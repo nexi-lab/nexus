@@ -21,8 +21,6 @@ from nexus.services.governance.models import (
     GovernanceEdge,
 )
 
-from collections.abc import Callable
-from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -44,7 +42,7 @@ class GovernanceGraphService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
+        session_factory: "Callable[[], AsyncSession]",
         cache_ttl: float = 60.0,
     ) -> None:
         self._session_factory = session_factory

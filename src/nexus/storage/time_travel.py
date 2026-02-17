@@ -12,8 +12,6 @@ from sqlalchemy import and_, or_, select
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.storage.models import FilePathModel, OperationLogModel
 
-from nexus.storage.backend_base import Backend
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -22,7 +20,7 @@ if TYPE_CHECKING:
 class TimeTravelReader:
     """Read filesystem state at historical operation points."""
 
-    def __init__(self, session: Session, backend: Backend):
+    def __init__(self, session: "Session", backend: "Backend"):
         """Initialize time-travel reader.
 
         Args:

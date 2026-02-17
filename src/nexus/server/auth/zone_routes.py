@@ -219,7 +219,7 @@ async def list_zones(
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
     limit: int = 100,
     offset: int = 0,
-) -> ZoneListResponse:
+) -> "ZoneListResponse":
     """List zones the authenticated user belongs to.
 
     Global admins can see all zones. Regular users only see zones

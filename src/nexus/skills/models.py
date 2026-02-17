@@ -2,11 +2,9 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.mcp.models import MCPToolConfig
-if TYPE_CHECKING:
-    from nexus.mcp.models import MCPToolConfig
 
 @dataclass
 class SkillMetadata:

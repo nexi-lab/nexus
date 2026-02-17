@@ -11,7 +11,6 @@ Upsert semantics: DELETE + INSERT (portable across PostgreSQL and SQLite).
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 

@@ -11,7 +11,6 @@ from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -467,7 +466,7 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if path is a directory.
 

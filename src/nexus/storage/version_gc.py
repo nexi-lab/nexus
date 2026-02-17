@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import bindparam, text
 
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -231,7 +230,7 @@ class VersionHistoryGC:
         stats.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
         return stats
 
-    def _is_sqlite(self, session: Session) -> bool:
+    def _is_sqlite(self, session: "Session") -> bool:
         """Check if the database is SQLite."""
         if session.bind is None:
             return False
@@ -240,7 +239,7 @@ class VersionHistoryGC:
 
     def _delete_old_versions(
         self,
-        session: Session,
+        session: "Session",
         retention_days: int,
         batch_size: int,
         dry_run: bool,
@@ -341,7 +340,7 @@ class VersionHistoryGC:
 
     async def _delete_old_versions_async(
         self,
-        session: Session,
+        session: "Session",
         retention_days: int,
         batch_size: int,
         dry_run: bool,
@@ -430,7 +429,7 @@ class VersionHistoryGC:
 
     def _trim_excess_versions(
         self,
-        session: Session,
+        session: "Session",
         max_versions: int,
         batch_size: int,
         dry_run: bool,
@@ -507,7 +506,7 @@ class VersionHistoryGC:
 
     async def _trim_excess_versions_async(
         self,
-        session: Session,
+        session: "Session",
         max_versions: int,
         batch_size: int,
         dry_run: bool,
@@ -571,7 +570,7 @@ class VersionHistoryGC:
 
         return total_deleted, total_bytes
 
-    def _count_resources(self, session: Session) -> int:
+    def _count_resources(self, session: "Session") -> int:
         """Count unique resources in version_history."""
         # Use subquery for SQLite compatibility (doesn't support COUNT(DISTINCT tuple))
         query = text("""

@@ -20,7 +20,6 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 if TYPE_CHECKING:
     from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 
@@ -264,7 +263,7 @@ class HotspotDetector:
 
     def get_prefetch_candidates(
         self,
-        tiger_cache: TigerCache,
+        tiger_cache: "TigerCache",
         cache_ttl: int = 300,
     ) -> list[HotspotEntry]:
         """Get hot entries that should be prefetched before expiry.
@@ -364,8 +363,8 @@ class HotspotPrefetcher:
     def __init__(
         self,
         detector: HotspotDetector,
-        tiger_cache: TigerCache,
-        tiger_updater: TigerCacheUpdater,
+        tiger_cache: "TigerCache",
+        tiger_updater: "TigerCacheUpdater",
         config: HotspotConfig | None = None,
     ):
         """Initialize hotspot prefetcher.
@@ -483,8 +482,8 @@ class HotspotPrefetcher:
 
 async def hotspot_prefetch_task(
     detector: HotspotDetector,
-    tiger_cache: TigerCache,
-    tiger_updater: TigerCacheUpdater,
+    tiger_cache: "TigerCache",
+    tiger_updater: "TigerCacheUpdater",
     config: HotspotConfig | None = None,
 ) -> None:
     """Background task: Run hotspot prefetcher (Issue #921).

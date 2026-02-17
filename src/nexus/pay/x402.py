@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 from starlette.responses import Response
 
-from nexus.pay.credits import CreditsService
 if TYPE_CHECKING:
     import httpx
 
@@ -545,7 +544,7 @@ class X402Client:
     async def process_topup_webhook(
         self,
         webhook_payload: dict[str, Any],
-        credits_service: CreditsService,
+        credits_service: "CreditsService",
     ) -> str:
         """Process x402 payment webhook and credit agent in TigerBeetle.
 

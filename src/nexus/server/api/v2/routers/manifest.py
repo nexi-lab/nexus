@@ -165,7 +165,7 @@ async def resolve_manifest(
     agent_id: str,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     nexus_fs: Any = Depends(get_nexus_fs),
-) -> ResolveResponse:
+) -> "ResolveResponse":
     """Trigger manifest resolution for an agent.
 
     Resolves all sources in the agent's manifest and returns results.

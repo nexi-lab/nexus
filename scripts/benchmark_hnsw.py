@@ -17,6 +17,8 @@ References:
     - https://github.com/pgvector/pgvector
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
@@ -32,6 +34,7 @@ from sqlalchemy.orm import sessionmaker
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class BenchmarkConfig:
     """Configuration for HNSW benchmark."""
@@ -41,6 +44,7 @@ class BenchmarkConfig:
     ef_search: int
     maintenance_work_mem: str = "2GB"
     max_parallel_workers: int = 7
+
 
 @dataclass
 class BenchmarkResult:
@@ -56,6 +60,7 @@ class BenchmarkResult:
     qps: float
     recall_at_10: float
 
+
 # Configurations to test
 BENCHMARK_CONFIGS = [
     # Small scale
@@ -68,12 +73,14 @@ BENCHMARK_CONFIGS = [
     BenchmarkConfig(m=24, ef_construction=200, ef_search=150),
 ]
 
+
 def get_vector_count(session: Any) -> int:
     """Get count of vectors in document_chunks."""
     result = session.execute(
         text("SELECT COUNT(*) FROM document_chunks WHERE embedding IS NOT NULL")
     )
     return result.scalar() or 0
+
 
 def get_sample_embeddings(session: Any, n: int = 100) -> list[list[float]]:
     """Get sample embeddings for test queries."""
@@ -97,6 +104,7 @@ def get_sample_embeddings(session: Any, n: int = 100) -> list[list[float]]:
             embeddings.append([float(x) for x in vec_str.split(",")])
     return embeddings
 
+
 def exact_search(session: Any, embedding: list[float], limit: int = 10) -> list[str]:
     """Perform exact (sequential) search for ground truth."""
     result = session.execute(
@@ -112,6 +120,7 @@ def exact_search(session: Any, embedding: list[float], limit: int = 10) -> list[
         {"embedding": embedding, "limit": limit},
     )
     return [row[0] for row in result]
+
 
 def hnsw_search(session: Any, embedding: list[float], ef_search: int, limit: int = 10) -> list[str]:
     """Perform HNSW search with given ef_search."""
@@ -130,16 +139,19 @@ def hnsw_search(session: Any, embedding: list[float], ef_search: int, limit: int
     )
     return [row[0] for row in result]
 
+
 def calculate_recall(ground_truth: list[str], results: list[str]) -> float:
     """Calculate recall@K."""
     if not ground_truth:
         return 0.0
     return len(set(ground_truth) & set(results)) / len(ground_truth)
 
+
 def drop_hnsw_index(session: Any) -> None:
     """Drop existing HNSW index."""
     session.execute(text("DROP INDEX IF EXISTS idx_chunks_embedding_hnsw"))
     session.commit()
+
 
 def create_hnsw_index(session: Any, config: BenchmarkConfig) -> float:
     """Create HNSW index and return build time in seconds."""
@@ -162,6 +174,7 @@ def create_hnsw_index(session: Any, config: BenchmarkConfig) -> float:
     session.commit()
     return time.perf_counter() - start
 
+
 def get_index_size(session: Any) -> float:
     """Get HNSW index size in MB."""
     result = session.execute(
@@ -174,6 +187,7 @@ def get_index_size(session: Any) -> float:
     )
     row = result.fetchone()
     return float(row[1]) if row else 0.0
+
 
 def benchmark_config(
     session: Any,
@@ -242,6 +256,7 @@ def benchmark_config(
         qps=qps,
         recall_at_10=recall_at_10,
     )
+
 
 def run_benchmark(
     database_url: str,
@@ -342,6 +357,7 @@ def run_benchmark(
 
     return results
 
+
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -377,6 +393,7 @@ Examples:
         test_queries=args.test_queries,
         output_file=args.output,
     )
+
 
 if __name__ == "__main__":
     main()

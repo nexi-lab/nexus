@@ -17,8 +17,6 @@ Usage:
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.connectors.base import SkillDocMixin
-from nexus.core.protocols.connector import ConnectorProtocol
 if TYPE_CHECKING:
     from nexus.connectors.base import SkillDocMixin
     from nexus.core.protocols.connector import ConnectorProtocol
@@ -26,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 def on_mount(
-    backend: ConnectorProtocol,
+    backend: "ConnectorProtocol",
     mount_path: str,
     filesystem: Any = None,
     skill_registry: Any = None,

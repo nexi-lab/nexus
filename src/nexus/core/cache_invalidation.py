@@ -11,7 +11,6 @@ Issue #1169 / #1519.
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.core._metadata_generated import FileMetadata
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata
 
@@ -34,7 +33,7 @@ class CacheInvalidationObserver(Protocol):
     def on_read(
         self,
         path: str,
-        metadata: FileMetadata | None,
+        metadata: "FileMetadata | None",
         revision: int,
         zone_id: str,
         resource_type: str = "file",
@@ -63,7 +62,7 @@ class ReadSetCacheObserver:
     def on_read(
         self,
         path: str,
-        metadata: FileMetadata | None,
+        metadata: "FileMetadata | None",
         revision: int,
         zone_id: str,
         resource_type: str = "file",

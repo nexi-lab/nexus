@@ -93,11 +93,6 @@ def live_server(tmp_path, monkeypatch):
         database_url=f"sqlite:///{db_path}",
     )
 
-    # Reset auth cache for clean test
-    from nexus.server.dependencies import _reset_auth_cache
-
-    _reset_auth_cache()
-
     client = TestClient(app)
     logger.info("Live server started with permissions enabled")
 

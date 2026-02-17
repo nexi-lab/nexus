@@ -48,10 +48,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from collections.abc import Generator, Iterator
-
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Generator, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +301,7 @@ class ReadSet:
         """Return number of entries in the read set."""
         return len(self.entries)
 
-    def __iter__(self) -> Iterator[ReadSetEntry]:
+    def __iter__(self) -> "Iterator[ReadSetEntry]":
         """Iterate over entries."""
         return iter(self.entries)
 
@@ -374,7 +372,7 @@ class RWLock:
         self._pending_writers: int = 0
 
     @contextlib.contextmanager
-    def read_lock(self) -> Generator[None, None, None]:
+    def read_lock(self) -> "Generator[None, None, None]":
         """Acquire shared read lock. Blocks if a writer holds or is waiting."""
         with self._condition:
             while self._writer or self._pending_writers > 0:
@@ -389,7 +387,7 @@ class RWLock:
                     self._condition.notify_all()
 
     @contextlib.contextmanager
-    def write_lock(self) -> Generator[None, None, None]:
+    def write_lock(self) -> "Generator[None, None, None]":
         """Acquire exclusive write lock. Blocks until all readers/writers release."""
         with self._condition:
             self._pending_writers += 1
@@ -691,10 +689,10 @@ class ReadSetRegistry:
             return len(self._read_sets)
 
 # Module-level singleton for global access
-_global_registry: ReadSetRegistry | None = None
+_global_registry: "ReadSetRegistry | None" = None
 _registry_lock = threading.Lock()
 
-def get_global_registry() -> ReadSetRegistry:
+def get_global_registry() -> "ReadSetRegistry":
     """Get or create the global ReadSetRegistry singleton.
 
     Returns:
@@ -707,7 +705,7 @@ def get_global_registry() -> ReadSetRegistry:
                 _global_registry = ReadSetRegistry()
     return _global_registry
 
-def set_global_registry(registry: ReadSetRegistry | None) -> None:
+def set_global_registry(registry: "ReadSetRegistry | None") -> None:
     """Set the global ReadSetRegistry (for testing).
 
     Args:

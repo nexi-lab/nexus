@@ -384,7 +384,7 @@ def get_dispute(
 @router.post("/api/v2/disputes/{dispute_id}/resolve")
 def resolve_dispute(
     dispute_id: str,
-    request: DisputeResolveRequest,
+    request: "DisputeResolveRequest",
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
 ) -> DisputeResponse:
     """Resolve a dispute (admin/auto-mediation)."""

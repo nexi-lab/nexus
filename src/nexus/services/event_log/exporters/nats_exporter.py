@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent
 
-from nexus.services.event_log.exporters.config import NatsExporterConfig
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import NatsExporterConfig
 
@@ -24,7 +23,7 @@ logger = logging.getLogger(__name__)
 class NatsExporter:
     """NATS JetStream event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: NatsExporterConfig) -> None:
+    def __init__(self, config: "NatsExporterConfig") -> None:
         self._config = config
         self._nc: Any | None = None
         self._js: Any | None = None

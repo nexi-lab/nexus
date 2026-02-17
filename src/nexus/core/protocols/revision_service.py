@@ -17,7 +17,6 @@ References:
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -35,7 +34,7 @@ class RevisionServiceProtocol(Protocol):
         *,
         limit: int = 50,
         offset: int = 0,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """List version history for a file.
 
@@ -55,7 +54,7 @@ class RevisionServiceProtocol(Protocol):
         path: str,
         version: int | str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Get a specific version of a file.
 
@@ -75,7 +74,7 @@ class RevisionServiceProtocol(Protocol):
         version_a: int | str,
         version_b: int | str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Compute diff between two versions.
 

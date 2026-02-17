@@ -16,7 +16,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from nexus.services.context_manifest.models import ContextSourceProtocol, ManifestResult
 if TYPE_CHECKING:
     from nexus.services.context_manifest.models import (
         ContextSourceProtocol,
@@ -33,10 +32,10 @@ class ContextManifestProtocol(Protocol):
 
     async def resolve(
         self,
-        sources: Sequence[ContextSourceProtocol],
+        sources: Sequence["ContextSourceProtocol"],
         variables: dict[str, str],
         output_dir: Path | None = None,
-    ) -> ManifestResult:
+    ) -> "ManifestResult":
         """Resolve all sources and optionally write results to *output_dir*.
 
         Args:

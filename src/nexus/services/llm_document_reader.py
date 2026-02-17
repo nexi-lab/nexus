@@ -21,9 +21,6 @@ from nexus.services.llm_context_builder import ChunkLike, ContextBuilder
 
 logger = logging.getLogger(__name__)
 
-from nexus.core.filesystem import NexusFilesystem
-from nexus.llm.provider import LLMProvider
-from nexus.search.semantic import SemanticSearch
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.llm.provider import LLMProvider
@@ -52,9 +49,9 @@ class LLMDocumentReader:
 
     def __init__(
         self,
-        nx: NexusFilesystem,
-        provider: LLMProvider,
-        search: SemanticSearch | None = None,
+        nx: "NexusFilesystem",
+        provider: "LLMProvider",
+        search: "SemanticSearch | None" = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ):

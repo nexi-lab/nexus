@@ -277,9 +277,9 @@ class AsyncReBACBridge:
         return self._manager.get_l1_cache_stats()
 
 # Global bridge instance (optional singleton pattern)
-_global_bridge: AsyncReBACBridge | None = None
+_global_bridge: "AsyncReBACBridge | None" = None
 
-def get_async_rebac_bridge(database_url: str | None = None, **kwargs: Any) -> AsyncReBACBridge:
+def get_async_rebac_bridge(database_url: str | None = None, **kwargs: Any) -> "AsyncReBACBridge":
     """Get or create the global async ReBAC bridge.
 
     Args:

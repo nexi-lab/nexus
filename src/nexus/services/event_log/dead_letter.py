@@ -13,8 +13,6 @@ from typing import TYPE_CHECKING
 
 from nexus.core.event_bus import FileEvent
 
-from nexus.services.event_log.exporter_registry import ExporterRegistry
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -37,7 +35,7 @@ class DeadLetterHandler:
 
     def route_to_dlq(
         self,
-        session: Session,
+        session: "Session",
         *,
         operation_id: str,
         exporter_name: str,
@@ -66,7 +64,7 @@ class DeadLetterHandler:
 
     def list_unresolved(
         self,
-        session: Session,
+        session: "Session",
         *,
         exporter_name: str | None = None,
         limit: int = 100,
@@ -88,8 +86,8 @@ class DeadLetterHandler:
 
     async def replay_dlq(
         self,
-        session: Session,
-        exporter_registry: ExporterRegistry,
+        session: "Session",
+        exporter_registry: "ExporterRegistry",
         *,
         limit: int = 100,
     ) -> int:

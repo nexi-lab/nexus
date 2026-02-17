@@ -29,8 +29,6 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-from nexus.rebac.circuit_breaker import AsyncCircuitBreaker
-from nexus.rebac.manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.rebac.circuit_breaker import AsyncCircuitBreaker
     from nexus.rebac.manager import ReBACManager
@@ -88,10 +86,10 @@ class ReBACService(ReBACShareMixin):
 
     def __init__(
         self,
-        rebac_manager: ReBACManager | None,
+        rebac_manager: "ReBACManager | None",
         enforce_permissions: bool = True,
         enable_audit_logging: bool = True,
-        circuit_breaker: AsyncCircuitBreaker | None = None,
+        circuit_breaker: "AsyncCircuitBreaker | None" = None,
         file_reader: Callable | None = None,
     ):
         """Initialize ReBAC service.

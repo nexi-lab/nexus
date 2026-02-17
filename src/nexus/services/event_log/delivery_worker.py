@@ -26,9 +26,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.core.operation_types import OperationType
 
-from collections.abc import Callable
-from nexus.services.event_log.exporter_registry import ExporterRegistry
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -86,9 +83,9 @@ class EventDeliveryWorker:
 
     def __init__(
         self,
-        session_factory: Callable[..., Any],
+        session_factory: "Callable[..., Any]",
         event_bus: Any | None = None,
-        exporter_registry: ExporterRegistry | None = None,
+        exporter_registry: "ExporterRegistry | None" = None,
         *,
         event_loop: asyncio.AbstractEventLoop | None = None,
         poll_interval_ms: int = 200,
@@ -288,7 +285,7 @@ class EventDeliveryWorker:
         )
 
     def _handle_dispatch_failure(
-        self, session: Session, record: Any, event: FileEvent, exc: Exception
+        self, session: "Session", record: Any, event: FileEvent, exc: Exception
     ) -> None:
         """Handle a failed dispatch: track retries or route to DLQ."""
         op_id = record.operation_id
@@ -325,7 +322,7 @@ class EventDeliveryWorker:
 
     def _dispatch_to_exporters(
         self,
-        session: Session,
+        session: "Session",
         events: list[FileEvent],
         events_with_records: list[tuple[FileEvent, Any]],
     ) -> None:
@@ -375,7 +372,7 @@ class EventDeliveryWorker:
             agent_id=record.agent_id,
         )
 
-    def _mark_delivered(self, session: Session, operation_ids: list[str]) -> None:
+    def _mark_delivered(self, session: "Session", operation_ids: list[str]) -> None:
         """Mark operation_log rows as delivered."""
         from sqlalchemy import update
 

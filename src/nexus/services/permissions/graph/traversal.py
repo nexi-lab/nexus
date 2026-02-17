@@ -19,9 +19,6 @@ from sqlalchemy import or_, select
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
 from nexus.storage.models.permissions import ReBACTupleModel as RT
 
-from collections.abc import Callable
-from nexus.core.rebac import NamespaceConfig
-from sqlalchemy.engine import Connection
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -31,6 +28,7 @@ if TYPE_CHECKING:
     from nexus.services.permissions.tuples.repository import TupleRepository
 
 logger = logging.getLogger(__name__)
+
 
 class PermissionComputer:
     """Computes permissions via Zanzibar-style graph traversal.
@@ -52,7 +50,7 @@ class PermissionComputer:
     def __init__(
         self,
         repo: "TupleRepository",
-        namespace_resolver: Callable[[str], NamespaceConfig | None],
+        namespace_resolver: "Callable[[str], NamespaceConfig | None]",
         max_depth: int = 10,
     ) -> None:
         self._repo = repo
@@ -248,7 +246,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -308,7 +306,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -364,7 +362,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -554,7 +552,7 @@ class PermissionComputer:
 
     def _query_direct_tuple(
         self,
-        conn: Connection,
+        conn: "Connection",
         subject: Entity,
         relation: str,
         obj: Entity,
@@ -627,7 +625,7 @@ class PermissionComputer:
 
     def _check_wildcard_access(
         self,
-        conn: Connection,
+        conn: "Connection",
         relation: str,
         obj: Entity,
         zone_id: str | None,
@@ -688,7 +686,7 @@ class PermissionComputer:
 
     def _check_userset_grants(
         self,
-        conn: Connection,
+        conn: "Connection",
         subject: Entity,
         relation: str,
         obj: Entity,
@@ -915,7 +913,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         paths: list[dict[str, Any]],

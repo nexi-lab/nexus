@@ -23,8 +23,6 @@ import threading
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.gateway import NexusFSGateway
-from nexus.services.sync_service import SyncService
 if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway
     from nexus.services.sync_service import SyncService
@@ -37,7 +35,7 @@ class SyncJobService:
     Jobs run in background threads with progress tracking.
     """
 
-    def __init__(self, gateway: NexusFSGateway, sync_service: SyncService):
+    def __init__(self, gateway: "NexusFSGateway", sync_service: "SyncService"):
         """Initialize sync job service.
 
         Args:

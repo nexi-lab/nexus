@@ -67,7 +67,7 @@ async def debug_asyncio() -> dict[str, Any]:
 @router.get("/api/auth/whoami", response_model=WhoamiResponse)
 async def whoami(
     auth_result: dict[str, Any] | None = Depends(get_auth_result),
-) -> WhoamiResponse:
+) -> "WhoamiResponse":
     """Authentication info endpoint."""
     if auth_result is None or not auth_result.get("authenticated"):
         return WhoamiResponse(authenticated=False)

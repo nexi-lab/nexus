@@ -23,7 +23,6 @@ from nexus.validation.script_builder import (
     parse_simple_script_output,
 )
 
-from nexus.sandbox.sandbox_provider import SandboxProvider
 if TYPE_CHECKING:
     from nexus.sandbox.sandbox_provider import SandboxProvider
 
@@ -54,7 +53,7 @@ class ValidationRunner:
     async def validate(
         self,
         sandbox_id: str,
-        provider: SandboxProvider,
+        provider: "SandboxProvider",
         workspace_path: str = "/workspace",
         config: ValidationPipelineConfig | None = None,
     ) -> list[ValidationResult]:
@@ -155,7 +154,7 @@ class ValidationRunner:
     async def _resolve_configs(
         self,
         sandbox_id: str,
-        provider: SandboxProvider,
+        provider: "SandboxProvider",
         workspace_path: str,
         explicit_config: ValidationPipelineConfig | None,
     ) -> list[ValidatorConfig]:

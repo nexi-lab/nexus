@@ -25,6 +25,8 @@ Usage:
     python scripts/test_gmail_e2e.py --skip-api
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import subprocess
@@ -35,16 +37,19 @@ from pathlib import Path
 # Add src to path for local development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+
 def print_header(title: str) -> None:
     """Print a section header."""
     print(f"\n{'=' * 60}")
     print(f"  {title}")
     print(f"{'=' * 60}\n")
 
+
 def print_result(success: bool, message: str) -> None:
     """Print test result."""
     status = "✅ PASS" if success else "❌ FAIL"
     print(f"{status}: {message}")
+
 
 def get_db_url_from_docker() -> str:
     """Get postgres connection URL from docker container."""
@@ -98,6 +103,7 @@ def get_db_url_from_docker() -> str:
     except Exception as e:
         raise RuntimeError(f"Error getting docker postgres URL: {e}") from e
 
+
 def test_skill_md_generation(backend, tmp_dir: Path) -> bool:
     """Test SKILL.md loading from static file."""
     print_header("Test 1: SKILL.md Generation")
@@ -149,6 +155,7 @@ def test_skill_md_generation(backend, tmp_dir: Path) -> bool:
 
         traceback.print_exc()
         return False
+
 
 def test_schema_validation() -> bool:
     """Test Pydantic schema validation."""
@@ -264,6 +271,7 @@ def test_schema_validation() -> bool:
 
     return tests_passed
 
+
 def test_trait_validation(backend) -> bool:
     """Test trait-based validation."""
     print_header("Test 3: Trait Validation")
@@ -335,6 +343,7 @@ def test_trait_validation(backend) -> bool:
 
     return tests_passed
 
+
 def test_operation_traits(backend) -> bool:
     """Test operation trait configuration."""
     print_header("Test 4: Operation Traits")
@@ -395,6 +404,7 @@ def test_operation_traits(backend) -> bool:
 
     return tests_passed
 
+
 def test_checkpoint_functionality(backend) -> bool:
     """Test checkpoint creation and management."""
     print_header("Test 5: Checkpoint Functionality")
@@ -448,6 +458,7 @@ def test_checkpoint_functionality(backend) -> bool:
 
     return tests_passed
 
+
 def test_error_formatting(backend) -> bool:
     """Test error message formatting."""
     print_header("Test 6: Error Formatting")
@@ -487,6 +498,7 @@ def test_error_formatting(backend) -> bool:
 
     return tests_passed
 
+
 def test_list_emails(backend, context) -> bool:
     """Test listing emails from Gmail."""
     print_header("Test 7: List Emails (API)")
@@ -517,6 +529,7 @@ def test_list_emails(backend, context) -> bool:
 
         traceback.print_exc()
         return False
+
 
 def test_read_email(backend, context) -> bool:
     """Test reading an email."""
@@ -563,6 +576,7 @@ def test_read_email(backend, context) -> bool:
 
         traceback.print_exc()
         return False
+
 
 def main():
     """Run all E2E tests."""
@@ -661,6 +675,7 @@ def main():
 
         # Exit with error code if any test failed
         sys.exit(0 if passed == total else 1)
+
 
 if __name__ == "__main__":
     main()

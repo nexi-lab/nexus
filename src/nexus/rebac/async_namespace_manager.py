@@ -14,12 +14,11 @@ from typing import TYPE_CHECKING
 
 from nexus.rebac.namespace_manager import NamespaceMount
 
-from nexus.rebac.namespace_manager import MountEntry, NamespaceManager
 if TYPE_CHECKING:
     from nexus.rebac.namespace_manager import MountEntry, NamespaceManager
 
 def _to_namespace_mount(
-    entry: MountEntry,
+    entry: "MountEntry",
     subject: tuple[str, str],
     zone_id: str | None,
 ) -> NamespaceMount:
@@ -43,7 +42,7 @@ class AsyncNamespaceManager:
     ``to_thread`` for consistency (cache operations under lock).
     """
 
-    def __init__(self, inner: NamespaceManager) -> None:
+    def __init__(self, inner: "NamespaceManager") -> None:
         self._inner = inner
 
     async def is_visible(

@@ -42,7 +42,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from nexus.storage.local_disk_cache import LocalDiskCache
 if TYPE_CHECKING:
     from nexus.storage.local_disk_cache import LocalDiskCache
 

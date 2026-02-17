@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from collections.abc import Callable
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -91,7 +90,7 @@ def _record_from_row(row: Any) -> EventRecord:
 class EventReplayService:
     """Service for replaying and streaming historical events from operation_log."""
 
-    def __init__(self, session_factory: Callable[..., Any]) -> None:
+    def __init__(self, session_factory: "Callable[..., Any]") -> None:
         self._session_factory = session_factory
 
     def replay(

@@ -19,9 +19,6 @@ from nexus.services.governance.models import (
     ThrottleConfig,
 )
 
-from collections.abc import Callable
-from nexus.services.governance.protocols import AnomalyServiceProtocol, CollusionServiceProtocol, GovernanceGraphProtocol
-from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -51,10 +48,10 @@ class ResponseService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
-        anomaly_service: AnomalyServiceProtocol | None = None,
-        collusion_service: CollusionServiceProtocol | None = None,
-        graph_service: GovernanceGraphProtocol | None = None,
+        session_factory: "Callable[[], AsyncSession]",
+        anomaly_service: "AnomalyServiceProtocol | None" = None,
+        collusion_service: "CollusionServiceProtocol | None" = None,
+        graph_service: "GovernanceGraphProtocol | None" = None,
     ) -> None:
         self._session_factory = session_factory
         self._anomaly_service = anomaly_service

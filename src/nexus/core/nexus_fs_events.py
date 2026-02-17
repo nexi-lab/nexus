@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.core.rpc_decorator import rpc_expose
 
-from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.distributed_lock import LockManagerBase
@@ -120,7 +119,7 @@ class NexusFSEventsMixin:
 
         return self._file_watcher
 
-    def _get_zone_id(self, context: OperationContext | None) -> str:
+    def _get_zone_id(self, context: "OperationContext | None") -> str:
         """Get zone ID from context or default.
 
         Args:
@@ -191,7 +190,7 @@ class NexusFSEventsMixin:
         path: str,
         timeout: float = 30.0,
         since_revision: int | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
 
@@ -324,7 +323,7 @@ class NexusFSEventsMixin:
         timeout: float = 30.0,
         ttl: float = 30.0,
         max_holders: int = 1,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> str | None:
         """Acquire an advisory lock on a path.
 
@@ -435,7 +434,7 @@ class NexusFSEventsMixin:
         lock_id: str,
         path: str,
         ttl: float = 30.0,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> bool:
         """Extend a lock's TTL (heartbeat for long-running operations).
 
@@ -498,7 +497,7 @@ class NexusFSEventsMixin:
         self,
         lock_id: str,
         path: str | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> bool:
         """Release an advisory lock.
 
@@ -566,7 +565,7 @@ class NexusFSEventsMixin:
         path: str,
         timeout: float = 30.0,
         ttl: float = 30.0,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> AsyncIterator[str]:
         """Acquire a distributed lock as an async context manager.
 

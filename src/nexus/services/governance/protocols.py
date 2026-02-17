@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from nexus.services.governance.models import AnomalyAlert, TransactionSummary
 
-from nexus.services.governance.models import ConstraintCheckResult, ConstraintType, FraudRing, FraudScore, GovernanceEdge
 if TYPE_CHECKING:
     from nexus.services.governance.models import (
         ConstraintCheckResult,
@@ -55,9 +54,9 @@ class GovernanceGraphProtocol(Protocol):
         from_agent: str,
         to_agent: str,
         zone_id: str,
-        constraint_type: ConstraintType,
+        constraint_type: "ConstraintType",
         reason: str = "",
-    ) -> GovernanceEdge:
+    ) -> "GovernanceEdge":
         """Add a governance constraint between two agents."""
         ...
 
@@ -70,7 +69,7 @@ class GovernanceGraphProtocol(Protocol):
         from_agent: str,
         to_agent: str,
         zone_id: str,
-    ) -> ConstraintCheckResult:
+    ) -> "ConstraintCheckResult":
         """Check if there's a constraint between two agents."""
         ...
 
@@ -78,7 +77,7 @@ class GovernanceGraphProtocol(Protocol):
         self,
         zone_id: str,
         agent_id: str | None = None,
-    ) -> list[GovernanceEdge]:
+    ) -> list["GovernanceEdge"]:
         """List constraint edges, optionally filtered by agent."""
         ...
 
@@ -112,10 +111,10 @@ class CollusionServiceProtocol(Protocol):
     async def detect_rings(
         self,
         zone_id: str,
-    ) -> list[FraudRing]:
+    ) -> list["FraudRing"]:
         """Detect transaction rings (cycles) in the interaction graph."""
         ...
 
-    async def compute_fraud_scores(self, zone_id: str) -> dict[str, FraudScore]:
+    async def compute_fraud_scores(self, zone_id: str) -> dict[str, "FraudScore"]:
         """Compute composite fraud scores for all agents in a zone."""
         ...

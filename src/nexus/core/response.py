@@ -360,7 +360,7 @@ def timed_response(func: Callable[P, HandlerResponse[R]]) -> Callable[P, Handler
 
     Usage:
         @timed_response
-        def read_content(self, hash: str) -> HandlerResponse[bytes]:
+        def read_content(self, hash: str) -> "HandlerResponse[bytes]":
             # Method implementation...
             return HandlerResponse.ok(data=content, backend_name=self.name)
 
@@ -368,7 +368,7 @@ def timed_response(func: Callable[P, HandlerResponse[R]]) -> Callable[P, Handler
     """
 
     @functools.wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> HandlerResponse[R]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> "HandlerResponse[R]":
         start = time.perf_counter()
         try:
             response = func(*args, **kwargs)

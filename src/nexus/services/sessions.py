@@ -12,7 +12,6 @@ See: docs/design/AGENT_IDENTITY_AND_SESSIONS.md
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -24,7 +23,7 @@ from nexus.storage.models import (
 )
 
 def create_session(
-    session: Session,
+    session: "Session",
     user_id: str,
     agent_id: str | None = None,
     zone_id: str | None = None,
@@ -79,7 +78,7 @@ def create_session(
 
     return user_session
 
-def get_session(session: Session, session_id: str) -> UserSessionModel | None:
+def get_session(session: "Session", session_id: str) -> UserSessionModel | None:
     """Get session by ID.
 
     Args:
@@ -102,7 +101,7 @@ def get_session(session: Session, session_id: str) -> UserSessionModel | None:
 
     return user_session
 
-def update_session_activity(session: Session, session_id: str) -> bool:
+def update_session_activity(session: "Session", session_id: str) -> bool:
     """Update last_activity timestamp.
 
     Call this on every request to track session activity.
@@ -125,7 +124,7 @@ def update_session_activity(session: Session, session_id: str) -> bool:
     session.flush()
     return True
 
-def delete_session_resources(session: Session, session_id: str) -> dict[str, int]:
+def delete_session_resources(session: "Session", session_id: str) -> dict[str, int]:
     """Delete all resources associated with a session.
 
     Called when:
@@ -161,7 +160,7 @@ def delete_session_resources(session: Session, session_id: str) -> dict[str, int
     session.flush()
     return counts
 
-def delete_session(session: Session, session_id: str) -> bool:
+def delete_session(session: "Session", session_id: str) -> bool:
     """Delete session and all session-scoped resources.
 
     Args:
@@ -182,7 +181,7 @@ def delete_session(session: Session, session_id: str) -> bool:
     session.flush()
     return result > 0
 
-def cleanup_expired_sessions(session: Session) -> dict[str, int | dict[str, int]]:
+def cleanup_expired_sessions(session: "Session") -> dict[str, int | dict[str, int]]:
     """Background task: Clean up expired sessions.
 
     Only deletes sessions with expires_at < now.
@@ -224,7 +223,7 @@ def cleanup_expired_sessions(session: Session) -> dict[str, int | dict[str, int]
     return {"sessions": len(expired), "resources": total_resources}
 
 def list_user_sessions(
-    session: Session, user_id: str, include_expired: bool = False
+    session: "Session", user_id: str, include_expired: bool = False
 ) -> list[UserSessionModel]:
     """List all sessions for a user.
 
@@ -248,7 +247,7 @@ def list_user_sessions(
     return list(query.all())
 
 def cleanup_inactive_sessions(
-    session: Session, inactive_threshold: timedelta = timedelta(days=30)
+    session: "Session", inactive_threshold: timedelta = timedelta(days=30)
 ) -> int:
     """Clean up sessions inactive for threshold period.
 

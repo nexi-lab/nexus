@@ -13,8 +13,8 @@ References:
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.pay.audit_types import TransactionProtocol
 if TYPE_CHECKING:
+    from nexus.pay.audit_types import TransactionProtocol
     from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 
 @runtime_checkable
@@ -28,7 +28,7 @@ class PaymentProtocol(Protocol):
     """
 
     @property
-    def protocol_name(self) -> TransactionProtocol: ...
+    def protocol_name(self) -> "TransactionProtocol": ...
 
     def can_handle(self, to: str, metadata: dict[str, Any] | None = None) -> bool: ...
 

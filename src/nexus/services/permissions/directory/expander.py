@@ -17,8 +17,6 @@ from sqlalchemy.exc import OperationalError
 
 from nexus.services.permissions.consistency.revision import get_zone_revision_for_grant
 
-from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
-from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -114,8 +112,8 @@ class DirectoryExpander:
 
     def __init__(
         self,
-        engine: Engine,
-        tiger_cache: TigerCache | None = None,
+        engine: "Engine",
+        tiger_cache: "TigerCache | None" = None,
         metadata_store: Any | None = None,
     ) -> None:
         self._engine = engine

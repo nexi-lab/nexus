@@ -26,7 +26,6 @@ import asyncio
 import logging
 import threading
 import time
-from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -166,8 +165,7 @@ class FileAccessTracker:
         self._max_tracked_paths = max_tracked_paths
 
         # Access log: (zone_id, path) -> list[timestamps]
-        # OrderedDict for O(1) LRU eviction via popitem(last=False)
-        self._access_log: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
+        self._access_log: dict[tuple[str, str], list[float]] = {}
         # User tracking: (zone_id, path) -> set[user_ids]
         self._user_access: dict[tuple[str, str], set[str]] = {}
         # Size tracking: (zone_id, path) -> total_bytes
@@ -204,9 +202,6 @@ class FileAccessTracker:
                     self._evict_oldest()
                 self._access_log[key] = []
                 self._user_access[key] = set()
-            else:
-                # Move to end (most recently used) for LRU ordering
-                self._access_log.move_to_end(key)
 
             # Record timestamp
             self._access_log[key].append(now)
@@ -226,12 +221,16 @@ class FileAccessTracker:
                 self._access_log[key] = [t for t in self._access_log[key] if t > cutoff]
 
     def _evict_oldest(self) -> None:
-        """Evict least-recently-used entry (must hold lock). O(1) amortized."""
+        """Evict oldest entry (must hold lock)."""
         if not self._access_log:
             return
 
-        # OrderedDict.popitem(last=False) removes the oldest (first) entry in O(1)
-        oldest_key, _ = self._access_log.popitem(last=False)
+        # Find key with oldest last access
+        oldest_key = min(
+            self._access_log.keys(),
+            key=lambda k: max(self._access_log[k]) if self._access_log[k] else 0,
+        )
+        del self._access_log[oldest_key]
         self._user_access.pop(oldest_key, None)
         self._size_cache.pop(oldest_key, None)
 

@@ -10,15 +10,15 @@ from typing import TYPE_CHECKING
 
 from nexus.rebac.namespace_manager import NamespaceManager
 
-from nexus.storage.record_store import RecordStoreABC
 if TYPE_CHECKING:
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
 def create_namespace_manager(
     rebac_manager: "EnhancedReBACManager",
-    record_store: RecordStoreABC | None = None,
+    record_store: "RecordStoreABC | None" = None,
 ) -> NamespaceManager:
     """Create NamespaceManager with config from environment variables.
 
@@ -36,7 +36,7 @@ def create_namespace_manager(
     persistent_store = None
     if record_store is not None:
         try:
-            from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
+            from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
 
             persistent_store = PostgresPersistentViewStore(record_store)
             logger.info("[NAMESPACE] L3 persistent view store enabled (RecordStore)")

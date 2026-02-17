@@ -21,6 +21,7 @@ from typing import Any
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.permissions import OperationContext
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 # ============================================================================
 # P0-4: Admin Capabilities and Audit System
@@ -412,8 +413,6 @@ EnhancedOperationContext = OperationContext
 # Use PermissionEnforcer directly instead of EnhancedPermissionEnforcer.
 # ============================================================================
 
-def __getattr__(name: str):
-    if name == "EnhancedPermissionEnforcer":
-        from nexus.services.permissions.enforcer import PermissionEnforcer
-        return PermissionEnforcer
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# EnhancedPermissionEnforcer is now just an alias for PermissionEnforcer
+# This maintains backward compatibility while we migrate code to use PermissionEnforcer
+EnhancedPermissionEnforcer = PermissionEnforcer

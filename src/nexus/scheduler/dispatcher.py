@@ -19,7 +19,6 @@ from nexus.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
 )
 
-from nexus.scheduler.service import SchedulerService
 if TYPE_CHECKING:
     from nexus.scheduler.service import SchedulerService
 
@@ -38,7 +37,7 @@ class TaskDispatcher:
 
     def __init__(
         self,
-        scheduler_service: SchedulerService,
+        scheduler_service: "SchedulerService",
         db_dsn: str = "",
         poll_interval: int = 30,
     ) -> None:

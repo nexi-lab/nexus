@@ -8,10 +8,12 @@ JSON bytes for zero-copy responses.
 import json
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from nexus.a2a.models import (
     AgentCapabilities,
     AgentCard,
+    AgentInterface,
     AgentProvider,
     AgentSkill,
     AuthScheme,
@@ -47,6 +49,7 @@ class AgentCardCache:
         skills: list[Any] | None = None,
         base_url: str = DEFAULT_NEXUS_URL,
         auth_provider: Any = None,
+        grpc_port: int | None = None,
     ) -> bytes:
         """Return the Agent Card as pre-serialised JSON bytes.
 
@@ -61,6 +64,7 @@ class AgentCardCache:
             skills=skills,
             base_url=base_url,
             auth_provider=auth_provider,
+            grpc_port=grpc_port,
         )
 
         self._card = card
@@ -86,6 +90,7 @@ def build_agent_card(
     skills: list[Any] | None = None,
     base_url: str = DEFAULT_NEXUS_URL,
     auth_provider: Any = None,
+    grpc_port: int | None = None,
 ) -> AgentCard:
     """Build an Agent Card from server configuration and skills.
 
@@ -120,6 +125,24 @@ def build_agent_card(
     # Detect auth schemes
     auth_schemes = _detect_auth_schemes(auth_provider)
 
+    # Build supported interfaces (v1.0)
+    interfaces = [
+        AgentInterface(
+            url=f"{base_url}/a2a",
+            protocol_binding="JSONRPC",
+            protocol_version="1.0",
+        ),
+    ]
+    if grpc_port:
+        host = urlparse(base_url).hostname or "localhost"
+        interfaces.append(
+            AgentInterface(
+                url=f"{host}:{grpc_port}",
+                protocol_binding="GRPC",
+                protocol_version="1.0",
+            ),
+        )
+
     card = AgentCard(
         name=name,
         description=description,
@@ -137,6 +160,7 @@ def build_agent_card(
         defaultInputModes=["text/plain", "application/json"],
         defaultOutputModes=["text/plain", "application/json"],
         skills=agent_skills,
+        supportedInterfaces=interfaces,
     )
 
     return card

@@ -34,6 +34,7 @@ from nexus.pay.x402 import (
 )
 from nexus.server.middleware.x402 import X402PaymentMiddleware
 
+
 def benchmark(name: str, iterations: int = 10000):
     """Decorator to benchmark a function."""
 
@@ -60,6 +61,7 @@ def benchmark(name: str, iterations: int = 10000):
         return wrapper
 
     return decorator
+
 
 def run_benchmarks():
     """Run all benchmarks."""
@@ -276,6 +278,7 @@ Optimization Recommendations:
   4. Pre-encode static payment required responses
   5. Use orjson for faster JSON serialization
 """)
+
 
 if __name__ == "__main__":
     run_benchmarks()

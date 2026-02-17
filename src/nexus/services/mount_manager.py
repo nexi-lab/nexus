@@ -20,7 +20,6 @@ from sqlalchemy import select
 from nexus.core.router import MountConfig
 from nexus.storage.models import MountConfigModel
 
-from nexus.storage.record_store import RecordStoreABC
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
@@ -54,7 +53,7 @@ class MountManager:
         >>> manager.remove_mount("/personal/alice")
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         """Initialize mount manager.
 
         Args:

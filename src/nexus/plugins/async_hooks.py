@@ -34,7 +34,6 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 
-from nexus.plugins.hooks import PluginHooks
 if TYPE_CHECKING:
     from nexus.plugins.hooks import PluginHooks
 
@@ -78,7 +77,7 @@ class AsyncHookEngine:
     registry.
     """
 
-    def __init__(self, inner: PluginHooks) -> None:
+    def __init__(self, inner: "PluginHooks") -> None:
         self._inner = inner
         # HookId.id → (HookType, adapted_handler)
         self._registered: dict[str, tuple[HookType, Callable[..., Any]]] = {}

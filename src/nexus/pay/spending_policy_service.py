@@ -35,8 +35,6 @@ from nexus.pay.spending_policy import (
     SpendingPolicy,
 )
 
-from collections.abc import Callable
-from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -81,7 +79,7 @@ class SpendingPolicyService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
+        session_factory: "Callable[[], AsyncSession]",
         *,
         cache_ttl: float = _CACHE_TTL,
         max_cache_entries: int = 4096,

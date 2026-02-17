@@ -25,7 +25,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from nexus.pay.x402 import X402Client
 if TYPE_CHECKING:
     from nexus.pay.x402 import X402Client
 
@@ -50,7 +49,7 @@ class X402PaymentMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: Any,
-        x402_client: X402Client,
+        x402_client: "X402Client",
         protected_paths: dict[str, Decimal] | None = None,
         price_callback: Callable[[Request], Decimal | None] | None = None,
     ):

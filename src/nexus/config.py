@@ -72,6 +72,10 @@ class FeaturesConfig(BaseModel):
         default=True,
         description="Enable Google A2A (Agent-to-Agent) protocol endpoint",
     )
+    a2a_grpc_port: int = Field(
+        default=0,
+        description="Port for A2A gRPC transport binding. 0 = disabled.",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -350,8 +354,8 @@ class NexusConfig(BaseModel):
     )
 
 def load_config(
-    config: str | Path | dict[str, Any] | NexusConfig | None = None,
-) -> NexusConfig:
+    config: "str | Path | dict[str, Any] | NexusConfig | None" = None,
+) -> "NexusConfig":
     """
     Load Nexus configuration from various sources.
 
@@ -384,7 +388,7 @@ def load_config(
     # Auto-discover
     return _auto_discover()
 
-def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
+def _load_from_dict(config_dict: dict[str, Any]) -> "NexusConfig":
     """Load configuration from dictionary."""
     # Merge with environment variables
     merged = _load_from_environment()
@@ -399,7 +403,7 @@ def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
 
     return NexusConfig(**merged_dict)
 
-def _load_from_file(path: Path) -> NexusConfig:
+def _load_from_file(path: Path) -> "NexusConfig":
     """Load configuration from file."""
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -412,7 +416,7 @@ def _load_from_file(path: Path) -> NexusConfig:
 
     return _load_from_dict(config_dict)
 
-def _load_from_environment() -> NexusConfig:
+def _load_from_environment() -> "NexusConfig":
     """Load configuration from environment variables."""
     env_config: dict[str, Any] = {}
 
@@ -549,7 +553,7 @@ def _load_from_environment() -> NexusConfig:
 
     return NexusConfig(**env_config)
 
-def _auto_discover() -> NexusConfig:
+def _auto_discover() -> "NexusConfig":
     """
     Auto-discover configuration from standard locations.
 

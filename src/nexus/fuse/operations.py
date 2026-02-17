@@ -50,10 +50,6 @@ except ImportError:
     LocalDiskCache = None  # type: ignore[misc,assignment]
     get_local_disk_cache = None  # type: ignore[assignment]
 
-from nexus.core.filesystem import NexusFilesystem
-from nexus.core.permissions import OperationContext
-from nexus.fuse.mount import MountMode
-from nexus.rebac.namespace_manager import NamespaceManager
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.core.permissions import OperationContext

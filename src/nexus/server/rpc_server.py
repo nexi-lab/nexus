@@ -20,7 +20,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
-from nexus import NexusFilesystem
 if TYPE_CHECKING:
     from nexus import NexusFilesystem
 else:

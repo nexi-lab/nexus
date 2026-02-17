@@ -25,8 +25,6 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
-from nexus.core.permissions import OperationContext
-from nexus.services.gateway import NexusFSGateway
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
@@ -48,7 +46,7 @@ class ShareLinkService:
 
     def __init__(
         self,
-        gateway: NexusFSGateway,
+        gateway: "NexusFSGateway",
         enforce_permissions: bool = True,
     ):
         """Initialize share link service.
@@ -107,7 +105,7 @@ class ShareLinkService:
 
     @staticmethod
     def _extract_context_info(
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> tuple[str, str, bool]:
         """Extract zone_id, user_id, is_admin from context.
 
@@ -142,7 +140,7 @@ class ShareLinkService:
         expires_in_hours: int | None = None,
         max_access_count: int | None = None,
         password: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse:
         """Create a shareable link for a file or directory.
 
@@ -250,7 +248,7 @@ class ShareLinkService:
     async def get_share_link(
         self,
         link_id: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse:
         """Get details of a share link.
 
@@ -323,7 +321,7 @@ class ShareLinkService:
         path: str | None = None,
         include_revoked: bool = False,
         include_expired: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse:
         """List share links created by the current user.
 
@@ -397,7 +395,7 @@ class ShareLinkService:
     async def revoke_share_link(
         self,
         link_id: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse:
         """Revoke a share link, immediately disabling access.
 
@@ -463,7 +461,7 @@ class ShareLinkService:
         password: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse:
         """Validate and access a shared resource via share link.
 
@@ -592,7 +590,7 @@ class ShareLinkService:
         self,
         link_id: str,
         limit: int = 100,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse:
         """Get access logs for a share link.
 

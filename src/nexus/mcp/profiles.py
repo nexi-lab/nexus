@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.rebac.manager import EnhancedReBACManager, WriteResult
 if TYPE_CHECKING:
     from nexus.rebac.manager import (
         EnhancedReBACManager,
@@ -237,11 +236,11 @@ def load_profiles_from_dict(raw: dict[str, Any]) -> ToolProfileConfig:
 # ---------------------------------------------------------------------------
 
 def grant_tools_for_profile(
-    rebac_manager: EnhancedReBACManager,
+    rebac_manager: "EnhancedReBACManager",
     subject: tuple[str, str],
     profile: ToolProfile,
     zone_id: str | None = None,
-) -> list[WriteResult]:
+) -> list["WriteResult"]:
     """Batch-write ReBAC grants for all tools in a profile.
 
     Creates tuples: (subject, "direct_viewer", ("file", "/tools/{tool_name}"))
@@ -279,7 +278,7 @@ def grant_tools_for_profile(
     return results
 
 def revoke_tools_by_tuple_ids(
-    rebac_manager: EnhancedReBACManager,
+    rebac_manager: "EnhancedReBACManager",
     tuple_ids: list[str],
 ) -> int:
     """Revoke tool grants by their tuple IDs.

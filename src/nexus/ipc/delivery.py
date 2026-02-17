@@ -33,7 +33,6 @@ from nexus.ipc.exceptions import (
 from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
 from nexus.ipc.storage.protocol import IPCStorageDriver
 
-from nexus.core.cache_store import CacheStoreABC
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
 
@@ -330,7 +329,7 @@ class MessageProcessor:
         handler: MessageHandler,
         *,
         zone_id: str,
-        cache_store: CacheStoreABC | None = None,
+        cache_store: "CacheStoreABC | None" = None,
         dedup_ttl_seconds: int = 3600,
         hot_subscriber: HotPathSubscriber | None = None,
         max_handler_concurrency: int = DEFAULT_MAX_HANDLER_CONCURRENCY,

@@ -22,8 +22,6 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from nexus.core.event_bus import EventBusProtocol, FileEvent
-from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
 if TYPE_CHECKING:
     from nexus.core.event_bus import EventBusProtocol, FileEvent
     from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
@@ -84,8 +82,8 @@ class WebSocketManager:
 
     def __init__(
         self,
-        event_bus: EventBusProtocol | None = None,
-        reactive_manager: ReactiveSubscriptionManager | None = None,
+        event_bus: "EventBusProtocol | None" = None,
+        reactive_manager: "ReactiveSubscriptionManager | None" = None,
     ) -> None:
         """Initialize the WebSocket manager.
 
@@ -314,7 +312,7 @@ class WebSocketManager:
         else:
             logger.debug(f"Unknown message type from {connection_id}: {msg_type}")
 
-    async def broadcast_to_zone(self, zone_id: str, event: FileEvent) -> int:
+    async def broadcast_to_zone(self, zone_id: str, event: "FileEvent") -> int:
         """Broadcast an event to all connections for a zone.
 
         Uses ReactiveSubscriptionManager to send batch_update messages (#1170)
@@ -340,7 +338,7 @@ class WebSocketManager:
     async def _broadcast_batch(
         self,
         connections: dict[str, ConnectionInfo],
-        event: FileEvent,
+        event: "FileEvent",
     ) -> int:
         """Send batch_update messages with subscriptions grouped per connection.
 

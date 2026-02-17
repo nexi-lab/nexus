@@ -29,10 +29,6 @@ from nexus.services.permissions.types import (
 )
 from nexus.storage.models.permissions import ReBACTupleModel as RT
 
-from collections.abc import Callable
-from nexus.core.rebac import NamespaceConfig
-from nexus.services.permissions.consistency.zone_manager import ZoneManager
-from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -61,10 +57,10 @@ class ZoneAwareTraversal:
 
     def __init__(
         self,
-        engine: Engine,
-        get_namespace: Callable[[str], NamespaceConfig | None],
-        evaluate_conditions: Callable[[dict[str, Any] | None, dict[str, Any] | None], bool],
-        zone_manager: ZoneManager,
+        engine: "Engine",
+        get_namespace: "Callable[[str], NamespaceConfig | None]",
+        evaluate_conditions: "Callable[[dict[str, Any] | None, dict[str, Any] | None], bool]",
+        zone_manager: "ZoneManager",
         enable_graph_limits: bool = True,
     ) -> None:
         self._engine = engine

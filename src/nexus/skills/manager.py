@@ -12,9 +12,6 @@ from nexus.skills.parser import SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
-from nexus.core.permissions import OperationContext
-from nexus.rebac.manager import ReBACManager
-from nexus.skills.governance import SkillGovernance
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.rebac.manager import ReBACManager
@@ -67,8 +64,8 @@ class SkillManager:
         self,
         filesystem: NexusFilesystem | None = None,
         registry: SkillRegistry | None = None,
-        rebac_manager: ReBACManager | None = None,
-        governance: SkillGovernance | None = None,
+        rebac_manager: "ReBACManager | None" = None,
+        governance: "SkillGovernance | None" = None,
     ):
         """Initialize skill manager.
 
@@ -127,7 +124,7 @@ class SkillManager:
         owner_id: str,
         tier: str,
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Create ReBAC permission tuples for a skill based on tier.
 
@@ -206,7 +203,7 @@ class SkillManager:
         creator_id: str | None = None,
         creator_type: str = "agent",
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         **kwargs: str,
     ) -> str:
         """Create a new skill from a template.
@@ -358,7 +355,7 @@ class SkillManager:
         version: str = "1.0.0",
         source_url: str | None = None,
         metadata: dict[str, Any] | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Create a new skill from content (e.g., from web scraping).
 

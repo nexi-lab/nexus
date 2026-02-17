@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
-from nexus.core._metadata_generated import FileMetadataProtocol
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
 
@@ -117,7 +116,7 @@ class WorkspaceRegistry:
 
     def __init__(
         self,
-        metadata: FileMetadataProtocol,
+        metadata: "FileMetadataProtocol",
         rebac_manager: Any | None = None,  # v0.5.0: For auto-granting ownership
         session_factory: Any | None = None,  # SQLAlchemy session factory
     ):

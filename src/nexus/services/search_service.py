@@ -108,10 +108,6 @@ def _filter_ignored_paths(
 
 logger = logging.getLogger(__name__)
 
-from nexus.core._metadata_generated import FileMetadataProtocol
-from nexus.core.router import PathRouter
-from nexus.services.permissions.enforcer import PermissionEnforcer
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.permissions import OperationContext
@@ -132,10 +128,10 @@ class SearchService(SemanticSearchMixin):
 
     def __init__(
         self,
-        metadata_store: FileMetadataProtocol,
-        permission_enforcer: PermissionEnforcer | None = None,
-        router: PathRouter | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        metadata_store: "FileMetadataProtocol",
+        permission_enforcer: "PermissionEnforcer | None" = None,
+        router: "PathRouter | None" = None,
+        rebac_manager: "EnhancedReBACManager | None" = None,
         enforce_permissions: bool = True,
         default_context: "OperationContext | None" = None,
         record_store: Any | None = None,

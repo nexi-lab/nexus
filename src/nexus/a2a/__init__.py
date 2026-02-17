@@ -9,9 +9,10 @@ See: https://a2a-protocol.org/latest/specification/
 
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter
 if TYPE_CHECKING:
     from fastapi import APIRouter
+
+    from nexus.a2a.task_manager import TaskManager
 
 __all__ = ["create_a2a_router"]
 
@@ -23,7 +24,7 @@ def create_a2a_router(
     auth_required: bool = False,
     auth_fn: Any = None,
     data_dir: str | None = None,
-) -> APIRouter:
+) -> "tuple[APIRouter, TaskManager]":
     """Create the A2A protocol FastAPI router.
 
     Args:
@@ -41,21 +42,24 @@ def create_a2a_router(
             When None, tasks are stored in-memory only.
 
     Returns:
-        Configured FastAPI APIRouter with A2A endpoints.
+        Tuple of (configured FastAPI APIRouter, TaskManager instance).
     """
     from nexus.a2a.router import build_router
-    from nexus.a2a.task_manager import TaskManager
+    from nexus.a2a.task_manager import TaskManager as _TaskManager
 
-    task_manager: TaskManager | None = None
+    task_manager: _TaskManager | None = None
     if data_dir is not None:
         from nexus.a2a.stores.local_driver import LocalStorageDriver
         from nexus.a2a.stores.vfs import VFSTaskStore
 
         storage = LocalStorageDriver(root=data_dir)
         store = VFSTaskStore(storage=storage)
-        task_manager = TaskManager(store=store)
+        task_manager = _TaskManager(store=store)
 
-    return build_router(
+    if task_manager is None:
+        task_manager = _TaskManager()
+
+    router = build_router(
         _nexus_fs=nexus_fs,
         config=config,
         base_url=base_url,
@@ -63,3 +67,4 @@ def create_a2a_router(
         auth_required=auth_required,
         auth_fn=auth_fn,
     )
+    return router, task_manager

@@ -1,22 +1,19 @@
 """Unit tests for server authentication dependencies.
 
 Tests cover:
-- TTLCache hit/miss and eviction
-- Shallow copy behavior (mutation safety)
-- _reset_auth_cache for test isolation
+- CacheStoreABC-based auth cache hit/miss and isolation
 - get_auth_result: open access, auth provider, static API key, token formats
 - require_auth: authenticated vs. unauthenticated
 - get_operation_context: subject mapping, admin capabilities, agent handling
 """
 
-import hashlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.server.dependencies import (
-    _AUTH_CACHE,
     _get_cached_auth,
     _reset_auth_cache,
     _set_cached_auth,
@@ -33,20 +30,27 @@ def _make_app_state(
     *,
     api_key: str | None = None,
     auth_provider: Any = None,
+    auth_cache_store: InMemoryCacheStore | None = None,
 ) -> MagicMock:
     """Build a minimal mock app state."""
     state = MagicMock()
     state.api_key = api_key
     state.auth_provider = auth_provider
+    state.auth_cache_store = auth_cache_store
     return state
 
 def _make_mock_request(
     *,
     api_key: str | None = None,
     auth_provider: Any = None,
+    auth_cache_store: InMemoryCacheStore | None = None,
 ) -> MagicMock:
     """Create a mock Request with app.state configured."""
-    state = _make_app_state(api_key=api_key, auth_provider=auth_provider)
+    state = _make_app_state(
+        api_key=api_key,
+        auth_provider=auth_provider,
+        auth_cache_store=auth_cache_store,
+    )
     request = MagicMock()
     request.app.state = state
     return request
@@ -81,71 +85,64 @@ async def _call_get_auth_result(
         x_nexus_zone_id=x_nexus_zone_id,
     )
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def clean_auth_cache():
-    """Ensure every test starts with an empty auth cache."""
-    _reset_auth_cache()
-    yield
-    _reset_auth_cache()
-
 # ===========================================================================
 # Cache layer
 # ===========================================================================
 
 class TestAuthCacheOperations:
-    """Tests for _get_cached_auth / _set_cached_auth / _reset_auth_cache."""
+    """Tests for _get_cached_auth / _set_cached_auth / _reset_auth_cache with CacheStoreABC."""
 
-    def test_cache_miss_returns_none(self):
+    @pytest.fixture
+    def cache(self) -> InMemoryCacheStore:
+        return InMemoryCacheStore()
+
+    async def test_cache_miss_returns_none(self, cache: InMemoryCacheStore) -> None:
         """A never-seen token should return None."""
-        assert _get_cached_auth("never-seen-token") is None
+        assert await _get_cached_auth(cache, "never-seen-token") is None
 
-    def test_cache_hit_returns_data(self):
+    async def test_cache_hit_returns_data(self, cache: InMemoryCacheStore) -> None:
         """After caching, the same token should be returned."""
-        _set_cached_auth("token-1", {"authenticated": True, "subject_id": "alice"})
+        await _set_cached_auth(cache, "token-1", {"authenticated": True, "subject_id": "alice"})
 
-        result = _get_cached_auth("token-1")
+        result = await _get_cached_auth(cache, "token-1")
         assert result is not None
         assert result["subject_id"] == "alice"
 
-    def test_cache_returns_shallow_copy(self):
-        """Returned dict must be a copy so callers cannot mutate the cached entry."""
-        _set_cached_auth("token-copy", {"key": "original"})
+    async def test_cache_returns_independent_copy(self, cache: InMemoryCacheStore) -> None:
+        """Returned dict must be independent (JSON round-trip) so callers cannot mutate cache."""
+        await _set_cached_auth(cache, "token-copy", {"key": "original"})
 
-        first = _get_cached_auth("token-copy")
+        first = await _get_cached_auth(cache, "token-copy")
         assert first is not None
         first["key"] = "mutated"
 
-        second = _get_cached_auth("token-copy")
+        second = await _get_cached_auth(cache, "token-copy")
         assert second is not None
         assert second["key"] == "original", "Mutation leaked into cache"
 
-    def test_reset_clears_cache(self):
+    async def test_reset_clears_cache(self, cache: InMemoryCacheStore) -> None:
         """_reset_auth_cache should evict all entries."""
-        _set_cached_auth("token-reset", {"authenticated": True})
-        assert _get_cached_auth("token-reset") is not None
+        await _set_cached_auth(cache, "token-reset", {"authenticated": True})
+        assert await _get_cached_auth(cache, "token-reset") is not None
 
-        _reset_auth_cache()
-        assert _get_cached_auth("token-reset") is None
+        await _reset_auth_cache(cache)
+        assert await _get_cached_auth(cache, "token-reset") is None
 
-    def test_different_tokens_have_different_entries(self):
+    async def test_different_tokens_have_different_entries(self, cache: InMemoryCacheStore) -> None:
         """Two different tokens must not collide."""
-        _set_cached_auth("token-a", {"user": "alice"})
-        _set_cached_auth("token-b", {"user": "bob"})
+        await _set_cached_auth(cache, "token-a", {"user": "alice"})
+        await _set_cached_auth(cache, "token-b", {"user": "bob"})
 
-        assert _get_cached_auth("token-a")["user"] == "alice"
-        assert _get_cached_auth("token-b")["user"] == "bob"
+        result_a = await _get_cached_auth(cache, "token-a")
+        result_b = await _get_cached_auth(cache, "token-b")
+        assert result_a is not None and result_a["user"] == "alice"
+        assert result_b is not None and result_b["user"] == "bob"
 
-    def test_cache_key_is_sha256_prefix(self):
-        """Cache key should be the first 32 chars of the SHA-256 hex digest."""
-        token = "my-secret-token"
-        expected_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
-
-        _set_cached_auth(token, {"ok": True})
-        assert expected_hash in _AUTH_CACHE
+    async def test_none_cache_store_degrades_gracefully(self) -> None:
+        """When cache_store is None, operations are no-ops."""
+        await _set_cached_auth(None, "token-x", {"ok": True})
+        assert await _get_cached_auth(None, "token-x") is None
+        await _reset_auth_cache(None)  # Should not raise
 
 # ===========================================================================
 # get_auth_result
@@ -275,8 +272,12 @@ class TestGetAuthResultAuthProvider:
     """Tests for external auth provider authentication."""
 
     def _make_auth_result_obj(self, **overrides):
-        """Build a minimal AuthResult mock."""
-        result = MagicMock()
+        """Build a minimal AuthResult mock.
+
+        Uses spec=[] to prevent MagicMock from auto-creating attributes
+        (which are not JSON-serializable and break CacheStoreABC round-trip).
+        """
+        result = MagicMock(spec=[])
         result.authenticated = overrides.get("authenticated", True)
         result.is_admin = overrides.get("is_admin", False)
         result.subject_type = overrides.get("subject_type", "user")
@@ -284,13 +285,15 @@ class TestGetAuthResultAuthProvider:
         result.zone_id = overrides.get("zone_id", "root")
         result.inherit_permissions = overrides.get("inherit_permissions", True)
         result.metadata = overrides.get("metadata", {})
+        result.agent_generation = overrides.get("agent_generation")
         return result
 
     async def test_provider_success_returns_result(self):
         """Successful provider auth should return structured result."""
+        cache = InMemoryCacheStore()
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
-        request = _make_mock_request(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider, auth_cache_store=cache)
 
         result = await _call_get_auth_result(request=request, authorization="Bearer valid-token")
         assert result is not None
@@ -300,9 +303,10 @@ class TestGetAuthResultAuthProvider:
 
     async def test_provider_caches_result(self):
         """Second call with same token should hit cache."""
+        cache = InMemoryCacheStore()
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
-        request = _make_mock_request(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider, auth_cache_store=cache)
 
         # First call: cache miss
         result1 = await _call_get_auth_result(
@@ -332,9 +336,10 @@ class TestGetAuthResultAuthProvider:
 
     async def test_cached_result_gets_fresh_agent_id(self):
         """Cached result should have per-request x_agent_id updated."""
+        cache = InMemoryCacheStore()
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
-        request = _make_mock_request(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider, auth_cache_store=cache)
 
         await _call_get_auth_result(
             request=request, authorization="Bearer agent-test", x_agent_id="agent-1"
@@ -346,9 +351,10 @@ class TestGetAuthResultAuthProvider:
 
     async def test_cache_entry_excludes_per_request_fields(self):
         """Cache should not store x_agent_id or timing fields."""
+        cache = InMemoryCacheStore()
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
-        request = _make_mock_request(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider, auth_cache_store=cache)
 
         await _call_get_auth_result(
             request=request,
@@ -357,7 +363,7 @@ class TestGetAuthResultAuthProvider:
         )
 
         # Read raw cache entry
-        cached = _get_cached_auth("exclusion-test")
+        cached = await _get_cached_auth(cache, "exclusion-test")
         assert cached is not None
         assert "x_agent_id" not in cached
         assert "_auth_time_ms" not in cached

@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from nexus.core.nexus_fs import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFilesystem
 
@@ -111,7 +110,7 @@ class DataMigrator:
         )
     """
 
-    def __init__(self, nx: NexusFilesystem) -> None:
+    def __init__(self, nx: "NexusFilesystem") -> None:
         """Initialize data migrator.
 
         Args:

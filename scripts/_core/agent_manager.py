@@ -14,6 +14,7 @@ DEFAULT_AGENT_METADATA = {
     "agent_id": "agent",
 }
 
+
 def create_impersonated_user_agent(
     nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
@@ -59,6 +60,7 @@ def create_impersonated_user_agent(
     except Exception as e:
         print(f"  ✗ Failed to create ImpersonatedUser agent: {e}")
         return None
+
 
 def create_untrusted_agent(
     nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
@@ -106,6 +108,7 @@ def create_untrusted_agent(
         print(f"  ✗ Failed to create UntrustedAgent agent: {e}")
         return None
 
+
 def create_standard_agents(
     nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
 ) -> dict[str, dict[str, Any] | None]:
@@ -134,6 +137,7 @@ def create_standard_agents(
         "impersonated": create_impersonated_user_agent(nx, user_id, context, metadata),
         "untrusted": create_untrusted_agent(nx, user_id, context, metadata),
     }
+
 
 def grant_agent_resource_access(
     nx: Any,

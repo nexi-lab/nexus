@@ -11,6 +11,8 @@ Usage:
     PYTHONPATH=src uv run python scripts/test_wildcard_e2e.py
 """
 
+from __future__ import annotations
+
 import os
 import signal
 import socket
@@ -29,11 +31,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 JWT_SECRET = "test-wildcard-e2e-secret-key"
 
+
 def find_free_port() -> int:
     """Find a free port."""
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
+
 
 def wait_for_server(url: str, timeout: float = 30.0) -> bool:
     """Wait for server to be ready."""
@@ -47,6 +51,7 @@ def wait_for_server(url: str, timeout: float = 30.0) -> bool:
             pass
         time.sleep(0.2)
     return False
+
 
 def create_jwt_token(user_id: str, zone_id: str = "default") -> str:
     """Create a JWT token for testing.
@@ -69,6 +74,7 @@ def create_jwt_token(user_id: str, zone_id: str = "default") -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
+
 def rpc_call(client: httpx.Client, method: str, params: dict, headers: dict):
     """Make JSON-RPC call to server."""
     response = client.post(
@@ -83,6 +89,7 @@ def rpc_call(client: httpx.Client, method: str, params: dict, headers: dict):
         raise Exception(f"RPC error: {result['error']}")
     return result.get("result")
 
+
 def print_result(name: str, passed: bool, message: str = ""):
     """Print test result."""
     status = "PASS" if passed else "FAIL"
@@ -91,6 +98,7 @@ def print_result(name: str, passed: bool, message: str = ""):
     print(f"  [{color}{status}{reset}] {name}")
     if message:
         print(f"        {message}")
+
 
 def main():
     print("\n" + "=" * 70)
@@ -471,6 +479,7 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
             shutil.rmtree(tmp_dir)
 
         print("[*] Done")
+
 
 if __name__ == "__main__":
     sys.exit(main())

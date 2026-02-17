@@ -21,8 +21,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
 from nexus.rebac.utils.zone import normalize_zone_id
 
-from nexus.rebac.async_manager import AsyncReBACManager
-from nexus.rebac.namespace_manager import NamespaceManager
 if TYPE_CHECKING:
     from nexus.rebac.async_manager import AsyncReBACManager
     from nexus.rebac.namespace_manager import NamespaceManager
@@ -38,9 +36,9 @@ class AsyncPermissionEnforcer:
 
     def __init__(
         self,
-        rebac_manager: AsyncReBACManager | None = None,
+        rebac_manager: "AsyncReBACManager | None" = None,
         backends: dict[str, Any] | None = None,
-        namespace_manager: NamespaceManager | None = None,
+        namespace_manager: "NamespaceManager | None" = None,
         agent_registry: Any = None,
     ):
         """Initialize async permission enforcer.

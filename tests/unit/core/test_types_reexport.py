@@ -100,7 +100,6 @@ class TestTypesIsLeafModule:
         )
 
     def test_no_future_annotations(self) -> None:
-        """types.py should NOT use ``from __future__ import annotations`` (Python 3.14+, PEP 649)."""
         source = _TYPES_FILE.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(_TYPES_FILE))
 
@@ -112,5 +111,4 @@ class TestTypesIsLeafModule:
                         has_future = True
 
         assert not has_future, (
-            "core/types.py should not use 'from __future__ import annotations' (PEP 649)"
         )

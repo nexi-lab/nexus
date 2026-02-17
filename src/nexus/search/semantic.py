@@ -42,7 +42,6 @@ from nexus.search.vector_db import VectorDatabase
 
 logger = logging.getLogger(__name__)
 
-from nexus.services.llm_context_builder import AdaptiveRetrievalConfig
 if TYPE_CHECKING:
     from nexus.search.ranking import RankingConfig
     from nexus.services.llm_context_builder import AdaptiveRetrievalConfig
@@ -75,7 +74,7 @@ class SemanticSearch:
         embedding_provider: EmbeddingProvider | None = None,
         chunk_size: int = 1024,
         chunk_strategy: ChunkStrategy = ChunkStrategy.SEMANTIC,
-        adaptive_config: AdaptiveRetrievalConfig | None = None,
+        adaptive_config: "AdaptiveRetrievalConfig | None" = None,
         entropy_filtering: bool = False,
         entropy_threshold: float = 0.35,
         entropy_alpha: float = 0.5,

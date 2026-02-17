@@ -1,49 +1,59 @@
 """FastAPI dependencies for authentication and operation context.
 
-This module contains the auth cache, authentication dependency functions
+This module contains the authentication dependency functions
 (get_auth_result, require_auth), and the OperationContext factory
 (get_operation_context) used by route handlers.
+
+Auth caching uses CacheStoreABC (the CacheStore pillar) per
+KERNEL-ARCHITECTURE.md §2 — accessed via ``app_state.auth_cache_store``.
 """
 
 import hashlib
 import hmac
+import json
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from cachetools import TTLCache
 from fastapi import Depends, Header, HTTPException, Request
 
 from nexus.server.token_utils import parse_sk_token
 
+if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
+
 logger = logging.getLogger(__name__)
 
-# Auth cache: token_hash -> auth result dict
-# TTL: 15 minutes (900 seconds) - balances performance vs permission freshness
-# Max 1000 entries - cachetools handles eviction automatically (LRU when full)
+# Auth cache TTL: 15 minutes (900 seconds) - balances performance vs permission freshness
 _AUTH_CACHE_TTL = 900
-_AUTH_CACHE_MAX_SIZE = 1000
-_AUTH_CACHE: TTLCache[str, dict[str, Any]] = TTLCache(
-    maxsize=_AUTH_CACHE_MAX_SIZE, ttl=_AUTH_CACHE_TTL
-)
 
-def _get_cached_auth(token: str) -> dict[str, Any] | None:
-    """Get cached auth result if valid. Returns a copy to prevent mutation."""
-    token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
-    cached = _AUTH_CACHE.get(token_hash)
-    if cached is not None:
-        # Return a shallow copy to prevent callers from mutating the cached entry
-        return dict(cached)
-    return None
+def _auth_cache_key(token: str) -> str:
+    """Compute the cache key for an auth token (SHA-256 prefix)."""
+    return f"auth:cache:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
 
-def _set_cached_auth(token: str, result: dict[str, Any]) -> None:
-    """Cache auth result with TTL."""
-    token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
-    _AUTH_CACHE[token_hash] = result
+async def _get_cached_auth(cache_store: "CacheStoreABC | None", token: str) -> dict[str, Any] | None:
+    """Get cached auth result if valid via CacheStoreABC."""
+    if cache_store is None:
+        return None
+    raw = await cache_store.get(_auth_cache_key(token))
+    if raw is None:
+        return None
+    result: dict[str, Any] = json.loads(raw)
+    return result
 
-def _reset_auth_cache() -> None:
+async def _set_cached_auth(
+    cache_store: "CacheStoreABC | None", token: str, result: dict[str, Any]
+) -> None:
+    """Cache auth result with TTL via CacheStoreABC."""
+    if cache_store is None:
+        return
+    await cache_store.set(_auth_cache_key(token), json.dumps(result).encode(), ttl=_AUTH_CACHE_TTL)
+
+async def _reset_auth_cache(cache_store: "CacheStoreABC | None") -> None:
     """Reset the auth cache. Used by tests for isolation."""
-    _AUTH_CACHE.clear()
+    if cache_store is None:
+        return
+    await cache_store.delete_by_pattern("auth:cache:*")
 
 # NEXUS_STATIC_ADMINS: comma-separated subject IDs that get admin privileges
 # in open access mode (no api_key, no auth_provider). Parsed once at import.
@@ -138,8 +148,9 @@ async def resolve_auth(
     if _state.auth_provider:
         import time as _time
 
-        # Check cache first (15 min TTL)
-        cached_result = _get_cached_auth(token)
+        # Check cache first (15 min TTL) via CacheStoreABC
+        _auth_cache: CacheStoreABC | None = getattr(_state, "auth_cache_store", None)
+        cached_result = await _get_cached_auth(_auth_cache, token)
         if cached_result:
             # Update x_agent_id and timing for this request
             # Safe: cached_result is already a copy from _get_cached_auth
@@ -177,7 +188,7 @@ async def resolve_auth(
             for k, v in auth_result.items()
             if k not in ("x_agent_id", "_auth_time_ms", "_auth_cached")
         }
-        _set_cached_auth(token, cache_entry)
+        await _set_cached_auth(_auth_cache, token, cache_entry)
         return auth_result
 
     # Fall back to static API key (constant-time comparison to prevent timing attacks)

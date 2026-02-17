@@ -70,7 +70,7 @@ class MountEntry:
 
     virtual_path: str
 
-def build_mount_entries(object_paths: list[tuple[str, str]]) -> list[MountEntry]:
+def build_mount_entries(object_paths: list[tuple[str, str]]) -> list["MountEntry"]:
     """Build mount entries from ReBAC-granted object paths.
 
     Pure function — no side effects, no database access. Takes a list of

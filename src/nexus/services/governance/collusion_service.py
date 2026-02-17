@@ -7,6 +7,7 @@ All graph operations are zone-scoped with configurable size caps.
 Runs as background job (not in request path).
 """
 
+
 import contextlib
 import json
 import logging
@@ -27,8 +28,6 @@ from nexus.services.governance.trust_math import (
     eigentrust,
 )
 
-from collections.abc import Callable
-from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
 
 class CollusionService:
     """Detects collusion patterns in agent transaction graphs.
@@ -49,7 +49,7 @@ class CollusionService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
+        session_factory: "Callable[[], AsyncSession]",
         max_nodes: int = 10_000,
         max_edges: int = 50_000,
         max_cycle_length: int = 8,

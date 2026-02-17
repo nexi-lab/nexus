@@ -22,10 +22,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.services.agents.agent_record import AgentRecord, AgentState
 
-from nexus.rebac.namespace_manager import NamespaceManager
-from nexus.sandbox.events import AgentEventLog
-from nexus.sandbox.sandbox_manager import SandboxManager
-from nexus.services.agents.agent_registry import AgentRegistry
 if TYPE_CHECKING:
     from nexus.rebac.namespace_manager import NamespaceManager
     from nexus.sandbox.events import AgentEventLog
@@ -61,11 +57,11 @@ class SandboxAuthService:
 
     def __init__(
         self,
-        agent_registry: AgentRegistry,
-        sandbox_manager: SandboxManager,
-        namespace_manager: NamespaceManager | None = None,
+        agent_registry: "AgentRegistry",
+        sandbox_manager: "SandboxManager",
+        namespace_manager: "NamespaceManager | None" = None,
         nexus_pay: Any = None,
-        event_log: AgentEventLog | None = None,
+        event_log: "AgentEventLog | None" = None,
         budget_enforcement: bool = False,
     ) -> None:
         self._registry = agent_registry

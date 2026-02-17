@@ -11,7 +11,6 @@ References:
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from nexus.core.protocols.connector import ConnectorProtocol
 if TYPE_CHECKING:
     from nexus.core.protocols.connector import ConnectorProtocol
 
@@ -73,7 +72,7 @@ class VFSRouterProtocol(Protocol):
     async def add_mount(
         self,
         mount_point: str,
-        backend: ConnectorProtocol,
+        backend: "ConnectorProtocol",
         *,
         priority: int = 0,
         readonly: bool = False,

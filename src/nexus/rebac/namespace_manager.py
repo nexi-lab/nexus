@@ -51,9 +51,9 @@ from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
 
-from nexus.core.persistent_view_store import PersistentViewStore
 if TYPE_CHECKING:
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.core.persistent_view_store import PersistentViewStore
+    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ class NamespaceManager:
         dcache_maxsize: int = 100_000,
         dcache_positive_ttl: int = 300,
         dcache_negative_ttl: int = 60,
-        persistent_store: PersistentViewStore | None = None,
+        persistent_store: "PersistentViewStore | None" = None,
     ) -> None:
         self._rebac_manager = rebac_manager
         self._revision_window = revision_window

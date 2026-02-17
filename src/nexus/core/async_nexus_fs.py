@@ -32,8 +32,6 @@ from nexus.core.exceptions import (
 from nexus.core.permissions import OperationContext, Permission
 from nexus.storage.content_cache import ContentCache
 
-from nexus.core._metadata_generated import FileMetadataProtocol
-from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
@@ -70,12 +68,12 @@ class AsyncNexusFS:
     def __init__(
         self,
         backend_root: str | Path,
-        metadata_store: FileMetadataProtocol,
+        metadata_store: "FileMetadataProtocol",
         tenant_id: str | None = None,
         enable_content_cache: bool = True,
         content_cache_size_mb: int = 256,
         enforce_permissions: bool = False,
-        permission_enforcer: AsyncPermissionEnforcer | None = None,
+        permission_enforcer: "AsyncPermissionEnforcer | None" = None,
     ):
         """
         Initialize async filesystem.

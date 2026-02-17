@@ -34,11 +34,6 @@ from nexus.services.conflict_resolution import (
 )
 from nexus.services.write_back_metrics import WriteBackMetrics
 
-from nexus.core.event_bus import EventBusBase
-from nexus.services.change_log_store import ChangeLogStore
-from nexus.services.conflict_log_store import ConflictLogStore
-from nexus.services.gateway import NexusFSGateway
-from nexus.services.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
 if TYPE_CHECKING:
     from nexus.core.event_bus import EventBusBase
     from nexus.services.change_log_store import ChangeLogStore
@@ -72,12 +67,12 @@ class WriteBackService:
 
     def __init__(
         self,
-        gateway: NexusFSGateway,
-        event_bus: EventBusBase,
-        backlog_store: SyncBacklogStore,
-        change_log_store: ChangeLogStore,
+        gateway: "NexusFSGateway",
+        event_bus: "EventBusBase",
+        backlog_store: "SyncBacklogStore",
+        change_log_store: "ChangeLogStore",
         default_strategy: ConflictStrategy = ConflictStrategy.KEEP_NEWER,
-        conflict_log_store: ConflictLogStore | None = None,
+        conflict_log_store: "ConflictLogStore | None" = None,
         max_concurrent_per_backend: int = 10,
         poll_interval_seconds: float = 30.0,
         batch_size: int = 50,
@@ -212,7 +207,7 @@ class WriteBackService:
         tasks = [self._process_entry(entry, sem) for entry in entries]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _process_entry(self, entry: SyncBacklogEntry, sem: asyncio.Semaphore) -> None:
+    async def _process_entry(self, entry: "SyncBacklogEntry", sem: asyncio.Semaphore) -> None:
         """Process a single backlog entry with semaphore rate limiting."""
         async with sem:
             if not self._backlog_store.mark_in_progress(entry.id):
@@ -252,7 +247,7 @@ class WriteBackService:
                     )
                 )
 
-    async def _write_back_single(self, entry: SyncBacklogEntry) -> None:
+    async def _write_back_single(self, entry: "SyncBacklogEntry") -> None:
         """Execute a single write-back operation to the backend.
 
         Steps:
@@ -288,7 +283,7 @@ class WriteBackService:
 
     async def _handle_write(
         self,
-        entry: SyncBacklogEntry,
+        entry: "SyncBacklogEntry",
         backend: Any,
         backend_path: str,
         mount_info: dict[str, Any],
@@ -369,7 +364,7 @@ class WriteBackService:
 
     async def _resolve_and_act_on_conflict(
         self,
-        entry: SyncBacklogEntry,
+        entry: "SyncBacklogEntry",
         ctx: ConflictContext,
         strategy: ConflictStrategy,
     ) -> bool:

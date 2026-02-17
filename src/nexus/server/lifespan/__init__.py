@@ -15,19 +15,19 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     """Application lifespan manager.
 
     Calls domain-specific initializers during startup and tears them
     down in reverse order during shutdown.
     """
+    from nexus.server.lifespan.a2a_grpc import shutdown_a2a_grpc, startup_a2a_grpc
     from nexus.server.lifespan.observability import (
         shutdown_observability,
         startup_observability,
@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bg_tasks.extend(await startup_search(app))
     bg_tasks.extend(await startup_services(app))
     bg_tasks.extend(await startup_uploads(app))
+    bg_tasks.extend(await startup_a2a_grpc(app))
 
     yield
 
@@ -64,6 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
         logger.debug(f"Cancelled {len(bg_tasks)} background tasks")
 
+    await shutdown_a2a_grpc(app)
     await shutdown_services(app)
     await shutdown_realtime(app)
 

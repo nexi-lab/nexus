@@ -34,10 +34,6 @@ def _utcnow_naive() -> datetime:
     """
     return datetime.now(UTC).replace(tzinfo=None)
 
-from collections.abc import Generator
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from nexus.storage.record_store import RecordStoreABC
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -77,7 +73,7 @@ class KeyService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         crypto: IdentityCrypto,
         cache_maxsize: int = 5000,
         cache_ttl: int = 60,
@@ -100,7 +96,7 @@ class KeyService:
         )
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> "Generator[Session, None, None]":
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:
@@ -267,7 +263,7 @@ class KeyService:
 
         return record
 
-    def get_public_key_object(self, key_id: str) -> Ed25519PublicKey | None:
+    def get_public_key_object(self, key_id: str) -> "Ed25519PublicKey | None":
         """Get the Ed25519PublicKey object for a key_id.
 
         Convenience method for signature verification.

@@ -18,8 +18,6 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-from starlette.requests import Request
-from starlette.responses import Response
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response

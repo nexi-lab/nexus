@@ -400,7 +400,7 @@ async def setup_zone(
     request: ZoneSetupRequest,
     user_info: tuple[str, str] = Depends(get_authenticated_user),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
-) -> ZoneSetupResponse:
+) -> "ZoneSetupResponse":
     """Create zone and API key for password-authenticated users.
 
     This endpoint is for password users who have already registered and logged in
@@ -772,7 +772,7 @@ async def request_verification(
 
 @router.post("/verify-email")
 async def verify_email(
-    request: VerifyEmailRequest,
+    request: "VerifyEmailRequest",
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> dict[str, str]:
     """Verify email with a verification token.

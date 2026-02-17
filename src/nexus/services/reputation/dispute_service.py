@@ -19,7 +19,6 @@ from nexus.storage.models._base import _generate_uuid
 from nexus.storage.models.dispute import DisputeModel
 from nexus.storage.session_mixin import SessionMixin
 
-from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -44,7 +43,7 @@ class DisputeService(SessionMixin):
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        session_factory: "sessionmaker[Session]",
     ) -> None:
         self._session_factory = session_factory
 
@@ -236,7 +235,7 @@ class DisputeService(SessionMixin):
 
     def _transition(
         self,
-        session: Session,
+        session: "Session",
         dispute_id: str,
         new_status: str,
     ) -> DisputeModel:

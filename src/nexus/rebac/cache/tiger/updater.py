@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
-from sqlalchemy.engine import Connection, Engine
 if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection, Engine
+
     from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,8 @@ class TigerCacheUpdater:
 
     def __init__(
         self,
-        engine: Engine,
-        tiger_cache: TigerCache,
+        engine: "Engine",
+        tiger_cache: "TigerCache",
         rebac_manager: "EnhancedReBACManager | None" = None,
     ):
         """Initialize the updater.
@@ -58,7 +58,7 @@ class TigerCacheUpdater:
         resource_type: str,
         zone_id: str,
         priority: int = 100,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> int:
         """Queue a cache update for background processing.
 
@@ -106,7 +106,7 @@ class TigerCacheUpdater:
                 return execute(new_conn)
 
     def reset_stuck_entries(
-        self, stuck_timeout_minutes: int = 5, conn: Connection | None = None
+        self, stuck_timeout_minutes: int = 5, conn: "Connection | None" = None
     ) -> int:
         """Reset entries stuck in 'processing' state.
 
@@ -153,7 +153,7 @@ class TigerCacheUpdater:
                     new_conn.execute(text("PRAGMA busy_timeout=100"))
                 return execute(new_conn)
 
-    def process_queue(self, batch_size: int = 100, conn: Connection | None = None) -> int:
+    def process_queue(self, batch_size: int = 100, conn: "Connection | None" = None) -> int:
         """Process pending queue entries.
 
         Args:
@@ -314,7 +314,7 @@ class TigerCacheUpdater:
         permission: str,
         resource_type: str,
         zone_id: str,
-        conn: Connection,
+        conn: "Connection",
     ) -> set[int]:
         """Compute all resources accessible by subject.
 
@@ -363,7 +363,7 @@ class TigerCacheUpdater:
 
         return accessible
 
-    def _get_current_revision(self, zone_id: str, conn: Connection) -> int:
+    def _get_current_revision(self, zone_id: str, conn: "Connection") -> int:
         """Get current revision from changelog."""
 
         query = text("""
@@ -375,7 +375,7 @@ class TigerCacheUpdater:
         row = result.fetchone()
         return int(row.revision) if row else 0
 
-    def cleanup_completed(self, older_than_hours: int = 24, conn: Connection | None = None) -> int:
+    def cleanup_completed(self, older_than_hours: int = 24, conn: "Connection | None" = None) -> int:
         """Clean up completed queue entries.
 
         Args:

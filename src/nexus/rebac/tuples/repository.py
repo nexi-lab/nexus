@@ -20,8 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
 
-from collections.abc import Generator
-from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -41,7 +39,7 @@ class TupleRepository:
         engine: SQLAlchemy database engine (SQLite or PostgreSQL)
     """
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: "Engine") -> None:
         self.engine = engine
 
         # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
@@ -92,7 +90,7 @@ class TupleRepository:
                 logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
-    def connection(self) -> Generator[Any, None, None]:
+    def connection(self) -> "Generator[Any, None, None]":
         """Context manager for database connections.
 
         Uses engine.connect() which properly goes through the connection pool

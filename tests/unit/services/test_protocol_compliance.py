@@ -94,23 +94,15 @@ def assert_protocol_compliance(
                 impl_is_async = inspect.iscoroutinefunction(
                     impl_attr
                 ) or inspect.isasyncgenfunction(impl_attr)
-                if proto_is_async != impl_is_async:
-                    # Allow: sync protocol with AsyncIterator return + async generator impl.
-                    # Protocols can't express async generators (no yield in stub body),
-                    # so the correct typing is `def f(...) -> AsyncIterator[T]: ...`
-                    # while the implementation uses `async def f(...) -> AsyncIterator[T]: yield`.
-                    impl_is_asyncgen = inspect.isasyncgenfunction(impl_attr)
-                    ret = proto_sig.return_annotation
-                    ret_str = str(ret)
-                    is_async_iter_return = "AsyncIterator" in ret_str or "AsyncGenerator" in ret_str
-                    if impl_is_asyncgen and not proto_is_async and is_async_iter_return:
-                        pass  # Compatible: async generator satisfies sync protocol with async return
-                    else:
-                        proto_kind = "async" if proto_is_async else "sync"
-                        impl_kind = "async" if impl_is_async else "sync"
-                        errors.append(
-                            f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
-                        )
+                # Async generators (async def + yield) are compatible with
+                # sync protocol stubs returning AsyncIterator (def -> AsyncIterator).
+                impl_is_asyncgen = inspect.isasyncgenfunction(impl_attr)
+                if proto_is_async != impl_is_async and not impl_is_asyncgen:
+                    proto_kind = "async" if proto_is_async else "sync"
+                    impl_kind = "async" if impl_is_async else "sync"
+                    errors.append(
+                        f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
+                    )
 
         if not check_signatures:
             continue

@@ -84,7 +84,7 @@ class LockInfo:
     path: str
     mode: Literal["mutex", "semaphore"]
     max_holders: int
-    holders: list[HolderInfo]
+    holders: "list[HolderInfo]"
     fence_token: int
 
 @dataclass

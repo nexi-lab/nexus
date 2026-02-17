@@ -90,7 +90,6 @@ from nexus.server.streaming import (  # noqa: E402
     _verify_stream_token,
 )
 
-from nexus.core.nexus_fs import NexusFS
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
@@ -556,13 +555,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
             )
 
-            _app.state.search_daemon = SearchDaemon(config)
+            # Inject async_session_factory from RecordStoreABC (Issue #615)
+            _record_store = getattr(_app.state.nexus_fs, "_record_store", None)
+            _async_sf = None
+            if _record_store is not None:
+                with suppress(Exception):
+                    _async_sf = _record_store.async_session_factory
+
+            _app.state.search_daemon = SearchDaemon(config, async_session_factory=_async_sf)
             await _app.state.search_daemon.startup()
             _app.state.search_daemon_enabled = True
             set_search_daemon(_app.state.search_daemon)
 
-            # Set NexusFS reference for index refresh (Issue #1024)
-            _app.state.search_daemon._nexus_fs = _app.state.nexus_fs
+            # Issue #1520: Set FileReaderProtocol for index refresh
+            from nexus.factory import _NexusFSFileReader
+
+            _app.state.search_daemon._file_reader = _NexusFSFileReader(_app.state.nexus_fs)
 
             stats = _app.state.search_daemon.get_stats()
             logger.info(
@@ -1184,7 +1192,7 @@ async def lifespan(_app: FastAPI) -> Any:
 # ============================================================================
 
 def create_app(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     api_key: str | None = None,
     auth_provider: Any = None,
     database_url: str | None = None,
@@ -1441,7 +1449,7 @@ def create_app(
 
     return app
 
-def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
+def _initialize_oauth_provider(nexus_fs: "NexusFS", auth_provider: Any) -> None:
     """Initialize OAuth provider if Google OAuth credentials are available.
 
     Args:
@@ -1504,7 +1512,7 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     # NexusFS instance is now registered unconditionally in create_app()
     # (moved from here to avoid being gated on OAuth credentials)
 
-def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
+def _discover_exposed_methods(nexus_fs: "NexusFS") -> dict[str, Any]:
     """Discover all methods marked with @rpc_expose decorator."""
     exposed = {}
 
@@ -1845,7 +1853,7 @@ def _register_routes(app: FastAPI) -> None:
             except Exception:
                 return None
 
-        a2a_router = create_a2a_router(
+        a2a_router, a2a_task_manager = create_a2a_router(
             nexus_fs=app.state.nexus_fs,
             config=None,
             base_url=a2a_base_url,
@@ -1853,6 +1861,7 @@ def _register_routes(app: FastAPI) -> None:
             auth_fn=_a2a_auth_adapter,
             data_dir=getattr(app.state, "data_dir", None),
         )
+        app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
         app.include_router(a2a_router)
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
     except ImportError as e:
@@ -1945,7 +1954,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/api/auth/whoami", response_model=WhoamiResponse)
     async def whoami(
         auth_result: dict[str, Any] | None = Depends(get_auth_result),
-    ) -> WhoamiResponse:
+    ) -> "WhoamiResponse":
         if auth_result is None or not auth_result.get("authenticated"):
             return WhoamiResponse(authenticated=False)
 
@@ -3628,7 +3637,7 @@ def run_server(
     )
 
 def run_server_from_config(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     host: str = "0.0.0.0",
     port: int = 2026,
     api_key: str | None = None,

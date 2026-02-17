@@ -4,8 +4,6 @@ Provides CLI commands for creating, managing, and executing code in sandboxes.
 Supports E2B and other sandbox providers.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 
@@ -14,7 +12,6 @@ import click
 from nexus import NexusFilesystem
 from nexus.cli.utils import get_default_filesystem
 
-
 @click.group(name="sandbox")
 def sandbox() -> None:
     """Manage code execution sandboxes.
@@ -22,7 +19,6 @@ def sandbox() -> None:
     Create, run code in, pause, resume, stop, and list sandboxes for safe code execution.
     """
     pass
-
 
 @sandbox.command(name="create")
 @click.argument("name")
@@ -96,7 +92,6 @@ def create_sandbox(
     except Exception as e:
         click.echo(f"Failed to create sandbox: {e}")
         sys.exit(1)
-
 
 @sandbox.command(name="get-or-create")
 @click.argument("name")
@@ -203,7 +198,6 @@ def get_or_create_sandbox(
     except Exception as e:
         click.echo(f"Failed to get or create sandbox: {e}")
         sys.exit(1)
-
 
 @sandbox.command(name="run")
 @click.argument("sandbox_id")
@@ -318,7 +312,6 @@ def run_code(
         click.echo(f"Failed to run code: {e}")
         sys.exit(1)
 
-
 @sandbox.command(name="pause")
 @click.argument("sandbox_id")
 @click.option(
@@ -362,7 +355,6 @@ def pause_sandbox(
         click.echo(f"Failed to pause sandbox: {e}")
         sys.exit(1)
 
-
 @sandbox.command(name="resume")
 @click.argument("sandbox_id")
 @click.option(
@@ -403,7 +395,6 @@ def resume_sandbox(
     except Exception as e:
         click.echo(f"Failed to resume sandbox: {e}")
         sys.exit(1)
-
 
 @sandbox.command(name="stop")
 @click.argument("sandbox_id")
@@ -447,7 +438,6 @@ def stop_sandbox(
     except Exception as e:
         click.echo(f"Failed to stop sandbox: {e}")
         sys.exit(1)
-
 
 @sandbox.command(name="list")
 @click.option(
@@ -574,7 +564,6 @@ def list_sandboxes(
         click.echo(f"Failed to list sandboxes: {e}")
         sys.exit(1)
 
-
 @sandbox.command(name="status")
 @click.argument("sandbox_id")
 @click.option(
@@ -622,7 +611,6 @@ def sandbox_status(
     except Exception as e:
         click.echo(f"Failed to get sandbox status: {e}")
         sys.exit(1)
-
 
 @sandbox.command(name="connect")
 @click.argument("sandbox_id")
@@ -750,7 +738,6 @@ def connect_sandbox(
         click.echo(f"Failed to connect to sandbox: {e}")
         sys.exit(1)
 
-
 @sandbox.command(name="disconnect")
 @click.argument("sandbox_id")
 @click.option(
@@ -818,7 +805,6 @@ def disconnect_sandbox(
     except Exception as e:
         click.echo(f"Failed to disconnect from sandbox: {e}")
         sys.exit(1)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register sandbox commands with the main CLI.

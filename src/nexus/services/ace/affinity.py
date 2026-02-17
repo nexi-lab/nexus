@@ -311,7 +311,7 @@ def compute_affinity_matrix(
 def cluster_by_affinity(
     memories: list[MemoryVector],
     config: AffinityConfig | None = None,
-) -> ClusterResult:
+) -> "ClusterResult":
     """Cluster memories by combined semantic and temporal affinity.
 
     Uses agglomerative (hierarchical) clustering with a precomputed affinity
@@ -392,7 +392,7 @@ def cluster_by_affinity(
 
 def get_cluster_statistics(
     memories: list[MemoryVector],
-    cluster_result: ClusterResult,
+    cluster_result: "ClusterResult",
     config: AffinityConfig | None = None,
 ) -> list[dict]:
     """Get statistics for each cluster.

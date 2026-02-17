@@ -52,7 +52,7 @@ from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.storage.record_store import RecordStoreABC
 
@@ -79,14 +79,14 @@ class CacheFactory:
         Args:
             settings: Cache configuration
             cache_store: Pre-built CacheStoreABC driver. If None, created from settings.
-            record_store: "RecordStoreABC" for PostgreSQL cache fallback.
+            record_store: RecordStoreABC for PostgreSQL cache fallback.
                 If provided and Dragonfly is not available, the factory uses
                 record_store.engine for PostgreSQL-backed caches instead of NullCacheStore.
         """
         self._settings = settings
         self._cache_store: CacheStoreABC = cache_store or NullCacheStore()
-        self._cache_client: "DragonflyClient | None" = None  # kept for embedding cache
-        self._record_store: "RecordStoreABC | None" = record_store
+        self._cache_client: DragonflyClient | None = None  # kept for embedding cache
+        self._record_store: RecordStoreABC | None = record_store
         self._initialized = False
         self._has_cache_store = False
         self._using_postgres = False
@@ -309,12 +309,12 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
 
         effective_config = config or CacheWrapperConfig()
 
         # Optional logging layer (Recursive Wrapping — PART 16, Issue #1449)
-        wrapped_inner: "Backend" = inner
+        wrapped_inner: Backend = inner
         if enable_logging:
             from nexus.backends.logging_wrapper import LoggingBackendWrapper
 
@@ -339,19 +339,19 @@ class CacheFactory:
         await self.shutdown()
 
 # Global factory instance for dependency injection
-_cache_factory: CacheFactory | None = None
+_cache_factory: "CacheFactory | None" = None
 
 async def init_cache_factory(
     settings: CacheSettings,
     cache_store: CacheStoreABC | None = None,
     record_store: "RecordStoreABC | None" = None,
-) -> CacheFactory:
+) -> "CacheFactory":
     """Initialize the global cache factory.
 
     Args:
         settings: Cache configuration
         cache_store: Pre-built CacheStoreABC driver
-        record_store: "RecordStoreABC" for SQL-backed cache fallback
+        record_store: RecordStoreABC for SQL-backed cache fallback
     """
     global _cache_factory
     _cache_factory = CacheFactory(settings, cache_store=cache_store, record_store=record_store)
@@ -365,7 +365,7 @@ async def shutdown_cache_factory() -> None:
         await _cache_factory.shutdown()
         _cache_factory = None
 
-def get_cache_factory() -> CacheFactory:
+def get_cache_factory() -> "CacheFactory":
     """Get the global cache factory instance."""
     if not _cache_factory:
         raise RuntimeError("Cache factory not initialized. Call init_cache_factory() first.")

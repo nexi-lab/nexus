@@ -579,3 +579,104 @@ class UploadChecksumMismatchError(NexusError):
         self.algorithm = algorithm
         msg = message or f"Checksum mismatch ({algorithm}) for upload {upload_id}"
         super().__init__(msg)
+
+# --- Context Branch Exceptions (Issue #1315) ---
+
+class BranchError(NexusError):
+    """Base exception for context branch operations.
+
+    All branch exceptions are expected errors — they represent user-facing
+    conditions that should be handled explicitly.
+    """
+
+    is_expected = True
+
+    def __init__(self, message: str, branch_name: str | None = None, path: str | None = None):
+        self.branch_name = branch_name
+        super().__init__(message, path)
+
+class BranchNotFoundError(BranchError):
+    """Raised when a branch does not exist.
+
+    Maps to HTTP 404 Not Found.
+    """
+
+    def __init__(self, branch_name: str, workspace_path: str | None = None):
+        msg = f"Branch '{branch_name}' not found"
+        if workspace_path:
+            msg += f" in workspace '{workspace_path}'"
+        super().__init__(msg, branch_name=branch_name, path=workspace_path)
+
+class BranchExistsError(BranchError):
+    """Raised when creating a branch that already exists.
+
+    Maps to HTTP 409 Conflict.
+    """
+
+    def __init__(self, branch_name: str, workspace_path: str | None = None):
+        msg = f"Branch '{branch_name}' already exists"
+        if workspace_path:
+            msg += f" in workspace '{workspace_path}'"
+        super().__init__(msg, branch_name=branch_name, path=workspace_path)
+
+class BranchConflictError(BranchError):
+    """Raised when a merge has conflicting files.
+
+    Contains the list of conflicting paths for the caller to handle.
+    Maps to HTTP 409 Conflict.
+    """
+
+    def __init__(
+        self,
+        source_branch: str,
+        target_branch: str,
+        conflicting_paths: list[str],
+    ):
+        self.source_branch = source_branch
+        self.target_branch = target_branch
+        self.conflicting_paths = conflicting_paths
+        paths_str = ", ".join(conflicting_paths[:5])
+        if len(conflicting_paths) > 5:
+            paths_str += f" (and {len(conflicting_paths) - 5} more)"
+        msg = (
+            f"Merge conflict: {len(conflicting_paths)} file(s) changed on both "
+            f"'{source_branch}' and '{target_branch}': {paths_str}"
+        )
+        super().__init__(msg, branch_name=source_branch)
+
+class BranchStateError(BranchError):
+    """Raised when a branch operation is invalid for the current branch state.
+
+    Examples: merging an already-merged branch, committing to a discarded branch.
+    Maps to HTTP 409 Conflict.
+    """
+
+    def __init__(self, branch_name: str, message: str):
+        super().__init__(message, branch_name=branch_name)
+
+class BranchProtectedError(BranchError):
+    """Raised when attempting to delete or discard a protected branch (e.g. 'main').
+
+    Maps to HTTP 403 Forbidden.
+    """
+
+    def __init__(self, branch_name: str, operation: str = "delete"):
+        msg = f"Cannot {operation} protected branch '{branch_name}'"
+        super().__init__(msg, branch_name=branch_name)
+
+class StalePointerError(BranchError):
+    """Raised when optimistic concurrency check fails on branch pointer update.
+
+    The branch's pointer_version has changed since the caller last read it,
+    indicating a concurrent modification. Caller should retry with fresh state.
+    Maps to HTTP 409 Conflict.
+    """
+
+    def __init__(self, branch_name: str, expected_version: int, current_version: int):
+        self.expected_version = expected_version
+        self.current_version = current_version
+        msg = (
+            f"Stale pointer for branch '{branch_name}': "
+            f"expected version {expected_version}, current is {current_version}"
+        )
+        super().__init__(msg, branch_name=branch_name)

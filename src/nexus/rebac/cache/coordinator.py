@@ -20,10 +20,6 @@ Related: Issue #1459 (decomposition), Issue #1244, Issue #1077, Issue #922, Issu
 import logging
 from typing import TYPE_CHECKING, Any
 
-from collections.abc import Callable, MutableMapping
-from nexus.rebac.cache.boundary import PermissionBoundaryCache
-from nexus.rebac.cache.iterator import IteratorCache
-from nexus.rebac.cache.result_cache import ReBACPermissionCache
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
 
@@ -72,10 +68,10 @@ class CacheCoordinator:
 
     def __init__(
         self,
-        l1_cache: ReBACPermissionCache | None = None,
-        boundary_cache: PermissionBoundaryCache | None = None,
-        iterator_cache: IteratorCache | None = None,
-        zone_graph_cache: MutableMapping[str, Any] | None = None,
+        l1_cache: "ReBACPermissionCache | None" = None,
+        boundary_cache: "PermissionBoundaryCache | None" = None,
+        iterator_cache: "IteratorCache | None" = None,
+        zone_graph_cache: "MutableMapping[str, Any] | None" = None,
     ) -> None:
         """Initialize the coordinator.
 
@@ -112,15 +108,15 @@ class CacheCoordinator:
     # Cache setters (for lazy initialization)
     # ------------------------------------------------------------------
 
-    def set_l1_cache(self, cache: ReBACPermissionCache) -> None:
+    def set_l1_cache(self, cache: "ReBACPermissionCache") -> None:
         """Set the L1 permission check cache."""
         self._l1_cache = cache
 
-    def set_boundary_cache(self, cache: PermissionBoundaryCache) -> None:
+    def set_boundary_cache(self, cache: "PermissionBoundaryCache") -> None:
         """Set the boundary cache."""
         self._boundary_cache = cache
 
-    def set_iterator_cache(self, cache: IteratorCache) -> None:
+    def set_iterator_cache(self, cache: "IteratorCache") -> None:
         """Set the iterator cache."""
         self._iterator_cache = cache
 
@@ -135,7 +131,7 @@ class CacheCoordinator:
     def register_boundary_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str, str, str, str], None],
+        callback: "Callable[[str, str, str, str, str], None]",
     ) -> None:
         """Register a boundary cache invalidation callback.
 
@@ -159,7 +155,7 @@ class CacheCoordinator:
     def register_visibility_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str], None],
+        callback: "Callable[[str, str], None]",
     ) -> None:
         """Register a directory visibility cache invalidation callback.
 
@@ -183,7 +179,7 @@ class CacheCoordinator:
     def register_namespace_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str, str], None],
+        callback: "Callable[[str, str, str], None]",
     ) -> None:
         """Register a namespace cache invalidation callback (Issue #1244).
 

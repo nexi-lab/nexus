@@ -26,7 +26,7 @@ from nexus.core.path_utils import get_ancestors, get_parent, get_parent_chain
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 class HierarchyManager:
     """Manages directory hierarchy relationships for permission inheritance (P0-3).

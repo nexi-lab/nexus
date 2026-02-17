@@ -35,7 +35,6 @@ from nexus.services.ace.affinity import (
 )
 from nexus.storage.models import MemoryModel
 
-from nexus.services.ace.consolidation import ConsolidationEngine
 if TYPE_CHECKING:
     from nexus.services.ace.consolidation import ConsolidationEngine
 
@@ -89,7 +88,7 @@ class HierarchicalMemoryManager:
 
     def __init__(
         self,
-        consolidation_engine: ConsolidationEngine,
+        consolidation_engine: "ConsolidationEngine",
         session: Session,
         zone_id: str = "root",
     ):
@@ -568,7 +567,7 @@ class HierarchicalMemoryManager:
 
 # Synchronous wrapper for non-async contexts
 def build_hierarchy(
-    consolidation_engine: ConsolidationEngine,
+    consolidation_engine: "ConsolidationEngine",
     session: Session,
     memories: list[MemoryModel] | None = None,
     memory_ids: list[str] | None = None,

@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
-from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
-from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -49,8 +47,8 @@ class DirectoryGrantExpander:
 
     def __init__(
         self,
-        engine: Engine,
-        tiger_cache: TigerCache,
+        engine: "Engine",
+        tiger_cache: "TigerCache",
         metadata_store: Any = None,
     ):
         """Initialize the expander.

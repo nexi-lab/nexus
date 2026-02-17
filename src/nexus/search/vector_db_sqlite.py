@@ -14,7 +14,6 @@ from nexus.search.result_builders import build_result_from_row
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -132,7 +131,7 @@ def reload_sqlite_vec(conn: Any) -> None:
     except (AttributeError, ImportError, RuntimeError):
         pass
 
-def sqlite_store_embedding(session: Session, chunk_id: str, embedding: list[float]) -> None:
+def sqlite_store_embedding(session: "Session", chunk_id: str, embedding: list[float]) -> None:
     """Store embedding as BLOB in SQLite."""
     blob = struct.pack(f"{len(embedding)}f", *embedding)
     session.execute(
@@ -141,7 +140,7 @@ def sqlite_store_embedding(session: Session, chunk_id: str, embedding: list[floa
     )
 
 def sqlite_vector_search(
-    session: Session,
+    session: "Session",
     embedding: list[float],
     limit: int,
     path_filter: str | None,
@@ -181,7 +180,7 @@ def sqlite_vector_search(
     return [build_result_from_row(row) for row in results]
 
 def sqlite_keyword_search(
-    session: Session,
+    session: "Session",
     query: str,
     limit: int,
     path_filter: str | None,

@@ -21,8 +21,6 @@ Issue #1246: BufferedRecordStoreSyncer implements Decision 13A (write-behind buf
 import logging
 from typing import TYPE_CHECKING, Any
 
-from collections.abc import Callable
-from nexus.core._metadata_generated import FileMetadata
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -37,12 +35,12 @@ class RecordStoreSyncer:
     knowing or importing this class.
     """
 
-    def __init__(self, session_factory: Callable[..., Any]) -> None:
+    def __init__(self, session_factory: "Callable[..., Any]") -> None:
         self._session_factory = session_factory
 
     def on_write(
         self,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         *,
         is_new: bool,
         path: str,
@@ -73,7 +71,7 @@ class RecordStoreSyncer:
 
     def on_write_batch(
         self,
-        items: list[tuple[FileMetadata, bool]],
+        items: list[tuple["FileMetadata", bool]],
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,
@@ -173,7 +171,7 @@ class BufferedRecordStoreSyncer:
 
     def __init__(
         self,
-        session_factory: Callable[..., Any],
+        session_factory: "Callable[..., Any]",
         *,
         flush_interval_ms: int = 100,
         max_buffer_size: int = 100,
@@ -203,7 +201,7 @@ class BufferedRecordStoreSyncer:
 
     def on_write(
         self,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         *,
         is_new: bool,
         path: str,
@@ -225,7 +223,7 @@ class BufferedRecordStoreSyncer:
 
     def on_write_batch(
         self,
-        items: list[tuple[FileMetadata, bool]],
+        items: list[tuple["FileMetadata", bool]],
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,

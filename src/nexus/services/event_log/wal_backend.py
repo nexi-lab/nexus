@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Self
 
 import orjson
 
-from nexus.services.event_log.protocol import EventLogConfig
 if TYPE_CHECKING:
     from nexus.core.event_bus import FileEvent
     from nexus.services.event_log.protocol import EventLogConfig
@@ -50,7 +49,7 @@ class WALEventLog:
     but fast enough (<5μs) that they don't need to_thread offloading.
     """
 
-    def __init__(self, config: EventLogConfig) -> None:
+    def __init__(self, config: "EventLogConfig") -> None:
         if PyWAL is None:
             raise ImportError(
                 "Rust WAL extension (_nexus_wal) not available. "
@@ -70,7 +69,7 @@ class WALEventLog:
 
     # -- EventLogProtocol ---------------------------------------------------
 
-    async def append(self, event: FileEvent) -> int:
+    async def append(self, event: "FileEvent") -> int:
         payload = orjson.dumps(event.to_dict())
         if len(payload) > _MAX_PAYLOAD_BYTES:
             raise ValueError(
@@ -80,7 +79,7 @@ class WALEventLog:
         result: int = self._wal.append(zone_id, payload)
         return result
 
-    async def append_batch(self, events: list[FileEvent]) -> list[int]:
+    async def append_batch(self, events: list["FileEvent"]) -> list[int]:
         batch: list[tuple[bytes, bytes]] = []
         for e in events:
             payload = orjson.dumps(e.to_dict())
@@ -98,7 +97,7 @@ class WALEventLog:
         limit: int = 1000,
         *,
         zone_id: str | None = None,
-    ) -> list[FileEvent]:
+    ) -> list["FileEvent"]:
         from nexus.core.event_bus import FileEvent
 
         zone_filter = zone_id.encode() if zone_id else None

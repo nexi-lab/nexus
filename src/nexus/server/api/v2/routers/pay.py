@@ -643,7 +643,7 @@ class RequestApprovalBody(BaseModel):
 
 @router.post("/approvals", response_model=ApprovalResponse, status_code=201)
 async def request_approval(
-    body: RequestApprovalBody,
+    body: "RequestApprovalBody",
     request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> ApprovalResponse:

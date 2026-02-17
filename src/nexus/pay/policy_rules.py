@@ -43,7 +43,7 @@ class RuleResult:
     denied_reason: str | None = None
     matched_rule_type: str | None = None
 
-def evaluate_rules(rules: list[dict[str, Any]], context: RuleContext) -> RuleResult:
+def evaluate_rules(rules: list[dict[str, Any]], context: RuleContext) -> "RuleResult":
     """Evaluate a list of rules against the transaction context.
 
     Rules are checked in order. Each rule has a "type" and type-specific params.
@@ -72,7 +72,7 @@ def evaluate_rules(rules: list[dict[str, Any]], context: RuleContext) -> RuleRes
 # Rule Handlers
 # =============================================================================
 
-def _eval_recipient_allowlist(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
+def _eval_recipient_allowlist(rule: dict[str, Any], ctx: RuleContext) -> "RuleResult":
     """Allow only if recipient is in the allowlist."""
     recipients: list[str] = rule.get("recipients", [])
     if not recipients:
@@ -85,7 +85,7 @@ def _eval_recipient_allowlist(rule: dict[str, Any], ctx: RuleContext) -> RuleRes
         matched_rule_type="recipient_allowlist",
     )
 
-def _eval_recipient_blocklist(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
+def _eval_recipient_blocklist(rule: dict[str, Any], ctx: RuleContext) -> "RuleResult":
     """Deny if recipient is in the blocklist."""
     recipients: list[str] = rule.get("recipients", [])
     if ctx.to in recipients:
@@ -96,7 +96,7 @@ def _eval_recipient_blocklist(rule: dict[str, Any], ctx: RuleContext) -> RuleRes
         )
     return RuleResult(allowed=True)
 
-def _eval_time_window(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
+def _eval_time_window(rule: dict[str, Any], ctx: RuleContext) -> "RuleResult":
     """Allow only during specified UTC hours [start, end)."""
     start_hour: int = rule.get("start_hour", 0)
     end_hour: int = rule.get("end_hour", 24)
@@ -120,7 +120,7 @@ def _eval_time_window(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
         matched_rule_type="time_window",
     )
 
-def _eval_metadata_match(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
+def _eval_metadata_match(rule: dict[str, Any], ctx: RuleContext) -> "RuleResult":
     """Require specific key-value pairs in transaction metadata."""
     required: dict[str, Any] = rule.get("required", {})
     for key, expected in required.items():
@@ -133,7 +133,7 @@ def _eval_metadata_match(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
             )
     return RuleResult(allowed=True)
 
-def _eval_amount_range(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
+def _eval_amount_range(rule: dict[str, Any], ctx: RuleContext) -> "RuleResult":
     """Allow only if amount is within [min, max] range."""
     min_amount = Decimal(str(rule["min"])) if "min" in rule else None
     max_amount = Decimal(str(rule["max"])) if "max" in rule else None

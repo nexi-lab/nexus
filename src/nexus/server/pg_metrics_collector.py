@@ -17,8 +17,6 @@ from typing import TYPE_CHECKING
 
 from prometheus_client.core import GaugeMetricFamily
 
-from collections.abc import Iterable
-from nexus.services.subsystems.observability_subsystem import QueryObserver
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -31,14 +29,14 @@ class QueryObserverCollector:
     observability subsystem at collection time.
     """
 
-    def __init__(self, observer: QueryObserver) -> None:
+    def __init__(self, observer: "QueryObserver") -> None:
         self._observer = observer
 
-    def describe(self) -> Iterable[GaugeMetricFamily]:
+    def describe(self) -> "Iterable[GaugeMetricFamily]":
         """Return empty — dynamic collector convention."""
         return []
 
-    def collect(self) -> Iterable[GaugeMetricFamily]:
+    def collect(self) -> "Iterable[GaugeMetricFamily]":
         """Yield gauge metric families from the observer's counters."""
         obs = self._observer
 

@@ -165,7 +165,7 @@ class TaskRegistry:
 # Module-level singleton
 _task_registry = TaskRegistry()
 
-def get_task_registry() -> TaskRegistry:
+def get_task_registry() -> "TaskRegistry":
     """Return the module-level TaskRegistry for observability."""
     return _task_registry
 

@@ -17,7 +17,6 @@ References:
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from nexus.rebac.namespace_manager import NamespaceMount
 if TYPE_CHECKING:
     from nexus.rebac.namespace_manager import NamespaceMount
 
@@ -42,6 +41,6 @@ class NamespaceManagerProtocol(Protocol):
         subject: tuple[str, str],
         *,
         zone_id: str | None = None,
-    ) -> list[NamespaceMount]: ...
+    ) -> list["NamespaceMount"]: ...
 
     async def invalidate(self, subject: tuple[str, str]) -> None: ...

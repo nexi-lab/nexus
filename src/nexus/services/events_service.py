@@ -4,7 +4,11 @@ This service handles file watching and advisory locking operations
 with dual-track support:
 
 Layer 1 (Same-box): OS-native file watching (inotify/FSEvents) + in-memory locks
-Layer 2 (Distributed): Redis Pub/Sub events + distributed locks
+Layer 2 (Distributed): EventBus (gRPC point-to-point / CacheStoreABC fan-out) + distributed locks
+
+Per KERNEL-ARCHITECTURE.md §6 three-tier messaging:
+  - System tier: gRPC IPC (point-to-point)
+  - User Space tier: EventBus / CacheStoreABC (fan-out)
 
 Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_events.py (836 lines)
@@ -22,10 +26,6 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
-from nexus.core.distributed_lock import LockManagerBase
-from nexus.core.event_bus import EventBusBase
-from nexus.core.permissions import OperationContext
-from nexus.core.protocols.connector import ConnectorProtocol
 if TYPE_CHECKING:
     from nexus.core.distributed_lock import LockManagerBase
     from nexus.core.event_bus import EventBusBase
@@ -38,7 +38,7 @@ class EventsService:
 
     Provides dual-track support for file watching and locking:
     - Layer 1: Same-box mode using OS-native APIs (PassthroughBackend only)
-    - Layer 2: Distributed mode using Redis Pub/Sub and locks (any backend)
+    - Layer 2: Distributed mode using EventBus + distributed locks (any backend)
 
     Architecture:
         - Clean dependency injection for all external systems
@@ -48,10 +48,10 @@ class EventsService:
 
     def __init__(
         self,
-        backend: ConnectorProtocol,
-        event_bus: EventBusBase | None = None,
-        lock_manager: LockManagerBase | None = None,
-        file_watcher: FileWatcher | None = None,
+        backend: "ConnectorProtocol",
+        event_bus: "EventBusBase | None" = None,
+        lock_manager: "LockManagerBase | None" = None,
+        file_watcher: "FileWatcher | None" = None,
         zone_id: str | None = None,
         metadata_cache: Any = None,
     ):
@@ -59,7 +59,7 @@ class EventsService:
 
         Args:
             backend: Storage backend (needed for same-box detection)
-            event_bus: Distributed event bus (Redis Pub/Sub) or None
+            event_bus: Distributed event bus (EventBus) or None
             lock_manager: Distributed lock manager or None
             file_watcher: OS-native file watcher or None (lazy init for same-box)
             zone_id: Default zone ID
@@ -92,7 +92,7 @@ class EventsService:
         """Check if distributed lock manager is available."""
         return self._lock_manager is not None
 
-    def _get_file_watcher(self) -> FileWatcher:
+    def _get_file_watcher(self) -> "FileWatcher":
         """Get or create the file watcher instance for same-box mode."""
         if not self._is_same_box():
             raise NotImplementedError(
@@ -107,7 +107,7 @@ class EventsService:
 
         return self._file_watcher
 
-    def _get_zone_id(self, context: OperationContext | None) -> str:
+    def _get_zone_id(self, context: "OperationContext | None") -> str:
         """Get zone ID from context or default."""
         if context and hasattr(context, "zone_id") and context.zone_id:
             return context.zone_id
@@ -151,12 +151,12 @@ class EventsService:
         path: str,
         timeout: float = 30.0,
         since_revision: int | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses RedisEventBus (Redis Pub/Sub)
+        - Layer 2 (preferred): Uses EventBus (distributed)
         - Layer 1 (fallback): Uses OS-native file watching (same-box only)
 
         Args:
@@ -253,7 +253,7 @@ class EventsService:
         timeout: float = 30.0,
         ttl: float = 30.0,
         max_holders: int = 1,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> str | None:
         """Acquire an advisory lock on a path.
 
@@ -318,7 +318,7 @@ class EventsService:
         lock_id: str,
         path: str,
         ttl: float = 30.0,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> bool:
         """Extend a lock's TTL (heartbeat for long-running operations).
 
@@ -363,7 +363,7 @@ class EventsService:
         self,
         lock_id: str,
         path: str | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> bool:
         """Release an advisory lock.
 
@@ -421,7 +421,7 @@ class EventsService:
         path: str,
         timeout: float = 30.0,
         ttl: float = 30.0,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> AsyncIterator[str]:
         """Acquire a distributed lock as an async context manager.
 
@@ -518,7 +518,7 @@ class EventsService:
 
         self._cache_invalidation_started = True
 
-        # Layer 2: Distributed event bus (Redis Pub/Sub)
+        # Layer 2: Distributed event bus
         if self._has_distributed_events():
             zone_id = self._get_zone_id(None)
 

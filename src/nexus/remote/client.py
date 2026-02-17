@@ -33,12 +33,6 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
-from nexus.remote.domain.mcp import MCPClient
-from nexus.remote.domain.memory import MemoryClient
-from nexus.remote.domain.oauth import OAuthClient
-from nexus.remote.domain.sandbox import SandboxClient
-from nexus.remote.domain.share_links import ShareLinksClient
-from nexus.remote.domain.skills import SkillsClient
 if TYPE_CHECKING:
     from nexus.remote.domain.mcp import MCPClient
     from nexus.remote.domain.memory import MemoryClient
@@ -234,13 +228,13 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # ============================================================
 
     @cached_property
-    def skills(self) -> SkillsClient:
+    def skills(self) -> "SkillsClient":
         from nexus.remote.domain.skills import SkillsClient as _SkillsClient
 
         return _SkillsClient(self._call_rpc)
 
     @cached_property
-    def sandbox(self) -> SandboxClient:
+    def sandbox(self) -> "SandboxClient":
         from nexus.remote.domain.sandbox import SandboxClient as _SandboxClient
 
         return _SandboxClient(
@@ -250,19 +244,19 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         )
 
     @cached_property
-    def oauth(self) -> OAuthClient:
+    def oauth(self) -> "OAuthClient":
         from nexus.remote.domain.oauth import OAuthClient as _OAuthClient
 
         return _OAuthClient(self._call_rpc)
 
     @cached_property
-    def mcp(self) -> MCPClient:
+    def mcp(self) -> "MCPClient":
         from nexus.remote.domain.mcp import MCPClient as _MCPClient
 
         return _MCPClient(self._call_rpc)
 
     @cached_property
-    def share_links(self) -> ShareLinksClient:
+    def share_links(self) -> "ShareLinksClient":
         from nexus.remote.domain.share_links import ShareLinksClient as _ShareLinksClient
 
         return _ShareLinksClient(self._call_rpc)
@@ -742,7 +736,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # ============================================================
 
     @property
-    def memory(self) -> MemoryClient:
+    def memory(self) -> "MemoryClient":
         if self._memory_api is None:
             from nexus.remote.domain.memory import MemoryClient as _MemoryClient
 

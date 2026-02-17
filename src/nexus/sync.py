@@ -8,7 +8,6 @@ import os
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from nexus import NexusFilesystem
 if TYPE_CHECKING:
     from nexus import NexusFilesystem
 
@@ -66,7 +65,7 @@ def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
     return files
 
 def copy_file(
-    nx: NexusFilesystem,
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     is_source_local: bool,
@@ -159,14 +158,14 @@ def copy_file(
         return len(content)
 
 def sync_directories(
-    nx: NexusFilesystem,
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     delete: bool = False,
     dry_run: bool = False,
     checksum: bool = True,
     progress: bool = True,
-) -> SyncStats:
+) -> "SyncStats":
     """Sync source directory to destination (one-way sync).
 
     Args:
@@ -300,12 +299,12 @@ def sync_directories(
     return stats
 
 def copy_recursive(
-    nx: NexusFilesystem,
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     checksum: bool = True,
     progress: bool = True,
-) -> SyncStats:
+) -> "SyncStats":
     """Recursively copy files with optional checksum verification.
 
     This is similar to sync but without the delete option.
@@ -313,7 +312,7 @@ def copy_recursive(
     return sync_directories(nx, source, dest, delete=False, checksum=checksum, progress=progress)
 
 def move_file(
-    nx: NexusFilesystem,
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
 ) -> bool:

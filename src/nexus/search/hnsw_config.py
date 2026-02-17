@@ -24,7 +24,6 @@ def _validate_identifier(name: str, label: str) -> str:
         raise ValueError(msg)
     return name
 
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -182,7 +181,7 @@ class HNSWConfig:
             f"WITH (m = {m}, ef_construction = {ef})"
         )
 
-    def apply_search_settings(self, session: Session) -> None:
+    def apply_search_settings(self, session: "Session") -> None:
         """Apply search settings to a SQLAlchemy session.
 
         Args:
@@ -192,7 +191,7 @@ class HNSWConfig:
 
         session.execute(text("SET LOCAL hnsw.ef_search = :val"), {"val": self.ef_search})
 
-    def apply_build_settings(self, session: Session) -> None:
+    def apply_build_settings(self, session: "Session") -> None:
         """Apply index build settings to a SQLAlchemy session.
 
         Args:
@@ -206,7 +205,7 @@ class HNSWConfig:
             {"val": self.max_parallel_workers},
         )
 
-def get_vector_count(session: Session, table: str = "document_chunks") -> int:
+def get_vector_count(session: "Session", table: str = "document_chunks") -> int:
     """Get the count of vectors in a table.
 
     Args:
@@ -228,7 +227,7 @@ def get_vector_count(session: Session, table: str = "document_chunks") -> int:
         # embedding column doesn't exist yet
         return 0
 
-def get_recommended_config(session: Session) -> HNSWConfig:
+def get_recommended_config(session: "Session") -> "HNSWConfig":
     """Get recommended HNSW config based on current dataset.
 
     Args:

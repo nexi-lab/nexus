@@ -14,7 +14,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from nexus.a2a.models import Task, TaskState
 from nexus.a2a.stores.serialization import task_from_db_row, task_to_db_columns
 
-from nexus.storage.record_store import RecordStoreABC
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
@@ -36,7 +35,7 @@ class DatabaseTaskStore:
         A ``RecordStoreABC`` providing ``session_factory`` for database access.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         import warnings
 
         warnings.warn(
@@ -47,6 +46,7 @@ class DatabaseTaskStore:
             stacklevel=2,
         )
         self._session_factory = record_store.session_factory
+        self._executor = None  # Use default thread pool executor
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:
         """Run a sync function in the dedicated DB thread pool.

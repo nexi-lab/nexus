@@ -21,8 +21,6 @@ from cachetools import LRUCache
 
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 
-from nexus.core._metadata_generated import FileMetadataProtocol
-from nexus.core.protocols.connector import ConnectorProtocol
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
     from nexus.core.protocols.connector import ConnectorProtocol
@@ -98,8 +96,8 @@ class OverlayResolver:
 
     def __init__(
         self,
-        metadata: FileMetadataProtocol,
-        backend: ConnectorProtocol,
+        metadata: "FileMetadataProtocol",
+        backend: "ConnectorProtocol",
         *,
         max_cached_manifests: int = 256,
     ) -> None:
@@ -137,7 +135,7 @@ class OverlayResolver:
         self,
         path: str,
         overlay_config: OverlayConfig,
-    ) -> FileMetadata | None:
+    ) -> "FileMetadata | None":
         """Resolve a file read through the overlay layers.
 
         Resolution order:
@@ -180,7 +178,7 @@ class OverlayResolver:
         # Synthesize FileMetadata from base manifest entry
         return self._manifest_entry_to_metadata(entry, path)
 
-    def is_whiteout(self, meta: FileMetadata) -> bool:
+    def is_whiteout(self, meta: "FileMetadata") -> bool:
         """Check if a metadata entry is a whiteout marker.
 
         Whiteout markers represent files that exist in the base layer
@@ -229,7 +227,7 @@ class OverlayResolver:
         self,
         prefix: str,
         overlay_config: OverlayConfig,
-    ) -> list[FileMetadata]:
+    ) -> list["FileMetadata"]:
         """List files by merging upper and base layers.
 
         Two-pass set merge:
@@ -403,7 +401,7 @@ class OverlayResolver:
         self,
         entry: ManifestEntry,
         full_path: str,
-    ) -> FileMetadata:
+    ) -> "FileMetadata":
         """Synthesize a FileMetadata from a base-layer ManifestEntry.
 
         Args:

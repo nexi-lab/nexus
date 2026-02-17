@@ -15,8 +15,6 @@ References:
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.llm.citation import DocumentReadResult
-from nexus.llm.provider import LLMProvider
 if TYPE_CHECKING:
     from nexus.llm.citation import DocumentReadResult
     from nexus.llm.provider import LLMProvider
@@ -42,7 +40,7 @@ class LLMServiceProtocol(Protocol):
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: LLMProvider | None = None,
+        provider: "LLMProvider | None" = None,
     ) -> str: ...
 
     async def llm_read_detailed(
@@ -56,8 +54,8 @@ class LLMServiceProtocol(Protocol):
         search_mode: str = "semantic",
         search_limit: int = 10,
         include_citations: bool = True,
-        provider: LLMProvider | None = None,
-    ) -> DocumentReadResult: ...
+        provider: "LLMProvider | None" = None,
+    ) -> "DocumentReadResult": ...
 
     def llm_read_stream(
         self,
@@ -68,12 +66,12 @@ class LLMServiceProtocol(Protocol):
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: LLMProvider | None = None,
+        provider: "LLMProvider | None" = None,
     ) -> AsyncIterator[str]: ...
 
     def create_llm_reader(
         self,
-        provider: LLMProvider | None = None,
+        provider: "LLMProvider | None" = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,

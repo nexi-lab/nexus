@@ -19,7 +19,6 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-from nexus.migrations import ImportResult
 if TYPE_CHECKING:
     from nexus.migrations import ImportResult
 
@@ -694,7 +693,7 @@ def validate(
     except Exception as e:
         handle_error(e)
 
-def _print_import_result(result: ImportResult, dry_run: bool) -> None:
+def _print_import_result(result: "ImportResult", dry_run: bool) -> None:
     """Print import result summary.
 
     Args:

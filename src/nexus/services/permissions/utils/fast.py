@@ -15,7 +15,6 @@ The module automatically falls back to Python implementation if Rust is unavaila
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.rebac import NamespaceConfig as ReBACNamespaceConfig
 if TYPE_CHECKING:
     from nexus.core.rebac import Entity
     from nexus.core.rebac import NamespaceConfig as ReBACNamespaceConfig
@@ -234,7 +233,7 @@ def _compute_permission_simple(
     permission: str,
     obj: "Entity",
     tuples: list[dict[str, Any]],
-    namespaces: dict[str, ReBACNamespaceConfig],
+    namespaces: dict[str, "ReBACNamespaceConfig"],
 ) -> bool:
     """
     Simplified permission computation for fallback.

@@ -14,10 +14,9 @@ Design:
 import re
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from nexus.core.permissions import OperationContext
-
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.core.permissions import OperationContext
 
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -121,7 +120,7 @@ class ObjectStoreABC(Protocol):
         self,
         content_hashes: list[str],
         *,
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: dict[str, "OperationContext"] | None = None,
     ) -> dict[str, bytes | None]:
         """Read multiple content items by hash.
 
@@ -145,7 +144,7 @@ class BackendObjectStore:
     def __init__(
         self,
         backend: "Backend",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         self._backend = backend
         self._context = context
@@ -186,7 +185,7 @@ class BackendObjectStore:
         self,
         content_hashes: list[str],
         *,
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: dict[str, "OperationContext"] | None = None,
     ) -> dict[str, bytes | None]:
         for h in content_hashes:
             _validate_hash(h)

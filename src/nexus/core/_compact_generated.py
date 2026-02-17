@@ -79,7 +79,7 @@ class CompactFileMetadata:
     i_links_count: int
 
     @classmethod
-    def from_file_metadata(cls, m: FileMetadata) -> "CompactFileMetadata":
+    def from_file_metadata(cls, m: "FileMetadata") -> "CompactFileMetadata":
         """Create CompactFileMetadata from FileMetadata."""
         return cls(
             path_id=_intern(m.path),
@@ -99,7 +99,7 @@ class CompactFileMetadata:
             i_links_count=m.i_links_count,
         )
 
-    def to_file_metadata(self) -> FileMetadata:
+    def to_file_metadata(self) -> "FileMetadata":
         """Convert back to FileMetadata."""
         from nexus.core._metadata_generated import FileMetadata
 

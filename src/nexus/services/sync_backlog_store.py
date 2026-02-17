@@ -398,7 +398,7 @@ class SyncBacklogStore(SyncStoreBase):
             session.close()
 
     @staticmethod
-    def _to_entry(row: SyncBacklogModel) -> SyncBacklogEntry:
+    def _to_entry(row: "SyncBacklogModel") -> SyncBacklogEntry:
         """Convert SQLAlchemy model to frozen dataclass."""
         return SyncBacklogEntry(
             id=row.id,

@@ -43,10 +43,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from nexus.core.hash_fast import hash_content
-from nexus.core.permissions import OperationContext
 
 if TYPE_CHECKING:
     from nexus.backends.cas_blob_store import CASBlobStore
+    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +325,7 @@ class ChunkedStorageMixin:
     def _write_chunked(
         self,
         content: bytes,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Write content as CDC chunks with manifest.
 
@@ -438,7 +438,7 @@ class ChunkedStorageMixin:
     def _read_chunked(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes:
         """Read chunked content by reassembling from chunks.
 
@@ -521,7 +521,7 @@ class ChunkedStorageMixin:
     def _delete_chunked(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Delete chunked content, handling chunk reference counts.
 

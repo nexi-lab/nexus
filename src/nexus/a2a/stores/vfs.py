@@ -25,7 +25,6 @@ from nexus.a2a.models import Task, TaskState
 from nexus.ipc.conventions import AGENTS_ROOT, task_dead_letter_path, tasks_path
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 
-from nexus.ipc.storage.protocol import IPCStorageDriver
 if TYPE_CHECKING:
     from nexus.ipc.storage.protocol import IPCStorageDriver
 
@@ -65,7 +64,7 @@ class VFSTaskStore:
 
     def __init__(
         self,
-        storage: IPCStorageDriver,
+        storage: "IPCStorageDriver",
         max_cache_size: int = _DEFAULT_MAX_CACHE_SIZE,
     ) -> None:
         self._storage = storage

@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
-from nexus.services.chunked_upload_service import ChunkedUploadService
 if TYPE_CHECKING:
     from nexus.services.chunked_upload_service import ChunkedUploadService
 

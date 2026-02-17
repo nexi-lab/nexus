@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING
 
 from nexus.core.context_utils import get_user_identity, get_zone_id
 
-from nexus.core.permissions import OperationContext
-from nexus.services.gateway import NexusFSGateway
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
@@ -25,10 +23,10 @@ class PermissionCheckError(Exception):
     """
 
 def check_permission(
-    gw: NexusFSGateway,
+    gw: "NexusFSGateway",
     path: str,
     permission: str,
-    context: OperationContext | None,
+    context: "OperationContext | None",
 ) -> bool:
     """Check if user has permission on path.
 

@@ -12,6 +12,7 @@ Functions:
 Related: Issue #1459 Phase 15+, performance optimization
 """
 
+
 import json
 import logging
 import time
@@ -26,10 +27,6 @@ from nexus.rebac.types import (
     TraversalStats,
 )
 
-from collections.abc import Callable
-from contextlib import AbstractContextManager
-from nexus.core.rebac import NamespaceConfig
-from nexus.rebac.consistency.zone_manager import ZoneManager
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
@@ -38,6 +35,7 @@ if TYPE_CHECKING:
     from nexus.rebac.consistency.zone_manager import ZoneManager
 
 logger = logging.getLogger(__name__)
+
 
 class ZoneAwareTraversal:
     """Zone-aware permission graph traversal with P0-5 limits.
@@ -59,12 +57,12 @@ class ZoneAwareTraversal:
 
     def __init__(
         self,
-        connection_factory: Callable[[], AbstractContextManager[Any]],
-        create_cursor: Callable[[Any], Any],
-        fix_sql: Callable[[str], str],
-        get_namespace: Callable[[str], NamespaceConfig | None],
-        evaluate_conditions: Callable[[dict[str, Any] | None, dict[str, Any] | None], bool],
-        zone_manager: ZoneManager,
+        connection_factory: "Callable[[], AbstractContextManager[Any]]",
+        create_cursor: "Callable[[Any], Any]",
+        fix_sql: "Callable[[str], str]",
+        get_namespace: "Callable[[str], NamespaceConfig | None]",
+        evaluate_conditions: "Callable[[dict[str, Any] | None, dict[str, Any] | None], bool]",
+        zone_manager: "ZoneManager",
         enable_graph_limits: bool = True,
     ) -> None:
         self._connection = connection_factory

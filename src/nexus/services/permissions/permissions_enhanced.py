@@ -8,6 +8,7 @@ from nexus.rebac.permissions_enhanced import (
     AuditLogEntry,
     AuditStore,
     EnhancedOperationContext,
+    EnhancedPermissionEnforcer,
 )
 
 __all__ = [
@@ -17,10 +18,3 @@ __all__ = [
     "EnhancedOperationContext",
     "EnhancedPermissionEnforcer",
 ]
-
-
-def __getattr__(name: str):
-    if name == "EnhancedPermissionEnforcer":
-        from nexus.rebac.permissions_enhanced import EnhancedPermissionEnforcer
-        return EnhancedPermissionEnforcer
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

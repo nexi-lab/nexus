@@ -9,7 +9,6 @@ import asyncio
 
 import pytest
 
-
 try:
     from sqlalchemy import create_engine, text
     from sqlalchemy.pool import StaticPool
@@ -17,7 +16,6 @@ try:
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
-
 
 @pytest.fixture
 def pg_engine():
@@ -74,7 +72,6 @@ def pg_engine():
     yield engine
     engine.dispose()
 
-
 def _seed_permission(engine, subject_id: str = "alice", zone_id: str = "z1"):
     """Insert a permission cache entry directly via SQL."""
     import uuid
@@ -97,7 +94,6 @@ def _seed_permission(engine, subject_id: str = "alice", zone_id: str = "z1"):
             "expires_at": datetime.now(UTC) + timedelta(hours=1),
         })
 
-
 def _seed_tiger(engine, subject_id: str = "alice"):
     """Insert a tiger cache entry directly."""
     from datetime import UTC, datetime
@@ -115,7 +111,6 @@ def _seed_tiger(engine, subject_id: str = "alice"):
             "ca": datetime.now(UTC), "ua": datetime.now(UTC),
         })
 
-
 def _seed_resource_map(engine, resource_id: str = "/test.txt"):
     """Insert a resource map entry directly."""
     from datetime import UTC, datetime
@@ -129,7 +124,6 @@ def _seed_resource_map(engine, resource_id: str = "/test.txt"):
             "rt": "file", "rid": resource_id,
             "ca": datetime.now(UTC),
         })
-
 
 @pytest.mark.skipif(not SQLALCHEMY_AVAILABLE, reason="sqlalchemy not installed")
 class TestPostgresPermissionCacheAsync:
@@ -233,7 +227,6 @@ class TestPostgresPermissionCacheAsync:
 
         await asyncio.wait_for(sequential(), timeout=5.0)
 
-
 @pytest.mark.skipif(not SQLALCHEMY_AVAILABLE, reason="sqlalchemy not installed")
 class TestPostgresTigerCacheAsync:
     """Test Tiger cache async wrapping."""
@@ -278,7 +271,6 @@ class TestPostgresTigerCacheAsync:
 
         cache = PostgresTigerCache(pg_engine)
         assert await cache.health_check() is True
-
 
 @pytest.mark.skipif(not SQLALCHEMY_AVAILABLE, reason="sqlalchemy not installed")
 class TestPostgresResourceMapCacheAsync:

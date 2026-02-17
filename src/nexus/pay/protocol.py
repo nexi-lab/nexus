@@ -23,8 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.pay.audit_types import TransactionProtocol
 
-from nexus.pay.x402 import X402Client
-from nexus.services.protocols.payment import PaymentProtocol
 if TYPE_CHECKING:
     from nexus.pay.x402 import X402Client
     from nexus.services.protocols.payment import PaymentProtocol
@@ -91,14 +89,14 @@ class ProtocolDetector:
     whose can_handle() returns True is selected.
     """
 
-    def __init__(self, protocols: list[PaymentProtocol]) -> None:
+    def __init__(self, protocols: list["PaymentProtocol"]) -> None:
         self._protocols = list(protocols)
 
     def detect(
         self,
         to: str,
         metadata: dict[str, Any] | None = None,
-    ) -> PaymentProtocol:
+    ) -> "PaymentProtocol":
         """Detect the appropriate protocol for a destination.
 
         Raises:
@@ -131,14 +129,14 @@ class ProtocolRegistry:
     def __init__(self) -> None:
         self._protocols: dict[str, PaymentProtocol] = {}
 
-    def register(self, protocol: PaymentProtocol) -> None:
+    def register(self, protocol: "PaymentProtocol") -> None:
         """Register a protocol by its user-facing method name."""
         name = get_protocol_method_name(protocol.protocol_name)
         self._protocols[name] = protocol
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Registered protocol: %s", name)
 
-    def get(self, name: str) -> PaymentProtocol:
+    def get(self, name: str) -> "PaymentProtocol":
         """Get a protocol by name.
 
         Raises:
@@ -160,7 +158,7 @@ class ProtocolRegistry:
         method: str,
         to: str,
         metadata: dict[str, Any] | None = None,
-    ) -> PaymentProtocol:
+    ) -> "PaymentProtocol":
         """Resolve a protocol by method name or auto-detect.
 
         Args:
@@ -193,7 +191,7 @@ class X402PaymentProtocol:
     Structurally satisfies ``PaymentProtocol``.
     """
 
-    def __init__(self, client: X402Client) -> None:
+    def __init__(self, client: "X402Client") -> None:
         self._client = client
 
     @property

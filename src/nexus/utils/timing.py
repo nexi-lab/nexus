@@ -47,7 +47,7 @@ class Timer:
         target_logger: logging.Logger,
         label: str,
         level: int = logging.DEBUG,
-    ) -> Generator[Timer, None, None]:
+    ) -> "Generator[Timer, None, None]":
         """Context manager that auto-logs elapsed time on exit.
 
         Args:

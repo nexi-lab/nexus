@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.services.subsystem import Subsystem
 
-from nexus.services.protocols.llm import LLMProtocol
 if TYPE_CHECKING:
     from nexus.services.protocols.llm import LLMProtocol
 
@@ -31,12 +30,12 @@ class LLMSubsystem(Subsystem):
         llm_service: LLMProtocol implementation with the 4 RPC methods.
     """
 
-    def __init__(self, llm_service: LLMProtocol) -> None:
+    def __init__(self, llm_service: "LLMProtocol") -> None:
         self._service = llm_service
         logger.info("[LLMSubsystem] Initialized")
 
     @property
-    def service(self) -> LLMProtocol:
+    def service(self) -> "LLMProtocol":
         """Access the underlying LLM service."""
         return self._service
 

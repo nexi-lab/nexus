@@ -11,7 +11,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -21,10 +20,10 @@ class SessionMixin:
     Subclasses must set ``self._session_factory`` to a ``sessionmaker`` instance.
     """
 
-    _session_factory: sessionmaker[Session]
+    _session_factory: "sessionmaker[Session]"
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> Generator["Session", None, None]:
         """Create a session with auto-commit/rollback/close."""
         session = self._session_factory()
         try:

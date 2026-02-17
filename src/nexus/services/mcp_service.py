@@ -17,7 +17,6 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
-from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -88,7 +87,7 @@ class MCPService:
         self,
         tier: str | None = None,
         include_unmounted: bool = True,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List MCP server mounts.
 
@@ -156,7 +155,7 @@ class MCPService:
     async def mcp_list_tools(
         self,
         name: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List tools from a specific MCP mount.
 
@@ -254,7 +253,7 @@ class MCPService:
         headers: dict[str, str] | None = None,
         description: str | None = None,
         tier: str = "system",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Mount an MCP server.
 
@@ -369,7 +368,7 @@ class MCPService:
     async def mcp_unmount(
         self,
         name: str,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Unmount an MCP server.
 
@@ -418,7 +417,7 @@ class MCPService:
     async def mcp_sync(
         self,
         name: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Sync/refresh tools from an MCP server.
 

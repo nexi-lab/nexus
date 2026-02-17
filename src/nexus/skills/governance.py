@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 
-from nexus.rebac.manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager
 
@@ -94,7 +93,7 @@ class SkillGovernance:
 
     def __init__(
         self,
-        rebac_manager: ReBACManager | None = None,
+        rebac_manager: "ReBACManager | None" = None,
     ):
         """Initialize governance system.
 

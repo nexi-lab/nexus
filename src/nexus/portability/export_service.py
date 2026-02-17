@@ -30,9 +30,6 @@ from nexus.portability.models import (
     ZoneExportOptions,
 )
 
-from nexus.backends.backend import Backend
-from nexus.core._metadata_generated import FileMetadataProtocol
-from nexus.core.nexus_fs import NexusFS
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
@@ -61,7 +58,7 @@ class ZoneExportService:
 
     def __init__(
         self,
-        nexus_fs: NexusFS,
+        nexus_fs: "NexusFS",
     ):
         """Initialize the export service.
 
@@ -404,7 +401,7 @@ class ZoneExportService:
 
 # Convenience function for CLI usage
 def export_zone_bundle(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     zone_id: str,
     output_path: Path,
     include_content: bool = True,

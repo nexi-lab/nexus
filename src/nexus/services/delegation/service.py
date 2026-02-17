@@ -46,12 +46,6 @@ from nexus.services.delegation.models import (
     DelegationStatus,
 )
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.namespace_manager import NamespaceManager
-from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
-from nexus.services.reputation.reputation_service import ReputationService
-from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -78,12 +72,12 @@ class DelegationService:
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
-        rebac_manager: EnhancedReBACManager,
-        namespace_manager: NamespaceManager | None = None,
-        entity_registry: EntityRegistry | None = None,
-        agent_registry: AgentRegistry | None = None,
-        reputation_service: ReputationService | None = None,
+        session_factory: "sessionmaker[Session]",
+        rebac_manager: "EnhancedReBACManager",
+        namespace_manager: "NamespaceManager | None" = None,
+        entity_registry: "EntityRegistry | None" = None,
+        agent_registry: "AgentRegistry | None" = None,
+        reputation_service: "ReputationService | None" = None,
     ) -> None:
         self._session_factory = session_factory
         self._rebac_manager = rebac_manager

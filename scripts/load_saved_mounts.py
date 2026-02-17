@@ -13,6 +13,7 @@ import sys
 import urllib.error
 import urllib.request
 
+
 def load_saved_mounts(nexus_url: str, admin_api_key: str) -> bool:
     """
     Load all saved mounts from database.
@@ -88,6 +89,7 @@ def load_saved_mounts(nexus_url: str, admin_api_key: str) -> bool:
         traceback.print_exc()
         return False
 
+
 def main() -> None:
     """Main entry point."""
     if len(sys.argv) < 3:
@@ -103,6 +105,7 @@ def main() -> None:
 
     success = load_saved_mounts(nexus_url, admin_api_key)
     sys.exit(0 if success else 1)
+
 
 if __name__ == "__main__":
     main()

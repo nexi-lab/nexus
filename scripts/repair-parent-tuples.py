@@ -27,6 +27,7 @@ from nexus.cli.utils import BackendConfig, get_filesystem
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
 def find_directories_without_parent_tuples(nx: Any, base_path: str = "/") -> list[str]:
     """Find all directories that don't have parent tuples."""
     from sqlalchemy import text
@@ -70,6 +71,7 @@ def find_directories_without_parent_tuples(nx: Any, base_path: str = "/") -> lis
 
     return directories
 
+
 def repair_directory(nx: Any, path: str, dry_run: bool = False) -> bool:
     """Create parent tuple for a directory."""
     if not hasattr(nx, "_hierarchy_manager"):
@@ -96,6 +98,7 @@ def repair_directory(nx: Any, path: str, dry_run: bool = False) -> bool:
     except Exception as e:
         logger.error(f"✗ Failed to create parent tuple for {path}: {e}")
         return False
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Repair missing parent tuples for directories")
@@ -168,6 +171,7 @@ def main() -> int:
 
     nx.close()
     return 0 if failed == 0 else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -24,11 +24,6 @@ from nexus.core.rebac import Entity
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.types import ConsistencyLevel
 
-from collections.abc import Callable
-from contextlib import AbstractContextManager
-from nexus.core.rebac import NamespaceConfig
-from nexus.rebac.tiger_cache import TigerCache
-from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
@@ -66,17 +61,17 @@ class BulkPermissionChecker:
 
     def __init__(
         self,
-        engine: Engine,
-        connection_factory: Callable[[], AbstractContextManager[Any]],
-        create_cursor: Callable[[Any], Any],
-        fix_sql: Callable[[str], str],
-        get_namespace: Callable[[str], NamespaceConfig | None],
+        engine: "Engine",
+        connection_factory: "Callable[[], AbstractContextManager[Any]]",
+        create_cursor: "Callable[[Any], Any]",
+        fix_sql: "Callable[[str], str]",
+        get_namespace: "Callable[[str], NamespaceConfig | None]",
         enforce_zone_isolation: bool,
         l1_cache: Any | None,
-        tiger_cache: TigerCache | None,
-        compute_bulk_helper: Callable[..., bool],
-        rebac_check_single: Callable[..., bool],
-        cache_result: Callable[..., None],
+        tiger_cache: "TigerCache | None",
+        compute_bulk_helper: "Callable[..., bool]",
+        rebac_check_single: "Callable[..., bool]",
+        cache_result: "Callable[..., None]",
         tuple_version: int,
     ) -> None:
         self._engine = engine
@@ -95,7 +90,7 @@ class BulkPermissionChecker:
     def update_refs(
         self,
         l1_cache: Any | None = None,
-        tiger_cache: TigerCache | None = None,
+        tiger_cache: "TigerCache | None" = None,
         tuple_version: int | None = None,
     ) -> None:
         """Update mutable references that may change after construction."""

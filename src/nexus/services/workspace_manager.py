@@ -9,13 +9,11 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import desc, select
 
-from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
+from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.core.workspace_manifest import WorkspaceManifest
+from nexus.services.workspace_permissions import check_workspace_permission
 from nexus.storage.models import WorkspaceSnapshotModel
 
-from nexus.backends.backend import Backend
-from nexus.core._metadata_generated import FileMetadataProtocol
-from nexus.rebac.manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
@@ -40,9 +38,9 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: FileMetadataProtocol,
-        backend: Backend,
-        rebac_manager: ReBACManager | None = None,
+        metadata: "FileMetadataProtocol",
+        backend: "Backend",
+        rebac_manager: "ReBACManager | None" = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
         session_factory: Any | None = None,
@@ -76,6 +74,9 @@ class WorkspaceManager:
     ) -> None:
         """Check if user or agent has permission on workspace.
 
+        Delegates to shared utility (Issue #1315 C2-B) for DRY reuse
+        by both WorkspaceManager and ContextBranchService.
+
         Args:
             workspace_path: Path to workspace
             permission: Permission to check (e.g., 'snapshot:create', 'snapshot:list')
@@ -85,75 +86,17 @@ class WorkspaceManager:
 
         Raises:
             NexusPermissionError: If permission check fails
-
-        Note:
-            v0.5.0: Now supports both user and agent subjects.
-            - If agent_id is provided: subject=("agent", agent_id)
-            - Else if user_id is provided: subject=("user", user_id)
-            - Else: deny by default (no identity)
-
-            Permission mapping to file operations:
-            - snapshot:create, snapshot:restore -> write (modify state)
-            - snapshot:list, snapshot:diff -> read (read-only)
         """
-        if not self.rebac_manager:
-            # No ReBAC manager configured — allow operation
-            logger.warning(
-                f"WorkspaceManager: No ReBAC manager configured, allowing {permission} on {workspace_path}"
-            )
-            return
-
-        # Use provided IDs or fall back to defaults
-        check_agent_id = agent_id or self.agent_id
-        check_zone_id = zone_id or self.zone_id
-
-        # Determine subject based on available context
-        # v0.5.0: Support both users and agents
-        if check_agent_id:
-            subject = ("agent", check_agent_id)
-            subject_desc = f"agent={check_agent_id}"
-        elif user_id:
-            subject = ("user", user_id)
-            subject_desc = f"user={user_id}"
-        else:
-            # No identity available - deny by default for security
-            logger.error(
-                f"WorkspaceManager: No user_id or agent_id provided for permission check: {permission} on {workspace_path}"
-            )
-            raise NexusPermissionError(
-                f"{permission} on workspace {workspace_path} (no user_id or agent_id provided)"
-            )
-
-        # Map workspace permissions to file permissions
-        # Workspaces are just directories, so we use the existing "file" namespace
-        # which already has proper permission mappings (owner/editor/viewer)
-        if permission in ("snapshot:create", "snapshot:restore"):
-            # Write operations require write permission
-            file_permission = "write"
-        elif permission in ("snapshot:list", "snapshot:diff"):
-            # Read-only operations require read permission
-            file_permission = "read"
-        else:
-            # Unknown permission - default to write for safety
-            logger.warning(f"Unknown workspace permission: {permission}, defaulting to write")
-            file_permission = "write"
-
-        # Check permission via ReBAC on the FILE object
-        has_permission = self.rebac_manager.rebac_check(
-            subject=subject,
-            permission=file_permission,
-            object=("file", workspace_path),
-            zone_id=check_zone_id,
+        check_workspace_permission(
+            rebac_manager=self.rebac_manager,
+            workspace_path=workspace_path,
+            permission=permission,
+            user_id=user_id,
+            agent_id=agent_id,
+            zone_id=zone_id,
+            default_agent_id=self.agent_id,
+            default_zone_id=self.zone_id,
         )
-
-        if not has_permission:
-            logger.warning(
-                f"WorkspaceManager: Permission denied for {subject_desc}, "
-                f"permission={permission} (mapped to {file_permission}), workspace={workspace_path}, zone={check_zone_id}"
-            )
-            raise NexusPermissionError(
-                f"Permission denied: {permission} on workspace {workspace_path}"
-            )
 
     def create_snapshot(
         self,

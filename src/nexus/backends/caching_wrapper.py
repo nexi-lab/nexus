@@ -28,7 +28,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.delegating import DelegatingBackend

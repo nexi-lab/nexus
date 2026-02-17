@@ -38,8 +38,6 @@ def _utcnow_naive() -> datetime:
 
 logger = logging.getLogger(__name__)
 
-from nexus.search.embeddings import EmbeddingProvider
-from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -250,9 +248,9 @@ class GraphStore:
 
     def __init__(
         self,
-        session: AsyncSession,
+        session: "AsyncSession",
         zone_id: str = "root",
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
         merge_threshold: float = 0.85,
         confidence_threshold: float = 0.75,
     ):

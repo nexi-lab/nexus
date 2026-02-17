@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from fuse import FUSE
 
-from nexus.core.filesystem import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
 
@@ -419,7 +418,7 @@ def mount_nexus(
     subject_type: str | None = None,
     owner_id: str | None = None,
     zone_id: str | None = None,
-) -> NexusFUSE:
+) -> "NexusFUSE":
     """Convenience function to mount Nexus filesystem.
 
     Args:

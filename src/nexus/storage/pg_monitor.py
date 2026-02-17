@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -107,7 +106,7 @@ class PgMonitor:
     Based on Supabase Postgres Best Practices guide.
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session: "Session"):
         """Initialize the monitor with a SQLAlchemy session.
 
         Args:

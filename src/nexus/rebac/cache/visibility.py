@@ -20,7 +20,6 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
 if TYPE_CHECKING:
     from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
 
@@ -47,7 +46,7 @@ class DirectoryVisibilityCache:
 
     def __init__(
         self,
-        tiger_cache: TigerCache | None = None,
+        tiger_cache: "TigerCache | None" = None,
         ttl: int = 300,  # 5 minutes default
         max_entries: int = 10000,
     ):

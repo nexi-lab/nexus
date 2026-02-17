@@ -147,7 +147,7 @@ _GENERIC_API_KEY_ASSIGNMENT = _RedactionPattern(
 
 # The default set of patterns, ordered from most specific to least specific
 # to minimize false-positive overlap.
-BUILT_IN_SECRET_PATTERNS: tuple[_RedactionPattern, ...] = (
+BUILT_IN_SECRET_PATTERNS: tuple["_RedactionPattern", ...] = (
     _PEM_PRIVATE_KEY,  # Most distinctive (multi-line)
     _NEXUS_API_KEY,  # Before generic sk- (more specific)
     _BEARER_TOKEN,  # "Bearer " prefix is distinctive
@@ -193,7 +193,7 @@ _TRIGGER_SUBSTRINGS: tuple[str, ...] = (
     "api-key",
 )
 
-def redact_text(text: str, patterns: tuple[_RedactionPattern, ...] | None = None) -> str:
+def redact_text(text: str, patterns: tuple["_RedactionPattern", ...] | None = None) -> str:
     """Apply redaction patterns to a text string.
 
     Uses a heuristic pre-check: if the text contains none of the trigger

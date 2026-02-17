@@ -111,7 +111,7 @@ class SearchConfig:
     # Ranking (Issue #1092)
     enable_attribute_boosting: bool = True
 
-def search_config_from_env() -> SearchConfig:
+def search_config_from_env() -> "SearchConfig":
     """Build SearchConfig from environment variables.
 
     Env vars (all optional, with sane defaults):

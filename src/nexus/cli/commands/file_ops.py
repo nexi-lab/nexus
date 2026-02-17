@@ -1,7 +1,5 @@
 """File operation commands - read, write, cat, cp, mv, rm, sync."""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,7 +17,6 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 def register_commands(cli: click.Group) -> None:
     """Register all file operation commands."""
     cli.add_command(init)
@@ -32,7 +29,6 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(move_cmd)
     cli.add_command(sync_cmd)
     cli.add_command(rm)
-
 
 @click.command()
 @click.argument("path", default="./nexus-workspace", type=click.Path())
@@ -72,7 +68,6 @@ def init(path: str) -> None:
         console.print(f"  Shared: [cyan]{workspace_path / 'shared'}[/cyan]")
     except Exception as e:
         handle_error(e)
-
 
 @click.command()
 @click.argument("path", type=str)
@@ -234,7 +229,6 @@ def cat(
     except Exception as e:
         handle_error(e)
 
-
 @click.command()
 @click.argument("path", type=str)
 @click.argument("content", type=str, required=False)
@@ -329,7 +323,6 @@ def write(
     except Exception as e:
         handle_error(e)
 
-
 @click.command()
 @click.argument("path", type=str)
 @click.argument("content", type=str, required=False)
@@ -419,7 +412,6 @@ def append(
             console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
     except Exception as e:
         handle_error(e)
-
 
 @click.command(name="write-batch")
 @click.argument("source_dir", type=click.Path(exists=True, file_okay=False, dir_okay=True))
@@ -588,7 +580,6 @@ def write_batch(
     except Exception as e:
         handle_error(e)
 
-
 @click.command()
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
@@ -620,7 +611,6 @@ def cp(
         console.print(f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
     except Exception as e:
         handle_error(e)
-
 
 @click.command(name="copy")
 @click.argument("source", type=str)
@@ -706,7 +696,6 @@ def copy_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @click.command(name="move")
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
@@ -751,7 +740,6 @@ def move_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @click.command(name="sync")
 @click.argument("source", type=str)
@@ -835,7 +823,6 @@ def sync_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @click.command()
 @click.argument("path", type=str)

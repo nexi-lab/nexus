@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from prometheus_client.core import GaugeMetricFamily
 
-from collections.abc import Iterable
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -39,11 +38,11 @@ class WriteBufferCollector:
     def __init__(self, write_observer: MetricsProvider) -> None:
         self._write_observer = write_observer
 
-    def describe(self) -> Iterable[GaugeMetricFamily]:
+    def describe(self) -> "Iterable[GaugeMetricFamily]":
         """Return empty -- dynamic collector convention."""
         return []
 
-    def collect(self) -> Iterable[GaugeMetricFamily]:
+    def collect(self) -> "Iterable[GaugeMetricFamily]":
         """Yield gauge metric families from the write observer's counters."""
         metrics = self._write_observer.metrics
 

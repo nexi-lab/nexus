@@ -809,10 +809,10 @@ class BM25SIndex:
                 return False
 
 # Global singleton for shared index access
-_global_index: BM25SIndex | None = None
+_global_index: "BM25SIndex | None" = None
 _global_lock = threading.Lock()
 
-def get_bm25s_index(index_dir: str | Path = ".nexus-data/bm25s") -> BM25SIndex:
+def get_bm25s_index(index_dir: str | Path = ".nexus-data/bm25s") -> "BM25SIndex":
     """Get or create global BM25S index.
 
     Args:

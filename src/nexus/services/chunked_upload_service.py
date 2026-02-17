@@ -28,10 +28,6 @@ from nexus.core.exceptions import (
 from nexus.services.upload_session import UploadSession, UploadStatus
 from nexus.storage.models.upload_session import UploadSessionModel
 
-from collections.abc import Callable
-from nexus.core._metadata_generated import FileMetadataProtocol
-from nexus.core.protocols.connector import ConnectorProtocol
-from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -94,9 +90,9 @@ class ChunkedUploadService:
 
     def __init__(
         self,
-        session_factory: Callable[[], Session],
-        backend: ConnectorProtocol,
-        metadata_store: FileMetadataProtocol | None = None,
+        session_factory: "Callable[[], Session]",
+        backend: "ConnectorProtocol",
+        metadata_store: "FileMetadataProtocol | None" = None,
         config: ChunkedUploadConfig | None = None,
     ):
         self._session_factory = session_factory

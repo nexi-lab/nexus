@@ -7,13 +7,12 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
-def startup_observability(app: FastAPI) -> None:
+def startup_observability(app: "FastAPI") -> None:
     """Initialize all observability subsystems (sync, no background tasks)."""
     _startup_logging()
     _startup_sentry()
@@ -100,7 +99,7 @@ def _startup_prometheus() -> None:
     except ImportError:
         logger.debug("prometheus_client not available")
 
-def _startup_thread_pool(app: FastAPI) -> None:
+def _startup_thread_pool(app: "FastAPI") -> None:
     """Configure thread pool size (Issue #932)."""
     from anyio import to_thread
 

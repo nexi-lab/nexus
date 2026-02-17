@@ -1,4 +1,4 @@
-"""Unit tests for describe() composition chain output (#1449).
+"""Unit tests for describe() composition chain output (#1449, #1705).
 
 Tests verify the recursive wrapping chain description follows the
 format: "layer1 → layer2 → ... → leaf" using unicode arrows.
@@ -11,14 +11,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# Reusable test key for EncryptedStorage tests
+from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
+
 from nexus.backends.backend import Backend
+from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 from nexus.backends.logging_wrapper import LoggingBackendWrapper
 from nexus.cache.backend_wrapper import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
 from nexus.core.protocols.describable import Describable
+
+_TEST_KEY = AESGCMSIV.generate_key(bit_length=256)
 
 def _make_leaf(name: str = "local") -> Backend:
     """Create a mock leaf backend with the given name."""
@@ -51,6 +58,18 @@ class TestSingleWrapperDescribe:
         leaf = _make_leaf("s3")
         wrapper = LoggingBackendWrapper(inner=leaf)
         assert wrapper.describe() == "logging → s3"
+
+    def test_encrypted_wrapper(self) -> None:
+        leaf = _make_leaf("local")
+        config = EncryptedStorageConfig(key=_TEST_KEY, metrics_enabled=False)
+        wrapper = EncryptedStorage(inner=leaf, config=config)
+        assert wrapper.describe() == "encrypt(AES-256-GCM-SIV) → local"
+
+    def test_compressed_wrapper(self) -> None:
+        leaf = _make_leaf("s3")
+        config = CompressedStorageConfig(metrics_enabled=False)
+        wrapper = CompressedStorage(inner=leaf, config=config)
+        assert wrapper.describe() == "compress(zstd) → s3"
 
 class TestTwoDeepChainDescribe:
     """2-deep chain should show all layers in order."""
@@ -89,6 +108,17 @@ class TestDeepChainDescribe:
         outer_cache = CachingBackendWrapper(inner=inner_cache, config=config)
         assert outer_cache.describe() == "cache → cache → s3"
 
+    def test_full_production_chain(self) -> None:
+        """Recommended production chain: cache → compress → encrypt → leaf."""
+        leaf = _make_leaf("s3")
+        enc_config = EncryptedStorageConfig(key=_TEST_KEY, metrics_enabled=False)
+        encrypted = EncryptedStorage(inner=leaf, config=enc_config)
+        cmp_config = CompressedStorageConfig(metrics_enabled=False)
+        compressed = CompressedStorage(inner=encrypted, config=cmp_config)
+        cache_config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
+        cached = CachingBackendWrapper(inner=compressed, config=cache_config)
+        assert cached.describe() == "cache → compress(zstd) → encrypt(AES-256-GCM-SIV) → s3"
+
 class TestDescribableProtocol:
     """Verify structural subtyping with Describable protocol."""
 
@@ -110,6 +140,18 @@ class TestDescribableProtocol:
     def test_delegating_backend_is_describable(self) -> None:
         leaf = _make_leaf("local")
         wrapper = DelegatingBackend(inner=leaf)
+        assert isinstance(wrapper, Describable)
+
+    def test_encrypted_wrapper_is_describable(self) -> None:
+        leaf = _make_leaf("local")
+        config = EncryptedStorageConfig(key=_TEST_KEY, metrics_enabled=False)
+        wrapper = EncryptedStorage(inner=leaf, config=config)
+        assert isinstance(wrapper, Describable)
+
+    def test_compressed_wrapper_is_describable(self) -> None:
+        leaf = _make_leaf("local")
+        config = CompressedStorageConfig(metrics_enabled=False)
+        wrapper = CompressedStorage(inner=leaf, config=config)
         assert isinstance(wrapper, Describable)
 
 class TestDescribeUnicodeArrow:

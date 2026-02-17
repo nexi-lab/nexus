@@ -67,7 +67,7 @@ def derive_grants(
     add_grants: list[str] | None = None,
     readonly_paths: list[str] | None = None,
     scope_prefix: str | None = None,
-) -> list[GrantSpec]:
+) -> list["GrantSpec"]:
     """Derive child grants from parent grants according to delegation mode.
 
     This is the core anti-escalation function. For all modes, the returned
@@ -143,9 +143,9 @@ def _derive_copy(
     remove_set: frozenset[str],
     readonly_set: frozenset[str],
     scope_prefix: str | None,
-) -> list[GrantSpec]:
+) -> list["GrantSpec"]:
     """COPY mode: start with parent grants, narrow down."""
-    result: list[GrantSpec] = []
+    result: list["GrantSpec"] = []
     for object_id, relation in sorted(parent_map.items()):
         # Filter by scope prefix
         if not _matches_prefix(object_id, scope_prefix):
@@ -163,9 +163,9 @@ def _derive_clean(
     parent_map: dict[str, str],
     add_set: frozenset[str],
     scope_prefix: str | None,
-) -> list[GrantSpec]:
+) -> list["GrantSpec"]:
     """CLEAN mode: empty set, add only specified grants from parent."""
-    result: list[GrantSpec] = []
+    result: list["GrantSpec"] = []
     # Validate: all add_grants must exist in parent
     parent_ids = frozenset(parent_map.keys())
     escalation = add_set - parent_ids
@@ -181,9 +181,9 @@ def _derive_clean(
 def _derive_shared(
     parent_map: dict[str, str],
     scope_prefix: str | None,
-) -> list[GrantSpec]:
+) -> list["GrantSpec"]:
     """SHARED mode: return all parent grants (within scope_prefix)."""
-    result: list[GrantSpec] = []
+    result: list["GrantSpec"] = []
     for object_id, relation in sorted(parent_map.items()):
         if not _matches_prefix(object_id, scope_prefix):
             continue

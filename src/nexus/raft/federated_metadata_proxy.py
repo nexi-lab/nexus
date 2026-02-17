@@ -23,8 +23,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
-from nexus.raft.zone_path_resolver import ResolvedPath
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 if TYPE_CHECKING:
     from nexus.raft.zone_path_resolver import ResolvedPath, ZonePathResolver
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -42,7 +40,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
     def __init__(
         self,
         resolver: "ZonePathResolver",
-        root_store: RaftMetadataStore,
+        root_store: "RaftMetadataStore",
         *,
         zone_manager: Any | None = None,
     ):
@@ -83,7 +81,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
     # Path remapping helpers
     # =========================================================================
 
-    def _resolve(self, path: str) -> ResolvedPath:
+    def _resolve(self, path: str) -> "ResolvedPath":
         return self._resolver.resolve(path)
 
     @staticmethod
@@ -112,7 +110,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
     def _to_zone_metadata(
         self,
         metadata: FileMetadata,
-        resolved: ResolvedPath,
+        resolved: "ResolvedPath",
     ) -> FileMetadata:
         """Remap global metadata path to zone-relative path for storage."""
         if not resolved.mount_chain:
@@ -148,7 +146,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
 
     def _walk_mount_tree(
         self,
-        resolved: ResolvedPath,
+        resolved: "ResolvedPath",
         recursive: bool,
         **kwargs: Any,
     ) -> list[FileMetadata]:

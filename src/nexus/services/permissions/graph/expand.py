@@ -12,9 +12,6 @@ from typing import TYPE_CHECKING
 
 from nexus.core.rebac import Entity
 
-from collections.abc import Callable
-from nexus.core.rebac import NamespaceConfig
-from nexus.services.permissions.tuples.repository import TupleRepository
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -37,8 +34,8 @@ class ExpandEngine:
 
     def __init__(
         self,
-        repo: TupleRepository,
-        namespace_resolver: Callable[[str], NamespaceConfig | None],
+        repo: "TupleRepository",
+        namespace_resolver: "Callable[[str], NamespaceConfig | None]",
         max_depth: int = 10,
     ) -> None:
         self._repo = repo
@@ -86,7 +83,7 @@ class ExpandEngine:
         self,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         subjects: set[tuple[str, str]],
         visited: set[tuple[str, str, str]],
         depth: int,

@@ -8,13 +8,12 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
-async def startup_permissions(app: FastAPI) -> list[asyncio.Task]:
+async def startup_permissions(app: "FastAPI") -> list[asyncio.Task]:
     """Initialize permission infrastructure and return background tasks.
 
     Covers:
@@ -41,7 +40,7 @@ async def startup_permissions(app: FastAPI) -> list[asyncio.Task]:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-async def _startup_async_rebac(app: FastAPI) -> None:
+async def _startup_async_rebac(app: "FastAPI") -> None:
     """Initialize async ReBAC manager and AsyncNexusFS."""
     if not app.state.database_url:
         return
@@ -121,7 +120,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
     except Exception as e:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
 
-async def _startup_cache_factory(app: FastAPI) -> None:
+async def _startup_cache_factory(app: "FastAPI") -> None:
     """Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)."""
     try:
         from nexus.cache.factory import init_cache_factory
@@ -156,7 +155,7 @@ async def _startup_cache_factory(app: FastAPI) -> None:
     except Exception as e:
         logger.warning("Failed to initialize cache factory: %s", e, exc_info=True)
 
-def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
+def _startup_tiger_cache(app: "FastAPI") -> list[asyncio.Task]:
     """Start Tiger Cache worker, warm-up, and DirectoryGrantExpander."""
     bg_tasks: list[asyncio.Task] = []
 
@@ -228,7 +227,7 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
 
     return bg_tasks
 
-def _startup_backfill(app: FastAPI) -> list[asyncio.Task]:
+def _startup_backfill(app: "FastAPI") -> list[asyncio.Task]:
     """Auto-backfill sparse directory index for system paths (Issue #perf19)."""
     bg_tasks: list[asyncio.Task] = []
 
@@ -256,7 +255,7 @@ def _startup_backfill(app: FastAPI) -> list[asyncio.Task]:
 
     return bg_tasks
 
-def _startup_cache_warmup(app: FastAPI) -> None:
+def _startup_cache_warmup(app: "FastAPI") -> None:
     """File cache warmup on server startup (Issue #1076)."""
     if not app.state.nexus_fs:
         return
@@ -294,7 +293,7 @@ def _startup_cache_warmup(app: FastAPI) -> None:
     except Exception as e:
         logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
-def _startup_circuit_breaker(app: FastAPI) -> None:
+def _startup_circuit_breaker(app: "FastAPI") -> None:
     """Wire circuit breaker from factory for health endpoint access (Issue #726)."""
     if app.state.nexus_fs:
         app.state.rebac_circuit_breaker = app.state.nexus_fs._service_extras.get(

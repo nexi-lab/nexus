@@ -8,7 +8,6 @@ import logging
 import shlex
 from typing import TYPE_CHECKING
 
-from nexus.sandbox.sandbox_provider import SandboxProvider
 if TYPE_CHECKING:
     from nexus.sandbox.sandbox_provider import SandboxProvider
 
@@ -36,7 +35,7 @@ _ALL_MARKER_FILES: frozenset[str] = frozenset(
 
 async def detect_project_validators(
     sandbox_id: str,
-    provider: SandboxProvider,
+    provider: "SandboxProvider",
     workspace_path: str = "/workspace",
 ) -> list[str]:
     """Detect applicable validators by checking workspace files.

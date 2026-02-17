@@ -16,7 +16,6 @@ References:
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -35,7 +34,7 @@ class ContentServiceProtocol(Protocol):
         path: str,
         *,
         format: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Read file with automatic parsing/conversion.
 
@@ -54,7 +53,7 @@ class ContentServiceProtocol(Protocol):
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Detect the content type of a file.
 

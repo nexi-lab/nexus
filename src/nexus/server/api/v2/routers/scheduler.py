@@ -235,7 +235,7 @@ async def cancel_task(
 async def get_metrics(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
     scheduler: Any = Depends(get_scheduler_service),
-) -> MetricsResponse:
+) -> "MetricsResponse":
     """Get scheduler queue metrics and fair-share snapshots."""
     data = await scheduler.metrics()
     return MetricsResponse(**data)

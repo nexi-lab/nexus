@@ -253,7 +253,7 @@ class ContextIdentity:
     user_id: str
     is_admin: bool
 
-def extract_context_identity(context: OperationContext | None) -> ContextIdentity:
+def extract_context_identity(context: OperationContext | None) -> "ContextIdentity":
     """Extract zone/user/admin from an OperationContext.
 
     Safe to call with ``None`` -- returns sensible defaults.

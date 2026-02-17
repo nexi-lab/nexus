@@ -23,12 +23,10 @@ from nexus.cache.domain import (
 )
 from nexus.cache.inmemory import InMemoryCacheStore
 
-
 @pytest.fixture
 def cache_store():
     """Create a fresh InMemoryCacheStore for each test."""
     return InMemoryCacheStore()
-
 
 class TestPermissionCacheCompliance:
     """PermissionCache satisfies PermissionCacheProtocol."""
@@ -94,7 +92,6 @@ class TestPermissionCacheCompliance:
         cache = PermissionCache(cache_store)
         assert await cache.health_check() is True
 
-
 class TestTigerCacheCompliance:
     """TigerCache satisfies TigerCacheProtocol."""
 
@@ -144,7 +141,6 @@ class TestTigerCacheCompliance:
         cache = TigerCache(cache_store)
         assert await cache.health_check() is True
 
-
 class TestResourceMapCacheCompliance:
     """ResourceMapCache satisfies ResourceMapCacheProtocol."""
 
@@ -164,7 +160,6 @@ class TestResourceMapCacheCompliance:
         cache = ResourceMapCache(cache_store)
         result = await cache.get_int_id("file", "/missing.txt", "z1")
         assert result is None
-
 
 class TestEmbeddingCacheCompliance:
     """EmbeddingCache satisfies EmbeddingCacheProtocol."""

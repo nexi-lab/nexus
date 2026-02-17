@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.read_set import ReadSet, ReadSetRegistry
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 
-from nexus.core._metadata_generated import FileMetadata
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata
 
@@ -111,7 +110,7 @@ class ReadSetAwareCache:
     def put_path(
         self,
         path: str,
-        metadata: FileMetadata | None,
+        metadata: "FileMetadata | None",
         read_set: ReadSet | None = None,
         zone_revision: int = 0,
     ) -> None:

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent
 
-from nexus.services.event_log.exporters.config import KafkaExporterConfig
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import KafkaExporterConfig
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 class KafkaExporter:
     """Kafka event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: KafkaExporterConfig) -> None:
+    def __init__(self, config: "KafkaExporterConfig") -> None:
         self._config = config
         self._producer: Any | None = None
 

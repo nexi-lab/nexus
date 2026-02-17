@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
 
-from nexus.skills.protocols import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem
 
@@ -568,7 +567,7 @@ class MCPToolExporter:
     # Output path for exported tools
     OUTPUT_PATH = "/skills/system/mcp-tools/nexus/"
 
-    def __init__(self, filesystem: NexusFilesystem | None = None):
+    def __init__(self, filesystem: "NexusFilesystem | None" = None):
         """Initialize exporter.
 
         Args:

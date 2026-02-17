@@ -189,6 +189,7 @@ class TestBootSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
+            "context_branch_service",
         }
         assert expected_keys == set(result.keys())
 
@@ -238,6 +239,7 @@ class TestBootBrickServices:
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
+            "task_queue_service",
         }
         assert expected_keys == set(result.keys())
 

@@ -13,9 +13,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.sync_bridge import fire_and_forget
 from nexus.pay.audit_types import TransactionProtocol
 
-from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
-from nexus.services.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
-from nexus.services.protocols.payment import PaymentProtocol
 if TYPE_CHECKING:
     from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
     from nexus.services.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
@@ -52,9 +49,9 @@ class GovernanceEnforcedPayment:
 
     def __init__(
         self,
-        inner: PaymentProtocol,
-        graph_service: GovernanceGraphProtocol,
-        anomaly_service: AnomalyServiceProtocol,
+        inner: "PaymentProtocol",
+        graph_service: "GovernanceGraphProtocol",
+        anomaly_service: "AnomalyServiceProtocol",
     ) -> None:
         self._inner = inner
         self._graph_service = graph_service
@@ -69,7 +66,7 @@ class GovernanceEnforcedPayment:
         """Delegate to inner protocol."""
         return self._inner.can_handle(to, metadata)
 
-    async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult:
+    async def transfer(self, request: "ProtocolTransferRequest") -> "ProtocolTransferResult":
         """Execute transfer with governance enforcement.
 
         Pre-check: governance constraint check (~1ms).

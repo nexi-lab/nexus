@@ -26,8 +26,6 @@ from nexus.services.governance.models import (
 )
 from nexus.services.governance.protocols import AnomalyDetectorProtocol
 
-from collections.abc import Callable
-from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -102,7 +100,7 @@ class AnomalyService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
+        session_factory: "Callable[[], AsyncSession]",
         detector: AnomalyDetectorProtocol | None = None,
         config: AnomalyDetectionConfig | None = None,
     ) -> None:

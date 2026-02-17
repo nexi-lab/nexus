@@ -22,6 +22,7 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+
 def benchmark_native_python(tmp_dir: str, num_files: int = 50) -> dict:
     """Benchmark native Python file writes."""
     content = b"x" * 1024  # 1KB
@@ -44,6 +45,7 @@ def benchmark_native_python(tmp_dir: str, num_files: int = 50) -> dict:
         "max_ms": max(times),
         "throughput": num_files / (sum(times) / 1000),
     }
+
 
 def benchmark_native_bash(tmp_dir: str, num_files: int = 50) -> dict:
     """Benchmark bash file writes using echo."""
@@ -72,6 +74,7 @@ def benchmark_native_bash(tmp_dir: str, num_files: int = 50) -> dict:
         "max_ms": max(times),
         "throughput": num_files / (sum(times) / 1000),
     }
+
 
 def run_benchmark(enable_deferred: bool = False):
     """Run write performance benchmark.
@@ -226,6 +229,7 @@ def run_benchmark(enable_deferred: bool = False):
             "single_throughput": num_files / (sum(single_times) / 1000),
             "batch_throughput": total_files / total_time_sec,
         }
+
 
 if __name__ == "__main__":
     import json

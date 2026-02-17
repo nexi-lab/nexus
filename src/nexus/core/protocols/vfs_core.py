@@ -14,7 +14,6 @@ References:
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -31,7 +30,7 @@ class VFSCoreProtocol(Protocol):
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes | str:
         """Read file content at path.
 
@@ -49,7 +48,7 @@ class VFSCoreProtocol(Protocol):
         path: str,
         content: bytes | str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Write content to file at path.
 
@@ -66,7 +65,7 @@ class VFSCoreProtocol(Protocol):
     def delete(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Delete file or directory at path.
 
@@ -85,7 +84,7 @@ class VFSCoreProtocol(Protocol):
         *,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Create directory at path.
 
@@ -100,7 +99,7 @@ class VFSCoreProtocol(Protocol):
     def stat(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Get file/directory metadata.
 
@@ -116,7 +115,7 @@ class VFSCoreProtocol(Protocol):
     def exists(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bool:
         """Check if path exists.
 
@@ -134,7 +133,7 @@ class VFSCoreProtocol(Protocol):
         source: str,
         destination: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Rename/move a file or directory.
 

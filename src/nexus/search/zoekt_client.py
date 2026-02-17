@@ -242,9 +242,9 @@ class ZoektClient:
             return {"available": False, "error": str(e)}
 
 # Global client instance
-_client: ZoektClient | None = None
+_client: "ZoektClient | None" = None
 
-def get_zoekt_client() -> ZoektClient:
+def get_zoekt_client() -> "ZoektClient":
     """Get the global Zoekt client instance."""
     global _client
     if _client is None:
@@ -511,9 +511,9 @@ class ZoektIndexManager:
             return False
 
 # Global index manager instance
-_index_manager: ZoektIndexManager | None = None
+_index_manager: "ZoektIndexManager | None" = None
 
-def get_zoekt_index_manager() -> ZoektIndexManager:
+def get_zoekt_index_manager() -> "ZoektIndexManager":
     """Get the global Zoekt index manager instance."""
     global _index_manager
     if _index_manager is None:

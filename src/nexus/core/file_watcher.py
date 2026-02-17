@@ -63,7 +63,7 @@ class FileChange:
         return result
 
 # Type alias for callback functions
-FileChangeCallback = Callable[[FileChange], None]
+FileChangeCallback = Callable[["FileChange"], None]
 
 class FileWatcher:
     """Cross-platform file watcher using OS-native event-driven APIs.

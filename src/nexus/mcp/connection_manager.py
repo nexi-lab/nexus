@@ -30,7 +30,6 @@ from nexus.mcp.models import MCPMount
 from nexus.mcp.mount import MCPMountManager
 from nexus.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
 
-from nexus.skills.protocols import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem
 
@@ -106,7 +105,7 @@ class MCPConnectionManager:
 
     def __init__(
         self,
-        filesystem: NexusFilesystem | None = None,
+        filesystem: "NexusFilesystem | None" = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
     ):

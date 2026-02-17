@@ -96,7 +96,7 @@ class TigerCacheUpdater:
             created_at=datetime.now(UTC),
         )
 
-        def execute(connection: "Connection") -> int:
+        def execute(connection: Connection) -> int:
             result = connection.execute(stmt)
             return result.lastrowid or 0
 
@@ -130,7 +130,7 @@ class TigerCacheUpdater:
             .values(status="pending")
         )
 
-        def execute(connection: "Connection") -> int:
+        def execute(connection: Connection) -> int:
             result = connection.execute(stmt)
             count = result.rowcount
             if count > 0:
@@ -191,7 +191,7 @@ class TigerCacheUpdater:
         if self._is_postgresql:
             select_query = select_query.with_for_update(skip_locked=True)
 
-        def do_process(connection: "Connection") -> int:
+        def do_process(connection: Connection) -> int:
             processed = 0
             result = connection.execute(select_query)
             entries = list(result)
@@ -365,7 +365,7 @@ class TigerCacheUpdater:
             TCQ.processed_at < cutoff,
         )
 
-        def execute(connection: "Connection") -> int:
+        def execute(connection: Connection) -> int:
             result = connection.execute(stmt)
             return result.rowcount
 

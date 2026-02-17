@@ -44,7 +44,6 @@ from nexus.pay.constants import (
     micro_to_credits,
 )
 
-from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 if TYPE_CHECKING:
     from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 
@@ -122,7 +121,7 @@ class CreditsService:
         tigerbeetle_address: str = "127.0.0.1:3000",
         cluster_id: int = 0,
         enabled: bool = True,
-        audit_logger: ExchangeAuditLogger | None = None,
+        audit_logger: "ExchangeAuditLogger | None" = None,
     ):
         """Initialize CreditsService.
 

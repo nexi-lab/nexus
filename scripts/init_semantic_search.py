@@ -30,6 +30,7 @@ from nexus.backends.local import LocalBackend  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.storage.raft_metadata_store import RaftMetadataStore  # noqa: E402
 
+
 async def init_semantic_search() -> bool:
     """
     Initialize semantic search (defaults to keyword-only for safety).
@@ -98,10 +99,12 @@ async def init_semantic_search() -> bool:
         traceback.print_exc()
         return False
 
+
 def main() -> None:
     """Main entry point."""
     success = asyncio.run(init_semantic_search())
     sys.exit(0 if success else 1)
+
 
 if __name__ == "__main__":
     main()

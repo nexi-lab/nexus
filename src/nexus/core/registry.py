@@ -39,7 +39,7 @@ class BaseRegistry(Generic[T]):
     Example::
 
         from nexus.core.registry import BaseRegistry
-        reg: BaseRegistry[int] = BaseRegistry("counters")
+        reg: "BaseRegistry[int]" = BaseRegistry("counters")
         reg.register("hits", 0)
         assert reg.get("hits") == 0
     """

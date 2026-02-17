@@ -23,6 +23,8 @@ References:
     - https://github.com/nexi-lab/nexus/issues/1039
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -46,6 +48,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
 
 class GraphStoreE2ETest:
     """End-to-end test runner for GraphStore."""
@@ -488,6 +491,7 @@ class GraphStoreE2ETest:
             logger.error(f"\n  {self.failed} TESTS FAILED!")
             return False
 
+
 async def main():
     parser = argparse.ArgumentParser(description="Graph Storage E2E Test")
     parser.add_argument(
@@ -528,6 +532,7 @@ async def main():
         sys.exit(1)
     finally:
         await test.teardown()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

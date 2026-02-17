@@ -13,7 +13,6 @@ It must NOT import from:
 
 import pytest
 
-
 # Modules that are ALLOWED to be imported by nexus.cache
 ALLOWED_NEXUS_MODULES = {
     "nexus.core.cache_store",
@@ -23,7 +22,6 @@ ALLOWED_NEXUS_MODULES = {
 FORBIDDEN_PREFIXES = [
     "nexus.server.",
 ]
-
 
 class TestCacheBrickIsolation:
     """Verify nexus.cache import boundaries."""

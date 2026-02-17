@@ -61,7 +61,7 @@ VALID_TRANSITIONS: dict[AgentState, frozenset[AgentState]] = {
 # States that trigger generation increment when transitioning TO CONNECTED
 _NEW_SESSION_SOURCES = frozenset({AgentState.UNKNOWN, AgentState.IDLE, AgentState.SUSPENDED})
 
-def validate_transition(current: AgentState, target: AgentState) -> bool:
+def validate_transition(current: "AgentState", target: "AgentState") -> bool:
     """Check if a state transition is valid according to the allowlist.
 
     Pure function with no side effects. Does not modify any state.
@@ -84,7 +84,7 @@ def validate_transition(current: AgentState, target: AgentState) -> bool:
     allowed = VALID_TRANSITIONS.get(current, frozenset())
     return target in allowed
 
-def is_new_session(current: AgentState, target: AgentState) -> bool:
+def is_new_session(current: "AgentState", target: "AgentState") -> bool:
     """Check if a transition represents a new session (generation should increment).
 
     A new session occurs when transitioning TO CONNECTED from any non-CONNECTED

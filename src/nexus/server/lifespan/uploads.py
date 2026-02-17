@@ -8,13 +8,12 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
-async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
+async def startup_uploads(app: "FastAPI") -> list[asyncio.Task]:
     """Initialize chunked upload service and return background tasks."""
     bg_tasks: list[asyncio.Task] = []
 

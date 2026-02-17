@@ -1,295 +1,284 @@
-"""Fix forward-reference NameErrors after removing `from __future__ import annotations`.
+#!/usr/bin/env python3
+"""Iteratively fix forward-reference NameErrors by importing modules and quoting names.
 
-Two patterns:
-1. Self-referencing class methods: `class Foo: def m() -> Foo:` → `-> "Foo":`
-2. TYPE_CHECKING imports used at runtime → move to regular imports
-
-Usage:
-    python scripts/fix_forward_refs.py [--dry-run]
+Strategy:
+1. Try to import every module under src/nexus/
+2. Catch NameError at the exact source file+line
+3. Quote the offending name in the annotation
+4. Repeat until convergence
 """
 
-import ast
+import importlib
+import os
 import re
 import sys
-from pathlib import Path
+import traceback
 
 
-def find_self_ref_classes(source: str, filepath: str) -> list[tuple[int, str, str]]:
-    """Find class methods that reference their own class name in annotations.
-
-    Returns list of (line_number, old_text, new_text) replacements.
-    """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return []
-
-    replacements = []
-    lines = source.splitlines()
-
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        class_name = node.name
-
-        # Walk all function defs inside this class
-        for child in ast.walk(node):
-            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+def get_all_modules():
+    """Get all .py modules under src/nexus/."""
+    modules = []
+    for root, _dirs, files in os.walk("src/nexus"):
+        for f in sorted(files):
+            if not f.endswith(".py"):
                 continue
-
-            # Check return annotation
-            if child.returns:
-                _check_annotation(child.returns, class_name, lines, replacements)
-
-            # Check argument annotations
-            for arg in child.args.args + child.args.posonlyargs + child.args.kwonlyargs:
-                if arg.annotation:
-                    _check_annotation(arg.annotation, class_name, lines, replacements)
-            if child.args.vararg and child.args.vararg.annotation:
-                _check_annotation(child.args.vararg.annotation, class_name, lines, replacements)
-            if child.args.kwarg and child.args.kwarg.annotation:
-                _check_annotation(child.args.kwarg.annotation, class_name, lines, replacements)
+            path = os.path.join(root, f)
+            mod = path.replace("src/", "").replace("/", ".").replace(".py", "")
+            if mod.endswith(".__init__"):
+                mod = mod[:-9]
+            modules.append(mod)
+    return modules
 
 
-    return replacements
-
-
-def _check_annotation(ann_node, class_name: str, lines: list[str], replacements: list):
-    """Check if an annotation node references class_name and needs quoting."""
-    if isinstance(ann_node, ast.Name) and ann_node.id == class_name:
-        line_idx = ann_node.lineno - 1
-        line = lines[line_idx]
-        # Already quoted?
-        col = ann_node.col_offset
-        if col > 0 and line[col-1] == '"':
-            return
-        replacements.append((ann_node.lineno, ann_node.col_offset, class_name))
-
-    elif isinstance(ann_node, ast.Subscript):
-        # e.g. HandlerResponse[T] — check the value
-        _check_annotation(ann_node.value, class_name, lines, replacements)
-
-    elif isinstance(ann_node, ast.BinOp) and isinstance(ann_node.op, ast.BitOr):
-        # Union: X | Y
-        _check_annotation(ann_node.left, class_name, lines, replacements)
-        _check_annotation(ann_node.right, class_name, lines, replacements)
-
-
-def find_type_checking_runtime_usage(source: str) -> list[str]:
-    """Find names imported under TYPE_CHECKING that are used at runtime.
-
-    Returns list of module import lines that need to be moved to runtime.
-    """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return []
-
-    # Find TYPE_CHECKING block
-    tc_names: dict[str, tuple[str, str]] = {}  # name -> (module, original_name)
-    tc_block_lines: set[int] = set()
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.If):
-            # Check if this is `if TYPE_CHECKING:`
-            test = node.test
-            if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
-                for stmt in node.body:
-                    if isinstance(stmt, ast.ImportFrom) and stmt.module:
-                        for alias in stmt.names:
-                            imported_name = alias.asname or alias.name
-                            tc_names[imported_name] = (stmt.module, alias.name)
-                            tc_block_lines.add(stmt.lineno)
-                    elif isinstance(stmt, ast.Import):
-                        for alias in stmt.names:
-                            imported_name = alias.asname or alias.name
-                            tc_names[imported_name] = (alias.name, alias.name)
-                            tc_block_lines.add(stmt.lineno)
-
-    if not tc_names:
-        return []
-
-    # Now find which of these names are used at runtime (outside strings)
-    # We look for Name nodes that reference tc_names outside of:
-    # - TYPE_CHECKING blocks
-    # - String annotations (already handled)
-    runtime_used = set()
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in tc_names:
-            # Check if this is inside the TYPE_CHECKING block
-            if node.lineno not in tc_block_lines:
-                runtime_used.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            # Check base of attribute access
-            if isinstance(node.value, ast.Name) and node.value.id in tc_names:
-                if node.value.lineno not in tc_block_lines:
-                    runtime_used.add(node.value.id)
-
-    return list(runtime_used)
-
-
-def fix_file_self_refs(filepath: Path, dry_run: bool = False) -> int:
-    """Fix self-referencing class annotations in a file.
-
-    Returns number of fixes applied.
-    """
-    source = filepath.read_text()
-    replacements = find_self_ref_classes(source, str(filepath))
-
-    if not replacements:
-        return 0
-
-    lines = source.splitlines(keepends=True)
-
-    # Sort replacements by line number descending, then col descending
-    # so we can apply them without shifting offsets
-    replacements.sort(key=lambda x: (x[0], x[1]), reverse=True)
-
-    # Deduplicate by (line, col)
-    seen = set()
-    unique_replacements = []
-    for lineno, col, name in replacements:
-        key = (lineno, col)
-        if key not in seen:
-            seen.add(key)
-            unique_replacements.append((lineno, col, name))
-
-    count = 0
-    for lineno, col, name in unique_replacements:
-        line_idx = lineno - 1
-        line = lines[line_idx]
-
-        # Check if already quoted
-        if col > 0 and col < len(line) and line[col-1] == '"':
+def try_import_all():
+    """Try importing all modules, return list of unique error locations."""
+    errors = {}
+    for mod_name in get_all_modules():
+        if mod_name in sys.modules:
             continue
+        try:
+            importlib.import_module(mod_name)
+        except NameError as e:
+            tb = traceback.extract_tb(sys.exc_info()[2])
+            if tb:
+                source = tb[-1]
+                key = (source.filename, source.lineno)
+                if key not in errors:
+                    name_str = str(e)
+                    # Extract name from "name 'Foo' is not defined"
+                    if "'" in name_str:
+                        name = name_str.split("'")[1]
+                    else:
+                        name = name_str.split("name ")[1].split(" ")[0]
+                    errors[key] = {"name": name, "file": source.filename, "line": source.lineno}
+        except SyntaxError as e:
+            if e.filename and e.lineno:
+                key = (e.filename, e.lineno)
+                if key not in errors:
+                    errors[key] = {"name": "", "file": e.filename, "line": e.lineno, "type": "SyntaxError"}
+        except TypeError as e:
+            tb = traceback.extract_tb(sys.exc_info()[2])
+            if tb:
+                source = tb[-1]
+                key = (source.filename, source.lineno)
+                if key not in errors:
+                    errors[key] = {"name": "", "file": source.filename, "line": source.lineno,
+                                   "type": "TypeError", "msg": str(e)}
+        except Exception:
+            pass
 
-        # Replace the bare name with quoted name
-        # We need to handle cases like `-> ClassName:` and `-> ClassName[T]:`
-        # Find the extent of the name in the line
-        end_col = col + len(name)
-        before = line[:col]
-        after = line[end_col:]
-
-        # Check if it's part of a subscript like ClassName[T]
-        if after.lstrip().startswith('['):
-            # Need to find the matching ] and quote the whole thing
-            # This is complex, so for subscripts we quote just the name
-            # Actually for self-refs like `-> HandlerResponse[T]:` inside the class,
-            # we need to quote the whole expression. But if T is a TypeVar, the
-            # subscript form works with a quoted class name.
-            lines[line_idx] = before + '"' + name + '"' + after
-        else:
-            lines[line_idx] = before + '"' + name + '"' + after
-
-        count += 1
-
-    if count > 0 and not dry_run:
-        filepath.write_text(''.join(lines))
-
-    return count
+    return list(errors.values())
 
 
-def fix_file_tc_imports(filepath: Path, dry_run: bool = False) -> int:
-    """Move TYPE_CHECKING imports to runtime if they're used at runtime.
-
-    Returns number of names moved.
-    """
-    source = filepath.read_text()
-    runtime_used = find_type_checking_runtime_usage(source)
-
-    if not runtime_used:
-        return 0
-
+def fix_name_at_line(filepath, lineno, name):
+    """Quote a name in annotation context at the given line."""
     try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return 0
+        lines = open(filepath).read().split("\n")
+    except Exception:
+        return False
 
-    lines = source.splitlines(keepends=True)
+    idx = lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return False
 
-    # Find the TYPE_CHECKING if block
-    tc_if_node = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.If):
-            test = node.test
-            if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
-                tc_if_node = node
-                break
+    line = lines[idx]
 
-    if tc_if_node is None:
-        return 0
+    # Already quoted?
+    if f'"{name}"' in line or f'"{name} |' in line or f'| {name}"' in line:
+        return False
 
-    # Collect import statements in the TC block
-    # Group by module
-    tc_imports: dict[str, list[tuple[str, str | None]]] = {}  # module -> [(name, asname)]
-    tc_import_lines: list[int] = []
+    # Skip f-strings
+    stripped = line.lstrip()
+    if stripped.startswith("#"):
+        return False
 
-    for stmt in tc_if_node.body:
-        if isinstance(stmt, ast.ImportFrom) and stmt.module:
-            for alias in stmt.names:
-                imported_name = alias.asname or alias.name
-                if imported_name in runtime_used:
-                    if stmt.module not in tc_imports:
-                        tc_imports[stmt.module] = []
-                    tc_imports[stmt.module].append((alias.name, alias.asname))
+    original = line
 
-    if not tc_imports:
-        return 0
+    # Try to match and fix union patterns first (must quote entire union)
+    # Pattern: Name | Type1 | Type2 | None → "Name | Type1 | Type2 | None"
+    # We need to find the full union expression containing `name`
 
-    # Build new import lines to add before the TC block
-    new_import_lines = []
-    for module, names in sorted(tc_imports.items()):
-        name_strs = []
-        for name, asname in names:
-            if asname and asname != name:
-                name_strs.append(f"{name} as {asname}")
-            else:
-                name_strs.append(name)
-        new_import_lines.append(f"from {module} import {', '.join(name_strs)}\n")
+    # Check for: `name | None` → `"name | None"`
+    pattern_name_none = re.compile(
+        rf'(?<!["\w]){re.escape(name)}\s*\|\s*None\b'
+    )
+    if pattern_name_none.search(line):
+        line = pattern_name_none.sub(f'"{name} | None"', line)
+        if line != original:
+            lines[idx] = line
+            open(filepath, "w").write("\n".join(lines))
+            return True
 
-    if not new_import_lines and not dry_run:
-        return 0
+    # Pattern: `name | SomeType | None`
+    pattern_name_type_none = re.compile(
+        rf'(?<!["\w]){re.escape(name)}\s*\|\s*([A-Z][A-Za-z0-9_]*)\s*\|\s*None\b'
+    )
+    if pattern_name_type_none.search(line):
+        line = pattern_name_type_none.sub(rf'"{name} | \1 | None"', line)
+        if line != original:
+            lines[idx] = line
+            open(filepath, "w").write("\n".join(lines))
+            return True
 
-    # Find the line to insert before (the `if TYPE_CHECKING:` line)
-    insert_line = tc_if_node.lineno - 1
+    # Pattern: `name | SomeType` (no None)
+    pattern_name_type = re.compile(
+        rf'(?<!["\w]){re.escape(name)}\s*\|\s*([A-Z][A-Za-z0-9_]*)\b(?!\s*\|)'
+    )
+    if pattern_name_type.search(line):
+        line = pattern_name_type.sub(rf'"{name} | \1"', line)
+        if line != original:
+            lines[idx] = line
+            open(filepath, "w").write("\n".join(lines))
+            return True
 
-    # Remove the moved names from TC block
-    # This is complex to do correctly with AST, so we'll just add the runtime
-    # imports and leave the TC imports (duplicates are harmless for TYPE_CHECKING)
+    # Pattern: `SomeType | name` where SomeType is the start of a union
+    # This needs SomeType to be a real type. We quote the whole thing.
+    pattern_type_name = re.compile(
+        rf'([A-Z][A-Za-z0-9_]*)\s*\|\s*{re.escape(name)}\b'
+    )
+    if pattern_type_name.search(line):
+        # Need to quote the whole union expression
+        # Find the annotation start (after : or ->)
+        m = re.search(r'(:\s*|->?\s*)', line)
+        if m:
+            ann_start = m.end()
+            ann_text = line[ann_start:]
+            # Find annotation end (before = or , or : at end)
+            ann_end_match = re.search(r'\s*[=,]|\s*$|\s*:\s*$', ann_text)
+            if ann_end_match:
+                ann_end = ann_end_match.start()
+                ann = ann_text[:ann_end].strip()
+                if name in ann and f'"{name}"' not in ann and not ann.startswith('"'):
+                    quoted_ann = f'"{ann}"'
+                    line = line[:ann_start] + quoted_ann + ann_text[ann_end:]
+                    if line != original:
+                        lines[idx] = line
+                        open(filepath, "w").write("\n".join(lines))
+                        return True
 
-    if not dry_run:
-        for imp_line in reversed(new_import_lines):
-            lines.insert(insert_line, imp_line)
-        filepath.write_text(''.join(lines))
+    # Pattern: `Mapped[name | None]` or `list[name]` etc.
+    pattern_generic = re.compile(
+        rf'(\w+\[){re.escape(name)}(\s*[\]|,])'
+    )
+    m = pattern_generic.search(line)
+    if m:
+        # Check if it's name | None inside brackets
+        pattern_generic_union = re.compile(
+            rf'(\w+\[){re.escape(name)}\s*\|\s*None(\s*\])'
+        )
+        m2 = pattern_generic_union.search(line)
+        if m2:
+            line = pattern_generic_union.sub(rf'\1"{name} | None"\2', line)
+        else:
+            line = pattern_generic.sub(rf'\1"{name}"\2', line)
+        if line != original:
+            lines[idx] = line
+            open(filepath, "w").write("\n".join(lines))
+            return True
 
-    return len(runtime_used)
+    # Simple: just quote the bare name
+    pattern_bare = re.compile(rf'(?<!["\w.]){re.escape(name)}(?!["\w])')
+    if pattern_bare.search(line):
+        line = pattern_bare.sub(f'"{name}"', line, count=1)
+        if line != original:
+            lines[idx] = line
+            open(filepath, "w").write("\n".join(lines))
+            return True
+
+    return False
+
+
+def fix_fstring_at_line(filepath, lineno):
+    """Fix f-string corruption at a specific line."""
+    try:
+        content = open(filepath).read()
+    except Exception:
+        return False
+
+    # Generic pattern for f-string corruption: f"["Name"]..." → f"[Name]..."
+    pattern = re.compile(r'f"(\[)"([A-Za-z_]\w*)"\]')
+    new_content = pattern.sub(r'f"\1\2]', content)
+
+    # Also: regular string "["Name"]..." → "[Name]..."
+    pattern2 = re.compile(r'"(\[)"([A-Za-z_]\w*)"\]')
+    new_content = pattern2.sub(r'"\1\2]', new_content)
+
+    if new_content != content:
+        open(filepath, "w").write(new_content)
+        return True
+    return False
+
+
+def fix_str_subscript(filepath):
+    """Fix "Name"[T] → "Name[T]" patterns."""
+    try:
+        content = open(filepath).read()
+    except Exception:
+        return False
+
+    pattern = re.compile(r'"([A-Za-z_]\w*)"\[([A-Za-z0-9_.,\s\[\]|]+)\]')
+    new_content = pattern.sub(r'"\1[\2]"', content)
+    if new_content != content:
+        open(filepath, "w").write(new_content)
+        return True
+    return False
 
 
 def main():
-    dry_run = "--dry-run" in sys.argv
-    src_dir = Path("src/nexus")
+    max_rounds = 50
+    total_fixes = 0
 
-    if not src_dir.exists():
-        print(f"ERROR: {src_dir} not found. Run from project root.")
-        sys.exit(1)
+    for round_num in range(1, max_rounds + 1):
+        # Clear cached modules for re-import
+        to_remove = [k for k in sys.modules if k.startswith("nexus.")]
+        for k in to_remove:
+            del sys.modules[k]
 
-    total_self_ref = 0
-    total_tc = 0
+        errors = try_import_all()
 
-    py_files = sorted(src_dir.rglob("*.py"))
-    print(f"Scanning {len(py_files)} Python files...")
+        name_errors = [e for e in errors if e.get("type") != "SyntaxError" and e.get("type") != "TypeError"]
+        syntax_errors = [e for e in errors if e.get("type") == "SyntaxError"]
+        type_errors = [e for e in errors if e.get("type") == "TypeError"]
 
-    for filepath in py_files:
-        count = fix_file_self_refs(filepath, dry_run)
-        if count:
-            total_self_ref += count
-            prefix = "[DRY-RUN] " if dry_run else ""
-            print(f"  {prefix}Fixed {count} self-ref(s) in {filepath.relative_to(src_dir.parent.parent)}")
+        total_errors = len(errors)
+        if total_errors == 0:
+            print(f"\nRound {round_num}: All importable modules succeed!")
+            break
 
-    print(f"\nTotal self-ref fixes: {total_self_ref}")
-    print(f"Total TYPE_CHECKING fixes: {total_tc}")
-    print(f"{'DRY RUN - no files modified' if dry_run else 'Files updated.'}")
+        print(f"\nRound {round_num}: {total_errors} unique error locations "
+              f"({len(name_errors)} NameError, {len(syntax_errors)} SyntaxError, {len(type_errors)} TypeError)")
+
+        fixes = 0
+
+        for err in syntax_errors:
+            if fix_fstring_at_line(err["file"], err["line"]):
+                fixes += 1
+                print(f"  Fixed SyntaxError at {err['file']}:{err['line']}")
+
+        for err in type_errors:
+            if fix_str_subscript(err["file"]):
+                fixes += 1
+                print(f"  Fixed TypeError at {err['file']}:{err['line']}")
+
+        for err in name_errors:
+            if fix_name_at_line(err["file"], err["line"], err["name"]):
+                fixes += 1
+                print(f"  Fixed {err['name']} at {err['file']}:{err['line']}")
+            else:
+                print(f"  SKIP {err['name']} at {err['file']}:{err['line']}")
+
+        total_fixes += fixes
+        print(f"  => {fixes} fixes this round (total: {total_fixes})")
+
+        if fixes == 0:
+            print(f"\nNo automatic fixes possible. {total_errors} errors remain.")
+            for err in errors[:30]:
+                name = err.get("name", err.get("msg", ""))
+                etype = err.get("type", "NameError")
+                print(f"  {etype}: {name} at {err['file']}:{err['line']}")
+            break
+
+    print(f"\nDone: {total_fixes} total fixes across {round_num} rounds")
 
 
 if __name__ == "__main__":

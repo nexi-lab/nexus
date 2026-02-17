@@ -16,8 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
 
-from collections.abc import Callable
-from nexus.core.rebac import NamespaceConfig
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -46,7 +44,7 @@ class PermissionComputer:
     def __init__(
         self,
         repo: "TupleRepository",
-        namespace_resolver: Callable[[str], NamespaceConfig | None],
+        namespace_resolver: "Callable[[str], NamespaceConfig | None]",
         max_depth: int = 10,
     ) -> None:
         self._repo = repo
@@ -242,7 +240,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -302,7 +300,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -358,7 +356,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -973,7 +971,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: NamespaceConfig,
+        namespace: "NamespaceConfig",
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         paths: list[dict[str, Any]],

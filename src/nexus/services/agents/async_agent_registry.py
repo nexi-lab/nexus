@@ -21,15 +21,12 @@ from typing import TYPE_CHECKING, Any
 from nexus.services.agents.agent_record import AgentState
 from nexus.services.protocols.agent_registry import AgentInfo
 
-from nexus.scheduler.events import AgentStateEmitter
-from nexus.services.agents.agent_record import AgentRecord
-from nexus.services.agents.agent_registry import AgentRegistry
 if TYPE_CHECKING:
     from nexus.scheduler.events import AgentStateEmitter
     from nexus.services.agents.agent_record import AgentRecord
     from nexus.services.agents.agent_registry import AgentRegistry
 
-def _to_agent_info(record: AgentRecord) -> AgentInfo:
+def _to_agent_info(record: "AgentRecord") -> AgentInfo:
     """Convert an ``AgentRecord`` to the protocol-level ``AgentInfo``.
 
     Maps the persistence-layer dataclass to the lightweight snapshot
@@ -59,9 +56,9 @@ class AsyncAgentRegistry:
 
     def __init__(
         self,
-        inner: AgentRegistry,
+        inner: "AgentRegistry",
         *,
-        state_emitter: AgentStateEmitter | None = None,
+        state_emitter: "AgentStateEmitter | None" = None,
     ) -> None:
         self._inner = inner
         self._state_emitter = state_emitter

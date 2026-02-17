@@ -21,6 +21,7 @@ Usage:
 import argparse
 import sys
 
+
 def get_secret(project_id: str, secret_id: str) -> str:
     """Get secret value from Google Secret Manager.
 
@@ -58,6 +59,7 @@ def get_secret(project_id: str, secret_id: str) -> str:
         print(f"Error retrieving secret {secret_id}: {e}", file=sys.stderr)
         raise
 
+
 def load_slack_secrets(project_id: str) -> dict[str, str]:
     """Load all Slack secrets from Google Secret Manager.
 
@@ -85,6 +87,7 @@ def load_slack_secrets(project_id: str) -> dict[str, str]:
             print(f"✗ Failed to load: {env_var} - {e}", file=sys.stderr)
 
     return result
+
 
 def main():
     parser = argparse.ArgumentParser(description="Load Slack secrets from Google Secret Manager")
@@ -153,6 +156,7 @@ def main():
             # Mask secret values for display
             masked = value[:10] + "..." if len(value) > 10 else value
             print(f"  {key}={masked}", file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()

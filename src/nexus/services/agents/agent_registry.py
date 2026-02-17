@@ -48,7 +48,6 @@ from nexus.services.agents.agent_record import (
 )
 from nexus.storage.models import AgentRecordModel
 
-from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -110,7 +109,7 @@ class AgentRegistry:
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        session_factory: "sessionmaker[Session]",
         entity_registry: Any = None,
         flush_interval: int = 60,
         cache_maxsize: int = 5000,
@@ -137,7 +136,7 @@ class AgentRegistry:
         )
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> Generator["Session", None, None]:
         """Create a session from the factory with auto-commit/rollback."""
         session = self._session_factory()
         try:

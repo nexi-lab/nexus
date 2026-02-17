@@ -88,7 +88,7 @@ def parse_datetime(value: str | datetime | None) -> datetime | None:
 
     raise ValueError(f"Cannot parse datetime: {value!r}")
 
-def parse_temporal_range(value: str) -> TemporalRange:
+def parse_temporal_range(value: str) -> "TemporalRange":
     """Parse a partial date string into a start/end datetime range.
 
     Supports:

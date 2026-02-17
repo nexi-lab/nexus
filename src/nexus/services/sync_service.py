@@ -25,7 +25,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.core.context_utils import get_zone_id
 from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore

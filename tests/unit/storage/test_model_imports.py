@@ -114,6 +114,8 @@ EXPECTED_MODELS = [
     # Transactional Snapshots (Issue #1752)
     "TransactionSnapshotModel",
     "SnapshotEntryModel",
+    # Context Branching (Issue #1315)
+    "ContextBranchModel",
 ]
 
 class TestModelReExports:

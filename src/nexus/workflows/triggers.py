@@ -150,7 +150,7 @@ BUILTIN_TRIGGERS: dict[TriggerType, TriggerFactory] = {
     TriggerType.METADATA_CHANGE: MetadataChangeTrigger,
     TriggerType.SCHEDULE: ScheduleTrigger,
     TriggerType.WEBHOOK: WebhookTrigger,
-    TriggerType.MANUAL: ManualTrigger,
+    TriggerType.MANUAL: "ManualTrigger",
 }
 
 class TriggerManager:

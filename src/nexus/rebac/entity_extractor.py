@@ -393,9 +393,9 @@ class EntityExtractor:
         return "ENTITY"
 
 # Module-level convenience functions
-_default_extractor: EntityExtractor | None = None
+_default_extractor: "EntityExtractor | None" = None
 
-def get_default_extractor() -> EntityExtractor:
+def get_default_extractor() -> "EntityExtractor":
     """Get or create the default entity extractor.
 
     Returns:

@@ -137,9 +137,9 @@ class PendingOAuthManager:
             del self._storage[token]
 
 # Global instance (shared across all requests)
-_pending_oauth_manager: PendingOAuthManager | None = None
+_pending_oauth_manager: "PendingOAuthManager | None" = None
 
-def get_pending_oauth_manager() -> PendingOAuthManager:
+def get_pending_oauth_manager() -> "PendingOAuthManager":
     """Get the global pending OAuth manager instance."""
     global _pending_oauth_manager
     if _pending_oauth_manager is None:

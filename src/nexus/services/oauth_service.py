@@ -21,8 +21,6 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
-from nexus.core.cache_store import CacheStoreABC
-from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
     from nexus.core.permissions import OperationContext
@@ -41,7 +39,7 @@ class PKCEStateStore:
 
     def __init__(
         self,
-        cache_store: CacheStoreABC | None = None,
+        cache_store: "CacheStoreABC | None" = None,
         ttl: int = 600,
     ) -> None:
         self._cache_store = cache_store
@@ -167,7 +165,7 @@ class OAuthService:
     @rpc_expose(description="List all available OAuth providers")
     async def oauth_list_providers(
         self,
-        context: OperationContext | None = None,  # noqa: ARG002 - Required by RPC protocol
+        context: "OperationContext | None" = None,  # noqa: ARG002 - Required by RPC protocol
     ) -> builtins.list[dict[str, Any]]:
         """List all available OAuth providers from configuration.
 
@@ -300,7 +298,7 @@ class OAuthService:
         state: str | None = None,
         redirect_uri: str | None = None,
         code_verifier: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Exchange OAuth authorization code for tokens and store credentials.
 
@@ -449,7 +447,7 @@ class OAuthService:
         self,
         provider: str | None = None,
         include_revoked: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all OAuth credentials for the current user.
 
@@ -541,7 +539,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Revoke an OAuth credential.
 
@@ -615,7 +613,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Test if an OAuth credential is valid and can be refreshed.
 
@@ -720,7 +718,7 @@ class OAuthService:
         self,
         provider: str,
         redirect_url: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Connect to an MCP provider using Klavis hosted OAuth.
 
@@ -1127,7 +1125,7 @@ class OAuthService:
         provider: str,
         user_email: str,
         zone_id: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         *,
         action: str = "access",
     ) -> None:

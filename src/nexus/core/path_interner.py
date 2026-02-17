@@ -16,10 +16,12 @@ References:
 """
 
 import threading
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 class PathInterner:
     """Thread-safe path string interning for memory efficiency.
@@ -120,7 +122,7 @@ class PathInterner:
         with self._lock:
             return len(self._ids)
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> "Iterator[str]":
         """Iterate over all interned paths."""
         with self._lock:
             # Return a copy to avoid issues with concurrent modification
@@ -336,7 +338,7 @@ class SegmentedPathInterner:
 # Use module-level instances for sharing across the application
 
 _global_path_interner: PathInterner | None = None
-_global_segmented_interner: SegmentedPathInterner | None = None
+_global_segmented_interner: "SegmentedPathInterner | None" = None
 _interner_lock = threading.Lock()
 
 def get_path_interner() -> PathInterner:
@@ -352,7 +354,7 @@ def get_path_interner() -> PathInterner:
                 _global_path_interner = PathInterner()
     return _global_path_interner
 
-def get_segmented_interner() -> SegmentedPathInterner:
+def get_segmented_interner() -> "SegmentedPathInterner":
     """Get the global SegmentedPathInterner instance (thread-safe singleton).
 
     Returns:

@@ -8,6 +8,7 @@ and consistent output formatting.
 from collections.abc import Callable
 from typing import Any
 
+
 def safe_operation(
     operation_name: str,
     operation_fn: Callable[..., Any],
@@ -71,6 +72,7 @@ def safe_operation(
 
         return None
 
+
 def print_section(title: str, char: str = "=") -> None:
     """
     Print a formatted section header.
@@ -89,6 +91,7 @@ def print_section(title: str, char: str = "=") -> None:
     print(f"\n{separator}")
     print(title)
     print(separator)
+
 
 def print_subsection(title: str) -> None:
     """

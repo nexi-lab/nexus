@@ -808,7 +808,7 @@ def create_query_expansion_service(
     model: str | None = None,
     api_key: str | None = None,
     config: QueryExpansionConfig | None = None,
-) -> QueryExpansionService:
+) -> "QueryExpansionService":
     """Create a query expansion service with smart triggering.
 
     Args:

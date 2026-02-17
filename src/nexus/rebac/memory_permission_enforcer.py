@@ -19,7 +19,7 @@ from nexus.services.permissions.enforcer import PermissionEnforcer
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 class MemoryPermissionEnforcer(PermissionEnforcer):
     """Permission enforcer for memory with identity relationships.

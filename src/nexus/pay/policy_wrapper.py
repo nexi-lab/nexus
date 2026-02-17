@@ -19,8 +19,6 @@ from nexus.pay.audit_types import TransactionProtocol
 from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 from nexus.pay.spending_policy import ApprovalRequiredError, PolicyDeniedError
 
-from nexus.pay.spending_policy_service import SpendingPolicyService
-from nexus.services.protocols.payment import PaymentProtocol
 if TYPE_CHECKING:
     from nexus.pay.spending_policy_service import SpendingPolicyService
     from nexus.services.protocols.payment import PaymentProtocol
@@ -40,8 +38,8 @@ class PolicyEnforcedPayment:
 
     def __init__(
         self,
-        inner: PaymentProtocol,
-        policy_service: SpendingPolicyService,
+        inner: "PaymentProtocol",
+        policy_service: "SpendingPolicyService",
     ) -> None:
         self._inner = inner
         self._policy_service = policy_service

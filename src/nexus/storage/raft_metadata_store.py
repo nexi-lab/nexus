@@ -226,7 +226,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         self,
         prefix: str = "",
         recursive: bool = True,
-    ) -> "list[FileMetadata]":
+    ) -> list[FileMetadata]:
         """List metadata entries from the embedded sled engine.
 
         Args:
@@ -442,7 +442,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         recursive: bool = True,
         zone_id: str | None = None,
         accessible_int_ids: set[int] | None = None,
-    ) -> "list[FileMetadata]":
+    ) -> list[FileMetadata]:
         """List all files with given path prefix.
 
         RaftMetadataStore is zone-local: each zone has its own sled database,

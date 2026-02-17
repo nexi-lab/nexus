@@ -400,7 +400,7 @@ async def get_delegation_chain(
 @router.post("/{delegation_id}/complete")
 async def complete_delegation(
     delegation_id: str,
-    request: CompleteDelegationRequest,
+    request: "CompleteDelegationRequest",
     http_request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> dict[str, Any]:

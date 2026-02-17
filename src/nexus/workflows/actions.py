@@ -363,5 +363,5 @@ BUILTIN_ACTIONS = {
     "llm": LLMAction,
     "webhook": WebhookAction,
     "python": PythonAction,
-    "bash": BashAction,
+    "bash": "BashAction",
 }

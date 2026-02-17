@@ -43,10 +43,6 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nexus.backends.backend import Backend
-from nexus.core._metadata_generated import FileMetadataProtocol
-from nexus.core.config import CacheConfig, DistributedConfig, KernelServices, PermissionConfig
-from nexus.storage.record_store import RecordStoreABC
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
@@ -291,7 +287,7 @@ def create_record_store(
     db_url: str | None = None,
     db_path: str | None = None,
     create_tables: bool = True,
-) -> RecordStoreABC:
+) -> "RecordStoreABC":
     """Create a RecordStore with Cloud SQL support auto-detected from env.
 
     When the ``CLOUD_SQL_INSTANCE`` environment variable is set, the
@@ -612,6 +608,22 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
+    # --- Context Branch Service (Issue #1315) ---
+    context_branch_service: Any = None
+    try:
+        from nexus.services.context_branch import ContextBranchService
+
+        context_branch_service = ContextBranchService(
+            workspace_manager=kernel["workspace_manager"],
+            session_factory=ctx.session_factory,
+            rebac_manager=kernel["rebac_manager"],
+            default_zone_id=ctx.zone_id,
+            default_agent_id=ctx.agent_id,
+        )
+        logger.debug("[BOOT:SYSTEM] ContextBranchService created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
+
     # TODO: EventLog, Hook, Scheduler services (not yet implemented)
 
     result = {
@@ -623,12 +635,38 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "delivery_worker": delivery_worker,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
+        "context_branch_service": context_branch_service,
     }
 
     elapsed = time.perf_counter() - t0
     active = sum(1 for v in result.values() if v is not None)
     logger.info("[BOOT:SYSTEM] %d/%d services ready (%.3fs)", active, len(result), elapsed)
     return result
+
+def _resolve_tasks_db_path(backend: Any) -> str:
+    """Resolve the fjall database path for TaskQueueService.
+
+    Priority:
+    1. NEXUS_TASKS_DB_PATH environment variable
+    2. NEXUS_DATA_DIR/tasks-db
+    3. backend.root_path/../tasks-db (alongside backend storage)
+    4. .nexus-data/tasks-db (fallback)
+    """
+    import os
+
+    env_path = os.environ.get("NEXUS_TASKS_DB_PATH")
+    if env_path:
+        return env_path
+
+    data_dir = os.environ.get("NEXUS_DATA_DIR")
+    if data_dir:
+        return os.path.join(data_dir, "tasks-db")
+
+    root_path = getattr(backend, "root_path", None)
+    if root_path is not None:
+        return os.path.join(str(root_path), "tasks-db")
+
+    return os.path.join(".nexus-data", "tasks-db")
 
 def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str, Any]:
     """Boot Tier 2 (BRICK) — optional, silent on failure.
@@ -650,15 +688,6 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         logger.debug("[BOOT:BRICK] Search brick imports: %s", _search_status)
     except ImportError:
         logger.debug("[BOOT:BRICK] Search brick manifest not available")
-
-    # --- LLM Brick Import Validation (Issue #1521) ---
-    try:
-        from nexus.llm.manifest import verify_imports as _verify_llm
-
-        _llm_status = _verify_llm()
-        logger.debug("[BOOT:BRICK] LLM brick imports: %s", _llm_status)
-    except ImportError:
-        logger.debug("[BOOT:BRICK] LLM brick manifest not available")
 
     # Wire zoekt callbacks into backends (Issue #1520)
     try:
@@ -826,6 +855,17 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except ImportError as _snap_exc:
         logger.debug("[BOOT:BRICK] TransactionalSnapshotService unavailable: %s", _snap_exc)
 
+    # --- TaskQueueService (Issue #655) ---
+    task_queue_service: Any = None
+    try:
+        from nexus.services.task_queue_service import TaskQueueService
+
+        task_queue_service = TaskQueueService(
+            db_path=_resolve_tasks_db_path(ctx.backend),
+        )
+    except Exception as _tq_exc:
+        logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -837,6 +877,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
+        "task_queue_service": task_queue_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -872,19 +913,19 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
         logger.debug("[BOOT:BG] EventDeliveryWorker started")
 
 def create_nexus_services(
-    record_store: RecordStoreABC,
-    metadata_store: FileMetadataProtocol,
-    backend: Backend,
+    record_store: "RecordStoreABC",
+    metadata_store: "FileMetadataProtocol",
+    backend: "Backend",
     router: "PathRouter",
     *,
-    permissions: PermissionConfig | None = None,
-    cache: CacheConfig | None = None,
-    distributed: DistributedConfig | None = None,
+    permissions: "PermissionConfig | None" = None,
+    cache: "CacheConfig | None" = None,
+    distributed: "DistributedConfig | None" = None,
     zone_id: str | None = None,
     agent_id: str | None = None,
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
-) -> KernelServices:
+) -> "KernelServices":
     """Create default services for NexusFS dependency injection.
 
     Orchestrates 3-tier boot sequence:
@@ -968,6 +1009,7 @@ def create_nexus_services(
         workspace_registry=kernel["workspace_registry"],
         mount_manager=kernel["mount_manager"],
         workspace_manager=kernel["workspace_manager"],
+        context_branch_service=system.get("context_branch_service"),
         write_observer=kernel["write_observer"],
         version_service=kernel["version_service"],
         # System tier
@@ -992,11 +1034,12 @@ def create_nexus_services(
         delivery_worker=system["delivery_worker"],
         api_key_creator=brick["api_key_creator"],
         snapshot_service=brick["snapshot_service"],
+        task_queue_service=brick["task_queue_service"],
     )
 
 def _create_distributed_infra(
-    dist: DistributedConfig,
-    metadata_store: FileMetadataProtocol,
+    dist: "DistributedConfig",
+    metadata_store: "FileMetadataProtocol",
     session_factory: Any,
     coordination_url: str | None,
 ) -> tuple[Any, Any]:
@@ -1133,19 +1176,19 @@ def _post_init(nx: "NexusFS") -> None:
         logger.warning("Failed to load saved mounts during initialization: %s", e)
 
 def create_nexus_fs(
-    backend: Backend,
-    metadata_store: FileMetadataProtocol,
-    record_store: RecordStoreABC | None = None,
+    backend: "Backend",
+    metadata_store: "FileMetadataProtocol",
+    record_store: "RecordStoreABC | None" = None,
     *,
     cache_store: Any = None,
     is_admin: bool = False,
     custom_namespaces: list[Any] | None = None,
-    cache: CacheConfig | None = None,
-    permissions: PermissionConfig | None = None,
-    distributed: DistributedConfig | None = None,
+    cache: "CacheConfig | None" = None,
+    permissions: "PermissionConfig | None" = None,
+    distributed: "DistributedConfig | None" = None,
     memory: Any = None,
     parsing: Any = None,
-    services: KernelServices | None = None,
+    services: "KernelServices | None" = None,
     # Legacy flat params — translated to config objects for backward compat
     enforce_permissions: bool | None = None,
     allow_admin_bypass: bool | None = None,
@@ -1328,6 +1371,11 @@ def create_nexus_fs(
 
         services = _dc_replace(services, workflow_engine=workflow_engine)
 
+    # Create parse callback for virtual views (Issue #668: factory creates services)
+    from nexus.parsers import create_default_parse_fn
+
+    _parse_fn = create_default_parse_fn()
+
     nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
@@ -1341,6 +1389,7 @@ def create_nexus_fs(
         memory=memory,
         parsing=parsing,
         services=services,
+        parse_fn=_parse_fn,
     )
 
     # Post-construction I/O (mount restoration, etc.)

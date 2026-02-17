@@ -106,7 +106,7 @@ async def detect_device() -> dict[str, Any]:
     }
 
 @router.post("/download", response_model=ModelDownloadResponse)
-async def download_models(request: ModelDownloadRequest) -> ModelDownloadResponse:
+async def download_models(request: ModelDownloadRequest) -> "ModelDownloadResponse":
     """Download models for a specific device tier.
 
     Pre-downloads all models needed for offline operation at the specified tier.

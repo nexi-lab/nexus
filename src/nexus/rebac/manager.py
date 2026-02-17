@@ -83,7 +83,6 @@ from nexus.rebac.types import (
 from nexus.rebac.utils.changelog import insert_changelog_entry
 from nexus.rebac.utils.zone import normalize_zone_id
 
-from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -119,7 +118,7 @@ class ReBACManager:
 
     def __init__(
         self,
-        engine: Engine,
+        engine: "Engine",
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
         enforce_zone_isolation: bool = False,

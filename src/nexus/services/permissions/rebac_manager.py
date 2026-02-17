@@ -39,7 +39,6 @@ from nexus.services.permissions.rebac_fast import (
 )
 from nexus.services.permissions.tuples.repository import TupleRepository
 
-from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -79,7 +78,7 @@ class ReBACManager:
 
     def __init__(
         self,
-        engine: Engine,
+        engine: "Engine",
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
         enable_l1_cache: bool = True,

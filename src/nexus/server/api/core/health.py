@@ -26,7 +26,7 @@ class HealthResponse(BaseModel):
 
 @router.get("/health", response_model=HealthResponse)
 @limiter.exempt
-async def health_check(request: Request) -> HealthResponse | Any:
+async def health_check(request: Request) -> "HealthResponse | Any":
     """Basic health check (always accessible)."""
     enforce_permissions = None
     enforce_zone_isolation = None

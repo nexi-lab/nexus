@@ -22,8 +22,6 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from nexus.backends.backend import FileInfo
-from nexus.services.change_log_store import ChangeLogEntry
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
     from nexus.services.change_log_store import ChangeLogEntry
@@ -120,8 +118,8 @@ def resolve_conflict(
 def detect_conflict(
     nexus_mtime: datetime | None,
     nexus_content_hash: str | None,
-    backend_file_info: FileInfo,
-    last_synced: ChangeLogEntry | None,
+    backend_file_info: "FileInfo",
+    last_synced: "ChangeLogEntry | None",
 ) -> bool:
     """Determine if both Nexus and backend changed since last sync.
 
@@ -176,7 +174,7 @@ def _resolve_by_size(
 def _nexus_changed(
     nexus_mtime: datetime | None,
     nexus_content_hash: str | None,
-    last_synced: ChangeLogEntry,
+    last_synced: "ChangeLogEntry",
 ) -> bool:
     """Check if Nexus side changed since last sync."""
     # Compare content hash first (most reliable)
@@ -191,8 +189,8 @@ def _nexus_changed(
     return True
 
 def _backend_changed(
-    backend_file_info: FileInfo,
-    last_synced: ChangeLogEntry,
+    backend_file_info: "FileInfo",
+    last_synced: "ChangeLogEntry",
 ) -> bool:
     """Check if backend side changed since last sync."""
     # Compare backend version first (most reliable for cloud backends)

@@ -33,7 +33,7 @@ from nexus.storage.models.permissions import TigerResourceMapModel as TRM
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
-    from nexus.cache.base import TigerCacheProtocol
+    from nexus.cache.dragonfly import DragonflyTigerCache
     from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
@@ -86,7 +86,7 @@ class TigerCache:
         engine: "Engine",
         resource_map: "TigerResourceMap | None" = None,
         rebac_manager: "EnhancedReBACManager | None" = None,
-        dragonfly_cache: "TigerCacheProtocol | None" = None,
+        dragonfly_cache: "DragonflyTigerCache | None" = None,
     ):
         """Initialize Tiger Cache.
 
@@ -104,7 +104,7 @@ class TigerCache:
         self._is_postgresql = "postgresql" in str(engine.url)
 
         # L2: Dragonfly distributed cache (optional)
-        self._dragonfly: "TigerCacheProtocol | None" = dragonfly_cache
+        self._dragonfly: DragonflyTigerCache | None = dragonfly_cache
         self._dragonfly_url: str | None = None  # Cached URL for sync Redis client
 
         # L1: In-memory cache for hot entries
@@ -123,14 +123,14 @@ class TigerCache:
         """Public accessor for the resource map."""
         return self._resource_map
 
-    def set_dragonfly_cache(self, dragonfly_cache: "TigerCacheProtocol | None") -> None:
+    def set_dragonfly_cache(self, dragonfly_cache: "DragonflyTigerCache | None") -> None:
         """Set or update the Dragonfly cache backend.
 
         This allows late binding of the Dragonfly cache after initialization,
         useful when the cache factory initializes after TigerCache.
 
         Args:
-            dragonfly_cache: TigerCacheProtocol instance or None to disable
+            dragonfly_cache: DragonflyTigerCache instance or None to disable
         """
         self._dragonfly = dragonfly_cache
         if dragonfly_cache:
@@ -412,7 +412,7 @@ class TigerCache:
             TC.resource_type == key.resource_type,
         )
 
-        def execute(connection: "Connection") -> bytes | None:
+        def execute(connection: Connection) -> bytes | None:
             result = connection.execute(stmt)
             row = result.fetchone()
             if row:
@@ -593,7 +593,7 @@ class TigerCache:
             TC.resource_type == key.resource_type,
         )
 
-        def execute(connection: "Connection") -> Any:  # Returns Bitmap or None
+        def execute(connection: Connection) -> Any:  # Returns Bitmap or None
             result = connection.execute(stmt)
             row = result.fetchone()
             if row:
@@ -811,7 +811,7 @@ class TigerCache:
             "revision": revision,
         }
 
-        def execute(connection: "Connection") -> None:
+        def execute(connection: Connection) -> None:
             if self._is_postgresql:
                 pg_stmt = pg_insert(TC).values(**params, created_at=now, updated_at=now)
                 pg_stmt = pg_stmt.on_conflict_do_update(
@@ -916,7 +916,7 @@ class TigerCache:
         if conditions:
             stmt = stmt.where(*conditions)
 
-        def execute(connection: "Connection") -> int:
+        def execute(connection: Connection) -> int:
             result = connection.execute(stmt)
             return result.rowcount
 

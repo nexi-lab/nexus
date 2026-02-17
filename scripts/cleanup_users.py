@@ -24,6 +24,7 @@ from nexus.storage.models import (
     ZoneModel,
 )
 
+
 def cleanup_database():
     """Remove all users and related data from database."""
     # Get database URL from environment or use default
@@ -93,6 +94,7 @@ def cleanup_database():
             session.rollback()
             print(f"\n❌ Error during cleanup: {e}")
             raise
+
 
 if __name__ == "__main__":
     cleanup_database()

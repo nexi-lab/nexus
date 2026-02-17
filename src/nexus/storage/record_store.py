@@ -30,8 +30,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.engine.interfaces import DBAPIConnection
-from sqlalchemy.pool import ConnectionPoolEntry
 if TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPIConnection
     from sqlalchemy.pool import ConnectionPoolEntry

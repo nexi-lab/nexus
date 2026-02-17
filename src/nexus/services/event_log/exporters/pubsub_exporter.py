@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent
 
-from nexus.services.event_log.exporters.config import PubSubExporterConfig
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import PubSubExporterConfig
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 class PubSubExporter:
     """Google Pub/Sub event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: PubSubExporterConfig) -> None:
+    def __init__(self, config: "PubSubExporterConfig") -> None:
         self._config = config
         self._publisher: Any | None = None
 

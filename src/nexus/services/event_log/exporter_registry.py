@@ -10,8 +10,6 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.core.event_bus import FileEvent
-from nexus.services.event_log.exporter_protocol import EventStreamExporterProtocol
 if TYPE_CHECKING:
     from nexus.core.event_bus import FileEvent
     from nexus.services.event_log.exporter_protocol import EventStreamExporterProtocol
@@ -24,7 +22,7 @@ class ExporterRegistry:
     def __init__(self) -> None:
         self._exporters: dict[str, EventStreamExporterProtocol] = {}
 
-    def register(self, exporter: EventStreamExporterProtocol) -> None:
+    def register(self, exporter: "EventStreamExporterProtocol") -> None:
         """Register an exporter. Overwrites if name already exists."""
         self._exporters[exporter.name] = exporter
         logger.info("Registered event exporter: %s", exporter.name)
@@ -39,7 +37,7 @@ class ExporterRegistry:
     def exporter_names(self) -> list[str]:
         return list(self._exporters)
 
-    async def dispatch_batch(self, events: list[FileEvent]) -> dict[str, list[str]]:
+    async def dispatch_batch(self, events: list["FileEvent"]) -> dict[str, list[str]]:
         """Dispatch a batch of events to all registered exporters in parallel.
 
         Returns:

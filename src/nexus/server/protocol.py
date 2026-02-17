@@ -1839,7 +1839,7 @@ METHOD_PARAMS = {
     "list_share_links": ListShareLinksParams,
     "revoke_share_link": RevokeShareLinkParams,
     "access_share_link": AccessShareLinkParams,
-    "get_share_link_access_logs": GetShareLinkAccessLogsParams,
+    "get_share_link_access_logs": "GetShareLinkAccessLogsParams",
 }
 
 def parse_method_params(method: str, params: dict[str, Any] | None) -> Any:

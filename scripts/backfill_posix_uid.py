@@ -23,12 +23,14 @@ from datetime import UTC, datetime
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+
 def get_db_url() -> str:
     """Get database URL from environment."""
     return os.environ.get(
         "NEXUS_DATABASE_URL",
         os.environ.get("POSTGRES_URL", "sqlite:///nexus.db"),
     )
+
 
 def backfill_posix_uid(dry_run: bool = False, batch_size: int = 1000) -> dict[str, int | str]:
     """Backfill posix_uid from ReBAC direct_owner relationships.
@@ -154,6 +156,7 @@ def backfill_posix_uid(dry_run: bool = False, batch_size: int = 1000) -> dict[st
     stats["end_time"] = datetime.now(UTC).isoformat()
     return stats
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Backfill posix_uid from ReBAC direct_owner relationships"
@@ -180,6 +183,7 @@ def main() -> None:
     print(f"  Start time: {stats['start_time']}")
     print(f"  End time: {stats.get('end_time', 'N/A')}")
     print("=" * 50)
+
 
 if __name__ == "__main__":
     main()

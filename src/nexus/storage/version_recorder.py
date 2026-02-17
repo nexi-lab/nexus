@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 
-from nexus.core._metadata_generated import FileMetadata
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata
 
@@ -42,7 +41,7 @@ class VersionRecorder:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def record_write(self, metadata: FileMetadata, *, is_new: bool) -> None:
+    def record_write(self, metadata: "FileMetadata", *, is_new: bool) -> None:
         """Record a file write (create or update).
 
         Args:
@@ -74,7 +73,7 @@ class VersionRecorder:
                 .values(deleted_at=_utcnow_naive())
             )
 
-    def _record_create(self, metadata: FileMetadata) -> None:
+    def _record_create(self, metadata: "FileMetadata") -> None:
         """Insert new FilePathModel + initial VersionHistoryModel."""
         # Remove any soft-deleted entries at this path (single statement, no SELECT)
         self.session.execute(
@@ -110,7 +109,7 @@ class VersionRecorder:
             )
             self.session.add(version_entry)
 
-    def _record_update(self, metadata: FileMetadata) -> None:
+    def _record_update(self, metadata: "FileMetadata") -> None:
         """Update existing FilePathModel + append VersionHistoryModel."""
         existing = self.session.execute(
             select(FilePathModel).where(

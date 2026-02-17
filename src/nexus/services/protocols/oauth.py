@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 
-from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -43,38 +42,38 @@ class OAuthProtocol(Protocol):
         state: str | None = None,
         redirect_uri: str | None = None,
         code_verifier: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
     async def oauth_list_providers(
         self,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]: ...
 
     async def oauth_list_credentials(
         self,
         provider: str | None = None,
         include_revoked: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]: ...
 
     async def oauth_revoke_credential(
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
     async def oauth_test_credential(
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
     async def mcp_connect(
         self,
         provider: str,
         redirect_url: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...

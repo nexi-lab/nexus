@@ -194,7 +194,7 @@ async def request_topup(
 @router.get("/config", response_model=X402ConfigResponse)
 async def get_x402_config(
     request: Request,
-) -> X402ConfigResponse:
+) -> "X402ConfigResponse":
     """Get x402 configuration.
 
     Returns the current x402 configuration for the server.

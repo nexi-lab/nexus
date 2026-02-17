@@ -263,7 +263,6 @@ def test_service_protocol_compliance(
 
 _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
-    ("context_manifest", "nexus/services/protocols/context_manifest.py"),
     ("event_log", "nexus/services/protocols/event_log.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),

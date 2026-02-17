@@ -144,6 +144,9 @@ class KernelServices:
     # Cache invalidation (Issue #1169 / #1519)
     cache_observer: CacheInvalidationObserver | None = None
 
+    # --- Tier 1.5: SYSTEM SERVICE — Brick Lifecycle Manager (Issue #1704) ---
+    brick_lifecycle_manager: Any = None
+
     # --- Tier 2: BRICK — infrastructure ---
     event_bus: Any = None
     lock_manager: Any = None

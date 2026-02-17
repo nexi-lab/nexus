@@ -239,40 +239,42 @@ class ProxyBrick:
 class ProxyVFSBrick(ProxyBrick):
     """Proxy for ``VFSOperations`` — forwards file ops to a cloud kernel.
 
-    Note: ``zone_id`` is accepted in method signatures to satisfy the
-    ``VFSOperations`` protocol but is **not** forwarded to the remote
-    server API, which uses auth-context for zone scoping instead.
+    ``zone_id`` is forwarded to the remote server for zone-scoped
+    operation dispatch.
     """
 
-    async def read(self, path: str, zone_id: str) -> bytes:  # noqa: ARG002
-        result = await self._forward("read", path=path)
+    async def read(self, path: str, zone_id: str) -> bytes:
+        result = await self._forward("read", path=path, zone_id=zone_id)
         if isinstance(result, bytes):
             return result
         if isinstance(result, str):
             return result.encode()
         raise TypeError(f"Expected bytes or str from remote read, got {type(result).__name__}")
 
-    async def write(self, path: str, data: bytes, zone_id: str) -> None:  # noqa: ARG002
+    async def write(self, path: str, data: bytes, zone_id: str) -> None:
         if len(data) > self._config.stream_threshold_bytes:
-            await self._forward_stream("write", data, path=path)
+            await self._forward_stream("write", data, path=path, zone_id=zone_id)
             return
         encoded = base64.b64encode(data).decode()
-        await self._forward("write", path=path, content=encoded)
+        await self._forward("write", path=path, content=encoded, zone_id=zone_id)
 
-    async def list_dir(self, path: str, zone_id: str) -> list[str]:  # noqa: ARG002
-        return await self._forward("list_dir", path=path)  # type: ignore[no-any-return]
+    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+        result: list[str] = await self._forward("list_dir", path=path, zone_id=zone_id)
+        return result
 
-    async def rename(self, src: str, dst: str, zone_id: str) -> None:  # noqa: ARG002
-        await self._forward("rename", src=src, dst=dst)
+    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+        await self._forward("rename", src=src, dst=dst, zone_id=zone_id)
 
-    async def mkdir(self, path: str, zone_id: str) -> None:  # noqa: ARG002
-        await self._forward("mkdir", path=path)
+    async def mkdir(self, path: str, zone_id: str) -> None:
+        await self._forward("mkdir", path=path, zone_id=zone_id)
 
-    async def count_dir(self, path: str, zone_id: str) -> int:  # noqa: ARG002
-        return await self._forward("count_dir", path=path)  # type: ignore[no-any-return]
+    async def count_dir(self, path: str, zone_id: str) -> int:
+        result: int = await self._forward("count_dir", path=path, zone_id=zone_id)
+        return result
 
-    async def exists(self, path: str, zone_id: str) -> bool:  # noqa: ARG002
-        return await self._forward("exists", path=path)  # type: ignore[no-any-return]
+    async def exists(self, path: str, zone_id: str) -> bool:
+        result: bool = await self._forward("exists", path=path, zone_id=zone_id)
+        return result
 
 
 class ProxyEventLogBrick(ProxyBrick):

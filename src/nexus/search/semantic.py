@@ -760,7 +760,7 @@ class SemanticSearch:
         """Clear the entire search index."""
         with self._get_session() as session:
             # Delete all chunks
-            session.query(DocumentChunkModel).delete()
+            session.execute(delete(DocumentChunkModel))
             session.commit()
 
     def close(self) -> None:

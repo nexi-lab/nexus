@@ -1421,7 +1421,7 @@ def create_nexus_fs(
     _parse_fn = create_default_parse_fn()
 
     # Create parser registry (Issue #657: factory builds infrastructure)
-    from nexus.parsers.parser_registry import MarkItDownParser, ParserRegistry
+    from nexus.parsers import MarkItDownParser, ParserRegistry
 
     _parser_registry = ParserRegistry()
     _parser_registry.register(MarkItDownParser())

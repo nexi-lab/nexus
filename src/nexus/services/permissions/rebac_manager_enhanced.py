@@ -85,8 +85,8 @@ from nexus.storage.models.permissions import ReBACTupleModel as RT
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from nexus.rebac.cache.iterator import IteratorCache
     from nexus.services.permissions.cache.leopard import LeopardIndex
-    from nexus.services.permissions.rebac_iterator_cache import IteratorCache
     from nexus.services.permissions.tiger_cache import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
@@ -223,7 +223,7 @@ class EnhancedReBACManager(ReBACManager):
         )
 
         # Iterator cache for paginated list operations (Issue #722)
-        from nexus.services.permissions.rebac_iterator_cache import IteratorCache
+        from nexus.rebac.cache.iterator import IteratorCache
 
         self._iterator_cache: IteratorCache = IteratorCache(
             max_size=1000,

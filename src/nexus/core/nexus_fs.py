@@ -8669,7 +8669,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
+        from nexus.rebac.cache.iterator import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -8798,7 +8798,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
+        from nexus.rebac.cache.iterator import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {

@@ -410,6 +410,13 @@ module = [
 warn_return_any = false
 
 [[tool.mypy.overrides]]
+module = "nexus.backends.delegating"
+# DelegatingBackend delegates all Backend methods to _inner via explicit forwarding.
+# mypy resolves _inner.method() return types as Any when Backend is imported under
+# TYPE_CHECKING (Issue #1449 recursive wrapping).
+warn_return_any = false
+
+[[tool.mypy.overrides]]
 module = "nexus.backends.s3_connector"
 # HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
 disable_error_code = ["attr-defined", "return-value"]
@@ -618,7 +625,7 @@ module = [
     "nexus.core.distributed_lock",
 ]
 # Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
-disable_error_code = ["attr-defined", "union-attr", "no-any-return"]
+disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
 
 [tool.ruff]

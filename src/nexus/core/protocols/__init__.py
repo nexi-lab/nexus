@@ -20,6 +20,7 @@ from nexus.core.protocols.connector import (
     PassthroughProtocol,
     StreamingProtocol,
 )
+from nexus.core.protocols.describable import Describable
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "CachingConnectorContract",
     "ConnectorProtocol",
     "ContentStoreProtocol",
+    "Describable",
     "DirectoryListingProtocol",
     "DirectoryOpsProtocol",
     "MountInfo",

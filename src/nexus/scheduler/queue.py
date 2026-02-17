@@ -4,7 +4,10 @@ Uses SELECT ... FOR UPDATE SKIP LOCKED for concurrent, safe dequeue.
 Tasks are ordered by (effective_tier ASC, enqueued_at ASC) for
 strict priority ordering with FIFO within each tier.
 
-Related: Issue #1212
+HRRN dequeue (Issue #1274) orders by priority_class ASC,
+hrrn_score() DESC, enqueued_at ASC for Astraea-style scheduling.
+
+Related: Issue #1212, #1274
 """
 
 from __future__ import annotations
@@ -14,8 +17,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
+    DEFAULT_EST_SERVICE_TIME_SECS,
     MAX_WAIT_SECONDS,
     TASK_STATUS_COMPLETED,
     PriorityTier,
@@ -31,8 +36,9 @@ INSERT INTO scheduled_tasks (
     agent_id, executor_id, task_type, payload,
     priority_tier, effective_tier, deadline,
     boost_amount, boost_tiers, boost_reservation_id,
-    zone_id, idempotency_key
-) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12)
+    zone_id, idempotency_key,
+    request_state, priority_class, estimated_service_time
+) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 RETURNING id::text
 """
 
@@ -52,7 +58,76 @@ RETURNING
     enqueued_at, status, deadline,
     boost_amount, boost_tiers, boost_reservation_id,
     started_at, completed_at, error_message,
-    zone_id, idempotency_key
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
+"""
+
+_SQL_DEQUEUE_BY_EXECUTOR = """
+UPDATE scheduled_tasks
+SET status = 'running', started_at = now()
+WHERE id = (
+    SELECT id FROM scheduled_tasks
+    WHERE status = 'queued' AND executor_id = $1
+    ORDER BY effective_tier ASC, enqueued_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
+"""
+
+_SQL_DEQUEUE_HRRN = """
+UPDATE scheduled_tasks
+SET status = 'running', started_at = now()
+WHERE id = (
+    SELECT id FROM scheduled_tasks
+    WHERE status = 'queued'
+      AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
+    ORDER BY
+        priority_class ASC,
+        hrrn_score(enqueued_at, estimated_service_time) DESC,
+        enqueued_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
+"""
+
+_SQL_DEQUEUE_HRRN_BY_EXECUTOR = """
+UPDATE scheduled_tasks
+SET status = 'running', started_at = now()
+WHERE id = (
+    SELECT id FROM scheduled_tasks
+    WHERE status = 'queued' AND executor_id = $1
+      AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
+    ORDER BY
+        priority_class ASC,
+        hrrn_score(enqueued_at, estimated_service_time) DESC,
+        enqueued_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
 """
 
 _SQL_COMPLETE = """
@@ -75,7 +150,8 @@ SELECT
     enqueued_at, status, deadline,
     boost_amount, boost_tiers, boost_reservation_id,
     started_at, completed_at, error_message,
-    zone_id, idempotency_key
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
 FROM scheduled_tasks
 WHERE id = $1::uuid
 """
@@ -115,6 +191,59 @@ SELECT count(*) FROM updated
 
 _SQL_NOTIFY = "SELECT pg_notify('task_enqueued', $1)"
 
+_SQL_CANCEL_BY_AGENT = """
+UPDATE scheduled_tasks
+SET status = 'cancelled'
+WHERE agent_id = $1 AND status = 'queued'
+RETURNING id
+"""
+
+# --- Astraea additions (Issue #1274) ---
+
+_SQL_COUNT_RUNNING_BY_AGENT = """
+SELECT agent_id, count(*) AS running_count
+FROM scheduled_tasks
+WHERE status = 'running'
+GROUP BY agent_id
+"""
+
+_SQL_UPDATE_EXECUTOR_STATE = """
+UPDATE scheduled_tasks
+SET executor_state = $2
+WHERE agent_id = $1 AND status = 'queued'
+"""
+
+_SQL_STARVATION_PROMOTE = """
+UPDATE scheduled_tasks
+SET priority_class = 'batch'
+WHERE status = 'queued'
+  AND priority_class = 'background'
+  AND EXTRACT(EPOCH FROM (now() - enqueued_at)) > $1
+RETURNING id
+"""
+
+_SQL_PENDING_METRICS = """
+SELECT
+    priority_class,
+    count(*) AS cnt,
+    avg(EXTRACT(EPOCH FROM (now() - enqueued_at))) AS avg_wait,
+    max(EXTRACT(EPOCH FROM (now() - enqueued_at))) AS max_wait
+FROM scheduled_tasks
+WHERE status = 'queued'
+GROUP BY priority_class
+"""
+
+_SQL_PENDING_METRICS_BY_ZONE = """
+SELECT
+    priority_class,
+    count(*) AS cnt,
+    avg(EXTRACT(EPOCH FROM (now() - enqueued_at))) AS avg_wait,
+    max(EXTRACT(EPOCH FROM (now() - enqueued_at))) AS max_wait
+FROM scheduled_tasks
+WHERE status = 'queued' AND zone_id = $1
+GROUP BY priority_class
+"""
+
 
 # =============================================================================
 # Row-to-Model Conversion
@@ -143,8 +272,15 @@ def _row_to_task(row: dict[str, Any]) -> ScheduledTask:
         started_at=row.get("started_at"),
         completed_at=row.get("completed_at"),
         error_message=row.get("error_message"),
-        zone_id=row.get("zone_id", "default"),
+        zone_id=row.get("zone_id", ROOT_ZONE_ID),
         idempotency_key=row.get("idempotency_key"),
+        # Astraea fields with defaults for backward compat
+        request_state=row.get("request_state", "pending"),
+        priority_class=row.get("priority_class", "batch"),
+        executor_state=row.get("executor_state", "UNKNOWN"),
+        estimated_service_time=float(
+            row.get("estimated_service_time", DEFAULT_EST_SERVICE_TIME_SECS)
+        ),
     )
 
 
@@ -170,29 +306,17 @@ class TaskQueue:
         payload: dict[str, Any],
         priority_tier: int,
         effective_tier: int,
-        zone_id: str = "default",
+        zone_id: str = ROOT_ZONE_ID,
         deadline: datetime | None = None,
         boost_amount: Decimal = Decimal("0"),
         boost_tiers: int = 0,
         boost_reservation_id: str | None = None,
         idempotency_key: str | None = None,
+        request_state: str = "pending",
+        priority_class: str = "batch",
+        estimated_service_time: float = DEFAULT_EST_SERVICE_TIME_SECS,
     ) -> str:
         """Insert a task into the queue.
-
-        Args:
-            conn: asyncpg connection.
-            agent_id: Submitting agent.
-            executor_id: Target executor.
-            task_type: Type identifier.
-            payload: Task data as dict.
-            priority_tier: Base priority tier value.
-            effective_tier: Computed effective tier.
-            zone_id: Zone for multi-tenancy.
-            deadline: Optional deadline.
-            boost_amount: Credits paid for boost.
-            boost_tiers: Computed boost tiers.
-            boost_reservation_id: TigerBeetle reservation ID for boost.
-            idempotency_key: Deduplication key.
 
         Returns:
             Task ID as string.
@@ -213,6 +337,9 @@ class TaskQueue:
             boost_reservation_id,
             zone_id,
             idempotency_key,
+            request_state,
+            priority_class,
+            estimated_service_time,
         )
 
         # Notify dispatcher
@@ -220,19 +347,40 @@ class TaskQueue:
 
         return str(task_id)
 
-    async def dequeue(self, conn: Any) -> ScheduledTask | None:
-        """Dequeue the highest-priority task.
+    async def dequeue(self, conn: Any, *, executor_id: str | None = None) -> ScheduledTask | None:
+        """Dequeue the highest-priority task (classic effective_tier ordering).
 
         Uses FOR UPDATE SKIP LOCKED to safely handle concurrent workers.
         Atomically sets status to 'running'.
 
         Args:
-            conn: asyncpg connection.
-
-        Returns:
-            ScheduledTask if available, None if queue is empty.
+            conn: Database connection.
+            executor_id: If provided, only dequeue tasks assigned to this executor.
         """
-        row = await conn.fetchrow(_SQL_DEQUEUE)
+        if executor_id is not None:
+            row = await conn.fetchrow(_SQL_DEQUEUE_BY_EXECUTOR, executor_id)
+        else:
+            row = await conn.fetchrow(_SQL_DEQUEUE)
+        if row is None:
+            return None
+        return _row_to_task(row)
+
+    async def dequeue_hrrn(
+        self, conn: Any, *, executor_id: str | None = None
+    ) -> ScheduledTask | None:
+        """Dequeue using HRRN scoring within priority classes (Astraea).
+
+        Orders by: priority_class ASC, hrrn_score DESC, enqueued_at ASC.
+        Filters out tasks whose executor is SUSPENDED.
+
+        Args:
+            conn: Database connection.
+            executor_id: If provided, only dequeue tasks assigned to this executor.
+        """
+        if executor_id is not None:
+            row = await conn.fetchrow(_SQL_DEQUEUE_HRRN_BY_EXECUTOR, executor_id)
+        else:
+            row = await conn.fetchrow(_SQL_DEQUEUE_HRRN)
         if row is None:
             return None
         return _row_to_task(row)
@@ -245,60 +393,23 @@ class TaskQueue:
         status: str = TASK_STATUS_COMPLETED,
         error: str | None = None,
     ) -> None:
-        """Mark a task as completed or failed.
-
-        Args:
-            conn: asyncpg connection.
-            task_id: Task to complete.
-            status: Final status ('completed' or 'failed').
-            error: Error message if failed.
-        """
+        """Mark a task as completed or failed."""
         await conn.execute(_SQL_COMPLETE, task_id, status, error)
 
     async def cancel(self, conn: Any, task_id: str) -> bool:
-        """Cancel a queued task.
-
-        Only cancels tasks with status 'queued'. Running tasks cannot
-        be cancelled through this method.
-
-        Args:
-            conn: asyncpg connection.
-            task_id: Task to cancel.
-
-        Returns:
-            True if cancelled, False if task was not in 'queued' status.
-        """
+        """Cancel a queued task. Returns True if cancelled."""
         result = await conn.fetchval(_SQL_CANCEL, task_id)
         return result is not None
 
     async def get_task(self, conn: Any, task_id: str) -> ScheduledTask | None:
-        """Look up a task by ID.
-
-        Args:
-            conn: asyncpg connection.
-            task_id: Task ID to look up.
-
-        Returns:
-            ScheduledTask if found, None otherwise.
-        """
+        """Look up a task by ID."""
         row = await conn.fetchrow(_SQL_GET_TASK, task_id)
         if row is None:
             return None
         return _row_to_task(row)
 
     async def aging_sweep(self, conn: Any, now: datetime) -> int:
-        """Run aging sweep to recalculate effective_tier for queued tasks.
-
-        Updates tasks whose effective_tier has changed due to aging or
-        max-wait escalation.
-
-        Args:
-            conn: asyncpg connection.
-            now: Current timestamp.
-
-        Returns:
-            Number of tasks updated.
-        """
+        """Run aging sweep to recalculate effective_tier for queued tasks."""
         count = await conn.fetchval(
             _SQL_AGING_SWEEP,
             now,
@@ -306,3 +417,39 @@ class TaskQueue:
             MAX_WAIT_SECONDS,
         )
         return count or 0
+
+    async def cancel_by_agent(self, conn: Any, agent_id: str) -> int:
+        """Cancel all queued tasks for an agent. Returns count cancelled."""
+        rows = await conn.fetch(_SQL_CANCEL_BY_AGENT, agent_id)
+        return len(rows)
+
+    # --- Astraea methods (Issue #1274) ---
+
+    async def count_running_by_agent(self, conn: Any) -> dict[str, int]:
+        """Get running task count per agent for fair-share sync."""
+        rows = await conn.fetch(_SQL_COUNT_RUNNING_BY_AGENT)
+        return {row["agent_id"]: row["running_count"] for row in rows}
+
+    async def update_executor_state(self, conn: Any, agent_id: str, executor_state: str) -> None:
+        """Update executor_state for all queued tasks of an agent."""
+        await conn.execute(_SQL_UPDATE_EXECUTOR_STATE, agent_id, executor_state)
+
+    async def promote_starved(self, conn: Any, threshold_seconds: float) -> int:
+        """Promote BACKGROUND tasks that have waited longer than threshold to BATCH."""
+        rows = await conn.fetch(_SQL_STARVATION_PROMOTE, threshold_seconds)
+        return len(rows)
+
+    async def get_queue_metrics(
+        self, conn: Any, *, zone_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get aggregated queue metrics by priority_class.
+
+        Args:
+            conn: Database connection.
+            zone_id: If provided, filter metrics to this zone only.
+        """
+        if zone_id is not None:
+            rows = await conn.fetch(_SQL_PENDING_METRICS_BY_ZONE, zone_id)
+        else:
+            rows = await conn.fetch(_SQL_PENDING_METRICS)
+        return [dict(row) for row in rows]

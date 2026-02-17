@@ -33,10 +33,10 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from nexus.backends.service_map import SERVICE_REGISTRY, ServiceMap
-
 if TYPE_CHECKING:
-    from nexus.skills.mcp_models import MCPMount, MCPToolDefinition
+    from collections.abc import Callable
+
+    from nexus.mcp.models import MCPMount, MCPToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -81,16 +81,33 @@ class SkillGenerator:
     skill documentation for AI agents.
     """
 
-    def __init__(self, templates_path: Path | None = None):
+    def __init__(
+        self,
+        templates_path: Path | None = None,
+        service_info_lookup: Callable[[str], Any] | None = None,
+    ):
         """Initialize the skill generator.
 
         Args:
             templates_path: Optional path to connector skill templates.
                           Defaults to configs/connector-skills/
+            service_info_lookup: Optional callable(name) -> ServiceInfo | None.
+                               If not provided, falls back to ServiceMap.get_service_info.
         """
         self._templates_path = templates_path or CONNECTOR_SKILLS_PATH
         self._templates: dict[str, ConnectorTemplate] = {}
+        self._get_service_info = service_info_lookup or self._default_service_info_lookup
         self._load_templates()
+
+    @staticmethod
+    def _default_service_info_lookup(name: str) -> Any:
+        """Lazy fallback that imports ServiceMap at runtime."""
+        try:
+            from nexus.backends.service_map import ServiceMap
+
+            return ServiceMap.get_service_info(name)
+        except ImportError:
+            return None
 
     def _load_templates(self) -> None:
         """Load all connector skill templates."""
@@ -105,7 +122,7 @@ class SkillGenerator:
                     # Index by service name (from frontmatter)
                     self._templates[template.name] = template
                     # Also index by connector name if available from ServiceMap
-                    service_info = SERVICE_REGISTRY.get(template.name)
+                    service_info = self._get_service_info(template.name)
                     if service_info and service_info.connector:
                         self._templates[service_info.connector] = template
                     logger.debug(f"Loaded template: {template_file.name} -> {template.name}")
@@ -147,7 +164,7 @@ class SkillGenerator:
         name = frontmatter.get("name", "")
 
         # Look up service info from ServiceMap to get connector and other info
-        service_info = SERVICE_REGISTRY.get(name)
+        service_info = self._get_service_info(name)
 
         return ConnectorTemplate(
             name=name,
@@ -197,7 +214,7 @@ class SkillGenerator:
             Generated SKILL.md content
         """
         # Get service info
-        service_info = ServiceMap.get_service_info(service_name)
+        service_info = self._get_service_info(service_name)
 
         # Try to get connector template
         template = None

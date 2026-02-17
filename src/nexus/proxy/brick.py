@@ -13,7 +13,7 @@ import contextlib
 import json
 import logging
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -239,40 +239,39 @@ class ProxyBrick:
 class ProxyVFSBrick(ProxyBrick):
     """Proxy for ``VFSOperations`` — forwards file ops to a cloud kernel.
 
-    Note: ``zone_id`` is accepted in method signatures to satisfy the
-    ``VFSOperations`` protocol but is **not** forwarded to the remote
-    server API, which uses auth-context for zone scoping instead.
+    Per KERNEL-ARCHITECTURE.md §4, ``zone_id`` is forwarded to the remote
+    server for zone-scoped isolation.
     """
 
-    async def read(self, path: str, zone_id: str) -> bytes:  # noqa: ARG002
-        result = await self._forward("read", path=path)
+    async def read(self, path: str, zone_id: str) -> bytes:
+        result = await self._forward("read", path=path, zone_id=zone_id)
         if isinstance(result, bytes):
             return result
         if isinstance(result, str):
             return result.encode()
         raise TypeError(f"Expected bytes or str from remote read, got {type(result).__name__}")
 
-    async def write(self, path: str, data: bytes, zone_id: str) -> None:  # noqa: ARG002
+    async def write(self, path: str, data: bytes, zone_id: str) -> None:
         if len(data) > self._config.stream_threshold_bytes:
-            await self._forward_stream("write", data, path=path)
+            await self._forward_stream("write", data, path=path, zone_id=zone_id)
             return
         encoded = base64.b64encode(data).decode()
-        await self._forward("write", path=path, content=encoded)
+        await self._forward("write", path=path, content=encoded, zone_id=zone_id)
 
-    async def list_dir(self, path: str, zone_id: str) -> list[str]:  # noqa: ARG002
-        return await self._forward("list_dir", path=path)  # type: ignore[no-any-return]
+    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+        return cast(list[str], await self._forward("list_dir", path=path, zone_id=zone_id))
 
-    async def rename(self, src: str, dst: str, zone_id: str) -> None:  # noqa: ARG002
-        await self._forward("rename", src=src, dst=dst)
+    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+        await self._forward("rename", src=src, dst=dst, zone_id=zone_id)
 
-    async def mkdir(self, path: str, zone_id: str) -> None:  # noqa: ARG002
-        await self._forward("mkdir", path=path)
+    async def mkdir(self, path: str, zone_id: str) -> None:
+        await self._forward("mkdir", path=path, zone_id=zone_id)
 
-    async def count_dir(self, path: str, zone_id: str) -> int:  # noqa: ARG002
-        return await self._forward("count_dir", path=path)  # type: ignore[no-any-return]
+    async def count_dir(self, path: str, zone_id: str) -> int:
+        return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
 
-    async def exists(self, path: str, zone_id: str) -> bool:  # noqa: ARG002
-        return await self._forward("exists", path=path)  # type: ignore[no-any-return]
+    async def exists(self, path: str, zone_id: str) -> bool:
+        return cast(bool, await self._forward("exists", path=path, zone_id=zone_id))
 
 
 class ProxyEventLogBrick(ProxyBrick):
@@ -297,19 +296,36 @@ class ProxyEventLogBrick(ProxyBrick):
 
 
 class ProxySchedulerBrick(ProxyBrick):
-    """Proxy for ``SchedulerProtocol`` — forwards scheduling to cloud."""
+    """Proxy for ``SchedulerProtocol`` — forwards scheduling to cloud.
 
-    async def submit(self, request: Any) -> None:
-        await self._forward("scheduler.submit", request=asdict(request))
+    Implements the full 8-method protocol (Issue #1274).
+    """
 
-    async def next(self) -> Any | None:
-        return await self._forward("scheduler.next")
+    async def submit(self, request: Any) -> str:
+        result = await self._forward("scheduler.submit", request=asdict(request))
+        return str(result) if result is not None else ""
+
+    async def next(self, *, executor_id: str | None = None) -> Any | None:
+        return await self._forward("scheduler.next", executor_id=executor_id)
 
     async def pending_count(self, *, zone_id: str | None = None) -> int:
         return await self._forward("scheduler.pending_count", zone_id=zone_id)  # type: ignore[no-any-return]
 
     async def cancel(self, agent_id: str) -> int:
         return await self._forward("scheduler.cancel", agent_id=agent_id)  # type: ignore[no-any-return]
+
+    async def get_status(self, task_id: str) -> dict[str, Any] | None:
+        return await self._forward("scheduler.get_status", task_id=task_id)  # type: ignore[no-any-return]
+
+    async def complete(self, task_id: str, *, error: str | None = None) -> None:
+        await self._forward("scheduler.complete", task_id=task_id, error=error)
+
+    async def classify(self, request: Any) -> str:
+        result = await self._forward("scheduler.classify", request=asdict(request))
+        return str(result) if result is not None else "batch"
+
+    async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
+        return await self._forward("scheduler.metrics", zone_id=zone_id)  # type: ignore[no-any-return]
 
 
 class ProxyAgentRegistryBrick(ProxyBrick):

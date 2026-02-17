@@ -1,5 +1,11 @@
 """Service-layer protocol interfaces (Issue #1383).
 
+Convention (Issue #1291):
+- All protocols use @runtime_checkable for test-time isinstance() checks.
+- Do NOT use isinstance(obj, Protocol) in production hot paths.
+- All data classes use @dataclass(frozen=True, slots=True).
+- TYPE_CHECKING for all nexus.* imports (except zero-dep leaf modules).
+
 These protocols define domain-service contracts. They are NOT kernel primitives —
 they live in services/ because their implementations depend on one or more of the
 Four Pillars (Metastore, RecordStore, ObjectStore, CacheStore) rather than being
@@ -10,7 +16,6 @@ Only VFSRouterProtocol remains in core/protocols/ as it is a kernel concern
 
 Storage Affinity (per data-storage-matrix.md):
     - AgentRegistryProtocol  → RecordStore (relational agent identity)
-    - EventLogProtocol       → RecordStore (append-only BRIN audit log)
     - HookEngineProtocol     → CacheStore (ephemeral hook registration)
     - NamespaceManagerProtocol → RecordStore + CacheStore (ReBAC views)
     - SchedulerProtocol      → CacheStore or RecordStore (work queue)
@@ -20,9 +25,12 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from nexus.rebac.namespace_manager import NamespaceMount
+from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
+from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
-from nexus.services.protocols.event_log import EventId, EventLogProtocol, KernelEvent
+from nexus.services.protocols.governance import GovernanceProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -40,25 +48,55 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
-from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.llm import LLMProtocol, LLMServiceProtocol
+from nexus.services.protocols.lock import LockProtocol
+from nexus.services.protocols.mcp import MCPProtocol
+from nexus.services.protocols.mount import MountProtocol, ProgressCallback
+from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+from nexus.services.protocols.oauth import OAuthProtocol
+from nexus.services.protocols.parse import ParseProtocol
+from nexus.services.protocols.payment import PaymentProtocol
+from nexus.services.protocols.permission import PermissionProtocol
+from nexus.services.protocols.plugin import PluginProtocol
+from nexus.services.protocols.rebac import ReBACBrickProtocol
+from nexus.services.protocols.reputation import ReputationProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
+from nexus.services.protocols.share_link import ShareLinkProtocol
+from nexus.services.protocols.skills import SkillsProtocol
+from nexus.services.protocols.watch import WatchProtocol
+from nexus.workflows.protocol import (
+    LLMProviderProtocol,
+    MetadataStoreProtocol,
+    NexusOperationsProtocol,
+    WorkflowProtocol,
+)
 
 __all__ = [
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
+    "AnomalyDetectorProtocol",
     "ContextManifestProtocol",
-    "EventId",
+    "EventLogConfig",
     "EventLogProtocol",
+    "GovernanceProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
     "HookResult",
     "HookSpec",
-    "KernelEvent",
+    "LLMProtocol",
+    "LLMProviderProtocol",
+    "LLMServiceProtocol",
+    "LockProtocol",
+    "MCPProtocol",
+    "MetadataStoreProtocol",
+    "MountProtocol",
     "NamespaceManagerProtocol",
     "NamespaceMount",
+    "NexusOperationsProtocol",
+    "OAuthProtocol",
     "POST_COPY",
     "POST_DELETE",
     "POST_MKDIR",
@@ -69,6 +107,17 @@ __all__ = [
     "PRE_MKDIR",
     "PRE_READ",
     "PRE_WRITE",
+    "ParseProtocol",
+    "PaymentProtocol",
+    "PermissionProtocol",
+    "PluginProtocol",
+    "ProgressCallback",
+    "ReBACBrickProtocol",
+    "ReputationProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
+    "ShareLinkProtocol",
+    "SkillsProtocol",
+    "WatchProtocol",
+    "WorkflowProtocol",
 ]

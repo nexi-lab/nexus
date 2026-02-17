@@ -19,6 +19,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.raft.zone_manager import ZoneManager
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -50,18 +52,25 @@ class ZonePathResolver:
     """Resolve paths across zone boundaries via DT_MOUNT entries.
 
     Usage:
-        resolver = ZonePathResolver(zone_manager, root_zone_id="default")
+        resolver = ZonePathResolver(zone_manager, root_zone_id=ROOT_ZONE_ID)
         resolved = resolver.resolve("/shared/docs/file.txt")
         metadata = resolved.store.get(resolved.path)
     """
 
-    def __init__(self, zone_manager: ZoneManager, root_zone_id: str = "default"):
+    def __init__(self, zone_manager: ZoneManager, root_zone_id: str = ROOT_ZONE_ID):
         self._zone_manager = zone_manager
         self._root_zone_id = root_zone_id
 
     @property
     def root_zone_id(self) -> str:
         return self._root_zone_id
+
+    def get_store(self, zone_id: str) -> RaftMetadataStore | None:
+        """Get the metadata store for a zone by ID.
+
+        Delegates to the underlying ZoneManager.
+        """
+        return self._zone_manager.get_store(zone_id)
 
     def resolve(self, path: str) -> ResolvedPath:
         """Resolve a path, crossing DT_MOUNT boundaries as needed.

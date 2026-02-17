@@ -127,6 +127,16 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import ACE v2 routes: %s", e)
 
+    # ---- Events replay router (Issue #1139) ----
+    try:
+        from nexus.server.api.v2.routers.events_replay import router as events_replay_router
+
+        registry.add(
+            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=2)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Events replay routes: %s", e)
+
     # ---- Pay router ----
     try:
         from nexus.server.api.v2.routers.pay import router as pay_router
@@ -193,6 +203,30 @@ def build_v2_registry(
         registry.add(RouterEntry(router=manifest_router, name="manifest", endpoint_count=3))
     except ImportError as e:
         logger.warning("Failed to import Manifest routes: %s", e)
+
+    # ---- Delegation router (Issue #1271) ----
+    try:
+        from nexus.server.api.v2.routers.delegation import router as delegation_router
+
+        registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=5))
+    except ImportError as e:
+        logger.warning("Failed to import Delegation routes: %s", e)
+
+    # ---- Workflows router (Issue #1522) ----
+    try:
+        from nexus.server.api.v2.routers.workflows import router as workflows_router
+
+        registry.add(RouterEntry(router=workflows_router, name="workflows", endpoint_count=8))
+    except ImportError as e:
+        logger.warning("Failed to import Workflows routes: %s", e)
+
+    # ---- Snapshots router (Issue #1752) ----
+    try:
+        from nexus.server.api.v2.routers.snapshots import router as snapshots_router
+
+        registry.add(RouterEntry(router=snapshots_router, name="snapshots", endpoint_count=6))
+    except ImportError as e:
+        logger.warning("Failed to import Snapshots routes: %s", e)
 
     return registry
 

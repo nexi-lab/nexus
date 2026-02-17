@@ -23,12 +23,8 @@ from nexus.core.event_bus import (
     EventBusProtocol,
     FileEvent,
     FileEventType,
-    GlobalEventBus,
     RedisEventBus,
     create_event_bus,
-    get_global_event_bus,
-    require_global_event_bus,
-    set_global_event_bus,
 )
 
 # =============================================================================
@@ -553,7 +549,7 @@ class TestRedisEventBus:
         bus = RedisEventBus(mock_redis_client)
 
         assert bus._channel_name("zone1") == "nexus:events:zone1"
-        assert bus._channel_name("default") == "nexus:events:default"
+        assert bus._channel_name("root") == "nexus:events:root"
         assert bus._channel_name("multi-zone-123") == "nexus:events:multi-zone-123"
 
     @pytest.mark.asyncio
@@ -751,37 +747,6 @@ class TestEventBusFactory:
         """Test error for unsupported backend."""
         with pytest.raises(ValueError, match="Unsupported event bus backend"):
             create_event_bus(backend="unknown", redis_client=mock_redis_client)
-
-
-class TestGlobalEventBusSingleton:
-    """Tests for global event bus singleton management."""
-
-    def test_get_set_global_event_bus(self, mock_redis_client):
-        """Test setting and getting global event bus."""
-        # Initially None
-        set_global_event_bus(None)
-        assert get_global_event_bus() is None
-
-        # Set a bus
-        bus = RedisEventBus(mock_redis_client)
-        set_global_event_bus(bus)
-        assert get_global_event_bus() is bus
-
-        # Clear
-        set_global_event_bus(None)
-        assert get_global_event_bus() is None
-
-    def test_global_event_bus_alias(self, mock_redis_client):
-        """Test that GlobalEventBus is an alias for RedisEventBus."""
-        assert GlobalEventBus is RedisEventBus
-
-        bus = GlobalEventBus(mock_redis_client)
-        assert isinstance(bus, RedisEventBus)
-
-
-# =============================================================================
-# Protocol Compliance Tests
-# =============================================================================
 
 
 class TestEventBusProtocol:
@@ -1127,28 +1092,3 @@ class TestEventBusFactoryExtended:
         """Test error for unsupported backend."""
         with pytest.raises(ValueError, match="Unsupported event bus backend"):
             create_event_bus(backend="unknown")
-
-
-# =============================================================================
-# require_global_event_bus Tests (Issue #1331)
-# =============================================================================
-
-
-class TestRequireGlobalEventBus:
-    """Tests for require_global_event_bus() helper."""
-
-    def test_raises_when_none(self):
-        """Test that require raises when no bus is set."""
-        set_global_event_bus(None)
-        with pytest.raises(RuntimeError, match="not initialized"):
-            require_global_event_bus()
-
-    def test_returns_bus_when_set(self, mock_redis_client):
-        """Test that require returns the bus when set."""
-        bus = RedisEventBus(mock_redis_client)
-        set_global_event_bus(bus)
-        try:
-            result = require_global_event_bus()
-            assert result is bus
-        finally:
-            set_global_event_bus(None)

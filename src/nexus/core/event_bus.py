@@ -6,11 +6,11 @@ Block 2 (Issue #1106) for the distributed event system.
 
 Architecture:
 - EventBusProtocol: Abstract interface for event bus implementations
-- GlobalEventBus: Redis Pub/Sub implementation (default)
+- RedisEventBus: Redis Pub/Sub implementation (default)
 - Future: etcd, ZooKeeper, P2P implementations (Issue #1141)
 
 Multi-Region Support:
-- GlobalEventBus connects to a single Redis URL (NEXUS_REDIS_URL)
+- RedisEventBus connects to a single Redis URL (NEXUS_REDIS_URL)
 - Multi-region event sync depends on Redis deployment configuration
 - See distributed_lock.py for similar patterns with locks
 
@@ -30,12 +30,31 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.cache.dragonfly import DragonflyClient
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class PubSubClientProtocol(Protocol):
+    """Protocol for Redis-like pub/sub client providers (e.g., DragonflyClient).
+
+    Captures the interface that RedisEventBus needs, decoupling the kernel
+    event bus from the concrete cache driver (KERNEL-ARCHITECTURE.md §1).
+    """
+
+    @property
+    def client(self) -> Any:
+        """Underlying async client with pubsub() and publish() methods."""
+        ...
+
+    async def health_check(self) -> bool:
+        """Check if the backend is healthy."""
+        ...
+
+    async def get_info(self) -> dict[str, Any]:
+        """Get backend info/stats."""
+        ...
 
 
 def _utcnow_naive() -> datetime:
@@ -285,7 +304,7 @@ class EventBusProtocol(Protocol):
     """Protocol defining the event bus interface.
 
     This protocol allows different backend implementations:
-    - Redis Pub/Sub (default, implemented as GlobalEventBus)
+    - Redis Pub/Sub (default, implemented as RedisEventBus)
     - etcd watch (future)
     - ZooKeeper watchers (future)
     - P2P gossip protocol (future)
@@ -681,7 +700,7 @@ class RedisEventBus(EventBusBase):
         >>> event = FileEvent(
         ...     type=FileEventType.FILE_WRITE,
         ...     path="/inbox/test.txt",
-        ...     zone_id="default",
+        ...     zone_id="root",
         ... )
         >>> await bus.publish(event)
     """
@@ -690,7 +709,7 @@ class RedisEventBus(EventBusBase):
 
     def __init__(
         self,
-        redis_client: DragonflyClient,
+        redis_client: PubSubClientProtocol,
         session_factory: Any | None = None,
         node_id: str | None = None,
         event_log: Any | None = None,
@@ -698,7 +717,7 @@ class RedisEventBus(EventBusBase):
         """Initialize RedisEventBus.
 
         Args:
-            redis_client: DragonflyClient instance for Redis connection
+            redis_client: PubSubClientProtocol provider (e.g., DragonflyClient)
             session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
             node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
             event_log: Optional EventLogProtocol for durable WAL persistence (Issue #1397)
@@ -709,6 +728,14 @@ class RedisEventBus(EventBusBase):
         self._pubsub: Any = None
         self._started = False
         self._lock = asyncio.Lock()
+
+    def set_event_log(self, event_log: Any) -> None:
+        """Wire an event log for WAL-first durability (Issue #1397).
+
+        Called during server startup after the event log is initialized,
+        since the event bus may be constructed before the event log is available.
+        """
+        self._event_log = event_log
 
     def _channel_name(self, zone_id: str) -> str:
         """Get Redis channel name for a zone."""
@@ -759,7 +786,7 @@ class RedisEventBus(EventBusBase):
             except Exception as e:
                 logger.error(f"Event log append failed (event still published): {e}")
 
-        zone_id = event.zone_id or "default"
+        zone_id = event.zone_id or "root"
         channel = self._channel_name(zone_id)
         message = event.to_json()
 
@@ -956,18 +983,14 @@ class RedisEventBus(EventBusBase):
         }
 
 
-# Backward compatibility alias
-GlobalEventBus = RedisEventBus
-
-
 # =============================================================================
-# Factory and Singleton Management
+# Factory
 # =============================================================================
 
 
 def create_event_bus(
     backend: str = "redis",
-    redis_client: DragonflyClient | None = None,
+    redis_client: PubSubClientProtocol | None = None,
     nats_url: str | None = None,
     **kwargs: Any,
 ) -> EventBusBase:
@@ -998,41 +1021,3 @@ def create_event_bus(
         return RedisEventBus(redis_client, **kwargs)
 
     raise ValueError(f"Unsupported event bus backend: {backend}")
-
-
-# Singleton instance for shared use
-_global_event_bus: EventBusBase | None = None
-
-
-def get_global_event_bus() -> EventBusBase | None:
-    """Get the global event bus instance.
-
-    Returns:
-        EventBusBase instance if initialized, None otherwise
-    """
-    return _global_event_bus
-
-
-def require_global_event_bus() -> EventBusBase:
-    """Get the global event bus, raising if not initialized.
-
-    Returns:
-        The global EventBusBase instance.
-
-    Raises:
-        RuntimeError: If no global event bus has been set.
-    """
-    bus = _global_event_bus
-    if bus is None:
-        raise RuntimeError("Global event bus not initialized. Call set_global_event_bus() first.")
-    return bus
-
-
-def set_global_event_bus(bus: EventBusBase | None) -> None:
-    """Set the global event bus instance.
-
-    Args:
-        bus: EventBusBase instance to set as global, or None to clear
-    """
-    global _global_event_bus
-    _global_event_bus = bus

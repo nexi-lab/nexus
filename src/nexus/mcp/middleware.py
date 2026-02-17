@@ -42,7 +42,7 @@ from nexus.mcp.tool_utils import tool_error
 if TYPE_CHECKING:
     import mcp.types as mt
 
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -253,8 +253,9 @@ class ToolNamespaceMiddleware(Middleware):
     def _get_revision_bucket(self) -> int:
         """Get current zone revision bucket."""
         try:
-            revision = self._rebac_manager._get_zone_revision(self._zone_id)
-        except Exception:
+            revision = self._rebac_manager.get_zone_revision(self._zone_id)
+        except Exception as e:
+            logger.debug("Failed to get zone revision for %s: %s", self._zone_id, e)
             return 0
         return revision // self._revision_window
 
@@ -328,15 +329,15 @@ class ToolNamespaceMiddleware(Middleware):
             subject_id = ctx.get_state("subject_id")
             if subject_type and subject_id:
                 return (subject_type, subject_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to extract subject identity from context: %s", e)
 
         try:
             api_key = ctx.get_state("api_key")
             if api_key:
                 return ("api_key", api_key)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to extract API key from context: %s", e)
 
         return None
 

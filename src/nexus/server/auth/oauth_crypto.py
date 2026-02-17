@@ -11,8 +11,8 @@ Security features:
 - Time-to-live for encrypted data
 
 Example:
-    # Initialize crypto service with database URL for persistent key
-    crypto = OAuthCrypto(db_url="postgresql://user:pass@host/db")
+    # Initialize crypto service with injected session_factory
+    crypto = OAuthCrypto(session_factory=session_factory)
 
     # Encrypt a token
     encrypted = crypto.encrypt_token("ya29.a0ARrdaM...")
@@ -22,7 +22,6 @@ Example:
 """
 
 import logging
-import os
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -43,60 +42,55 @@ class OAuthCrypto:
 
     The encryption key is loaded in this order:
     1. Explicitly provided encryption_key parameter
-    2. NEXUS_OAUTH_ENCRYPTION_KEY environment variable
-    3. From database system_settings table (if db_url provided)
-    4. Generated and stored in database (if db_url provided)
-    5. Generated randomly (WARNING: not persistent across restarts!)
+    2. From database system_settings table (if session_factory provided)
+    3. Generated and stored in database (if session_factory provided)
+    4. Generated randomly (WARNING: not persistent across restarts!)
+
+    Callers should read NEXUS_OAUTH_ENCRYPTION_KEY env var at the server
+    entrypoint and pass it via the encryption_key parameter.
     """
 
     def __init__(
         self,
         encryption_key: str | None = None,
-        db_url: str | None = None,
+        *,
+        session_factory: Any = None,
     ):
         """Initialize the crypto service.
 
         Args:
-            encryption_key: Base64-encoded Fernet key. If None, loads from
-                           environment or database.
-            db_url: Database URL for storing/retrieving encryption key.
-                   If provided and key not found, generates and stores a new key.
+            encryption_key: Base64-encoded Fernet key. Callers should read
+                NEXUS_OAUTH_ENCRYPTION_KEY at the entrypoint and pass it here.
+            session_factory: Pre-built SQLAlchemy sessionmaker for
+                loading/storing encryption key in the database.
 
         Raises:
             ValueError: If the provided key is invalid
-
-        Note:
-            For production deployments, provide db_url to ensure the encryption
-            key is persisted and consistent across all processes/restarts.
         """
+        self._session_factory = session_factory
+
         # Priority 1: Explicit encryption key
         if encryption_key is not None:
             logger.debug("OAuthCrypto: Using explicit encryption key")
             self._init_fernet(encryption_key)
             return
 
-        # Priority 2: Environment variable (must be non-empty)
-        env_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip()
-        if env_key:
-            logger.debug("OAuthCrypto: Using env var NEXUS_OAUTH_ENCRYPTION_KEY")
-            self._init_fernet(env_key)
-            return
-
-        # Priority 3 & 4: Load from database or generate and store
-        if db_url:
-            logger.debug(f"OAuthCrypto: Trying to load key from db_url={db_url}")
-            db_key = self._load_or_create_key_from_db(db_url)
+        # Priority 2 & 3: Load from database or generate and store
+        if session_factory:
+            logger.debug("OAuthCrypto: Trying to load key from database")
+            db_key = self._load_or_create_key_from_db()
             if db_key:
                 logger.debug(
-                    f"OAuthCrypto: Loaded key from database (starts with: {db_key[:10]}...)"
+                    "OAuthCrypto: Loaded key from database (starts with: %s...)",
+                    db_key[:10],
                 )
                 self._init_fernet(db_key)
                 return
 
-        # Priority 5: Generate random key (WARNING: not persistent!)
+        # Priority 4: Generate random key (WARNING: not persistent!)
         logger.warning(
             "Generating random OAuth encryption key. This key will NOT persist "
-            "across restarts! Set NEXUS_OAUTH_ENCRYPTION_KEY or provide db_url "
+            "across restarts! Pass encryption_key or session_factory "
             "for production use."
         )
         key_bytes: bytes = Fernet.generate_key()
@@ -114,34 +108,25 @@ class OAuthCrypto:
         except Exception as e:
             raise ValueError(f"Invalid encryption key: {e}") from e
 
-    def _load_or_create_key_from_db(self, db_url: str) -> str | None:
+    def _load_or_create_key_from_db(self) -> str | None:
         """Load encryption key from database, or create and store a new one.
 
-        Args:
-            db_url: Database URL
+        Uses ``self._session_factory`` (injected via DI) to reuse the
+        application's connection pool.
 
         Returns:
             Encryption key string, or None if database access fails
         """
         try:
-            from sqlalchemy import create_engine, select
-            from sqlalchemy.orm import sessionmaker
+            from sqlalchemy import select
 
-            from nexus.storage.models import Base, SystemSettingsModel
+            from nexus.storage.models import SystemSettingsModel
 
-            logger.debug(f"OAuthCrypto._load_or_create_key_from_db: Connecting to {db_url}")
+            if self._session_factory is None:
+                logger.debug("OAuthCrypto: No session_factory — cannot load key")
+                return None
 
-            # Create engine
-            connect_args = {}
-            if "sqlite" in db_url:
-                connect_args["check_same_thread"] = False
-
-            engine = create_engine(db_url, connect_args=connect_args)
-
-            # Ensure table exists
-            Base.metadata.create_all(engine)
-
-            Session = sessionmaker(bind=engine)
+            Session = self._session_factory
 
             with Session() as session:
                 # Try to load existing key
@@ -154,7 +139,7 @@ class OAuthCrypto:
                     logger.debug(
                         f"OAuthCrypto: Loaded key from database (key={OAUTH_ENCRYPTION_KEY_NAME}, value starts with: {setting.value[:10]}...)"
                     )
-                    return setting.value
+                    return str(setting.value)
 
                 # Generate new key and store it
                 logger.debug("OAuthCrypto: No key found in database, generating new one")

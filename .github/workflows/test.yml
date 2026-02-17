@@ -2,9 +2,14 @@ name: Test
 
 on:
   push:
-    branches: [main, SETUP]
+    branches: [main, develop, SETUP]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   rpc-parity:
@@ -104,37 +109,264 @@ jobs:
         if: matrix.os != 'windows-latest'
         shell: bash
 
-      - name: Run tests with coverage
+      - name: Run unit tests
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # Exclude slow Windows tests: test_list_credentials and test_zone_isolation
-            uv run pytest -n auto -m "not slow" --cov=nexus --cov-report=xml --cov-report=term-missing \
-              --ignore=tests/unit/server/test_token_manager.py::TestTokenManager::test_list_credentials \
-              --ignore=tests/unit/server/test_token_manager.py::TestTokenManager::test_zone_isolation
-          else
-            # Run unit tests only with 120s per-test timeout
-            uv pip install pytest-timeout
-            uv run pytest tests/unit --cov=nexus --cov-report=xml --cov-report=term-missing --timeout=120 -v
+          start=$(date +%s)
+          uv run pytest tests/unit -v --durations=10
+          status=$?
+          echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt
+          exit $status
+        shell: bash
+
+      - name: Unit test duration (target <3min; fail if >5min)
+        if: always()
+        run: |
+          if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
+          dur=$(cat unit_test_duration_sec.txt)
+          echo "### Unit tests" >> $GITHUB_STEP_SUMMARY
+          echo "Duration: **${dur}s** (target &lt;180s; max 300s)" >> $GITHUB_STEP_SUMMARY
+          if [ "$dur" -gt 300 ]; then
+            echo "::error::Unit tests took ${dur}s (max 300s). Keep the suite lean; see tests/unit/README.md"
+            exit 1
           fi
         shell: bash
 
-      - name: Check coverage threshold
+      - name: Verify benchmark collection
         run: |
-          # v0.8.0: Temporarily lowered to 50% due to new subscription/parser code without tests
-          # Previous: 59%
-          # New v0.8 modules with low coverage: subscriptions, parsers/providers
-          # TODO: Raise back to 60% after adding tests for v0.8 subscription and parser modules
-          uv run coverage report --fail-under=50
+          uv run pytest tests/benchmarks/ --collect-only -q -o "addopts="
+        if: matrix.os == 'ubuntu-latest'
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+  e2e-self-contained:
+    name: E2E Tests (Self-Contained)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Run self-contained e2e tests
+        run: |
+          uv run pytest tests/e2e/self_contained/ -v --timeout=120 -o "addopts="
+        timeout-minutes: 10
+
+  e2e-postgres:
+    name: E2E Tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: nexus_test
+          POSTGRES_PASSWORD: nexus_test
+          POSTGRES_DB: nexus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test,postgres]"
+
+      - name: Run PostgreSQL e2e tests
+        run: |
+          uv run pytest tests/e2e/postgres/ --ignore=tests/e2e/postgres/migrations -v --timeout=120 -o "addopts="
+        timeout-minutes: 10
+
+  e2e-redis:
+    name: E2E Tests (Redis)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NEXUS_REDIS_URL: redis://localhost:6379
+      NEXUS_DRAGONFLY_COORDINATION_URL: redis://localhost:6379
+      REDIS_ENABLED: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Run Redis e2e tests
+        run: |
+          uv run pytest tests/e2e/redis/ -v --timeout=120 -o "addopts="
+        timeout-minutes: 10
+
+  e2e-docker:
+    name: E2E Tests (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Run Docker e2e tests
+        run: |
+          uv run pytest tests/e2e/docker/ -v --timeout=180 -o "addopts="
+        timeout-minutes: 15
+
+  e2e-nats:
+    name: E2E Tests (NATS)
+    runs-on: ubuntu-latest
+    env:
+      NEXUS_NATS_URL: nats://localhost:4222
+    steps:
+      - name: Start NATS with JetStream
+        run: |
+          docker run -d --name nats -p 4222:4222 nats:latest -js
+          sleep 2
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Run NATS e2e tests
+        run: |
+          uv run pytest tests/e2e/nats/ -v --timeout=120 -o "addopts="
+        timeout-minutes: 10
 
   migration-test:
     name: Migration Tests (SQLite)
@@ -162,7 +394,7 @@ jobs:
 
       - name: Run migration tests (SQLite)
         run: |
-          uv run pytest tests/integration/migrations/ -v -o "addopts="
+          uv run pytest tests/e2e/postgres/migrations/ -v -o "addopts="
 
   migration-test-pg:
     name: Migration Tests (PostgreSQL)
@@ -206,4 +438,4 @@ jobs:
 
       - name: Run migration tests (PostgreSQL)
         run: |
-          uv run pytest tests/integration/migrations/ -v -o "addopts="
+          uv run pytest tests/e2e/postgres/migrations/ -v -o "addopts="

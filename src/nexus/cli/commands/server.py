@@ -8,7 +8,6 @@ This module contains server-related CLI commands for:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import sys
 import time
@@ -24,6 +23,8 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:
@@ -375,12 +376,17 @@ def _mount_fuse(
             # log_file must be set when daemon=True
             assert log_file is not None, "log_file must be set in daemon mode"
 
-            # Configure logging to file
-            logging.basicConfig(
-                filename=log_file,
-                level=logging.DEBUG if debug else logging.INFO,
-                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            # Configure logging to file with secret redaction (Issue #86)
+            from nexus.core.logging_utils import RedactingFormatter
+
+            _fuse_formatter = RedactingFormatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             )
+            _fuse_handler = logging.FileHandler(log_file)
+            _fuse_handler.setFormatter(_fuse_formatter)
+            logging.root.handlers.clear()
+            logging.root.addHandler(_fuse_handler)
+            logging.root.setLevel(logging.DEBUG if debug else logging.INFO)
 
             # Redirect stdout/stderr to log file (for any print statements or uncaught errors)
             sys.stdout = open(log_file, "a")  # noqa: SIM115
@@ -597,11 +603,13 @@ def serve(
     import os
     import subprocess
 
-    # Set up logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    from nexus.core.logging_utils import setup_logging
+
+    # Set up logging with secret redaction (Issue #86)
+    # Read redaction setting from env var (config hasn't loaded yet at this point)
+    _redaction_env = os.getenv("NEXUS_LOG_REDACTION_ENABLED", "true").lower()
+    _redaction_enabled = _redaction_env in ("true", "1", "yes", "on")
+    setup_logging(level=logging.INFO, redaction_enabled=_redaction_enabled)
 
     try:
         # ============================================
@@ -960,7 +968,7 @@ def serve(
             sys.exit(1)
 
         # Create authentication provider
-        from nexus.server.auth.base import AuthProvider
+        from nexus.auth.providers.base import AuthProvider
 
         auth_provider: AuthProvider | None = None
         if auth_type == "database":
@@ -970,9 +978,9 @@ def serve(
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.server.auth.database_local import DatabaseLocalAuth
-            from nexus.server.auth.factory import DiscriminatingAuthProvider
+            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1021,7 +1029,7 @@ def serve(
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1059,7 +1067,7 @@ def serve(
             # Single OIDC provider authentication
             import os
 
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             oidc_issuer = os.getenv("NEXUS_OIDC_ISSUER")
             oidc_audience = os.getenv("NEXUS_OIDC_AUDIENCE")
@@ -1080,7 +1088,7 @@ def serve(
             import json
             import os
 
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             oidc_providers_json = os.getenv("NEXUS_OIDC_PROVIDERS")
             if not oidc_providers_json:
@@ -1103,7 +1111,7 @@ def serve(
 
         elif auth_type == "static":
             # Static API key authentication (deprecated, use database instead)
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             if not api_key:
                 console.print("[red]Error:[/red] Static authentication requires --api-key")
@@ -1118,7 +1126,7 @@ def serve(
 
         elif api_key:
             # Backward compatibility: --api-key without --auth-type defaults to static
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             auth_provider = create_auth_provider("static", api_key=api_key)
             console.print("[yellow]⚠️  Using static API key authentication (deprecated)[/yellow]")
@@ -1248,8 +1256,8 @@ def serve(
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.rebac.entity_registry import EntityRegistry
 
             engine = create_engine(db_url)
             Session = sessionmaker(bind=engine)
@@ -1259,13 +1267,15 @@ def serve(
             zone_id = "default"
 
             # User might already exist, ignore errors
-            with contextlib.suppress(Exception):
+            try:
                 entity_registry.register_entity(
                     entity_type="user",
                     entity_id=admin_user,
                     parent_type="zone",
                     parent_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("Entity registration skipped (may already exist): %s", e)
 
             # Create API key using DatabaseAPIKeyAuth
             try:
@@ -1311,7 +1321,7 @@ def serve(
                             raise
 
                     # Grant admin user ownership
-                    from nexus.services.permissions.rebac_manager_enhanced import (
+                    from nexus.rebac.manager import (
                         EnhancedReBACManager,
                     )
 
@@ -1422,28 +1432,34 @@ def serve(
             and nx._rebac_manager
             and hasattr(nx._rebac_manager, "get_cache_stats")
         ):
-            with contextlib.suppress(Exception):
+            try:
                 cache_stats_before = nx._rebac_manager.get_cache_stats()
+            except Exception as e:
+                logger.debug("Failed to get cache stats before warmup: %s", e)
 
         warmed_count = 0
         try:
             # Warm up common paths (non-blocking, best effort)
             common_paths = ["/", "/workspace", "/tmp", "/data"]
             for path in common_paths:
-                with contextlib.suppress(Exception):
+                try:
                     # Check if path exists and warm permission cache
                     if nx.exists(path):
                         # List directory to warm listing cache
-                        with contextlib.suppress(Exception):
+                        try:
                             nx.list(path, recursive=False, details=False)
                             warmed_count += 1
+                        except Exception as e:
+                            logger.debug("Failed to warm listing cache for %s: %s", path, e)
+                except Exception as e:
+                    logger.debug("Failed to warm permission cache for %s: %s", path, e)
 
             elapsed = time.time() - start_time
             console.print(f" [green]✓[/green] ({warmed_count} paths, {elapsed:.2f}s)")
 
             # Show cache stats if available
             if cache_stats_before:
-                with contextlib.suppress(Exception):
+                try:
                     cache_stats_after = nx._rebac_manager.get_cache_stats()  # type: ignore[attr-defined]
                     l2_before = cache_stats_before.get("l2_size", 0)
                     l2_after = cache_stats_after.get("l2_size", 0)
@@ -1451,6 +1467,8 @@ def serve(
 
                     if l2_warmed > 0:
                         console.print(f"  [dim]L2 permission cache: +{l2_warmed} entries[/dim]")
+                except Exception as e:
+                    logger.debug("Failed to get cache stats after warmup: %s", e)
 
         except Exception as e:
             console.print(f" [yellow]⚠ [/yellow] ({str(e)})")

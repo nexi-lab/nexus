@@ -47,6 +47,38 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Members required by ConnectorProtocol (Issue #1703).
+# Used for registration-time conformance validation.  Cannot use
+# issubclass(cls, ConnectorProtocol) because Python's runtime_checkable
+# doesn't support issubclass() on Protocols with @property members.
+_CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
+    {
+        # ContentStoreProtocol
+        "name",
+        "write_content",
+        "read_content",
+        "delete_content",
+        "content_exists",
+        "get_content_size",
+        "get_ref_count",
+        # DirectoryOpsProtocol
+        "mkdir",
+        "rmdir",
+        "is_directory",
+        # ConnectorProtocol (connection lifecycle)
+        "connect",
+        "disconnect",
+        "check_connection",
+        # ConnectorProtocol (capability flags)
+        "user_scoped",
+        "is_connected",
+        "is_passthrough",
+        "has_root_path",
+        "has_virtual_filesystem",
+        "has_token_manager",
+    }
+)
+
 
 class ArgType(Enum):
     """Types for connection arguments.
@@ -165,6 +197,13 @@ class ConnectorInfo:
     Auto-populated at registration time by :func:`derive_config_mapping`.
     """
 
+    service_name: str | None = None
+    """Unified service name for service_map integration (e.g., 'gmail', 'google-drive').
+
+    When set, service_map.py auto-derives the connector field from this registry,
+    eliminating manual synchronization between ConnectorRegistry and SERVICE_REGISTRY.
+    """
+
     @property
     def connection_args(self) -> dict[str, ConnectionArg]:
         """Get CONNECTION_ARGS from the connector class if defined.
@@ -259,6 +298,7 @@ class ConnectorRegistry:
         description: str = "",
         category: str = "storage",
         requires: list[str] | None = None,
+        service_name: str | None = None,
     ) -> None:
         """Register a connector class.
 
@@ -268,10 +308,23 @@ class ConnectorRegistry:
             description: Human-readable description
             category: Category for grouping
             requires: List of optional dependencies
+            service_name: Unified service name for service_map integration
 
         Raises:
-            ValueError: If a connector with the same name is already registered
+            ValueError: If a connector with the same name is already registered,
+                or if the connector class does not satisfy ConnectorProtocol.
         """
+        # Validate ConnectorProtocol conformance (Issue #1703).
+        # Cannot use issubclass() because ConnectorProtocol has @property
+        # members which Python's runtime_checkable doesn't support for
+        # issubclass(). Instead, check for required method/property presence.
+        missing = [m for m in _CONNECTOR_PROTOCOL_MEMBERS if not hasattr(connector_class, m)]
+        if missing:
+            raise ValueError(
+                f"Connector '{name}' ({connector_class.__name__}) does not satisfy "
+                f"ConnectorProtocol. Missing members: {', '.join(sorted(missing))}"
+            )
+
         existing = cls._base.get(name)
         if existing is not None:
             if existing.connector_class is not connector_class:
@@ -299,6 +352,7 @@ class ConnectorRegistry:
             requires=requires or [],
             user_scoped=user_scoped,
             config_mapping=config_mapping,
+            service_name=service_name,
         )
         cls._base.register(name, info, allow_overwrite=True)
 
@@ -398,6 +452,21 @@ class ConnectorRegistry:
         return name in cls._base
 
     @classmethod
+    def get_by_service_name(cls, service_name: str) -> ConnectorInfo | None:
+        """Get connector info by unified service name.
+
+        Args:
+            service_name: Unified service name (e.g., 'gmail', 'google-drive')
+
+        Returns:
+            ConnectorInfo if found, None otherwise
+        """
+        for info in cls._base.list_all():
+            if info.service_name == service_name:
+                return info
+        return None
+
+    @classmethod
     def clear(cls) -> None:
         """Clear all registered connectors. Primarily for testing."""
         cls._base.clear()
@@ -408,6 +477,7 @@ def register_connector(
     description: str = "",
     category: str = "storage",
     requires: list[str] | None = None,
+    service_name: str | None = None,
 ) -> Callable[[type[Backend]], type[Backend]]:
     """Decorator to register a connector class.
 
@@ -419,6 +489,9 @@ def register_connector(
         description: Human-readable description
         category: Category for grouping (default: 'storage')
         requires: List of optional dependencies (e.g., ['google-cloud-storage'])
+        service_name: Unified service name for service_map integration
+            (e.g., 'gmail', 'google-drive'). When set, service_map.py
+            auto-derives the connector field from this registry.
 
     Returns:
         Decorator function
@@ -440,6 +513,7 @@ def register_connector(
             description=description,
             category=category,
             requires=requires,
+            service_name=service_name,
         )
         return cls
 
@@ -476,10 +550,9 @@ def create_connector(name: str, **config: Any) -> Backend:
         ...     project_id="my-project"
         ... )
     """
-    # Ensure optional backends are registered on first use
-    _ensure_optional_backends_registered()
-    connector_cls = ConnectorRegistry.get(name)
-    return connector_cls(**config)
+    from nexus.backends.factory import BackendFactory
+
+    return BackendFactory.create(name, config)
 
 
 def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> Backend:
@@ -504,24 +577,6 @@ def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> B
         ...     {"bucket": "my-bucket", "project_id": "my-project"}
         ... )
     """
-    # Ensure optional backends are registered on first use
-    _ensure_optional_backends_registered()
-    info = ConnectorRegistry.get_info(name)
-    connector_cls = info.connector_class
+    from nexus.backends.factory import BackendFactory
 
-    # Get auto-derived config mapping from ConnectorInfo
-    mapping = info.config_mapping
-
-    # Build constructor kwargs by mapping config keys
-    kwargs: dict[str, Any] = {}
-    for config_key, param_name in mapping.items():
-        if config_key in backend_config:
-            kwargs[param_name] = backend_config[config_key]
-
-    # Also pass through any keys that match parameter names directly
-    # (for future extensibility without updating mappings)
-    for key, value in backend_config.items():
-        if key not in mapping and key not in kwargs:
-            kwargs[key] = value
-
-    return connector_cls(**kwargs)
+    return BackendFactory.create(name, backend_config)

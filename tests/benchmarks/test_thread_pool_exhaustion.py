@@ -25,6 +25,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -115,6 +117,15 @@ class TestResults:
 # =============================================================================
 # HTTP Client Test (against running server)
 # =============================================================================
+
+
+@pytest.fixture
+def base_url():
+    """Get base URL from NEXUS_BASE_URL env var, skip if not set."""
+    url = os.environ.get("NEXUS_BASE_URL")
+    if not url:
+        pytest.skip("NEXUS_BASE_URL not set — no running server for HTTP test")
+    return url
 
 
 def test_http_concurrent_requests(
@@ -248,7 +259,7 @@ def test_in_process_thread_exhaustion(
         context = OperationContext(
             user="test_user",
             groups=[],
-            zone_id="default",
+            zone_id="root",
             subject_type="user",
             subject_id="test_user",
         )
@@ -258,7 +269,7 @@ def test_in_process_thread_exhaustion(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            zone_id="default",
+            zone_id="root",
         )
 
         print("Created 50 test files")
@@ -364,7 +375,7 @@ async def test_async_thread_exhaustion(
         context = OperationContext(
             user="test_user",
             groups=[],
-            zone_id="default",
+            zone_id="root",
             subject_type="user",
             subject_id="test_user",
         )
@@ -374,13 +385,13 @@ async def test_async_thread_exhaustion(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            zone_id="default",
+            zone_id="root",
         )
 
         print("Created 100 test files")
 
         # FORCE WORST CASE: Disable Rust acceleration to simulate slow Python path
-        import nexus.services.permissions.rebac_fast as rebac_fast
+        import nexus.rebac.rebac_fast as rebac_fast
 
         _original_rust_available = rebac_fast.RUST_AVAILABLE  # noqa: F841
         rebac_fast.RUST_AVAILABLE = False

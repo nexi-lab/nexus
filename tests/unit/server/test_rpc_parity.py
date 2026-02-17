@@ -260,27 +260,11 @@ def test_all_public_methods_are_exposed_or_excluded():
         "arebac_explain",  # Delegates to rebac_service.rebac_explain()
         "arebac_list_tuples",  # Delegates to rebac_service.rebac_list_tuples()
         "aget_namespace",  # Delegates to rebac_service.get_namespace()
-        # MCPService backward-compat aliases (Issue #1287 Phase 1.4: mixin removed)
-        # Primary methods (mcp_*) have @rpc_expose; aliases (amcp_*) are internal-only
-        "amcp_mount",  # Alias for mcp_mount
-        "amcp_unmount",  # Alias for mcp_unmount
-        "amcp_list_mounts",  # Alias for mcp_list_mounts
-        "amcp_list_tools",  # Alias for mcp_list_tools
-        "amcp_sync",  # Alias for mcp_sync
-        "amcp_connect",  # Delegates to oauth_service.mcp_connect()
         # LLMService delegation (4 methods) — Issue #1287 Phase B: mixin removed
         "create_llm_reader",  # Delegates to llm_service.create_llm_reader()
         "llm_read",  # Delegates to llm_service.llm_read()
         "llm_read_detailed",  # Delegates to llm_service.llm_read_detailed()
         "llm_read_stream",  # Delegates to llm_service.llm_read_stream()
-        # OAuthService backward-compat aliases (Issue #1287 Phase 1.3: mixin removed)
-        # Primary methods (oauth_*) have @rpc_expose; aliases (aoauth_*) are internal-only
-        "aoauth_list_providers",  # Alias for oauth_list_providers
-        "aoauth_get_auth_url",  # Alias for oauth_get_auth_url
-        "aoauth_exchange_code",  # Alias for oauth_exchange_code
-        "aoauth_list_credentials",  # Alias for oauth_list_credentials
-        "aoauth_revoke_credential",  # Alias for oauth_revoke_credential
-        "aoauth_test_credential",  # Alias for oauth_test_credential
         # MountService delegation (15 methods)
         "aadd_mount",  # Delegates to mount_service.add_mount()
         "aremove_mount",  # Delegates to mount_service.remove_mount()
@@ -308,11 +292,8 @@ def test_all_public_methods_are_exposed_or_excluded():
         "locked",  # Async context manager - distributed lock acquisition
         # Consistency migration - server-side orchestration only (Issue #1180)
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
-        # Issue #1287 Phase B: backward-compat aliases for LLM methods (primary names have @rpc_expose)
-        "allm_read",  # Alias for llm_read
-        "allm_read_detailed",  # Alias for llm_read_detailed
-        "allm_read_stream",  # Alias for llm_read_stream
-        "acreate_llm_reader",  # Alias for create_llm_reader
+        # Workflow event queue - server-side background task (Issue #1522)
+        "ensure_workflow_consumer",  # Internal - starts bounded workflow event queue consumer
     }
 
     # Get all public methods

@@ -19,11 +19,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from cachetools import LRUCache
+
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
+    from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -88,21 +90,27 @@ class OverlayResolver:
     2. Fall back to base layer (immutable snapshot manifest) for unmodified files
     3. Whiteout markers (etag == WHITEOUT_HASH) hide base-layer files
 
-    Base manifests are cached in memory since they are immutable once created.
+    Base manifests are cached in a bounded LRU cache since they are immutable
+    once created.  Evicted entries are re-fetched from CAS on next access.
 
     Args:
         metadata: Metadata store (acts as the upper layer)
         backend: CAS backend for reading base manifests
+        max_cached_manifests: Maximum number of manifests to keep in cache.
     """
 
     def __init__(
         self,
         metadata: FileMetadataProtocol,
-        backend: Backend,
+        backend: ConnectorProtocol,
+        *,
+        max_cached_manifests: int = 256,
     ) -> None:
         self._metadata = metadata
         self._backend = backend
-        self._manifest_cache: dict[str, WorkspaceManifest] = {}
+        self._manifest_cache: LRUCache[str, WorkspaceManifest] = LRUCache(
+            maxsize=max_cached_manifests
+        )
 
     def get_base_manifest(self, base_hash: str) -> WorkspaceManifest:
         """Load and cache an immutable base manifest from CAS.

@@ -71,7 +71,7 @@ def make_rebac_mock(
     """Create a mock ReBAC manager with configurable grants."""
     rebac = MagicMock()
     rebac.rebac_list_objects.return_value = granted_objects or []
-    rebac._get_zone_revision.return_value = zone_revision
+    rebac.get_zone_revision.return_value = zone_revision
     return rebac
 
 
@@ -307,7 +307,7 @@ class TestCacheBehavior:
         assert mw._cache_misses == 1
 
         # Change revision to a new bucket
-        rebac._get_zone_revision.return_value = 15  # bucket = 15 // 10 = 1
+        rebac.get_zone_revision.return_value = 15  # bucket = 15 // 10 = 1
         await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
         assert mw._cache_misses == 2  # New bucket → cache miss
 
@@ -482,7 +482,7 @@ class TestErrorHandling:
         """ReBAC failure should fail-closed (no tools visible)."""
         rebac = MagicMock()
         rebac.rebac_list_objects.side_effect = RuntimeError("DB down")
-        rebac._get_zone_revision.return_value = 0
+        rebac.get_zone_revision.return_value = 0
 
         mw = ToolNamespaceMiddleware(rebac_manager=rebac)
 

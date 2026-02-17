@@ -35,9 +35,9 @@ class ReBACTupleModel(Base):
 
     tuple_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-    subject_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-    object_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    subject_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    object_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -212,7 +212,7 @@ class ReBACChangelogModel(Base):
     object_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     object_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root", index=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
@@ -254,7 +254,7 @@ class ReBACCheckCacheModel(Base):
 
     cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -455,3 +455,27 @@ class TigerDirectoryGrantsModel(Base):
             f"{self.subject_type}:{self.subject_id}, "
             f"dir={self.directory_path}, status={self.expansion_status})>"
         )
+
+
+class AdminBypassAuditModel(Base):
+    """Immutable audit log for admin/system bypass events (P0-4)."""
+
+    __tablename__ = "admin_bypass_audit"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    zone_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    permission: Mapped[str] = mapped_column(String(50), nullable=False)
+    bypass_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    capabilities: Mapped[str | None] = mapped_column(Text, nullable=True)
+    denial_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_audit_timestamp", "timestamp"),
+        Index("idx_audit_user_timestamp", "user_id", "timestamp"),
+        Index("idx_audit_zone_timestamp", "zone_id", "timestamp"),
+    )

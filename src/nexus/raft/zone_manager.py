@@ -618,23 +618,25 @@ class ZoneManager:
     def ensure_topology(self) -> bool:
         """Ensure root "/" and mount topology exist via standard Raft proposals.
 
-        Shared readiness gate for both static and dynamic paths:
+        Shared readiness gate called by health check (every 10s on each node).
 
-        - **Static (Day 1)**: Called by server health check after initial
-          leader election. Leader creates root "/" + mounts via normal Raft
-          proposals; followers receive them via log replication.
+        Each zone has an **independent Raft group with independent leadership**.
+        A single mount requires writes to TWO zones (parent + target), which
+        may have different leaders on different nodes. This method handles
+        each write independently:
 
-        - **Dynamic (Recovery)**: Called after campaign() + wait_for_leader()
-          re-elects a leader. Validates persisted topology (idempotent no-op
-          when data survived in Raft snapshots/redb).
+        - **Phase A**: DT_MOUNT in parent zone (needs parent zone leader)
+        - **Phase B**: i_links_count in target zone (needs target zone leader)
 
-        All operations use standard Raft: is_leader() + propose(). No custom
-        algorithms. Idempotent — safe to call repeatedly on any node.
+        Each node applies what it can (zones where it's leader). Other nodes
+        handle their zones. Raft replication propagates results to followers.
+        All nodes converge within 1-2 health check intervals (~10-20s).
+
+        Idempotent — safe to call repeatedly on any node.
 
         Returns:
-            True if topology is fully ready (root "/" + all mounts exist on
-            this node), False if still waiting for leader election or
-            log replication.
+            True if topology is fully ready on this node, False if still
+            waiting for leader writes or Raft replication.
         """
         if self._topology_initialized:
             return True
@@ -646,35 +648,25 @@ class ZoneManager:
         if root_store is None:
             return False
 
-        # Check if root "/" exists on this node (replicated or persisted)
+        # Fast path: check if everything is already replicated to this node
         root = root_store.get("/")
-        if root is None:
-            # Root missing — leader needs to create it
-            return self._try_apply_topology(root_store)
+        if root is not None and (not self._pending_mounts or self._all_mounts_ready()):
+            self._pending_mounts = None
+            self._topology_initialized = True
+            return True
 
-        # Root exists — verify pending mounts if any
-        if self._pending_mounts and not self._all_mounts_ready():
-            # Some mounts missing — leader needs to apply them.
-            # Followers wait for replication.
-            return self._try_apply_topology(root_store)
-
-        # All topology in place — works for both:
-        # - Static: leader created, followers received via replication
-        # - Dynamic: data persisted in Raft snapshots across restart
-        self._pending_mounts = None
-        self._topology_initialized = True
-        return True
+        # Not ready — apply what we can (zones where this node is leader)
+        return self._apply_topology()
 
     def _all_mounts_ready(self) -> bool:
-        """Check if all pending mounts have been applied on this node.
+        """Check if all pending mounts are fully applied on this node.
 
-        Uses target zone's i_links_count as mount indicator: mount() always
-        calls _increment_links() on the target zone. If i_links_count >= 1,
-        the mount was applied and replicated to this node.
+        Uses target zone's i_links_count as mount-complete indicator:
+        Phase B (_increment_links) sets i_links_count >= 1 on the target
+        zone. This is the LAST phase of a mount, so i_links_count >= 1
+        implies Phase A (DT_MOUNT) is also done.
 
-        This avoids complex zone-aware path resolution — works correctly
-        for both top-level (/corp) and nested (/corp/engineering) mounts,
-        and on both leader and follower nodes.
+        Works on both leader and follower nodes (reads replicated state).
         """
         if not self._pending_mounts:
             return True
@@ -687,30 +679,45 @@ class ZoneManager:
                 return False
         return True
 
-    def _try_apply_topology(self, root_store: RaftMetadataStore) -> bool:
-        """Create root "/" and apply mount topology via standard Raft proposals.
-
-        Only succeeds if this node is the Raft leader for the root zone.
-        Followers return False and wait for log replication.
-
-        Idempotent — skips existing root and mounts.
-
-        Returns:
-            True if topology was created/exists, False if not leader or
-            leadership changed during application.
-        """
-        # Standard Raft: only leader can propose
+    @staticmethod
+    def _is_zone_leader(store: RaftMetadataStore) -> bool:
+        """Check if this node is the Raft leader for the given zone's store."""
         try:
-            engine = root_store._engine  # noqa: SLF001
-            if engine is None or not hasattr(engine, "is_leader") or not engine.is_leader():
-                return False
+            engine = store._engine  # noqa: SLF001
+            return engine is not None and hasattr(engine, "is_leader") and engine.is_leader()
         except Exception:
             return False
 
-        try:
-            # Create root "/" via normal Raft proposal (idempotent)
-            root = root_store.get("/")
-            if root is None:
+    def _apply_topology(self) -> bool:
+        """Apply pending topology entries with per-zone fault tolerance.
+
+        Each zone has independent Raft leadership. A single mount requires
+        writes to TWO zones (parent for DT_MOUNT, target for i_links_count),
+        which may have different leaders on different nodes. This method
+        handles each write independently — no cross-zone atomicity needed.
+
+        Per-mount phases:
+          Phase A: Create DT_DIR + DT_MOUNT in parent zone
+          Phase B: Increment i_links_count in target zone
+
+        Each phase has its own leadership check and error handling.
+        Failed phases stay pending for the next ensure_topology() call.
+
+        Returns:
+            True if all topology is fully applied, False if still converging.
+        """
+        assert self._root_zone_id is not None
+        root_store = self.get_store(self._root_zone_id)
+        if root_store is None:
+            logger.debug("Root zone store not ready yet (zone=%s)", self._root_zone_id)
+            return False
+
+        # --- Root "/" creation (needs root zone leader) ---
+        root = root_store.get("/")
+        if root is None:
+            if not self._is_zone_leader(root_store):
+                return False
+            try:
                 root_entry = FileMetadata(
                     path="/",
                     backend_name="virtual",
@@ -722,44 +729,24 @@ class ZoneManager:
                 )
                 root_store.put(root_entry)
                 logger.info(
-                    "Leader: created root '/' in zone '%s' via Raft consensus",
+                    "Leader: created root '/' in zone '%s'",
                     self._root_zone_id,
                 )
+            except RuntimeError as e:
+                logger.debug("Root creation deferred: %s", e)
+                return False
 
-            # Apply mount topology via normal Raft proposals (idempotent)
-            if self._pending_mounts:
-                self._apply_mounts(self._pending_mounts)
-                self._pending_mounts = None
-
+        # --- Mount topology (per-mount, per-zone fault tolerance) ---
+        if not self._pending_mounts:
             self._topology_initialized = True
             return True
 
-        except RuntimeError as e:
-            # "not leader" — leadership may have changed during writes
-            logger.debug("Topology creation deferred: %s", e)
-            return False
-
-    def _apply_mounts(self, mounts: dict[str, str]) -> None:
-        """Apply mount topology via normal Raft proposals (leader only).
-
-        Called by ensure_topology() after leader election. Writes go through
-        Raft consensus — only the leader proposes; followers receive via
-        log replication. This follows the standard Raft contract.
-
-        Mounts are specified as global paths (e.g., "/corp/engineering")
-        and resolved to the correct parent zone via longest-prefix matching
-        against already-active mounts.
-
-        Args:
-            mounts: Global path → target zone mapping.
-        """
-        assert self._root_zone_id is not None
-
         # Process mounts in path-depth order (parents before children)
-        sorted_mounts = sorted(mounts.items(), key=lambda x: x[0].count("/"))
+        sorted_mounts = sorted(self._pending_mounts.items(), key=lambda x: x[0].count("/"))
 
         # Track active mounts for nested path resolution
         active_mounts: dict[str, str] = {}  # global_path → zone_id
+        remaining: dict[str, str] = {}  # mounts not yet fully applied
 
         for global_path, target_zone_id in sorted_mounts:
             # Resolve which zone owns this mount point
@@ -774,41 +761,91 @@ class ZoneManager:
                     break
 
             parent_store = self.get_store(parent_zone)
-            if parent_store is None:
+            target_store = self.get_store(target_zone_id)
+            if parent_store is None or target_store is None:
                 logger.warning(
-                    "Parent zone '%s' not found for mount '%s', skipping",
-                    parent_zone,
+                    "Zone store missing for mount '%s' (parent=%s, target=%s)",
                     global_path,
+                    parent_zone,
+                    target_zone_id,
                 )
+                remaining[global_path] = target_zone_id
                 continue
 
-            # Check if already mounted (idempotent)
+            # --- Phase A: DT_MOUNT in parent zone ---
             existing = parent_store.get(local_path)
-            if existing is not None and existing.is_mount:
-                logger.debug("Mount '%s' already exists, skipping", global_path)
-                active_mounts[global_path] = target_zone_id
-                continue
+            if existing is None or not existing.is_mount:
+                if not self._is_zone_leader(parent_store):
+                    remaining[global_path] = target_zone_id
+                    active_mounts[global_path] = target_zone_id
+                    continue
+                try:
+                    # Create directory if needed
+                    if existing is None:
+                        dir_entry = FileMetadata(
+                            path=local_path,
+                            backend_name="virtual",
+                            physical_path="",
+                            size=0,
+                            entry_type=DT_DIR,
+                            zone_id=parent_zone,
+                        )
+                        parent_store.put(dir_entry)
 
-            # Create directory at mount point if it doesn't exist
-            if existing is None:
-                dir_entry = FileMetadata(
-                    path=local_path,
-                    backend_name="virtual",
-                    physical_path="",
-                    size=0,
-                    entry_type=DT_DIR,
-                    zone_id=parent_zone,
-                )
-                parent_store.put(dir_entry)
+                    # Replace DT_DIR with DT_MOUNT
+                    mount_entry = FileMetadata(
+                        path=local_path,
+                        backend_name="mount",
+                        physical_path="",
+                        size=0,
+                        entry_type=DT_MOUNT,
+                        target_zone_id=target_zone_id,
+                        zone_id=parent_zone,
+                    )
+                    parent_store.put(mount_entry)
+                    logger.debug(
+                        "Phase A done: DT_MOUNT '%s' in zone '%s'", global_path, parent_zone
+                    )
+                except RuntimeError:
+                    remaining[global_path] = target_zone_id
+                    active_mounts[global_path] = target_zone_id
+                    continue
 
-            # Mount (standard Raft proposal — DT_MOUNT + i_links_count)
-            self.mount(parent_zone, local_path, target_zone_id)
+            # --- Phase B: i_links_count in target zone ---
+            target_root = target_store.get("/")
+            if target_root is None or target_root.i_links_count < 1:
+                if not self._is_zone_leader(target_store):
+                    remaining[global_path] = target_zone_id
+                    active_mounts[global_path] = target_zone_id
+                    continue
+                try:
+                    self._increment_links(target_store, target_zone_id)
+                    logger.debug("Phase B done: i_links_count for zone '%s'", target_zone_id)
+                except RuntimeError:
+                    remaining[global_path] = target_zone_id
+                    active_mounts[global_path] = target_zone_id
+                    continue
+
             active_mounts[global_path] = target_zone_id
+
+        applied = len(self._pending_mounts) - len(remaining)
+        if remaining:
+            logger.info(
+                "Topology progress: %d/%d mounts applied, %d pending",
+                applied,
+                len(self._pending_mounts),
+                len(remaining),
+            )
+            self._pending_mounts = remaining
+            return False
 
         logger.info(
             "Static topology applied: %d mounts via Raft consensus",
-            len(active_mounts),
+            len(self._pending_mounts),
         )
+        self._pending_mounts = None
+        self._topology_initialized = True
+        return True
 
     def shutdown(self) -> None:
         """Shut down all zones and the gRPC server."""

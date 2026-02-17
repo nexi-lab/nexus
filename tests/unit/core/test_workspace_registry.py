@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.workspace_registry import (
+from nexus.services.workspace.workspace_registry import (
     MemoryConfig,
     WorkspaceConfig,
     WorkspaceRegistry,
@@ -131,7 +131,7 @@ class TestWorkspaceRegistry:
         self, mock_metadata: MagicMock, mock_session_factory: MagicMock
     ) -> WorkspaceRegistry:
         """Create registry instance with mocked metadata."""
-        with patch("nexus.core.workspace_registry.WorkspaceRegistry._load_from_db"):
+        with patch("nexus.services.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
             reg = WorkspaceRegistry(mock_metadata, session_factory=mock_session_factory)
             reg._workspaces = {}
             reg._memories = {}
@@ -139,7 +139,7 @@ class TestWorkspaceRegistry:
 
     def test_init(self, mock_metadata: MagicMock, mock_session_factory: MagicMock) -> None:
         """Test registry initialization."""
-        with patch("nexus.core.workspace_registry.WorkspaceRegistry._load_from_db"):
+        with patch("nexus.services.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
             registry = WorkspaceRegistry(mock_metadata, session_factory=mock_session_factory)
             assert registry.metadata == mock_metadata
             assert registry.rebac_manager is None
@@ -317,7 +317,7 @@ class TestWorkspaceRegistry:
     def test_register_workspace_with_context_dict(self, registry: WorkspaceRegistry) -> None:
         """Test workspace registration with context as dict."""
         with patch.object(registry, "_save_workspace_to_db"):
-            context = {"user_id": "alice", "zone_id": "default"}
+            context = {"user_id": "alice", "zone_id": "root"}
             config = registry.register_workspace(
                 path="/workspace",
                 context=context,

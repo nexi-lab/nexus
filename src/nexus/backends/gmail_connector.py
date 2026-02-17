@@ -43,6 +43,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -54,7 +56,7 @@ from nexus.connectors.base import (
 )
 from nexus.connectors.gmail.errors import ERROR_REGISTRY
 from nexus.core.exceptions import BackendError
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 try:
     import yaml
@@ -72,9 +74,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@register_connector(
+    "gmail_connector",
+    description="Gmail with OAuth 2.0 authentication (read-only)",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+    service_name="gmail",
+)
 class GmailConnectorBackend(
     Backend,
     CacheConnectorMixin,
+    OAuthConnectorMixin,
     SkillDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
@@ -158,6 +168,32 @@ class GmailConnectorBackend(
     # Error registry for self-correcting messages
     ERROR_REGISTRY = ERROR_REGISTRY
 
+    # Connection arguments for registry-based instantiation
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name from config",
+            required=False,
+            default="gmail",
+        ),
+        "max_message_per_label": ConnectionArg(
+            type=ArgType.INTEGER,
+            description="Maximum number of messages to fetch per label folder",
+            required=False,
+            default=200,
+        ),
+    }
+
     def __init__(
         self,
         token_manager_db: str,
@@ -187,22 +223,7 @@ class GmailConnectorBackend(
             For multi-user production, leave user_email=None to auto-detect from context.
             This ensures each user accesses their own Gmail.
         """
-        # Import TokenManager here to avoid circular imports
-        from nexus.server.auth.token_manager import TokenManager
-
-        # Store original token_manager_db for config updates
-        self.token_manager_db = token_manager_db
-
-        # Resolve database URL using base class method (checks TOKEN_MANAGER_DB env var)
-        resolved_db = self.resolve_database_url(token_manager_db)
-
-        # Support both file paths and database URLs
-        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
-        else:
-            self.token_manager = TokenManager(db_path=resolved_db)
-        self.user_email = user_email  # None means use context.user_id
-        self.provider = provider
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
         # Store session factory for caching (CacheConnectorMixin)
         self.session_factory = session_factory
@@ -416,8 +437,10 @@ class GmailConnectorBackend(
                     elif mime_type == "text/html" and not body_html:
                         # Only set if not already set (prefer first occurrence)
                         body_html = decoded
-                except Exception:
-                    # Skip parts that fail to decode
+                except Exception as e:
+                    logger.debug(
+                        "Failed to decode email body part (mime_type=%s): %s", mime_type, e
+                    )
                     continue
 
         return body_text, body_html
@@ -584,6 +607,7 @@ class GmailConnectorBackend(
             backend="gmail",
         )
 
+    @timed_response
     def read_content(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> "HandlerResponse[bytes]":
@@ -603,15 +627,11 @@ class GmailConnectorBackend(
             NexusFileNotFoundError: If email doesn't exist
             BackendError: If read operation fails or PyYAML not installed
         """
-        import time
-
-        start_time = time.perf_counter()
 
         if yaml is None:
             return HandlerResponse.error(
                 message="PyYAML not installed. Install with: pip install pyyaml",
                 code=500,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
                 path=content_hash,
             )
@@ -621,7 +641,6 @@ class GmailConnectorBackend(
                 message="Gmail connector requires backend_path in OperationContext. "
                 "This backend reads files from actual paths, not CAS hashes.",
                 code=400,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
                 path=content_hash,
             )
@@ -640,7 +659,6 @@ class GmailConnectorBackend(
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Invalid Gmail path: {backend_path}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
 
@@ -649,7 +667,6 @@ class GmailConnectorBackend(
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Not a valid Gmail email file: {filename}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
 
@@ -659,7 +676,6 @@ class GmailConnectorBackend(
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Invalid Gmail email filename format: {filename}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
 
@@ -674,7 +690,6 @@ class GmailConnectorBackend(
             if cached and not cached.stale and cached.content_binary:
                 return HandlerResponse.ok(
                     data=cached.content_binary,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name="gmail",
                     path=backend_path,
                 )
@@ -687,7 +702,6 @@ class GmailConnectorBackend(
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Failed to fetch email: {e}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
 
@@ -704,12 +718,11 @@ class GmailConnectorBackend(
                     backend_version=IMMUTABLE_VERSION,  # Emails are immutable, use fixed version
                     zone_id=zone_id,
                 )
-            except Exception:
-                pass  # Don't fail on cache write errors
+            except Exception as e:
+                logger.debug("Gmail cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=content,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name="gmail",
             path=backend_path,
         )
@@ -758,8 +771,9 @@ class GmailConnectorBackend(
 
                 message_id = filename_parts[1]  # Get msg_id from "thread_id-msg_id"
                 path_to_message_id[path] = message_id
-            except Exception:
-                continue  # Skip paths that fail to parse
+            except Exception as e:
+                logger.debug("Failed to parse Gmail path %s: %s", path, e)
+                continue
 
         if not path_to_message_id:
             return {}
@@ -781,9 +795,10 @@ class GmailConnectorBackend(
                 parse_message_func=self._parse_gmail_message,
                 email_cache=email_cache,
             )
-        except Exception:
+        except Exception as e:
             # If batch fetch fails, fall back to empty results
             # The cache mixin will retry with sequential reads
+            logger.debug("Gmail batch fetch failed, falling back to sequential reads: %s", e)
             return {}
 
         # Format results as YAML
@@ -794,8 +809,9 @@ class GmailConnectorBackend(
                     email_data = email_cache[message_id]
                     content = self._format_email_as_yaml(email_data)
                     results[path] = content
-                except Exception:
-                    continue  # Skip emails that fail to format
+                except Exception as e:
+                    logger.debug("Failed to format email %s as YAML: %s", message_id, e)
+                    continue
 
         return results
 
@@ -857,10 +873,12 @@ class GmailConnectorBackend(
                 service = self._get_gmail_service(context)
                 service.users().messages().get(userId="me", id=message_id, format="full").execute()
                 return True
-            except Exception:
+            except Exception as e:
+                logger.debug("Gmail API check for message %s failed: %s", message_id, e)
                 return False
 
-        except Exception:
+        except Exception as e:
+            logger.debug("Gmail content existence check failed: %s", e)
             return False
 
     def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
@@ -959,10 +977,11 @@ class GmailConnectorBackend(
             # Return fixed version for immutable Gmail emails
             return IMMUTABLE_VERSION
 
-        except Exception:
+        except Exception as e:
+            logger.debug("Gmail version check failed: %s", e)
             return None
 
-    def _batch_get_versions(
+    def batch_get_versions(
         self,
         backend_paths: list[str],
         contexts: dict[str, "OperationContext"] | None = None,

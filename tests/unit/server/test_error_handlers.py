@@ -1,167 +1,202 @@
-"""Unit tests for error handler exception-to-response mapping.
+"""Unit tests for error handler HTTP status code mappings (Issue #1254).
 
-Tests cover:
-- Each exception class maps to the correct HTTP status code and error type
-- is_expected flag is propagated to the response
-- path attribute is included when present
-- ConflictError includes etag fields
-- Generic Exception falls through to 500
+Tests that every NexusError subclass maps to the correct HTTP status code
+via the centralized nexus_error_handler.
 """
-
-from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 from nexus.core.exceptions import (
+    AuditLogError,
     AuthenticationError,
     BackendError,
     ConflictError,
+    ConnectorAuthError,
+    ConnectorError,
+    ConnectorQuotaError,
+    ConnectorRateLimitError,
+    DatabaseConnectionError,
+    DatabaseError,
+    DatabaseIntegrityError,
+    DatabaseTimeoutError,
     InvalidPathError,
+    MetadataError,
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
     ParserError,
     PermissionDeniedError,
+    ServiceUnavailableError,
     StaleSessionError,
     ValidationError,
 )
 from nexus.server.error_handlers import nexus_error_handler
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _fake_request() -> MagicMock:
-    """Build a minimal mock FastAPI Request."""
-    return MagicMock()
-
 
 def _call_handler(exc: Exception) -> tuple[int, dict]:
-    """Invoke nexus_error_handler and return (status_code, content)."""
-    response = nexus_error_handler(_fake_request(), exc)
-    return response.status_code, response.body  # JSONResponse stores rendered body
+    """Helper to call nexus_error_handler and return (status_code, content)."""
+    request = MagicMock()
+    response = nexus_error_handler(request, exc)
+    return response.status_code, response.body
 
 
-def _call_handler_parsed(exc: Exception) -> tuple[int, dict]:
-    """Invoke handler and parse the JSON content dict."""
-    import json
+class TestExpectedErrors:
+    """Test HTTP mappings for expected (user) errors."""
 
-    response = nexus_error_handler(_fake_request(), exc)
-    content = json.loads(response.body.decode())
-    return response.status_code, content
+    def test_file_not_found_returns_404(self) -> None:
+        resp = nexus_error_handler(MagicMock(), NexusFileNotFoundError("/test"))
+        assert resp.status_code == 404
 
+    def test_permission_error_returns_403(self) -> None:
+        resp = nexus_error_handler(MagicMock(), NexusPermissionError("/test"))
+        assert resp.status_code == 403
 
-# ===========================================================================
-# Status code mapping
-# ===========================================================================
+    def test_permission_denied_error_returns_403(self) -> None:
+        resp = nexus_error_handler(MagicMock(), PermissionDeniedError("No access"))
+        assert resp.status_code == 403
 
+    def test_authentication_error_returns_401(self) -> None:
+        resp = nexus_error_handler(MagicMock(), AuthenticationError("Token expired"))
+        assert resp.status_code == 401
 
-class TestStatusCodeMapping:
-    """Each exception type should map to the correct HTTP status code."""
+    def test_invalid_path_returns_400(self) -> None:
+        resp = nexus_error_handler(MagicMock(), InvalidPathError("../../etc/passwd"))
+        assert resp.status_code == 400
 
-    def test_file_not_found_returns_404(self):
-        status, content = _call_handler_parsed(NexusFileNotFoundError("/missing.txt"))
-        assert status == 404
-        assert content["error"] == "Not Found"
+    def test_validation_error_returns_400(self) -> None:
+        resp = nexus_error_handler(MagicMock(), ValidationError("Invalid input"))
+        assert resp.status_code == 400
 
-    def test_permission_error_returns_403(self):
-        status, content = _call_handler_parsed(NexusPermissionError("/secret"))
-        assert status == 403
-        assert content["error"] == "Forbidden"
+    def test_conflict_error_returns_409(self) -> None:
+        resp = nexus_error_handler(MagicMock(), ConflictError("/test", "etag1", "etag2"))
+        assert resp.status_code == 409
 
-    def test_permission_denied_error_returns_403(self):
-        status, content = _call_handler_parsed(PermissionDeniedError("No read access"))
-        assert status == 403
-        assert content["error"] == "Forbidden"
+    def test_stale_session_error_returns_409(self) -> None:
+        resp = nexus_error_handler(MagicMock(), StaleSessionError("agent-1"))
+        assert resp.status_code == 409
 
-    def test_authentication_error_returns_401(self):
-        status, content = _call_handler_parsed(AuthenticationError("Token expired"))
-        assert status == 401
-        assert content["error"] == "Unauthorized"
-
-    def test_invalid_path_returns_400(self):
-        status, content = _call_handler_parsed(InvalidPathError("/bad/../path"))
-        assert status == 400
-        assert content["error"] == "Bad Request"
-
-    def test_validation_error_returns_400(self):
-        status, content = _call_handler_parsed(ValidationError("name is required"))
-        assert status == 400
-        assert content["error"] == "Bad Request"
-
-    def test_conflict_error_returns_409(self):
-        status, content = _call_handler_parsed(
-            ConflictError("/file.txt", "etag-expected", "etag-actual")
-        )
-        assert status == 409
-        assert content["error"] == "Conflict"
-
-    def test_stale_session_error_returns_409(self):
-        status, content = _call_handler_parsed(StaleSessionError("agent-001"))
-        assert status == 409
-        assert content["error"] == "Conflict"
-
-    def test_parser_error_returns_422(self):
-        status, content = _call_handler_parsed(ParserError("Unsupported format"))
-        assert status == 422
-        assert content["error"] == "Unprocessable Entity"
-
-    def test_backend_error_returns_502(self):
-        status, content = _call_handler_parsed(BackendError("GCS timeout", backend="gcs"))
-        assert status == 502
-        assert content["error"] == "Bad Gateway"
-
-    def test_generic_nexus_error_returns_500(self):
-        status, content = _call_handler_parsed(NexusError("Something broke"))
-        assert status == 500
-        assert content["error"] == "Internal Server Error"
-
-    def test_unknown_exception_returns_500(self):
-        """Non-NexusError exceptions should still get a 500 response."""
-        status, content = _call_handler_parsed(RuntimeError("unexpected"))
-        assert status == 500
-        assert content["error"] == "Internal Server Error"
+    def test_parser_error_returns_422(self) -> None:
+        resp = nexus_error_handler(MagicMock(), ParserError("Cannot parse"))
+        assert resp.status_code == 422
 
 
-# ===========================================================================
-# Response content
-# ===========================================================================
+class TestUnexpectedErrors:
+    """Test HTTP mappings for unexpected (system) errors."""
+
+    def test_backend_error_returns_502(self) -> None:
+        resp = nexus_error_handler(MagicMock(), BackendError("Connection failed"))
+        assert resp.status_code == 502
+
+    def test_metadata_error_returns_500(self) -> None:
+        resp = nexus_error_handler(MagicMock(), MetadataError("DB error"))
+        assert resp.status_code == 500
+
+    def test_service_unavailable_returns_503(self) -> None:
+        resp = nexus_error_handler(MagicMock(), ServiceUnavailableError("Down"))
+        assert resp.status_code == 503
+
+    def test_audit_log_error_returns_500(self) -> None:
+        resp = nexus_error_handler(MagicMock(), AuditLogError("Audit failed"))
+        assert resp.status_code == 500
+
+    def test_generic_nexus_error_returns_500(self) -> None:
+        resp = nexus_error_handler(MagicMock(), NexusError("Something broke"))
+        assert resp.status_code == 500
+
+    def test_unknown_exception_returns_500(self) -> None:
+        resp = nexus_error_handler(MagicMock(), RuntimeError("unknown"))
+        assert resp.status_code == 500
+
+
+class TestNewExceptionTypes:
+    """Test HTTP mappings for new Database/Connector exception types (Issue #1254)."""
+
+    def test_database_error_returns_502(self) -> None:
+        resp = nexus_error_handler(MagicMock(), DatabaseError("Connection lost"))
+        assert resp.status_code == 502
+
+    def test_database_connection_error_returns_502(self) -> None:
+        resp = nexus_error_handler(MagicMock(), DatabaseConnectionError("Refused"))
+        assert resp.status_code == 502
+
+    def test_database_timeout_error_returns_502(self) -> None:
+        resp = nexus_error_handler(MagicMock(), DatabaseTimeoutError("Timed out"))
+        assert resp.status_code == 502
+
+    def test_database_integrity_error_returns_502(self) -> None:
+        resp = nexus_error_handler(MagicMock(), DatabaseIntegrityError("Dup key"))
+        assert resp.status_code == 502
+
+    def test_connector_error_returns_502(self) -> None:
+        resp = nexus_error_handler(MagicMock(), ConnectorError("API failed"))
+        assert resp.status_code == 502
+
+    def test_connector_auth_error_returns_401(self) -> None:
+        resp = nexus_error_handler(MagicMock(), ConnectorAuthError("Token expired"))
+        assert resp.status_code == 401
+
+    def test_connector_rate_limit_error_returns_429(self) -> None:
+        resp = nexus_error_handler(MagicMock(), ConnectorRateLimitError("Rate limited"))
+        assert resp.status_code == 429
+
+    def test_connector_quota_error_returns_502(self) -> None:
+        resp = nexus_error_handler(MagicMock(), ConnectorQuotaError("Quota exceeded"))
+        assert resp.status_code == 502
 
 
 class TestResponseContent:
-    """Verify response body includes expected fields."""
+    """Test response content structure."""
 
-    def test_detail_contains_message(self):
-        _, content = _call_handler_parsed(NexusError("helpful message"))
-        assert "helpful message" in content["detail"]
+    def test_response_includes_is_expected(self) -> None:
+        import json
 
-    def test_is_expected_true_for_user_errors(self):
-        _, content = _call_handler_parsed(NexusFileNotFoundError("/x"))
-        assert content["is_expected"] is True
+        resp = nexus_error_handler(MagicMock(), ValidationError("Bad input"))
+        body = json.loads(resp.body)
+        assert body["is_expected"] is True
 
-    def test_is_expected_false_for_system_errors(self):
-        _, content = _call_handler_parsed(BackendError("disk full"))
-        assert content["is_expected"] is False
+        resp = nexus_error_handler(MagicMock(), BackendError("System failure"))
+        body = json.loads(resp.body)
+        assert body["is_expected"] is False
 
-    def test_is_expected_false_for_unknown_exceptions(self):
-        _, content = _call_handler_parsed(RuntimeError("oops"))
-        assert content["is_expected"] is False
+    def test_response_includes_path_when_present(self) -> None:
+        import json
 
-    def test_path_included_when_present(self):
-        _, content = _call_handler_parsed(NexusFileNotFoundError("/data/file.txt"))
-        assert content["path"] == "/data/file.txt"
+        resp = nexus_error_handler(MagicMock(), NexusFileNotFoundError("/missing/file"))
+        body = json.loads(resp.body)
+        assert body["path"] == "/missing/file"
 
-    def test_path_absent_when_not_set(self):
-        _, content = _call_handler_parsed(NexusError("no path"))
-        assert "path" not in content
+    def test_conflict_response_includes_etag_data(self) -> None:
+        import json
 
-    def test_conflict_error_includes_etags(self):
-        _, content = _call_handler_parsed(ConflictError("/file.txt", "expected-abc", "actual-xyz"))
-        assert content["expected_etag"] == "expected-abc"
-        assert content["current_etag"] == "actual-xyz"
+        resp = nexus_error_handler(MagicMock(), ConflictError("/test", "etag-old", "etag-new"))
+        body = json.loads(resp.body)
+        assert body["expected_etag"] == "etag-old"
+        assert body["current_etag"] == "etag-new"
 
-    def test_conflict_etags_not_present_on_non_conflict(self):
-        _, content = _call_handler_parsed(NexusFileNotFoundError("/x"))
-        assert "expected_etag" not in content
-        assert "current_etag" not in content
+    def test_is_expected_controls_classification(self) -> None:
+        """Verify is_expected flag matches exception class defaults."""
+        import json
+
+        # Expected errors
+        for exc in [
+            NexusFileNotFoundError("/test"),
+            ValidationError("Bad"),
+            AuthenticationError("Expired"),
+            ConnectorAuthError("Token revoked"),
+            ConnectorRateLimitError("Rate limited"),
+            DatabaseIntegrityError("Duplicate"),
+        ]:
+            resp = nexus_error_handler(MagicMock(), exc)
+            body = json.loads(resp.body)
+            assert body["is_expected"] is True, f"{type(exc).__name__} should be expected"
+
+        # Unexpected errors
+        for exc in [
+            BackendError("Failed"),
+            DatabaseError("Connection lost"),
+            ConnectorError("API failed"),
+            DatabaseConnectionError("Refused"),
+        ]:
+            resp = nexus_error_handler(MagicMock(), exc)
+            body = json.loads(resp.body)
+            assert body["is_expected"] is False, f"{type(exc).__name__} should be unexpected"

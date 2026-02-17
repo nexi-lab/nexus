@@ -1,23 +1,27 @@
 """Skill importer for ZIP/archive packages."""
 
+from __future__ import annotations
+
 import io
 import logging
 import re
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from nexus.core.exceptions import PermissionDeniedError, ValidationError
-from nexus.core.permissions import OperationContext
+from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillRegistry
 
+if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
+
 logger = logging.getLogger(__name__)
 
 
-class SkillImportError(ValidationError):
+class SkillImportError(SkillValidationError):
     """Raised when skill import fails."""
 
     pass
@@ -110,7 +114,7 @@ class SkillImporter:
         """
         # Permission check for system tier
         if tier == "system" and (not context or not getattr(context, "is_admin", False)):
-            raise PermissionDeniedError("Only admins can import to system tier")
+            raise SkillPermissionDeniedError("Only admins can import to system tier")
 
         # Extract and validate ZIP
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -375,7 +379,7 @@ class SkillImporter:
         if not context:
             raise ValueError("Context required for personal/zone tier skills")
 
-        zone_id = context.zone_id or "default"
+        zone_id = context.zone_id or "root"
 
         if tier == "personal":
             # Personal: /zone/{tid}/user/{uid}/skill/{skill_name}/

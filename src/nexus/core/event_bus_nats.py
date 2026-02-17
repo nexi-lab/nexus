@@ -14,7 +14,6 @@ Keep Dragonfly for caching only.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -39,6 +38,7 @@ from nats.js.api import (
 )
 from nats.js.errors import NotFoundError
 
+from nexus.constants import DEFAULT_NATS_URL
 from nexus.core.event_bus import (
     AckableEvent,
     EventBusBase,
@@ -82,7 +82,7 @@ class NatsEventBus(EventBusBase):
 
     def __init__(
         self,
-        nats_url: str = "nats://localhost:4222",
+        nats_url: str = DEFAULT_NATS_URL,
         session_factory: Any | None = None,
         node_id: str | None = None,
         max_reconnect_attempts: int = -1,
@@ -198,7 +198,7 @@ class NatsEventBus(EventBusBase):
         if not self._started or self._js is None:
             raise RuntimeError("NatsEventBus not started. Call start() first.")
 
-        zone_id = event.zone_id or "default"
+        zone_id = event.zone_id or "root"
         event_type = event.type.value if isinstance(event.type, FileEventType) else event.type
         subject = self._subject(zone_id, event_type)
 
@@ -221,11 +221,11 @@ class NatsEventBus(EventBusBase):
             raise
 
     # =========================================================================
-    # Subscribe (backward-compat wrapper)
+    # Subscribe (simple auto-ack interface)
     # =========================================================================
 
     async def subscribe(self, zone_id: str) -> AsyncIterator[FileEvent]:
-        """Subscribe with auto-ack (backward compatibility wrapper).
+        """Subscribe with auto-ack.
 
         Wraps subscribe_durable() and auto-acks each message so callers
         that don't need explicit ack/nack can use the simple interface.
@@ -315,8 +315,10 @@ class NatsEventBus(EventBusBase):
             logger.debug(f"Durable subscription {consumer_name} cancelled")
             raise
         finally:
-            with contextlib.suppress(Exception):
+            try:
                 await sub.unsubscribe()
+            except Exception as e:
+                logger.debug("NATS cleanup failed: %s", e)
 
     @staticmethod
     def _make_ack_fn(msg: Msg) -> Any:
@@ -411,8 +413,10 @@ class NatsEventBus(EventBusBase):
                 return event
 
         finally:
-            with contextlib.suppress(Exception):
+            try:
                 await sub.unsubscribe()
+            except Exception as e:
+                logger.debug("NATS cleanup failed: %s", e)
 
     # =========================================================================
     # Health & Stats

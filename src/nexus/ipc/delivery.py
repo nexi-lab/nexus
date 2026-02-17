@@ -1,7 +1,7 @@
-"""Message sending and processing for filesystem-as-IPC.
+"""Message sending and processing for IPC.
 
-MessageSender: writes messages to recipient inboxes with backpressure,
-    permission checks (via VFS), and best-effort EventBus notification.
+MessageSender: writes messages to recipient inboxes with backpressure
+    and best-effort EventBus notification.
 
 MessageProcessor: reads messages from an agent's inbox, invokes a handler,
     and manages the lifecycle (inbox -> processed on success, inbox ->
@@ -10,10 +10,12 @@ MessageProcessor: reads messages from an agent's inbox, invokes a handler,
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
-from collections import OrderedDict
 from collections.abc import Callable, Coroutine
-from typing import Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 from nexus.ipc.conventions import (
     dead_letter_path,
@@ -30,9 +32,22 @@ from nexus.ipc.exceptions import (
     InboxFullError,
     InboxNotFoundError,
 )
-from nexus.ipc.protocols import EventPublisher, VFSOperations
+from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
+from nexus.ipc.storage.protocol import IPCStorageDriver
+
+if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
+
+
+class DeliveryMode(StrEnum):
+    """How messages are delivered between agents."""
+
+    COLD_ONLY = "cold_only"  # Current behavior: filesystem only
+    HOT_COLD = "hot_cold"  # NATS instant + async filesystem persistence
+    HOT_ONLY = "hot_only"  # NATS only, no persistence
+
 
 # Type alias for message handler callbacks
 MessageHandler = Callable[[MessageEnvelope], Coroutine[Any, Any, None]]
@@ -43,38 +58,58 @@ DEFAULT_MAX_INBOX_SIZE = 1000
 # Default max payload size (1 MB)
 DEFAULT_MAX_PAYLOAD_BYTES = 1_048_576
 
+# Default concurrency bounds for hot/cold delivery
+DEFAULT_MAX_COLD_CONCURRENCY = 100
+DEFAULT_MAX_HANDLER_CONCURRENCY = 50
+
 
 class MessageSender:
-    """Sends messages to agent inboxes via VFS writes.
+    """Sends messages to agent inboxes via IPCStorageDriver.
 
-    Each send operation:
-    1. Validates the envelope
-    2. Checks inbox exists (agent is provisioned)
-    3. Checks backpressure (inbox size limit)
-    4. Writes message to recipient's inbox
-    5. Copies message to sender's outbox (audit trail)
-    6. Publishes EventBus notification (best-effort)
+    Supports tiered delivery modes:
+
+    - **COLD_ONLY** (default): write to filesystem synchronously.
+    - **HOT_COLD**: publish via NATS for instant delivery, then persist
+      to filesystem asynchronously in the background.
+    - **HOT_ONLY**: publish via NATS only — no persistence.
+
+    When the hot path is unavailable (NATS down), HOT_COLD silently
+    degrades to synchronous cold-only delivery.
 
     Args:
-        vfs: VFS operations for file read/write.
+        storage: Storage driver for IPC read/write operations.
         event_publisher: EventBus publisher for notifications. Optional.
         zone_id: Zone ID for multi-tenant isolation.
         max_inbox_size: Maximum messages per inbox before backpressure.
+        max_payload_bytes: Maximum serialized message size.
+        hot_publisher: NATS hot-path publisher. Optional.
+        delivery_mode: Delivery tier. Auto-overridden to COLD_ONLY when
+            hot_publisher is None.
+        max_cold_concurrency: Semaphore bound for background cold writes.
     """
 
     def __init__(
         self,
-        vfs: VFSOperations,
+        storage: IPCStorageDriver,
         event_publisher: EventPublisher | None = None,
-        zone_id: str = "default",
+        *,
+        zone_id: str,
         max_inbox_size: int = DEFAULT_MAX_INBOX_SIZE,
         max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
+        hot_publisher: HotPathPublisher | None = None,
+        delivery_mode: DeliveryMode = DeliveryMode.COLD_ONLY,
+        max_cold_concurrency: int = DEFAULT_MAX_COLD_CONCURRENCY,
     ) -> None:
-        self._vfs = vfs
+        self._storage = storage
         self._publisher = event_publisher
         self._zone_id = zone_id
         self._max_inbox_size = max_inbox_size
         self._max_payload_bytes = max_payload_bytes
+        self._hot_publisher = hot_publisher
+        # Safety: force COLD_ONLY when no hot publisher is provided
+        self._mode = delivery_mode if hot_publisher is not None else DeliveryMode.COLD_ONLY
+        self._cold_semaphore = asyncio.Semaphore(max_cold_concurrency)
+        self._pending_tasks: set[asyncio.Task[None]] = set()
 
     async def send(self, envelope: MessageEnvelope) -> str:
         """Send a message to the recipient's inbox.
@@ -83,42 +118,95 @@ class MessageSender:
             envelope: The message envelope to send.
 
         Returns:
-            The full path where the message was written.
+            The full path where the message was written (or a synthetic
+            ``hot://`` path for HOT_ONLY mode).
 
         Raises:
-            InboxNotFoundError: If recipient's inbox doesn't exist.
-            InboxFullError: If recipient's inbox exceeds size limit.
+            InboxNotFoundError: If recipient's inbox doesn't exist (cold modes).
+            InboxFullError: If recipient's inbox exceeds size limit (cold modes).
             EnvelopeValidationError: If envelope is invalid.
         """
-        # 1. Serialize once (avoid double serialization in validation + write)
         data = envelope.to_bytes()
-
-        # 2. Validate envelope (Pydantic already validates on construction,
-        #    but we check additional constraints here)
         self._validate_envelope(envelope, serialized_size=len(data))
 
-        # 3. Check inbox exists
+        # --- Hot path ---
+        hot_ok = False
+        if self._mode in (DeliveryMode.HOT_COLD, DeliveryMode.HOT_ONLY):
+            hot_ok = await self._hot_send(envelope)
+
+        # --- Cold path ---
+        msg_path: str | None = None
+        if self._mode == DeliveryMode.COLD_ONLY:
+            msg_path = await self._cold_send(envelope, data)
+        elif self._mode == DeliveryMode.HOT_COLD:
+            if hot_ok:
+                # Hot succeeded — persist asynchronously in background
+                self._enqueue_cold_write(envelope, data)
+            else:
+                # Hot failed — fall back to synchronous cold write
+                msg_path = await self._cold_send(envelope, data)
+
+        # HOT_ONLY: no filesystem write; return synthetic path
+        if msg_path is None:
+            msg_path = f"hot://agents.{envelope.recipient}.inbox/{envelope.id}"
+
+        logger.info(
+            "Message %s sent: %s -> %s (%s, mode=%s)",
+            envelope.id,
+            envelope.sender,
+            envelope.recipient,
+            envelope.type.value,
+            self._mode.value,
+        )
+        return msg_path
+
+    async def drain(self) -> None:
+        """Await all pending background cold-write tasks (graceful shutdown)."""
+        if self._pending_tasks:
+            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+            self._pending_tasks.clear()
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    async def _hot_send(self, envelope: MessageEnvelope) -> bool:
+        """Publish envelope via NATS hot path. Returns True on success."""
+        assert self._hot_publisher is not None  # noqa: S101
+        subject = f"agents.{envelope.recipient}.inbox"
+        try:
+            await self._hot_publisher.publish(subject, envelope.to_hot_bytes())
+            return True
+        except Exception:
+            logger.warning(
+                "Hot-path publish failed for message %s, degrading to cold path",
+                envelope.id,
+                exc_info=True,
+            )
+            return False
+
+    async def _cold_send(self, envelope: MessageEnvelope, data: bytes) -> str:
+        """Synchronous cold path: inbox write + outbox copy + EventBus notify."""
         recipient_inbox = inbox_path(envelope.recipient)
-        if not await self._vfs.exists(recipient_inbox, self._zone_id):
+        if not await self._storage.exists(recipient_inbox, self._zone_id):
             raise InboxNotFoundError(envelope.recipient)
 
         # 4. Check backpressure (count_dir is more efficient than list_dir)
-        inbox_count = await self._vfs.count_dir(recipient_inbox, self._zone_id)
+        inbox_count = await self._storage.count_dir(recipient_inbox, self._zone_id)
         if inbox_count >= self._max_inbox_size:
             raise InboxFullError(envelope.recipient, inbox_count, self._max_inbox_size)
 
-        # 5. Write to recipient's inbox
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
-        await self._vfs.write(msg_path, data, self._zone_id)
+        await self._storage.write(msg_path, data, self._zone_id)
 
-        # 6. Copy to sender's outbox (audit trail, best-effort)
+        # Outbox copy (best-effort)
         try:
             outbox_dir = outbox_path(envelope.sender)
-            if await self._vfs.exists(outbox_dir, self._zone_id):
+            if await self._storage.exists(outbox_dir, self._zone_id):
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )
-                await self._vfs.write(outbox_msg_path, data, self._zone_id)
+                await self._storage.write(outbox_msg_path, data, self._zone_id)
         except Exception:
             logger.warning(
                 "Failed to write outbox copy for message %s from %s",
@@ -127,7 +215,7 @@ class MessageSender:
                 exc_info=True,
             )
 
-        # 7. Publish EventBus notification (best-effort)
+        # EventBus notification (best-effort)
         if self._publisher is not None:
             try:
                 await self._publisher.publish(
@@ -149,14 +237,25 @@ class MessageSender:
                     exc_info=True,
                 )
 
-        logger.info(
-            "Message %s sent: %s -> %s (%s)",
-            envelope.id,
-            envelope.sender,
-            envelope.recipient,
-            envelope.type.value,
-        )
         return msg_path
+
+    def _enqueue_cold_write(self, envelope: MessageEnvelope, data: bytes) -> None:
+        """Enqueue an async cold write bounded by the semaphore."""
+
+        async def _bounded_cold() -> None:
+            async with self._cold_semaphore:
+                try:
+                    await self._cold_send(envelope, data)
+                except Exception:
+                    logger.warning(
+                        "Background cold write failed for message %s",
+                        envelope.id,
+                        exc_info=True,
+                    )
+
+        task = asyncio.create_task(_bounded_cold())
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
 
     def _validate_envelope(
         self, envelope: MessageEnvelope, *, serialized_size: int | None = None
@@ -207,30 +306,144 @@ class MessageProcessor:
     - Success: move to processed/
     - Failure: move to dead_letter/
     - Expired TTL: move to dead_letter/ without invoking handler
-    - Duplicate: skip (dedup via in-memory ID set)
+    - Duplicate: skip (dedup via CacheStoreABC)
+
+    Uses CacheStoreABC for TTL-based dedup tracking per KERNEL-ARCHITECTURE.md §2
+    (CacheStore pillar: ephemeral KV with TTL).  When no cache_store is provided,
+    a NullCacheStore is used and dedup is effectively disabled.
+
+    Optionally listens on a NATS hot-path subject for instant delivery.
+    The dedup set is shared between cold (``process_inbox``) and hot
+    (``_hot_listen_loop``) paths — both run in the same event loop so
+    no lock is needed.
 
     Args:
-        vfs: VFS operations for file read/write/rename.
+        storage: Storage driver for IPC read/write/rename.
         agent_id: The agent whose inbox to process.
         handler: Async callback invoked for each valid message.
         zone_id: Zone ID for multi-tenant isolation.
-        max_dedup_size: Maximum size of the in-memory dedup set.
+        cache_store: CacheStoreABC for dedup tracking (optional, degrades gracefully).
+        dedup_ttl_seconds: TTL for dedup cache entries.
+        hot_subscriber: NATS hot-path subscriber. Optional.
+        max_handler_concurrency: Semaphore bound for concurrent handler dispatch.
     """
 
     def __init__(
         self,
-        vfs: VFSOperations,
+        storage: IPCStorageDriver,
         agent_id: str,
         handler: MessageHandler,
-        zone_id: str = "default",
-        max_dedup_size: int = 10_000,
+        *,
+        zone_id: str,
+        cache_store: CacheStoreABC | None = None,
+        dedup_ttl_seconds: int = 3600,
+        hot_subscriber: HotPathSubscriber | None = None,
+        max_handler_concurrency: int = DEFAULT_MAX_HANDLER_CONCURRENCY,
     ) -> None:
-        self._vfs = vfs
+        self._storage = storage
         self._agent_id = agent_id
         self._handler = handler
         self._zone_id = zone_id
-        self._max_dedup_size = max_dedup_size
-        self._processed_ids: OrderedDict[str, None] = OrderedDict()
+        self._cache_store = cache_store
+        self._dedup_ttl = dedup_ttl_seconds
+        self._hot_subscriber = hot_subscriber
+        self._hot_task: asyncio.Task[None] | None = None
+        self._handler_semaphore = asyncio.Semaphore(max_handler_concurrency)
+        self._handler_tasks: set[asyncio.Task[None]] = set()
+
+    def _dedup_key(self, msg_id: str) -> str:
+        """Zone-scoped cache key for message dedup."""
+        return f"ipc:dedup:{self._zone_id}:{msg_id}"
+
+    async def _is_duplicate(self, msg_id: str) -> bool:
+        """Check if a message ID has already been processed (via CacheStoreABC)."""
+        if self._cache_store is None:
+            return False
+        return await self._cache_store.exists(self._dedup_key(msg_id))
+
+    async def _track_processed(self, message_id: str) -> None:
+        """Record message ID in dedup cache (TTL-based eviction via CacheStoreABC)."""
+        if self._cache_store is not None:
+            await self._cache_store.set(self._dedup_key(message_id), b"1", ttl=self._dedup_ttl)
+
+    async def start(self) -> None:
+        """Start the hot-path listener (if a subscriber is configured)."""
+        if self._hot_subscriber is not None and self._hot_task is None:
+            self._hot_task = asyncio.create_task(self._hot_listen_loop())
+            logger.info("Hot-path listener started for agent %s", self._agent_id)
+
+    async def stop(self) -> None:
+        """Stop the hot-path listener and await pending handler tasks."""
+        if self._hot_task is not None:
+            self._hot_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._hot_task
+            self._hot_task = None
+        if self._handler_tasks:
+            await asyncio.gather(*self._handler_tasks, return_exceptions=True)
+            self._handler_tasks.clear()
+        logger.info("Hot-path listener stopped for agent %s", self._agent_id)
+
+    async def _hot_listen_loop(self) -> None:
+        """Subscribe to hot-path subject and dispatch messages."""
+        assert self._hot_subscriber is not None  # noqa: S101
+        subject = f"agents.{self._agent_id}.inbox"
+        try:
+            async for raw in self._hot_subscriber.subscribe(subject):
+                try:
+                    envelope = MessageEnvelope.from_bytes(raw)
+                except Exception:
+                    logger.warning(
+                        "Failed to parse hot-path message for agent %s",
+                        self._agent_id,
+                        exc_info=True,
+                    )
+                    continue
+
+                # Dedup (shared with process_inbox)
+                if await self._is_duplicate(envelope.id):
+                    logger.debug("Hot-path dedup: skipping %s", envelope.id)
+                    continue
+
+                # TTL check
+                if envelope.is_expired():
+                    logger.info(
+                        "Hot-path message %s expired (TTL: %ss)",
+                        envelope.id,
+                        envelope.ttl_seconds,
+                    )
+                    await self._track_processed(envelope.id)
+                    continue
+
+                # Dispatch handler with semaphore
+                await self._dispatch_hot_handler(envelope)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error(
+                "Hot-path listen loop crashed for agent %s",
+                self._agent_id,
+                exc_info=True,
+            )
+
+    async def _dispatch_hot_handler(self, envelope: MessageEnvelope) -> None:
+        """Dispatch the handler for a hot-path message with concurrency control."""
+
+        async def _run() -> None:
+            async with self._handler_semaphore:
+                try:
+                    await self._handler(envelope)
+                except Exception:
+                    logger.error(
+                        "Handler failed for hot-path message %s",
+                        envelope.id,
+                        exc_info=True,
+                    )
+                await self._track_processed(envelope.id)
+
+        task = asyncio.create_task(_run())
+        self._handler_tasks.add(task)
+        task.add_done_callback(self._handler_tasks.discard)
 
     async def process_inbox(self) -> int:
         """Process all messages currently in the inbox.
@@ -240,7 +453,7 @@ class MessageProcessor:
         """
         agent_inbox = inbox_path(self._agent_id)
         try:
-            filenames = await self._vfs.list_dir(agent_inbox, self._zone_id)
+            filenames = await self._storage.list_dir(agent_inbox, self._zone_id)
         except Exception:
             logger.warning(
                 "Failed to list inbox for agent %s",
@@ -268,7 +481,7 @@ class MessageProcessor:
         """
         # Read and parse envelope
         try:
-            data = await self._vfs.read(msg_path, self._zone_id)
+            data = await self._storage.read(msg_path, self._zone_id)
             envelope = MessageEnvelope.from_bytes(data)
         except FileNotFoundError:
             # File was already moved/processed by another processor (race condition).
@@ -288,8 +501,8 @@ class MessageProcessor:
             await self._move_to_dead_letter_raw(msg_path, reason=str(exc))
             return
 
-        # Dedup check (OrderedDict preserves insertion order for LRU eviction)
-        if envelope.id in self._processed_ids:
+        # Dedup check via CacheStoreABC
+        if await self._is_duplicate(envelope.id):
             logger.debug(
                 "Skipping duplicate message %s for agent %s",
                 envelope.id,
@@ -300,9 +513,11 @@ class MessageProcessor:
                 dl_path = message_path_in_dead_letter(
                     self._agent_id, envelope.id, envelope.timestamp
                 )
-                await self._vfs.rename(msg_path, dl_path, self._zone_id)
-            except Exception:
-                pass  # best-effort cleanup of duplicate
+                await self._storage.rename(msg_path, dl_path, self._zone_id)
+            except Exception as e:
+                logger.debug(
+                    "Best-effort cleanup of duplicate message %s failed: %s", envelope.id, e
+                )
             return
 
         # TTL check
@@ -332,7 +547,7 @@ class MessageProcessor:
         # Success: move to processed
         try:
             dest = message_path_in_processed(self._agent_id, envelope.id, envelope.timestamp)
-            await self._vfs.rename(msg_path, dest, self._zone_id)
+            await self._storage.rename(msg_path, dest, self._zone_id)
         except Exception:
             logger.warning(
                 "Failed to move processed message %s (handler already succeeded)",
@@ -340,10 +555,8 @@ class MessageProcessor:
                 exc_info=True,
             )
 
-        # Track in dedup set (bounded, FIFO eviction via OrderedDict)
-        self._processed_ids[envelope.id] = None
-        while len(self._processed_ids) > self._max_dedup_size:
-            self._processed_ids.popitem(last=False)  # evict oldest
+        # Track in dedup cache (TTL-based eviction via CacheStoreABC)
+        await self._track_processed(envelope.id)
 
     async def _move_to_dead_letter(
         self,
@@ -354,7 +567,7 @@ class MessageProcessor:
         """Move a message to the dead letter directory."""
         try:
             dest = message_path_in_dead_letter(self._agent_id, envelope.id, envelope.timestamp)
-            await self._vfs.rename(msg_path, dest, self._zone_id)
+            await self._storage.rename(msg_path, dest, self._zone_id)
             logger.info(
                 "Message %s moved to dead_letter for agent %s (reason: %s)",
                 envelope.id,
@@ -373,7 +586,7 @@ class MessageProcessor:
         try:
             filename = msg_path.rsplit("/", 1)[-1]
             dest = f"{dead_letter_path(self._agent_id)}/{filename}"
-            await self._vfs.rename(msg_path, dest, self._zone_id)
+            await self._storage.rename(msg_path, dest, self._zone_id)
             logger.info(
                 "Malformed message moved to dead_letter for agent %s: %s (reason: %s)",
                 self._agent_id,

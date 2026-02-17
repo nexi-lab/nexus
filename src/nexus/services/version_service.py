@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
-    from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.async_permissions import AsyncPermissionEnforcer
+    from nexus.rebac.manager import EnhancedReBACManager
 
 
 class VersionService:
@@ -198,13 +198,11 @@ class VersionService:
 
         # Route to backend
         zone_id = context.zone_id if context else None
-        agent_id = context.agent_id if context else None
         is_admin = context.is_admin if context else False
 
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -323,13 +321,11 @@ class VersionService:
             raise RuntimeError("Router not configured for VersionService")
 
         zone_id = context.zone_id if context else None
-        agent_id = context.agent_id if context else None
         is_admin = context.is_admin if context else False
 
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )

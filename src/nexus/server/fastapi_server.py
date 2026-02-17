@@ -50,6 +50,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
+from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -58,9 +59,10 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 
 # --- Extracted modules (re-exported for backward compatibility) ---
-from nexus.server.dependencies import (  # noqa: E402
+from nexus.server.dependencies import (  # noqa: F401, E402
     get_auth_result,
     get_operation_context,
     require_auth,
@@ -76,8 +78,6 @@ from nexus.server.path_utils import (
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
-    decode_rpc_message,
-    encode_rpc_message,
     parse_method_params,
 )
 from nexus.server.rate_limiting import (  # noqa: E402
@@ -215,7 +215,6 @@ _fastapi_app: FastAPI | None = None
 
 # Stream token signing/verification is now in streaming.py.
 # Auth dependencies (get_auth_result, require_auth, get_operation_context) are in dependencies.py.
-# All are imported above for backward compatibility.
 
 
 # ============================================================================
@@ -282,19 +281,30 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize async ReBAC manager if database URL provided
     if _app.state.database_url:
         try:
-            from nexus.services.permissions.async_rebac_manager import (
-                AsyncReBACManager,
-                create_async_engine_from_url,
-            )
+            from nexus.rebac.async_manager import AsyncReBACManager
 
-            engine = create_async_engine_from_url(_app.state.database_url)
-            _app.state.async_rebac_manager = AsyncReBACManager(engine)
-            logger.info("Async ReBAC manager initialized")
+            # Issue #1385: AsyncReBACManager is a thin asyncio.to_thread() wrapper
+            # around the sync ReBACManager. Use the existing sync manager from NexusFS.
+            sync_rebac = getattr(_app.state, "nexus_fs", None)
+            sync_rebac = getattr(sync_rebac, "_rebac_manager", None) if sync_rebac else None
+            if sync_rebac:
+                _app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
+                logger.info("Async ReBAC manager initialized (wrapping sync manager)")
+            else:
+                # Fallback: create a fresh sync manager for async wrapper
+                from sqlalchemy import create_engine as _create_engine
+
+                from nexus.rebac.manager import ReBACManager
+
+                _sync_engine = _create_engine(_app.state.database_url)
+                _sync_mgr = ReBACManager(engine=_sync_engine)
+                _app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
+                logger.info("Async ReBAC manager initialized (fresh sync manager)")
 
             # Issue #940: Initialize AsyncNexusFS with permission enforcement
             try:
                 from nexus.core.async_nexus_fs import AsyncNexusFS
-                from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+                from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
                 backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
                 tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
@@ -310,7 +320,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 if enforce_permissions and hasattr(_app.state, "nexus_fs"):
                     sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
-                        from nexus.services.permissions.namespace_factory import (
+                        from nexus.rebac.namespace_factory import (
                             create_namespace_manager,
                         )
 
@@ -405,10 +415,7 @@ async def lifespan(_app: FastAPI) -> Any:
             segment_size_bytes=segment_size,
             sync_mode=sync_mode,  # type: ignore[arg-type]
         )
-        _app.state.event_log = create_event_log(
-            event_log_config,
-            session_factory=getattr(_app.state, "session_factory", None),
-        )
+        _app.state.event_log = create_event_log(event_log_config)
         if _app.state.event_log:
             logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
@@ -478,15 +485,15 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # ConflictLogStore is always available for the REST API,
             # even if the full write-back pipeline can't start (no event bus).
-            conflict_log_store = ConflictLogStore(gw)
+            conflict_log_store = ConflictLogStore(gw.session_factory)
             _app.state.conflict_log_store = conflict_log_store
 
             wb_event_bus = None
             if hasattr(_app.state.nexus_fs, "_event_bus"):
                 wb_event_bus = _app.state.nexus_fs._event_bus
             if wb_event_bus:
-                backlog_store = SyncBacklogStore(gw)
-                change_log_store = ChangeLogStore(gw)
+                backlog_store = SyncBacklogStore(gw.session_factory)
+                change_log_store = ChangeLogStore(gw.session_factory)
 
                 # Map env var to ConflictStrategy (backward compat)
                 _policy_map = {
@@ -625,7 +632,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Start DirectoryGrantExpander worker for large directory grants (Leopard-style)
                 # This processes pending directory grants asynchronously in background
                 try:
-                    from nexus.services.permissions.tiger_cache import DirectoryGrantExpander
+                    from nexus.rebac.tiger_cache import DirectoryGrantExpander
 
                     expander = DirectoryGrantExpander(
                         engine=_app.state.nexus_fs._rebac_manager.engine,
@@ -712,7 +719,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
     if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             _app.state.agent_registry = AgentRegistry(
                 session_factory=_app.state.nexus_fs.SessionLocal,
@@ -757,11 +764,11 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _db_url = _app.state.database_url or "sqlite:///nexus.db"
-            _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
+            _identity_oauth_crypto = OAuthCrypto()
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             _app.state.key_service = KeyService(
-                session_factory=_app.state.nexus_fs.SessionLocal,
+                record_store=_app.state.nexus_fs.record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
@@ -881,13 +888,16 @@ async def lifespan(_app: FastAPI) -> Any:
                     config=sandbox_config,
                 )
 
+                # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
+                sandbox_mgr.wire_router()
+
                 # Get NamespaceManager if available (best-effort)
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
-                        from nexus.services.permissions.namespace_factory import (
+                        from nexus.rebac.namespace_factory import (
                             create_namespace_manager,
                         )
 
@@ -1226,6 +1236,16 @@ def create_app(
     app.state.nexus_fs = nexus_fs
     app.state.api_key = api_key
     app.state.auth_provider = auth_provider
+
+    # Issue #1399: BrickContainer for DI (auth brick + future bricks)
+    from nexus.core.brick_container import BrickContainer
+
+    app.state.brick_container = BrickContainer()
+    if auth_provider is not None:
+        from nexus.auth.protocol import AuthBrickProtocol
+
+        if isinstance(auth_provider, AuthBrickProtocol):
+            app.state.brick_container.register(AuthBrickProtocol, auth_provider)
     app.state.database_url = database_url
     app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
@@ -1272,6 +1292,8 @@ def create_app(
     app.state.key_service = None
     app.state.rebac_circuit_breaker = None
     app.state.chunked_upload_service = None
+    app.state.delegation_service = None
+    app.state.reputation_service = None
 
     # Initialize subscription manager if we have a metadata store
     try:
@@ -1348,12 +1370,11 @@ def create_app(
     # Initialize authentication provider for user registration/login endpoints
     if auth_provider is not None:
         try:
-            from nexus.server.auth.auth_routes import set_auth_provider
-
             # Extract DatabaseLocalAuth from DiscriminatingAuthProvider if needed
-            from nexus.server.auth.base import AuthProvider
-            from nexus.server.auth.database_local import DatabaseLocalAuth
-            from nexus.server.auth.factory import DiscriminatingAuthProvider
+            from nexus.auth.providers.base import AuthProvider
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+            from nexus.server.auth.auth_routes import set_auth_provider
 
             local_auth_provider: AuthProvider | None = None
             if isinstance(auth_provider, DatabaseLocalAuth):
@@ -1398,7 +1419,7 @@ def create_app(
         logger.warning(f"Failed to register NexusFS instance: {e}")
 
     # Initialize OAuth provider if credentials are available
-    _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
+    _initialize_oauth_provider(nexus_fs, auth_provider)
 
     # Prometheus metrics middleware and endpoint (Issue #761)
     try:
@@ -1418,8 +1439,10 @@ def create_app(
         obs_sub = nexus_fs._service_extras.get("observability_subsystem")
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
-    except Exception:
+    except ImportError:
         pass
+    except Exception:
+        logger.warning("Failed to register QueryObserverCollector", exc_info=True)
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
@@ -1432,15 +1455,12 @@ def create_app(
     return app
 
 
-def _initialize_oauth_provider(
-    nexus_fs: NexusFS, auth_provider: Any, database_url: str | None
-) -> None:
+def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     """Initialize OAuth provider if Google OAuth credentials are available.
 
     Args:
         nexus_fs: NexusFS instance
         auth_provider: Authentication provider (for session factory)
-        database_url: Database URL
     """
     try:
         google_client_id = os.getenv("GOOGLE_CLIENT_ID") or os.getenv(
@@ -1449,9 +1469,7 @@ def _initialize_oauth_provider(
         google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET") or os.getenv(
             "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET"
         )
-        google_redirect_uri = os.getenv(
-            "GOOGLE_REDIRECT_URI", "http://localhost:5173/oauth/callback"
-        )
+        google_redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", DEFAULT_GOOGLE_REDIRECT_URI)
         jwt_secret = os.getenv("NEXUS_JWT_SECRET")
 
         if not google_client_id or not google_client_secret:
@@ -1479,7 +1497,8 @@ def _initialize_oauth_provider(
         from nexus.server.auth.oauth_crypto import OAuthCrypto
         from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 
-        oauth_crypto = OAuthCrypto(db_url=database_url)
+        _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
+        oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, session_factory=session_factory)
         oauth_provider = OAuthUserAuth(
             session_factory=session_factory,
             google_client_id=google_client_id,
@@ -1603,7 +1622,7 @@ def _register_routes(app: FastAPI) -> None:
         if has_rebac:
             cb = getattr(_fastapi_app.state, "rebac_circuit_breaker", None)
             if cb:
-                from nexus.services.permissions.circuit_breaker import CircuitState
+                from nexus.rebac.circuit_breaker import CircuitState
 
                 cb_state = cb.state
                 if cb_state == CircuitState.CLOSED:
@@ -1790,8 +1809,8 @@ def _register_routes(app: FastAPI) -> None:
     )
 
     v2_registry = build_v2_registry(
-        async_nexus_fs_getter=lambda: _fastapi_app.state.async_nexus_fs,
-        chunked_upload_service_getter=lambda: _fastapi_app.state.chunked_upload_service,
+        async_nexus_fs_getter=lambda: app.state.async_nexus_fs,
+        chunked_upload_service_getter=lambda: app.state.chunked_upload_service,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
@@ -1818,10 +1837,9 @@ def _register_routes(app: FastAPI) -> None:
     try:
         from nexus.a2a import create_a2a_router
 
-        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
-            getattr(_fastapi_app.state, "api_key", None)
-            or getattr(_fastapi_app.state, "auth_provider", None)
+            getattr(app.state, "api_key", None) or getattr(app.state, "auth_provider", None)
         )
 
         # Auth adapter: server-side concern, NOT imported by the brick.
@@ -1843,18 +1861,54 @@ def _register_routes(app: FastAPI) -> None:
             except Exception:
                 return None
 
-        a2a_router = create_a2a_router(
-            nexus_fs=_fastapi_app.state.nexus_fs,
-            config=None,  # Will use defaults; config can be passed when available
+        a2a_router, a2a_task_manager = create_a2a_router(
+            nexus_fs=app.state.nexus_fs,
+            config=None,
             base_url=a2a_base_url,
             auth_required=a2a_auth_required,
             auth_fn=_a2a_auth_adapter,
-            data_dir=getattr(_fastapi_app.state, "data_dir", None),
+            data_dir=getattr(app.state, "data_dir", None),
         )
+        app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
         app.include_router(a2a_router)
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
     except ImportError as e:
         logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+
+    # Secrets audit log endpoints (Issue #997)
+    try:
+        from nexus.server.api.v2.routers.secrets_audit import (
+            get_secrets_audit_logger as _secrets_audit_dep,
+        )
+        from nexus.server.api.v2.routers.secrets_audit import (
+            router as secrets_audit_router,
+        )
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        _secrets_audit_logger_instance: SecretsAuditLogger | None = None
+
+        def _get_secrets_audit_logger_override(
+            auth_result: dict[str, Any] = Depends(require_auth),
+        ) -> tuple:
+            nonlocal _secrets_audit_logger_instance
+            if not auth_result.get("is_admin", False):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Secrets audit log access requires admin privileges",
+                )
+            if _secrets_audit_logger_instance is None:
+                session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
+                if session_factory is None:
+                    raise HTTPException(status_code=500, detail="Secrets audit not configured")
+                _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
+            zone_id = auth_result.get("zone_id", "root")
+            return _secrets_audit_logger_instance, zone_id
+
+        app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override
+        app.include_router(secrets_audit_router)
+        logger.info("Secrets audit routes registered")
+    except ImportError as e:
+        logger.warning(f"Failed to import secrets audit router: {e}")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])
@@ -2355,7 +2409,16 @@ def _build_dispatch_table() -> dict[str, _DispatchEntry]:
     }
 
 
-async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
+async def _dispatch_method(
+    method: str,
+    params: Any,
+    context: Any,
+    *,
+    nexus_fs: Any = None,
+    exposed_methods: dict[str, Any] | None = None,
+    auth_provider: Any = None,  # noqa: ARG001
+    subscription_manager: Any = None,  # noqa: ARG001
+) -> Any:
     """Dispatch RPC method call.
 
     Looks up the method in ``_DISPATCH_TABLE`` first, then falls back to
@@ -2363,23 +2426,27 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     """
     global _DISPATCH_TABLE  # noqa: PLW0603
 
-    nexus_fs = _fastapi_app.state.nexus_fs
+    if nexus_fs is None:
+        nexus_fs = _fastapi_app.state.nexus_fs  # type: ignore[union-attr]
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
+
+    if exposed_methods is None:
+        exposed_methods = _fastapi_app.state.exposed_methods  # type: ignore[union-attr]
 
     # Lazy-init on first call (handler functions defined later in module)
     if not _DISPATCH_TABLE:
         _DISPATCH_TABLE = _build_dispatch_table()
 
     # Issue #1457: Enforce admin_only for ALL dispatch paths (auto + manual)
-    func = _fastapi_app.state.exposed_methods.get(method)
+    func = exposed_methods.get(method) if exposed_methods else None  # type: ignore[union-attr]
     if func and getattr(func, "_rpc_admin_only", False):
         _require_admin(context)
 
     # Auto-dispatch takes priority for dynamically exposed methods
     # that are NOT in the static dispatch table
-    if method in _fastapi_app.state.exposed_methods and method not in _DISPATCH_TABLE:
-        return await _auto_dispatch(method, params, context)
+    if exposed_methods and method in exposed_methods and method not in _DISPATCH_TABLE:
+        return await _auto_dispatch(method, params, context, exposed_methods=exposed_methods)
 
     entry = _DISPATCH_TABLE.get(method)
     if entry is not None:
@@ -2409,17 +2476,25 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return result
 
     # Fallback: try auto-dispatch for exposed methods
-    if method in _fastapi_app.state.exposed_methods:
-        return await _auto_dispatch(method, params, context)
+    _exposed = exposed_methods or {}
+    if method in _exposed:
+        return await _auto_dispatch(method, params, context, exposed_methods=exposed_methods)
 
     raise ValueError(f"Unknown method: {method}")
 
 
-async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
+async def _auto_dispatch(
+    method: str,
+    params: Any,
+    context: Any,
+    *,
+    exposed_methods: dict[str, Any] | None = None,
+) -> Any:
     """Auto-dispatch to exposed method."""
     import inspect
 
-    func = _fastapi_app.state.exposed_methods[method]
+    _methods = exposed_methods or _fastapi_app.state.exposed_methods  # type: ignore[union-attr]
+    func = _methods[method]
 
     # Build kwargs
     kwargs: dict[str, Any] = {}
@@ -2528,9 +2603,12 @@ def _handle_query_memories(params: Any, context: Any) -> dict[str, Any]:
                 embedding_provider_obj = create_embedding_provider(
                     provider=params.embedding_provider
                 )
-            except Exception:
-                # Failed to create provider, will use default or fallback
+            except ImportError:
                 pass
+            except Exception as e:
+                logger.warning(
+                    "Failed to create embedding provider %s: %s", params.embedding_provider, e
+                )
 
         # Use search method with semantic search
         search_mode = params.search_mode or "hybrid"
@@ -3324,8 +3402,8 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     import uuid
     from datetime import timedelta
 
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.rebac.entity_registry import EntityRegistry
 
     _require_admin(context)
 
@@ -3488,8 +3566,8 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.core.exceptions import NexusFileNotFoundError
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 
     _require_admin(context)
 

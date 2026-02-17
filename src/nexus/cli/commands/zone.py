@@ -33,7 +33,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.nexus_fs import NexusFS
+from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 
 
 @click.group()
@@ -95,7 +95,7 @@ def _get_zone_manager(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -163,7 +163,7 @@ def create_zone_cmd(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -225,7 +225,7 @@ def join_zone_cmd(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -290,7 +290,7 @@ def list_zones_cmd(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -356,7 +356,7 @@ def mount_zone_cmd(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -460,6 +460,7 @@ def export_zone(
         nexus zone export acme-corp -o /backup/acme.nexus --after 2025-01-01T00:00:00
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
         from nexus.portability import ZoneExportOptions, ZoneExportService
 
         # Parse after time if provided
@@ -603,6 +604,7 @@ def import_zone(
         nexus zone import /backup/acme.nexus --dry-run
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
         from nexus.portability import ConflictMode, ZoneImportOptions, ZoneImportService
 
         # Parse path remappings

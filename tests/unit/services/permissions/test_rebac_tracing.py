@@ -22,8 +22,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.services.permissions import rebac_tracing
-from nexus.services.permissions.rebac_tracing import (
+from nexus.rebac import rebac_tracing
+from nexus.rebac.rebac_tracing import (
     ATTR_BATCH_ALLOWED,
     ATTR_BATCH_DENIED,
     ATTR_BATCH_DURATION_MS,
@@ -375,10 +375,10 @@ class TestZeroOverhead:
     """Verify zero overhead when OTel is disabled."""
 
     def test_get_tracer_returns_none_when_disabled(self):
-        with patch("nexus.server.telemetry.get_tracer", return_value=None):
-            rebac_tracing.reset_tracer()
-            tracer = rebac_tracing._get_tracer()
-            assert tracer is None
+        """When OTEL_ENABLED is not set, _resolve_tracer returns None."""
+        rebac_tracing.reset_tracer()
+        tracer = rebac_tracing._get_tracer()
+        assert tracer is None
 
     def test_check_span_no_allocations_when_disabled(self):
         """When disabled, start_check_span should yield None immediately."""
@@ -560,39 +560,33 @@ class TestEngineAttribute:
 # ---------------------------------------------------------------------------
 
 
-class TestTracerCaching:
-    """Test that _get_tracer() caches its result."""
+class TestTracerInjection:
+    """Test set_tracer / _get_tracer / reset_tracer lifecycle."""
 
-    def test_tracer_resolved_once(self):
+    def test_set_tracer_makes_it_available(self):
         mock_tracer = MagicMock()
-        call_count = 0
+        rebac_tracing.set_tracer(mock_tracer)
 
-        def mock_get_tracer(name):
-            nonlocal call_count
-            call_count += 1
-            return mock_tracer
+        assert rebac_tracing._get_tracer() is mock_tracer
 
-        with patch("nexus.server.telemetry.get_tracer", mock_get_tracer):
-            rebac_tracing.reset_tracer()
-            t1 = rebac_tracing._get_tracer()
-            t2 = rebac_tracing._get_tracer()
+    def test_get_tracer_returns_none_by_default(self):
+        rebac_tracing.reset_tracer()
+        assert rebac_tracing._get_tracer() is None
 
-        assert t1 is mock_tracer
-        assert t2 is mock_tracer
-        assert call_count == 1  # Only resolved once
+    def test_reset_clears_tracer(self):
+        mock_tracer = MagicMock()
+        rebac_tracing.set_tracer(mock_tracer)
+        assert rebac_tracing._get_tracer() is mock_tracer
 
-    def test_reset_allows_re_resolution(self):
-        call_count = 0
+        rebac_tracing.reset_tracer()
+        assert rebac_tracing._get_tracer() is None
 
-        def mock_get_tracer(name):
-            nonlocal call_count
-            call_count += 1
-            return MagicMock()
+    def test_set_tracer_overwrites_previous(self):
+        tracer_a = MagicMock()
+        tracer_b = MagicMock()
 
-        with patch("nexus.server.telemetry.get_tracer", mock_get_tracer):
-            rebac_tracing.reset_tracer()
-            rebac_tracing._get_tracer()
-            rebac_tracing.reset_tracer()
-            rebac_tracing._get_tracer()
+        rebac_tracing.set_tracer(tracer_a)
+        assert rebac_tracing._get_tracer() is tracer_a
 
-        assert call_count == 2
+        rebac_tracing.set_tracer(tracer_b)
+        assert rebac_tracing._get_tracer() is tracer_b

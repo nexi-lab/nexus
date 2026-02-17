@@ -370,9 +370,10 @@ class NexusFSGateway:
         Args:
             paths: Virtual paths to invalidate
         """
-        if hasattr(self._fs.metadata, "_cache") and self._fs.metadata._cache:
+        metadata_cache = getattr(self._fs, "metadata_cache", None)
+        if metadata_cache is not None:
             for path in paths:
-                self._fs.metadata._cache.invalidate_path(path)
+                metadata_cache.invalidate_path(path)
 
     # =========================================================================
     # Hierarchy Operations

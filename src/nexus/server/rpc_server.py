@@ -36,6 +36,7 @@ from nexus.core.exceptions import (
 )
 from nexus.core.filters import is_os_metadata_file
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
@@ -50,8 +51,6 @@ from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
     RPCResponse,
-    decode_rpc_message,
-    encode_rpc_message,
     parse_method_params,
 )
 
@@ -310,7 +309,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             self._cached_auth_result = result
             return cast(bool, result.authenticated)
 
-        # Fall back to static API key (backward compatibility)
+        # Fall back to static API key
         if self.api_key:
             return bool(token == self.api_key)
 
@@ -389,7 +388,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     # P0-4: Grant zone-scoped admin capabilities to admin users
                     admin_capabilities = set()
                     if result.is_admin:
-                        from nexus.services.permissions.permissions_enhanced import AdminCapability
+                        from nexus.rebac.permissions_enhanced import AdminCapability
 
                         # Grant zone-scoped admin capabilities for full zone access
                         # ReBAC enforces zone isolation, so these capabilities are automatically
@@ -422,7 +421,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         admin_capabilities=admin_capabilities,  # P0-4: Admin capabilities
                     )
 
-        # Check for explicit subject header (for backward compatibility)
+        # Check for explicit subject header
         subject_header = self.headers.get("X-Nexus-Subject")
         if subject_header:
             parts = subject_header.split(":", 1)
@@ -490,8 +489,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         import uuid
         from datetime import timedelta
 
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.rebac.entity_registry import EntityRegistry
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
@@ -671,7 +670,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Success status
         """
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
@@ -1143,7 +1142,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 params.path,
                 recursive=params.recursive,
                 details=params.details,
-                prefix=params.prefix,
                 context=context,
             )
             # Debug: Check what we got

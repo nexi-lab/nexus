@@ -19,9 +19,10 @@ References:
 from __future__ import annotations
 
 import builtins
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.core.permissions import OperationContext
+if TYPE_CHECKING:
+    from nexus.core.types import OperationContext
 
 # =============================================================================
 # Issue #1520: Search Brick Protocol
@@ -33,34 +34,35 @@ class SearchBrickProtocol(Protocol):
     """Brick contract for search operations (Issue #1520).
 
     Defines the interface that search brick implementations must satisfy.
+    ``SearchDaemon`` is the canonical implementation.
+
     Used by the kernel/services layer to interact with the search brick
     without hard-coupling to its internals.
     """
 
-    async def search(
-        self,
-        query: str,
-        *,
-        limit: int = 10,
-        path_filter: str | None = None,
-        search_mode: str = "hybrid",
-    ) -> builtins.list[Any]: ...
+    @property
+    def is_initialized(self) -> bool: ...
 
-    async def index_document(
-        self,
-        path: str,
-        content: str,
-        *,
-        zone_id: str | None = None,
-    ) -> int: ...
-
-    async def get_stats(self) -> dict[str, Any]: ...
-
-    async def initialize(self) -> None: ...
+    async def startup(self) -> None: ...
 
     async def shutdown(self) -> None: ...
 
-    def verify_imports(self) -> dict[str, bool]: ...
+    async def search(
+        self,
+        query: str,
+        search_type: str = "hybrid",
+        limit: int = 10,
+        path_filter: str | None = None,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        adaptive_k: bool = False,
+    ) -> builtins.list[Any]: ...
+
+    def get_stats(self) -> dict[str, Any]: ...
+
+    def get_health(self) -> dict[str, Any]: ...
+
+    async def notify_file_change(self, path: str, change_type: str = "update") -> None: ...
 
 
 # =============================================================================
@@ -86,7 +88,6 @@ class SearchProtocol(Protocol):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: OperationContext | None = None,
         limit: int | None = None,

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Index, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
@@ -34,7 +34,7 @@ class OperationLogModel(Base):
     operation_type: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # Context
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Affected paths
@@ -55,6 +55,16 @@ class OperationLogModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
+
+    # Transactional outbox (Issue #1241): tracks whether event has been
+    # delivered to downstream systems (EventBus, webhooks, hooks).
+    delivered: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    # Monotonic sequence for cursor-based replay pagination (Issue #1138/#1139).
+    # Nullable for backfill of existing rows; new rows auto-populated via trigger/app.
+    sequence_number: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
 
     # Indexes
     __table_args__ = (
@@ -84,6 +94,21 @@ class OperationLogModel(Base):
             "agent_id",
             created_at.desc(),
         ),
+        # Transactional outbox index (Issue #1241): partial index on
+        # undelivered rows for efficient polling by EventDeliveryWorker.
+        # PostgreSQL-only; SQLite migration uses a regular index fallback.
+        Index(
+            "idx_operation_log_undelivered",
+            "created_at",
+            postgresql_where=text("delivered = false"),
+        ),
+        # BRIN index for efficient replay cursor queries (Issue #1138/#1139).
+        Index(
+            "idx_operation_log_zone_seq_brin",
+            "zone_id",
+            "sequence_number",
+            postgresql_using="brin",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -92,18 +117,9 @@ class OperationLogModel(Base):
     def validate(self) -> None:
         """Validate operation log model before database operations."""
         from nexus.core.exceptions import ValidationError
+        from nexus.core.operation_types import OperationType
 
-        valid_types = [
-            "write",
-            "delete",
-            "rename",
-            "mkdir",
-            "rmdir",
-            "chmod",
-            "chown",
-            "chgrp",
-            "setfacl",
-        ]
+        valid_types = [t.value for t in OperationType]
         if self.operation_type not in valid_types:
             raise ValidationError(
                 f"operation_type must be one of {valid_types}, got {self.operation_type}"

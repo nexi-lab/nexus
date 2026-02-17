@@ -2,13 +2,18 @@ name: API Surface Check
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'src/nexus/**/*.py'
+  merge_group:
 
 permissions:
   contents: read
   pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   api-surface-check:

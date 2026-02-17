@@ -5,16 +5,16 @@ combining content-addressable storage (CAS) with directory operations.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
+    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 
 @dataclass
@@ -278,6 +278,18 @@ class Backend(ABC):
         """
         return False
 
+    # === Chain Introspection (Issue #1449) ===
+
+    def describe(self) -> str:
+        """Return a human-readable description of this backend for debugging.
+
+        Leaf backends return their ``name``.  Wrappers override to build
+        the full composition chain, e.g. ``"cache → logging → s3"``.
+
+        See NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping Rule #3.
+        """
+        return self.name
+
     # === Connection Management ===
 
     def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
@@ -394,7 +406,11 @@ class Backend(ABC):
         pass
 
     def batch_read_content(
-        self, content_hashes: list[str], context: "OperationContext | None" = None
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """
         Read multiple content items by their hashes (batch operation).
@@ -405,7 +421,10 @@ class Backend(ABC):
 
         Args:
             content_hashes: List of SHA-256 hashes as hex strings
-            context: Operation context with user/zone info (optional, for user-scoped backends)
+            context: Shared operation context (used when per-hash context is not available)
+            contexts: Per-hash operation contexts mapping content_hash -> OperationContext.
+                     Used by path-based backends (S3, etc.) that need per-file backend_path.
+                     Falls back to ``context`` for hashes not in this dict.
 
         Returns:
             Dictionary mapping content_hash -> content bytes
@@ -417,7 +436,8 @@ class Backend(ABC):
         """
         result: dict[str, bytes | None] = {}
         for content_hash in content_hashes:
-            response = self.read_content(content_hash, context=context)
+            ctx = contexts.get(content_hash, context) if contexts else context
+            response = self.read_content(content_hash, context=ctx)
             if response.success:
                 result[content_hash] = response.data
             else:
@@ -751,6 +771,9 @@ class Backend(ABC):
         """
         Map backend path to ReBAC object type.
 
+        Override in subclasses (e.g. IPCVFSDriver) for custom object type mapping.
+        Called by ObjectTypeMapper as the virtual dispatch target.
+
         Used by the permission enforcer to determine what type of object
         is being accessed for ReBAC permission checks. This allows different
         backends to have different permission models.
@@ -776,6 +799,9 @@ class Backend(ABC):
         """
         Map backend path to ReBAC object identifier.
 
+        Override in subclasses for custom object ID mapping.
+        Called by ObjectTypeMapper as the virtual dispatch target.
+
         Used by the permission enforcer to identify the specific object
         being accessed in ReBAC permission checks.
 
@@ -795,3 +821,43 @@ class Backend(ABC):
             Backends can override to return more appropriate identifiers.
         """
         return backend_path
+
+
+@runtime_checkable
+class AsyncBackend(Protocol):
+    """Async variant of Backend -- ObjectStore ABC for async drivers.
+
+    Mirrors the Backend interface with async method signatures.
+    Required by the Four Pillars architecture: all ObjectStore drivers
+    must implement the pillar ABC for interchangeability.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    async def initialize(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    async def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> HandlerResponse[str]: ...
+
+    async def read_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bytes]: ...
+
+    async def delete_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[None]: ...
+
+    async def content_exists(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bool]: ...
+
+    def stream_content(
+        self,
+        content_hash: str,
+        chunk_size: int = 65536,
+        context: "OperationContext | None" = None,
+    ) -> AsyncIterator[bytes]: ...

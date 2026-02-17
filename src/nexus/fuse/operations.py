@@ -30,6 +30,7 @@ from nexus.core.virtual_views import (
     should_add_virtual_views,
 )
 from nexus.fuse.cache import FUSECacheManager
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # Import readahead for sequential read optimization (Issue #1073)
 try:
@@ -55,33 +56,23 @@ if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.core.permissions import OperationContext
     from nexus.fuse.mount import MountMode
-    from nexus.services.permissions.namespace_manager import NamespaceManager
+    from nexus.rebac.namespace_manager import NamespaceManager
 
-# Import remote exceptions for better error handling (may not be available in all contexts)
-try:
-    from nexus.remote.client import (
-        RemoteConnectionError,
-        RemoteFilesystemError,
-        RemoteTimeoutError,
-    )
-
-    HAS_REMOTE_EXCEPTIONS = True
-except ImportError:
-    HAS_REMOTE_EXCEPTIONS = False
-    RemoteConnectionError = None  # type: ignore[misc,assignment]
-    RemoteFilesystemError = None  # type: ignore[misc,assignment]
-    RemoteTimeoutError = None  # type: ignore[misc,assignment]
+from nexus.core.exceptions import (
+    RemoteConnectionError,
+    RemoteFilesystemError,
+    RemoteTimeoutError,
+)
 
 # Import event system for firing events from FUSE operations (Issue #1115)
 try:
-    from nexus.core.event_bus import FileEvent, FileEventType, get_global_event_bus
+    from nexus.core.event_bus import FileEvent, FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:
     HAS_EVENT_BUS = False
     FileEvent = None  # type: ignore[misc,assignment]
     FileEventType = None  # type: ignore[misc,assignment]
-    get_global_event_bus = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -100,16 +91,15 @@ def _handle_remote_exception(e: Exception, operation: str, path: str, **context:
     """
     context_str = ", ".join(f"{k}={v}" for k, v in context.items()) if context else ""
 
-    if HAS_REMOTE_EXCEPTIONS:
-        if RemoteTimeoutError is not None and isinstance(e, RemoteTimeoutError):
-            logger.error(f"[FUSE-{operation}] Timeout: {path} - {e} ({context_str})")
-            raise FuseOSError(errno.ETIMEDOUT) from e
-        if RemoteConnectionError is not None and isinstance(e, RemoteConnectionError):
-            logger.error(f"[FUSE-{operation}] Connection error: {path} - {e}")
-            raise FuseOSError(errno.ECONNREFUSED) from e
-        if RemoteFilesystemError is not None and isinstance(e, RemoteFilesystemError):
-            logger.error(f"[FUSE-{operation}] Remote error: {path} - {e}")
-            raise FuseOSError(errno.EIO) from e
+    if isinstance(e, RemoteTimeoutError):
+        logger.error(f"[FUSE-{operation}] Timeout: {path} - {e} ({context_str})")
+        raise FuseOSError(errno.ETIMEDOUT) from e
+    if isinstance(e, RemoteConnectionError):
+        logger.error(f"[FUSE-{operation}] Connection error: {path} - {e}")
+        raise FuseOSError(errno.ECONNREFUSED) from e
+    if isinstance(e, RemoteFilesystemError):
+        logger.error(f"[FUSE-{operation}] Remote error: {path} - {e}")
+        raise FuseOSError(errno.EIO) from e
 
     # Log with stack trace for debugging unexpected errors
     logger.exception(f"[FUSE-{operation}] Unexpected error: {path} ({context_str})")
@@ -191,6 +181,8 @@ class NexusFUSEOperations(Operations):
         context: OperationContext | None = None,
         namespace_manager: NamespaceManager | None = None,
         use_rust: bool = False,
+        event_bus: Any | None = None,
+        subscription_manager: Any | None = None,
     ) -> None:
         """Initialize FUSE operations.
 
@@ -210,11 +202,16 @@ class NexusFUSEOperations(Operations):
                     checks (A2-B). When provided, _check_namespace_visible() bypasses the
                     full RPC/PermissionEnforcer pipeline and calls is_visible() directly.
             use_rust: Use high-performance Rust FUSE daemon for hot path operations (Issue #1569).
+            event_bus: Optional EventBusBase instance for distributing file events.
+            subscription_manager: Optional subscription manager for webhook broadcasts.
+                    Injected from server layer to avoid FUSE→server layer inversion.
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
         self._context = context
         self._namespace_manager = namespace_manager
+        self._event_bus = event_bus
+        self._subscription_manager = subscription_manager
         self._use_rust = use_rust
         self._rust_client = None
 
@@ -320,6 +317,52 @@ class NexusFUSEOperations(Operations):
                 self._event_loop = asyncio.get_running_loop()
             logger.info("[FUSE] Event firing enabled")
 
+    @property
+    def _rust_available(self) -> bool:
+        """Check if Rust daemon is available for delegation (Issue 8B DRY).
+
+        Returns True only when all three conditions are met:
+        - use_rust flag is enabled
+        - Rust client is connected
+        - No namespace context (Rust daemon doesn't handle ReBAC)
+        """
+        return bool(self._use_rust and self._rust_client and not self._context)
+
+    def _try_rust(
+        self, op_name: str, rust_fn: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> tuple[bool, Any]:
+        """Issue 8B: Try a Rust operation with standard fallback handling.
+
+        Eliminates the repeated 7-line try/except delegation pattern across
+        7 FUSE methods. Returns (success, result) tuple so callers can decide
+        whether to fall through to Python.
+
+        ENOENT from Rust is re-raised immediately (file genuinely not found).
+        All other errors log a warning and signal fallback to Python.
+
+        Args:
+            op_name: Operation name for logging (e.g., "READ", "WRITE")
+            rust_fn: Rust client method to call
+            *args: Positional arguments for rust_fn
+            **kwargs: Keyword arguments for rust_fn
+
+        Returns:
+            (True, result) on success, (False, None) on failure
+        """
+        if not self._rust_available:
+            return (False, None)
+        try:
+            result = rust_fn(*args, **kwargs)
+            return (True, result)
+        except OSError as e:
+            if e.errno == errno.ENOENT:
+                raise FuseOSError(errno.ENOENT) from None
+            logger.warning(f"[FUSE-{op_name}] Rust failed: {e}, using Python")
+            return (False, None)
+        except Exception as e:
+            logger.warning(f"[FUSE-{op_name}] Rust failed: {e}, using Python")
+            return (False, None)
+
     def _dir_cache_key(self, path: str) -> str | tuple[str, str, str]:
         """Build context-aware dir cache key (Issue #1305).
 
@@ -387,7 +430,7 @@ class NexusFUSEOperations(Operations):
 
         This queues an event for async dispatch without blocking the FUSE operation.
         Events are delivered to:
-        - GlobalEventBus (Redis Pub/Sub for distributed cache invalidation)
+        - RedisEventBus (Redis Pub/Sub for distributed cache invalidation)
         - SubscriptionManager (webhook delivery)
         - TriggerManager (workflow triggers)
 
@@ -400,7 +443,7 @@ class NexusFUSEOperations(Operations):
         if not self._enable_events or not HAS_EVENT_BUS:
             return
 
-        if FileEvent is None or get_global_event_bus is None:
+        if FileEvent is None:
             return
 
         try:
@@ -434,20 +477,16 @@ class NexusFUSEOperations(Operations):
             event: FileEvent to dispatch
         """
         try:
-            # 1. Publish to global event bus (distributed cache invalidation)
-            event_bus = get_global_event_bus()
-            if event_bus is not None:
+            # 1. Publish to event bus (distributed cache invalidation)
+            if self._event_bus is not None:
                 try:
-                    await event_bus.publish(event)
+                    await self._event_bus.publish(event)
                 except Exception as e:
                     logger.debug(f"[FUSE-EVENT] Event bus publish failed: {e}")
 
-            # 2. Broadcast to webhook subscriptions
-            # Import here to avoid circular imports
+            # 2. Broadcast to webhook subscriptions via injected manager
             try:
-                from nexus.server.subscriptions import get_subscription_manager
-
-                sub_manager = get_subscription_manager()
+                sub_manager = self._subscription_manager
                 if sub_manager is not None:
                     event_type_str = (
                         event.type.value if hasattr(event.type, "value") else str(event.type)
@@ -460,10 +499,8 @@ class NexusFUSEOperations(Operations):
                             "size": event.size,
                             "timestamp": event.timestamp,
                         },
-                        zone_id=event.zone_id or "default",
+                        zone_id=event.zone_id or ROOT_ZONE_ID,
                     )
-            except ImportError:
-                pass  # Subscription manager not available
             except Exception as e:
                 logger.debug(f"[FUSE-EVENT] Webhook broadcast failed: {e}")
 
@@ -1016,8 +1053,7 @@ class NexusFUSEOperations(Operations):
             self._readahead.invalidate_path(original_path)
 
         # Issue #1115: Fire write event to downstream systems
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_WRITE, original_path, size=len(new_content))
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=len(new_content))
 
         return len(data)
 
@@ -1091,8 +1127,7 @@ class NexusFUSEOperations(Operations):
             }
 
         # Issue #1115: Fire create event (file_write with size=0)
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_WRITE, original_path, size=0)
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=0)
 
         return fd
 
@@ -1130,8 +1165,7 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(path)
 
         # Issue #1115: Fire delete event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_DELETE, original_path)
+        self._fire_event(FileEventType.FILE_DELETE, original_path)
 
     @fuse_operation("MKDIR")
     def mkdir(self, path: str, mode: int) -> None:  # noqa: ARG002
@@ -1162,8 +1196,7 @@ class NexusFUSEOperations(Operations):
             self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
 
         # Issue #1115: Fire directory create event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.DIR_CREATE, path)
+        self._fire_event(FileEventType.DIR_CREATE, path)
 
     @fuse_operation("RMDIR")
     def rmdir(self, path: str) -> None:
@@ -1185,8 +1218,7 @@ class NexusFUSEOperations(Operations):
         self.nexus_fs.rmdir(path, recursive=False)
 
         # Issue #1115: Fire directory delete event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.DIR_DELETE, path)
+        self._fire_event(FileEventType.DIR_DELETE, path)
 
     @fuse_operation("RENAME")
     def rename(self, old: str, new: str) -> None:
@@ -1291,8 +1323,7 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(new)
 
         # Issue #1115: Fire rename event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_RENAME, new_path, old_path=old_path)
+        self._fire_event(FileEventType.FILE_RENAME, new_path, old_path=old_path)
 
     # ============================================================
     # File Attribute Modification
@@ -1329,8 +1360,7 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(path)
 
         # Issue #1115: Fire metadata change event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.METADATA_CHANGE, original_path)
+        self._fire_event(FileEventType.METADATA_CHANGE, original_path)
 
     @fuse_operation("CHOWN")
     def chown(self, path: str, uid: int, gid: int) -> None:
@@ -1388,8 +1418,7 @@ class NexusFUSEOperations(Operations):
                 self.cache.invalidate_path(path)
 
             # Issue #1115: Fire metadata change event
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.METADATA_CHANGE, original_path)
+            self._fire_event(FileEventType.METADATA_CHANGE, original_path)
 
         except (ModuleNotFoundError, AttributeError):
             # Windows doesn't have pwd/grp modules - silently ignore
@@ -1440,8 +1469,7 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(path)
 
         # Issue #1115: Fire write event (truncate modifies content)
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_WRITE, original_path, size=length)
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=length)
 
     def utimens(self, path: str, times: tuple[float, float] | None = None) -> None:
         """Update file access and modification times.
@@ -1549,7 +1577,13 @@ class NexusFUSEOperations(Operations):
         # In text mode, try to parse
         if self.mode.value == "text" or (self.mode.value == "smart" and view_type):
             # Use shared parsing logic
-            parsed_content = get_parsed_content(content, path, view_type or "txt")
+            from nexus.parsers import create_default_parse_fn
+
+            if not hasattr(self, "_parse_fn"):
+                self._parse_fn = create_default_parse_fn()
+            parsed_content = get_parsed_content(
+                content, path, view_type or "txt", parse_fn=self._parse_fn
+            )
             # Cache the parsed result
             self.cache.cache_parsed(path, view_type, parsed_content)
             return parsed_content
@@ -1605,7 +1639,10 @@ class NexusFUSEOperations(Operations):
         """
         try:
             # Read full file content (uses cache hierarchy)
-            content = self._get_file_content(path, None)
+            # A1-B: readahead is triggered from open() where auth was verified;
+            # skip redundant context check to avoid passing credentials on
+            # background threads.
+            content = self._get_file_content(path, None, skip_auth=True)
 
             # Return requested range
             end = min(offset + size, len(content))
@@ -1697,11 +1734,6 @@ class NexusFUSEOperations(Operations):
             if metadata_dict:
                 # C2-B: Use module-level frozen dataclass instead of inner class
                 return MetadataObj.from_dict(metadata_dict)
-            return None
-
-        # Fall back to direct metadata access (for local NexusFS)
-        if hasattr(self.nexus_fs, "metadata"):
-            return self.nexus_fs.metadata.get(path)
 
         return None
 

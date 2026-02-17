@@ -324,3 +324,20 @@ class UnsupportedOperationError(SandboxProviderError):
     """Raised when operation is not supported by provider."""
 
     pass
+
+
+class EscalationNeeded(SandboxProviderError):
+    """Raised when a sandbox provider cannot handle the code and needs escalation.
+
+    Used by lightweight providers (e.g., Monty) to signal that the code
+    requires a more capable provider (e.g., Docker, E2B).
+
+    Attributes:
+        reason: Human-readable explanation of why escalation is needed.
+        suggested_tier: Optional hint for which tier to escalate to.
+    """
+
+    def __init__(self, reason: str, suggested_tier: str | None = None) -> None:
+        self.reason = reason
+        self.suggested_tier = suggested_tier
+        super().__init__(reason)

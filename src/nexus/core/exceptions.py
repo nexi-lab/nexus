@@ -27,6 +27,10 @@ Usage:
             logger.error(f"System error: {e}", exc_info=True)
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 
 class NexusError(Exception):
     """Base exception for all Nexus errors.
@@ -37,9 +41,15 @@ class NexusError(Exception):
         is_expected: Whether this is an expected user error (True) or
                      unexpected system error (False). Subclasses set
                      appropriate defaults.
+        status_code: HTTP status code for this error type. Subclasses
+                     override with the appropriate code (e.g. 404, 403).
+                     Used by error_handlers.py to avoid cascading isinstance.
+        error_type: Short HTTP error label (e.g. "Not Found", "Forbidden").
     """
 
     is_expected: bool = False  # Default: unexpected (system error)
+    status_code: int = 500
+    error_type: str = "Internal Server Error"
 
     def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
         self.message = message
@@ -56,6 +66,22 @@ class NexusError(Exception):
         return self.message
 
 
+class BootError(NexusError):
+    """Fatal boot-time error — a kernel-tier service failed to initialize.
+
+    Raised when a service required for NexusFS boot cannot be constructed.
+    This is an unexpected error — indicates a misconfiguration or missing
+    dependency that prevents the system from starting.
+    """
+
+    is_expected = False  # Fatal boot failure
+
+    def __init__(self, message: str, *, tier: str = "kernel", service_name: str = "") -> None:
+        super().__init__(message)
+        self.tier = tier
+        self.service_name = service_name
+
+
 class NexusFileNotFoundError(NexusError, FileNotFoundError):
     """Raised when a file or directory does not exist.
 
@@ -63,6 +89,8 @@ class NexusFileNotFoundError(NexusError, FileNotFoundError):
     """
 
     is_expected = True  # User asked for non-existent resource
+    status_code = 404
+    error_type = "Not Found"
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "File not found"
@@ -77,14 +105,19 @@ class NexusPermissionError(NexusError):
     """
 
     is_expected = True  # User lacks required permissions
+    status_code = 403
+    error_type = "Forbidden"
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "Permission denied"
         super().__init__(msg, path)
 
 
-class PermissionDeniedError(NexusError):
+class PermissionDeniedError(NexusPermissionError):
     """Raised when ReBAC permission check fails.
+
+    Subclass of NexusPermissionError — can be caught by
+    ``except NexusPermissionError`` for unified permission handling.
 
     This is an expected error - the user attempted an operation they lack
     ReBAC permissions for.
@@ -95,9 +128,11 @@ class PermissionDeniedError(NexusError):
     """
 
     is_expected = True  # User lacks ReBAC permissions
+    status_code = 403
+    error_type = "Forbidden"
 
     def __init__(self, message: str, path: str | None = None):
-        super().__init__(message, path)
+        super().__init__(path=path or "", message=message)
 
 
 class StaleSessionError(NexusError):
@@ -110,6 +145,8 @@ class StaleSessionError(NexusError):
     """
 
     is_expected = True  # Agent session was superseded by a newer one
+    status_code = 409
+    error_type = "Conflict"
 
     def __init__(self, agent_id: str, message: str | None = None):
         self.agent_id = agent_id
@@ -125,12 +162,129 @@ class BackendError(NexusError):
     """
 
     is_expected = False  # System/infrastructure failure
+    status_code = 502
+    error_type = "Bad Gateway"
 
     def __init__(self, message: str, backend: str | None = None, path: str | None = None):
         self.backend = backend
         if backend:
             message = f"[{backend}] {message}"
         super().__init__(message, path)
+
+
+class DatabaseError(BackendError):
+    """Database operation failed. Wraps SQLAlchemy errors at storage boundary.
+
+    This is an unexpected error — indicates database infrastructure failure.
+    """
+
+    is_expected = False
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path=path)
+
+
+class DatabaseConnectionError(DatabaseError):
+    """Database connection failed (transient, should retry)."""
+
+
+class DatabaseTimeoutError(DatabaseError):
+    """Database query timed out."""
+
+
+class DatabaseIntegrityError(DatabaseError):
+    """Database integrity constraint violated (permanent, should not retry).
+
+    This is an expected error — caused by user actions (e.g., duplicate key).
+    """
+
+    is_expected = True
+
+
+class ConnectorError(BackendError):
+    """External connector/API operation failed."""
+
+    is_expected = False
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path=path)
+
+
+class ConnectorAuthError(ConnectorError):
+    """Connector authentication/token refresh failed.
+
+    This is an expected error — user needs to re-authenticate.
+    """
+
+    status_code = 401
+    error_type = "Unauthorized"
+    is_expected = True
+
+
+class ConnectorRateLimitError(ConnectorError):
+    """Connector hit rate limit (transient, should retry with backoff).
+
+    This is an expected error — external API rate limiting.
+    """
+
+    status_code = 429
+    error_type = "Too Many Requests"
+    is_expected = True
+
+
+class ConnectorQuotaError(ConnectorError):
+    """Connector quota exceeded.
+
+    This is an expected error — user/org quota limit reached.
+    """
+
+    is_expected = True
+
+
+class RemoteFilesystemError(NexusError):
+    """Enhanced remote filesystem error with detailed information.
+
+    Raised when RPC/HTTP communication with a remote Nexus server fails.
+    This is an unexpected error — indicates network or remote infrastructure failure.
+
+    Defined in core/exceptions so both nexus.remote and nexus.fuse can
+    import without cross-layer coupling.
+    """
+
+    is_expected = False  # Network / remote infrastructure failure
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        details: dict[str, Any] | None = None,
+        method: str | None = None,
+    ):
+        self.message = message
+        if status_code is not None:
+            self.status_code = status_code
+        self.details = details or {}
+        self.method = method
+
+        error_parts = [message]
+        if method:
+            error_parts.append(f"(method: {method})")
+        if status_code:
+            error_parts.append(f"[HTTP {status_code}]")
+
+        super().__init__(" ".join(error_parts))
+
+
+class RemoteConnectionError(RemoteFilesystemError):
+    """Error connecting to remote Nexus server."""
+
+    pass
+
+
+class RemoteTimeoutError(RemoteFilesystemError):
+    """Timeout while communicating with remote server."""
+
+    pass
 
 
 class ServiceUnavailableError(NexusError):
@@ -141,6 +295,8 @@ class ServiceUnavailableError(NexusError):
     """
 
     is_expected = False  # Infrastructure failure
+    status_code = 503
+    error_type = "Service Unavailable"
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
@@ -156,6 +312,8 @@ class CircuitOpenError(ServiceUnavailableError):
     """
 
     is_expected = False  # Infrastructure failure (circuit open)
+    status_code = 503
+    error_type = "Service Unavailable"
 
     def __init__(self, service_name: str, message: str | None = None):
         self.service_name = service_name
@@ -170,6 +328,8 @@ class InvalidPathError(NexusError):
     """
 
     is_expected = True  # User provided invalid input
+    status_code = 400
+    error_type = "Bad Request"
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "Invalid path"
@@ -201,6 +361,8 @@ class ValidationError(NexusError):
     """
 
     is_expected = True  # User input validation failure
+    status_code = 400
+    error_type = "Bad Request"
 
     def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
         super().__init__(message, path, is_expected)
@@ -214,6 +376,8 @@ class ParserError(NexusError):
     """
 
     is_expected = True  # User provided unparseable document
+    status_code = 422
+    error_type = "Unprocessable Entity"
 
     def __init__(self, message: str, path: str | None = None, parser: str | None = None):
         self.parser = parser
@@ -245,6 +409,8 @@ class ConflictError(NexusError):
     """
 
     is_expected = True  # Normal condition in concurrent systems
+    status_code = 409
+    error_type = "Conflict"
 
     def __init__(self, path: str, expected_etag: str, current_etag: str):
         """Initialize conflict error.
@@ -278,6 +444,8 @@ class LockTimeout(NexusError):
     """
 
     is_expected = True  # Normal condition in concurrent systems
+    status_code = 423
+    error_type = "Locked"
 
     def __init__(self, path: str, timeout: float, message: str | None = None):
         """Initialize lock timeout error.
@@ -333,6 +501,45 @@ class AuthenticationError(NexusError):
     """
 
     is_expected = True  # User auth issue (invalid/expired credentials)
+    status_code = 401
+    error_type = "Unauthorized"
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path)
+
+
+# --- Router / Path Exceptions ---
+
+
+class PathNotMountedError(NexusError):
+    """Raised when no mount exists for a given path.
+
+    This is an expected error — the user referenced a path that has no
+    backend mount configured. Maps to HTTP 404 Not Found.
+    """
+
+    is_expected = True  # User referenced unmounted path
+    status_code = 404
+    error_type = "Not Found"
+
+    def __init__(self, path: str, message: str | None = None):
+        msg = message or "No mount found for path"
+        super().__init__(msg, path)
+
+
+class AccessDeniedError(NexusError):
+    """Raised when access to a path is denied by namespace or zone rules.
+
+    Distinct from NexusPermissionError (ReBAC / file-level permissions):
+    AccessDeniedError covers zone isolation, read-only namespaces, and
+    admin-only namespace enforcement in the VFS router layer.
+
+    This is an expected error — maps to HTTP 403 Forbidden.
+    """
+
+    is_expected = True  # User lacks zone/namespace-level access
+    status_code = 403
+    error_type = "Forbidden"
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
@@ -349,6 +556,8 @@ class UploadNotFoundError(NexusError):
     """
 
     is_expected = True
+    status_code = 404
+    error_type = "Not Found"
 
     def __init__(self, upload_id: str, message: str | None = None):
         self.upload_id = upload_id
@@ -364,6 +573,8 @@ class UploadExpiredError(NexusError):
     """
 
     is_expected = True
+    status_code = 410
+    error_type = "Gone"
 
     def __init__(self, upload_id: str, message: str | None = None):
         self.upload_id = upload_id
@@ -379,6 +590,8 @@ class UploadOffsetMismatchError(NexusError):
     """
 
     is_expected = True
+    status_code = 409
+    error_type = "Conflict"
 
     def __init__(self, upload_id: str, expected: int, received: int):
         self.upload_id = upload_id
@@ -396,6 +609,8 @@ class UploadChecksumMismatchError(NexusError):
     """
 
     is_expected = True
+    status_code = 460
+    error_type = "Checksum Mismatch"
 
     def __init__(self, upload_id: str, algorithm: str, message: str | None = None):
         self.upload_id = upload_id
@@ -404,5 +619,110 @@ class UploadChecksumMismatchError(NexusError):
         super().__init__(msg)
 
 
-# Alias for convenience (used in time-travel debugging)
-NotFoundError = NexusFileNotFoundError
+# --- Context Branch Exceptions (Issue #1315) ---
+
+
+class BranchError(NexusError):
+    """Base exception for context branch operations.
+
+    All branch exceptions are expected errors — they represent user-facing
+    conditions that should be handled explicitly.
+    """
+
+    is_expected = True
+
+    def __init__(self, message: str, branch_name: str | None = None, path: str | None = None):
+        self.branch_name = branch_name
+        super().__init__(message, path)
+
+
+class BranchNotFoundError(BranchError):
+    """Raised when a branch does not exist.
+
+    Maps to HTTP 404 Not Found.
+    """
+
+    def __init__(self, branch_name: str, workspace_path: str | None = None):
+        msg = f"Branch '{branch_name}' not found"
+        if workspace_path:
+            msg += f" in workspace '{workspace_path}'"
+        super().__init__(msg, branch_name=branch_name, path=workspace_path)
+
+
+class BranchExistsError(BranchError):
+    """Raised when creating a branch that already exists.
+
+    Maps to HTTP 409 Conflict.
+    """
+
+    def __init__(self, branch_name: str, workspace_path: str | None = None):
+        msg = f"Branch '{branch_name}' already exists"
+        if workspace_path:
+            msg += f" in workspace '{workspace_path}'"
+        super().__init__(msg, branch_name=branch_name, path=workspace_path)
+
+
+class BranchConflictError(BranchError):
+    """Raised when a merge has conflicting files.
+
+    Contains the list of conflicting paths for the caller to handle.
+    Maps to HTTP 409 Conflict.
+    """
+
+    def __init__(
+        self,
+        source_branch: str,
+        target_branch: str,
+        conflicting_paths: list[str],
+    ):
+        self.source_branch = source_branch
+        self.target_branch = target_branch
+        self.conflicting_paths = conflicting_paths
+        paths_str = ", ".join(conflicting_paths[:5])
+        if len(conflicting_paths) > 5:
+            paths_str += f" (and {len(conflicting_paths) - 5} more)"
+        msg = (
+            f"Merge conflict: {len(conflicting_paths)} file(s) changed on both "
+            f"'{source_branch}' and '{target_branch}': {paths_str}"
+        )
+        super().__init__(msg, branch_name=source_branch)
+
+
+class BranchStateError(BranchError):
+    """Raised when a branch operation is invalid for the current branch state.
+
+    Examples: merging an already-merged branch, committing to a discarded branch.
+    Maps to HTTP 409 Conflict.
+    """
+
+    def __init__(self, branch_name: str, message: str):
+        super().__init__(message, branch_name=branch_name)
+
+
+class BranchProtectedError(BranchError):
+    """Raised when attempting to delete or discard a protected branch (e.g. 'main').
+
+    Maps to HTTP 403 Forbidden.
+    """
+
+    def __init__(self, branch_name: str, operation: str = "delete"):
+        msg = f"Cannot {operation} protected branch '{branch_name}'"
+        super().__init__(msg, branch_name=branch_name)
+
+
+class StalePointerError(BranchError):
+    """Raised when optimistic concurrency check fails on branch pointer update.
+
+    The branch's pointer_version has changed since the caller last read it,
+    indicating a concurrent modification. Caller should retry with fresh state.
+    Maps to HTTP 409 Conflict.
+    """
+
+    def __init__(self, branch_name: str, expected_version: int, current_version: int):
+        self.expected_version = expected_version
+        self.current_version = current_version
+        msg = (
+            f"Stale pointer for branch '{branch_name}': "
+            f"expected version {expected_version}, current is {current_version}"
+        )
+        super().__init__(msg, branch_name=branch_name)

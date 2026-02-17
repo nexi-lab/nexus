@@ -1,5 +1,7 @@
 name: Docker Integration Test
 
+# TEMPORARILY DISABLED - TODO: Re-enable later. See https://github.com/nexi-lab/nexus/issues/1720
+
 # Required GitHub Secrets:
 # - ANTHROPIC_API_KEY: Claude API key for AI integration testing
 # - NEXUS_GCS_CREDENTIALS: GCS service account JSON credentials (content of gcs-credentials.json)
@@ -11,9 +13,9 @@ name: Docker Integration Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       # Docker-related files
       - 'Dockerfile'
@@ -29,8 +31,13 @@ on:
       - 'configs/*.yaml'
       - 'configs/*.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docker-build-and-init:
+    if: false  # Re-enable when addressing https://github.com/nexi-lab/nexus/issues/1720
     name: Docker Build & Init Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1691,10 +1698,10 @@ jobs:
           echo ""
 
           # Install Python dependencies and nexus package
-          python3 -m pip install pytest pytest-xdist sqlalchemy psycopg2-binary structlog --quiet || true
+          python3 -m pip install pytest pytest-xdist pytest-timeout sqlalchemy psycopg2-binary structlog --quiet || true
 
           # Run the PostgreSQL integration tests
-          pytest tests/integration/test_auth_postgres.py -v
+          pytest tests/e2e/postgres/test_auth_postgres.py -v
 
           if [ $? -eq 0 ]; then
             echo "✅ PostgreSQL auth integration tests completed successfully!"

@@ -4,7 +4,7 @@ Defines the contract for virtual path routing to storage backends.
 Existing implementation: ``nexus.core.router.PathRouter`` (sync).
 
 References:
-    - docs/design/KERNEL-ARCHITECTURE.md §3
+    - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
+    from nexus.core.protocols.connector import ConnectorProtocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +77,7 @@ class VFSRouterProtocol(Protocol):
     async def add_mount(
         self,
         mount_point: str,
-        backend: Backend,
+        backend: ConnectorProtocol,
         *,
         priority: int = 0,
         readonly: bool = False,

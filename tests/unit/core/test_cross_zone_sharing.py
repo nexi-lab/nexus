@@ -13,11 +13,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.rebac_manager_zone_aware import (
+from nexus.rebac.manager import (
     ZoneAwareReBACManager,
     ZoneIsolationError,
 )
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.storage.models import Base
 
 
@@ -267,7 +267,7 @@ class TestCrossZoneSharingRevoke:
     def test_revoke_cross_zone_share(self, zone_aware_manager):
         """Test revoking a cross-zone share."""
         # Create cross-zone share
-        tuple_id = zone_aware_manager.rebac_write(
+        write_result = zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
@@ -275,6 +275,8 @@ class TestCrossZoneSharingRevoke:
             subject_zone_id="partner-zone",
             object_zone_id="acme-zone",
         )
+        # EnhancedReBACManager.rebac_write returns WriteResult, extract tuple_id
+        tuple_id = write_result.tuple_id if hasattr(write_result, "tuple_id") else write_result
 
         # Verify share exists
         result = zone_aware_manager.rebac_check(
@@ -358,7 +360,7 @@ class TestCrossZoneRustPathFix:
     @pytest.fixture
     def enhanced_manager(self, engine):
         """Create an enhanced ReBAC manager that has _fetch_tuples_for_rust."""
-        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.rebac.manager import EnhancedReBACManager
 
         manager = EnhancedReBACManager(
             engine=engine,
@@ -433,7 +435,7 @@ class TestCrossZonePermissionExpansion:
     @pytest.fixture
     def manager_with_namespace(self, engine):
         """Create manager with file namespace for permission expansion."""
-        from nexus.core.rebac import DEFAULT_FILE_NAMESPACE
+        from nexus.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
 
         manager = ZoneAwareReBACManager(
             engine=engine,

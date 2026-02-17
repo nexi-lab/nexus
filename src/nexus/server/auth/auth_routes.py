@@ -9,31 +9,32 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
-from nexus.server.auth.database_local import DatabaseLocalAuth
+from nexus.auth.providers.database_local import DatabaseLocalAuth
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# Dependency Injection
+# Injectable DI — set at server startup, accessed via Depends() or direct call
 # ==============================================================================
 
 _auth_provider: DatabaseLocalAuth | None = None
 _oauth_provider: OAuthUserAuth | None = None
-_nexus_fs_instance: Any | None = None  # NexusFS instance for provisioning
+_nexus_fs_instance: Any | None = None
 
 
 def set_auth_provider(provider: DatabaseLocalAuth) -> None:
-    """Set the authentication provider for dependency injection."""
+    """Inject the authentication provider. Called by server layer at startup."""
     global _auth_provider
     _auth_provider = provider
 
 
 def get_auth_provider() -> DatabaseLocalAuth:
-    """Get the authentication provider.
+    """Return the injected auth provider (used as ``Depends(get_auth_provider)``).
 
     Raises:
-        HTTPException: If auth provider is not configured
+        HTTPException: If auth provider has not been injected.
     """
     if _auth_provider is None:
         raise HTTPException(
@@ -43,26 +44,44 @@ def get_auth_provider() -> DatabaseLocalAuth:
     return _auth_provider
 
 
+def reset_auth_provider() -> None:
+    """Reset auth provider to None — only for tests."""
+    global _auth_provider
+    _auth_provider = None
+
+
 def set_oauth_provider(provider: OAuthUserAuth) -> None:
-    """Set the OAuth authentication provider for dependency injection."""
+    """Inject the OAuth authentication provider. Called by server layer at startup."""
     global _oauth_provider
     _oauth_provider = provider
 
 
 def get_oauth_provider() -> OAuthUserAuth | None:
-    """Get the OAuth authentication provider (optional)."""
+    """Return the injected OAuth provider, or None if not configured."""
     return _oauth_provider
 
 
+def reset_oauth_provider() -> None:
+    """Reset OAuth provider to None — only for tests."""
+    global _oauth_provider
+    _oauth_provider = None
+
+
 def set_nexus_instance(nexus_fs: Any) -> None:
-    """Set the global NexusFS instance for user provisioning."""
+    """Inject the NexusFS instance for user provisioning. Called by server layer at startup."""
     global _nexus_fs_instance
     _nexus_fs_instance = nexus_fs
 
 
 def get_nexus_instance() -> Any | None:
-    """Get the global NexusFS instance."""
+    """Return the injected NexusFS instance, or None if not configured."""
     return _nexus_fs_instance
+
+
+def reset_nexus_instance() -> None:
+    """Reset NexusFS instance to None — only for tests."""
+    global _nexus_fs_instance
+    _nexus_fs_instance = None
 
 
 async def get_authenticated_user(
@@ -226,16 +245,6 @@ class OAuthCallbackResponse(BaseModel):
     message: str = "OAuth authentication successful"
 
 
-class OAuthAccountResponse(BaseModel):
-    """OAuth account information."""
-
-    oauth_account_id: str
-    provider: str
-    provider_email: str
-    created_at: str
-    last_used_at: str | None = None
-
-
 class OAuthCheckResponseExisting(BaseModel):
     """OAuth check response for existing users."""
 
@@ -396,7 +405,9 @@ async def login(
                                 break
                     except Exception as e:
                         # Decryption failed or key invalid, continue to next one
-                        logger.warning(f"Failed to decrypt API key {oauth_key.key_id}: {e}")
+                        logger.warning(
+                            "Failed to decrypt API key %s: %s", oauth_key.key_id, e, exc_info=True
+                        )
                         continue
 
         return LoginResponse(
@@ -542,7 +553,7 @@ async def setup_zone(
                 raise ValueError("Failed to create API key during provisioning")
 
         except Exception as e:
-            logger.error(f"Failed to provision password user resources: {e}")
+            logger.error("Failed to provision password user resources: %s", e, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to provision user resources: {e}",
@@ -596,7 +607,7 @@ async def setup_zone(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Zone setup failed: {e}")
+        logger.error("Zone setup failed: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Zone setup failed: {e}",
@@ -783,7 +794,7 @@ async def request_verification(
         return {"message": "If this email is registered, a verification link has been sent."}
 
     try:
-        from nexus.server.auth.database_local import get_user_by_email
+        from nexus.auth.user_queries import get_user_by_email
 
         with auth.session_factory() as session:
             user = get_user_by_email(session, str(email))
@@ -932,7 +943,7 @@ async def oauth_check(
                 # Existing OAuth account - login immediately
                 from datetime import UTC, datetime, timedelta
 
-                from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+                from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
                 from nexus.storage.models import APIKeyModel, UserModel
 
                 user = session.get(UserModel, existing_oauth.user_id)
@@ -1012,7 +1023,9 @@ async def oauth_check(
                                 break
                     except Exception as e:
                         # Decryption failed or key invalid, continue to next one
-                        logger.warning(f"Failed to decrypt API key {oauth_key.key_id}: {e}")
+                        logger.warning(
+                            "Failed to decrypt API key %s: %s", oauth_key.key_id, e, exc_info=True
+                        )
                         continue
 
                 # Only create a NEW API key if user has NO oauth_api_keys entries at all
@@ -1210,7 +1223,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         import uuid
         from datetime import UTC, datetime, timedelta
 
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
         from nexus.server.auth.user_helpers import get_user_by_email
         from nexus.storage.models import UserModel
 
@@ -1225,7 +1238,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     raise ValueError("Existing user email is required")
                 # User exists but not linked to OAuth - auto-link them
                 user_id = existing_user.user_id
-                zone_id = "default"  # Use their existing zone
+                zone_id = existing_user.zone_id or ROOT_ZONE_ID
 
                 with session.begin():
                     # Create OAuth account link
@@ -1515,7 +1528,7 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
         # Determine if this is a new user (check if user was just created)
         # For now, we'll assume it's new if the user was created recently
         # This is a simplification - in practice, you'd track this in the handler
-        is_new_user = False  # TODO: Track this properly in OAuthUserAuth
+        is_new_user = False  # Stub: needs proper tracking in OAuthUserAuth
 
         return OAuthCallbackResponse(
             token=token,
@@ -1538,45 +1551,3 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth callback failed: {e}",
         ) from e
-
-
-@router.get("/oauth/accounts", response_model=list[OAuthAccountResponse])
-async def list_oauth_accounts() -> list[OAuthAccountResponse]:
-    """List linked OAuth accounts for current user.
-
-    Returns:
-        List of linked OAuth accounts
-
-    Raises:
-        401: Not authenticated
-        501: Not implemented
-    """
-    # TODO: Implement OAuth account listing
-    # Requires: JWT token authentication middleware
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="OAuth account listing requires JWT token authentication middleware",
-    )
-
-
-@router.delete("/oauth/accounts/{oauth_account_id}")
-async def unlink_oauth_account(_oauth_account_id: str) -> dict[str, Any]:
-    """Unlink an OAuth account.
-
-    Args:
-        oauth_account_id: OAuth account ID to unlink
-
-    Returns:
-        Success message
-
-    Raises:
-        401: Not authenticated
-        404: OAuth account not found
-        501: Not implemented
-    """
-    # TODO: Implement OAuth account unlinking
-    # Requires: JWT token authentication middleware
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="OAuth account unlinking requires JWT token authentication middleware",
-    )

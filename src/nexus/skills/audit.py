@@ -2,37 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any
 
-from nexus.core.exceptions import ValidationError
+from nexus.skills.exceptions import SkillValidationError
 
 logger = logging.getLogger(__name__)
-
-
-class DatabaseConnection(Protocol):
-    """Protocol for database connections."""
-
-    def execute(self, query: str, params: dict[str, Any] | None = None) -> Any:
-        """Execute a query."""
-        ...
-
-    def fetchall(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Fetch all results from a query."""
-        ...
-
-    def fetchone(self, query: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        """Fetch one result from a query."""
-        ...
-
-    def commit(self) -> None:
-        """Commit the transaction."""
-        ...
 
 
 class AuditAction(StrEnum):
@@ -65,13 +44,13 @@ class AuditLogEntry:
             ValidationError: If validation fails.
         """
         if not self.audit_id:
-            raise ValidationError("audit_id is required")
+            raise SkillValidationError("audit_id is required")
 
         if not self.skill_name:
-            raise ValidationError("skill_name is required")
+            raise SkillValidationError("skill_name is required")
 
         if not isinstance(self.action, AuditAction):
-            raise ValidationError(f"action must be AuditAction, got {type(self.action)}")
+            raise SkillValidationError(f"action must be AuditAction, got {type(self.action)}")
 
 
 class SkillAuditLogger:
@@ -88,7 +67,7 @@ class SkillAuditLogger:
         >>> from nexus.skills import SkillAuditLogger, AuditAction
         >>>
         >>> # Initialize logger
-        >>> audit = SkillAuditLogger(db_connection)
+        >>> audit = SkillAuditLogger()
         >>>
         >>> # Log skill execution
         >>> await audit.log(
@@ -108,13 +87,8 @@ class SkillAuditLogger:
         ...     print(f"{log.action.value} by {log.agent_id} at {log.timestamp}")
     """
 
-    def __init__(self, db_connection: DatabaseConnection | None = None):
-        """Initialize audit logger.
-
-        Args:
-            db_connection: Optional database connection (defaults to in-memory)
-        """
-        self._db = db_connection
+    def __init__(self) -> None:
+        """Initialize audit logger."""
         self._in_memory_logs: list[AuditLogEntry] = []
 
     async def log(
@@ -165,36 +139,7 @@ class SkillAuditLogger:
 
         entry.validate()
 
-        if self._db:
-            # Insert into database
-            query = """
-            INSERT INTO skill_audit_log (
-                audit_id, skill_name, action, agent_id,
-                zone_id, details, timestamp
-            ) VALUES (
-                :audit_id, :skill_name, :action, :agent_id,
-                :zone_id, :details, :timestamp
-            )
-            """
-            import json
-
-            await asyncio.to_thread(
-                self._db.execute,
-                query,
-                {
-                    "audit_id": audit_id,
-                    "skill_name": skill_name,
-                    "action": action.value,
-                    "agent_id": agent_id,
-                    "zone_id": zone_id,
-                    "details": json.dumps(details) if details else None,
-                    "timestamp": timestamp,
-                },
-            )
-            await asyncio.to_thread(self._db.commit)
-        else:
-            # Store in memory
-            self._in_memory_logs.append(entry)
+        self._in_memory_logs.append(entry)
 
         logger.debug(f"Logged {action.value} for skill '{skill_name}' (ID: {audit_id})")
         return audit_id
@@ -238,89 +183,34 @@ class SkillAuditLogger:
             >>> yesterday = datetime.now(timezone.utc) - timedelta(days=1)
             >>> logs = await audit.query_logs(start_time=yesterday)
         """
-        if self._db:
-            # Build query
-            query = "SELECT * FROM skill_audit_log WHERE 1=1"
-            params: dict[str, Any] = {}
+        logs = self._in_memory_logs
 
-            if skill_name:
-                query += " AND skill_name = :skill_name"
-                params["skill_name"] = skill_name
+        if skill_name:
+            logs = [log for log in logs if log.skill_name == skill_name]
 
-            if action:
-                query += " AND action = :action"
-                params["action"] = action.value
+        if action:
+            logs = [log for log in logs if log.action == action]
 
-            if agent_id:
-                query += " AND agent_id = :agent_id"
-                params["agent_id"] = agent_id
+        if agent_id:
+            logs = [log for log in logs if log.agent_id == agent_id]
 
-            if zone_id:
-                query += " AND zone_id = :zone_id"
-                params["zone_id"] = zone_id
+        if zone_id:
+            logs = [log for log in logs if log.zone_id == zone_id]
 
-            if start_time:
-                query += " AND timestamp >= :start_time"
-                params["start_time"] = start_time
+        if start_time:
+            logs = [log for log in logs if log.timestamp >= start_time]
 
-            if end_time:
-                query += " AND timestamp <= :end_time"
-                params["end_time"] = end_time
+        if end_time:
+            logs = [log for log in logs if log.timestamp <= end_time]
 
-            query += " ORDER BY timestamp DESC"
+        # Sort by timestamp descending
+        logs = sorted(logs, key=lambda x: x.timestamp, reverse=True)
 
-            if limit:
-                query += f" LIMIT {limit}"
+        # Limit results
+        if limit:
+            logs = logs[:limit]
 
-            import json
-
-            results = await asyncio.to_thread(self._db.fetchall, query, params)
-            logs = []
-            for row in results:
-                details = json.loads(row["details"]) if row.get("details") else None
-                logs.append(
-                    AuditLogEntry(
-                        audit_id=row["audit_id"],
-                        skill_name=row["skill_name"],
-                        action=AuditAction(row["action"]),
-                        agent_id=row.get("agent_id"),
-                        zone_id=row.get("zone_id"),
-                        details=details,
-                        timestamp=row["timestamp"],
-                    )
-                )
-            return logs
-
-        else:
-            # Filter in-memory logs
-            logs = self._in_memory_logs
-
-            if skill_name:
-                logs = [log for log in logs if log.skill_name == skill_name]
-
-            if action:
-                logs = [log for log in logs if log.action == action]
-
-            if agent_id:
-                logs = [log for log in logs if log.agent_id == agent_id]
-
-            if zone_id:
-                logs = [log for log in logs if log.zone_id == zone_id]
-
-            if start_time:
-                logs = [log for log in logs if log.timestamp >= start_time]
-
-            if end_time:
-                logs = [log for log in logs if log.timestamp <= end_time]
-
-            # Sort by timestamp descending
-            logs = sorted(logs, key=lambda x: x.timestamp, reverse=True)
-
-            # Limit results
-            if limit:
-                logs = logs[:limit]
-
-            return logs
+        return logs
 
     async def get_skill_activity(self, skill_name: str) -> dict[str, Any]:
         """Get activity summary for a skill.

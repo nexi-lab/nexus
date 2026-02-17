@@ -22,13 +22,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.agent_record import AgentRecord, AgentState
+from nexus.services.agents.agent_record import AgentRecord, AgentState
 
 if TYPE_CHECKING:
-    from nexus.core.agent_registry import AgentRegistry
+    from nexus.rebac.namespace_manager import NamespaceManager
     from nexus.sandbox.events import AgentEventLog
     from nexus.sandbox.sandbox_manager import SandboxManager
-    from nexus.services.permissions.namespace_manager import NamespaceManager
+    from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

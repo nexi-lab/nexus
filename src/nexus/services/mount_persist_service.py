@@ -34,9 +34,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
-    from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import OperationContext
     from nexus.services.mount_core_service import MountCoreService
+    from nexus.services.mount_manager import MountManager
     from nexus.services.sync_service import SyncService
 
 logger = logging.getLogger(__name__)
@@ -360,7 +360,7 @@ class MountPersistService:
             return OperationContext(
                 user=subject_id,
                 groups=[],
-                zone_id=mount.get("zone_id", "default"),
+                zone_id=mount.get("zone_id", "root"),
                 subject_type=subject_type,
                 subject_id=subject_id,
             )

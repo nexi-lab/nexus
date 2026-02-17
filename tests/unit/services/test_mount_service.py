@@ -168,7 +168,7 @@ class TestListMounts:
 
         mock_nexus_fs.rebac_check.side_effect = check_permission
 
-        result = asyncio.run(mount_service.list_mounts(_context=operation_context))
+        result = asyncio.run(mount_service.list_mounts(context=operation_context))
 
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/allowed"
@@ -192,7 +192,7 @@ class TestListMounts:
             is_admin=True,
         )
 
-        result = asyncio.run(mount_service.list_mounts(_context=admin_ctx))
+        result = asyncio.run(mount_service.list_mounts(context=admin_ctx))
 
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/restricted"

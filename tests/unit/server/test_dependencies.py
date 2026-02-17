@@ -295,7 +295,7 @@ class TestGetAuthResultAuthProvider:
         result.is_admin = overrides.get("is_admin", False)
         result.subject_type = overrides.get("subject_type", "user")
         result.subject_id = overrides.get("subject_id", "alice")
-        result.zone_id = overrides.get("zone_id", "default")
+        result.zone_id = overrides.get("zone_id", "root")
         result.inherit_permissions = overrides.get("inherit_permissions", True)
         result.metadata = overrides.get("metadata", {})
         return result
@@ -442,7 +442,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "user",
                 "subject_id": "root",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": True,
             }
         )
@@ -455,13 +455,12 @@ class TestGetOperationContext:
             {
                 "subject_type": "agent",
                 "subject_id": "agent-001",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
-                "metadata": {"legacy_user_id": "alice"},
             }
         )
         assert ctx.agent_id == "agent-001"
-        assert ctx.user == "alice"  # From legacy_user_id
+        assert ctx.user == "agent-001"
 
     def test_x_agent_id_upgrades_user_to_agent(self):
         """X-Agent-ID header should upgrade user subject to agent."""
@@ -469,7 +468,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "user",
                 "subject_id": "alice",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "x_agent_id": "my-agent",
             }
@@ -483,7 +482,7 @@ class TestGetOperationContext:
         ctx = get_operation_context({})
         assert ctx.user == "anonymous"
         assert ctx.subject_type == "user"
-        assert ctx.zone_id == "default"
+        assert ctx.zone_id == "root"
         assert ctx.is_admin is False
 
     def test_agent_generation_from_auth_result(self):
@@ -492,7 +491,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "agent",
                 "subject_id": "agent-001",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "metadata": {},
                 "agent_generation": 42,
@@ -506,7 +505,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "agent",
                 "subject_id": "agent-001",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "metadata": {},
             }
@@ -519,7 +518,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "user",
                 "subject_id": "alice",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "agent_generation": 5,
             }

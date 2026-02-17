@@ -26,6 +26,10 @@ class SearchBrickManifest:
             "search_mode": {"type": "str", "default": "hybrid"},
             "entropy_filtering": {"type": "bool", "default": False},
             "fusion_method": {"type": "str", "default": "rrf"},
+            "chunk_size": {"type": "int", "default": 1500},
+            "pool_min_size": {"type": "int", "default": 10},
+            "pool_max_size": {"type": "int", "default": 50},
+            "pool_recycle": {"type": "int", "default": 3600},
         }
     )
     dependencies: list[str] = field(default_factory=list)
@@ -47,6 +51,9 @@ def verify_imports() -> dict[str, bool]:
         "nexus.search.chunking",
         "nexus.search.embeddings",
         "nexus.search.vector_db",
+        "nexus.search.config",
+        "nexus.search.protocols",
+        "nexus.search.result_builders",
     ]:
         try:
             importlib.import_module(mod)
@@ -60,6 +67,7 @@ def verify_imports() -> dict[str, bool]:
         "nexus.search.bm25s_search",
         "nexus.search.zoekt_client",
         "nexus.search.graph_store",
+        "nexus.core.trigram_fast",
     ]:
         try:
             importlib.import_module(mod)

@@ -53,6 +53,13 @@ repos:
         files: \.py$
         exclude: ^\.pre-commit-hooks/
 
+      - id: check-brick-imports
+        name: Brick Zero-Core-Imports Check
+        entry: python .pre-commit-hooks/check_brick_imports.py
+        language: python
+        files: \.py$
+        pass_filenames: true
+
       # DISABLED: RPC Parity test (pytest, slow) - runs in CI instead
       # Uncomment to re-enable:
       # - id: rpc-parity

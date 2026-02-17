@@ -28,15 +28,28 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+
+def _needs_token_manager_db(backend_type: str, config: dict[str, Any]) -> bool:
+    """Check if backend needs token_manager_db auto-injection."""
+    if "token_manager_db" in config:
+        return False
+    from nexus.backends.registry import ConnectorRegistry
+
+    try:
+        info = ConnectorRegistry.get_info(backend_type)
+    except KeyError:
+        return False
+    return info.user_scoped and "token_manager_db" in info.connection_args
+
+
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
 ProgressCallback = Callable[[int, str], None]
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
-    from nexus.core.mount_manager import MountManager
     from nexus.core.nexus_fs import NexusFilesystem
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
+    from nexus.services.mount_manager import MountManager
 
 
 class MountService:
@@ -164,10 +177,7 @@ class MountService:
             config = backend_config.copy()
 
             # Auto-inject token_manager_db for OAuth-backed connectors
-            if (
-                backend_type in ("gdrive_connector", "gmail_connector", "x_connector")
-                and "token_manager_db" not in config
-            ):
+            if _needs_token_manager_db(backend_type, config):
                 # Use centralized database URL resolution
                 if self.nexus_fs:
                     try:
@@ -180,105 +190,15 @@ class MountService:
                         f"Cannot create {backend_type} mount: nexus_fs not configured"
                     )
 
-            # Import backend classes dynamically
-            backend: Backend
-            if backend_type == "local":
-                from nexus.backends.local import LocalBackend
+            # Create backend via centralized factory
+            from nexus.backends.factory import BackendFactory
 
-                backend = LocalBackend(root_path=config["data_dir"])
-            elif backend_type == "gcs":
-                from nexus.backends.gcs import GCSBackend
+            # Get session factory for caching support if available
+            session_factory = None
+            if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
+                session_factory = self.nexus_fs.SessionLocal
 
-                backend = GCSBackend(
-                    bucket_name=config["bucket"],
-                    project_id=config.get("project_id"),
-                    credentials_path=config.get("credentials_path"),
-                )
-            elif backend_type == "gcs_connector":
-                from nexus.backends.gcs_connector import GCSConnectorBackend
-
-                # Get session factory for caching support if available
-                session_factory = None
-                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                    session_factory = self.nexus_fs.SessionLocal
-
-                backend = GCSConnectorBackend(
-                    bucket_name=config["bucket"],
-                    project_id=config.get("project_id"),
-                    prefix=config.get("prefix", ""),
-                    credentials_path=config.get("credentials_path"),
-                    # OAuth access token (alternative to credentials_path)
-                    access_token=config.get("access_token"),
-                    # Session factory for caching support
-                    session_factory=session_factory,
-                )
-            elif backend_type == "s3_connector":
-                from nexus.backends.s3_connector import S3ConnectorBackend
-
-                # Get session factory for caching support if available
-                session_factory = None
-                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                    session_factory = self.nexus_fs.SessionLocal
-
-                backend = S3ConnectorBackend(
-                    bucket_name=config["bucket"],
-                    region_name=config.get("region_name"),
-                    prefix=config.get("prefix", ""),
-                    credentials_path=config.get("credentials_path"),
-                    access_key_id=config.get("access_key_id"),
-                    secret_access_key=config.get("secret_access_key"),
-                    session_token=config.get("session_token"),
-                    # Session factory for caching support
-                    session_factory=session_factory,
-                )
-            elif backend_type == "gdrive_connector":
-                from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
-
-                backend = GoogleDriveConnectorBackend(
-                    token_manager_db=config["token_manager_db"],
-                    root_folder=config.get("root_folder", "nexus-data"),
-                    user_email=config.get("user_email"),  # Optional - uses context.user_id if None
-                )
-            elif backend_type == "x_connector":
-                from nexus.backends.x_connector import XConnectorBackend
-
-                backend = XConnectorBackend(
-                    token_manager_db=config["token_manager_db"],
-                    user_email=config.get("user_email"),
-                    cache_ttl=config.get("cache_ttl"),
-                    cache_dir=config.get("cache_dir"),
-                )
-            elif backend_type == "hn_connector":
-                from nexus.backends.hn_connector import HNConnectorBackend
-
-                # Get session factory for caching support if available
-                hn_session_factory = None
-                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                    hn_session_factory = self.nexus_fs.SessionLocal
-
-                backend = HNConnectorBackend(
-                    cache_ttl=config.get("cache_ttl", 300),
-                    stories_per_feed=config.get("stories_per_feed", 10),
-                    include_comments=config.get("include_comments", True),
-                    session_factory=hn_session_factory,
-                )
-            elif backend_type == "gmail_connector":
-                from nexus.backends.gmail_connector import GmailConnectorBackend
-
-                # Get session factory for caching support if available
-                gmail_session_factory = None
-                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                    gmail_session_factory = self.nexus_fs.SessionLocal
-
-                backend = GmailConnectorBackend(
-                    token_manager_db=config["token_manager_db"],
-                    user_email=config.get("user_email"),
-                    provider=config.get("provider", "gmail"),
-                    session_factory=gmail_session_factory,
-                    max_message_per_label=config.get("max_message_per_label", 2000),
-                )
-            else:
-                raise RuntimeError(f"Unsupported backend type: {backend_type}")
+            backend = BackendFactory.create(backend_type, config, session_factory=session_factory)
 
             # Add mount to router
             self.router.add_mount(
@@ -301,7 +221,7 @@ class MountService:
     async def remove_mount(
         self,
         mount_point: str,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Remove a backend mount from the filesystem.
 
@@ -311,7 +231,7 @@ class MountService:
 
         Args:
             mount_point: Virtual path of mount to remove (e.g., "/personal/alice")
-            _context: Operation context (automatically provided by RPC server)
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             Dictionary with removal details:
@@ -359,7 +279,7 @@ class MountService:
             if self.nexus_fs and hasattr(self.nexus_fs, "hierarchy_manager"):
                 try:
                     if hasattr(self.nexus_fs.hierarchy_manager, "remove_parent_tuples"):
-                        zone_id = get_zone_id(_context)
+                        zone_id = get_zone_id(context)
                         tuples_removed = self.nexus_fs.hierarchy_manager.remove_parent_tuples(
                             mount_point, zone_id
                         )
@@ -373,7 +293,7 @@ class MountService:
             # Remove direct_owner permission tuple for the mount point
             if self.nexus_fs and hasattr(self.nexus_fs, "rebac_delete_object_tuples"):
                 try:
-                    zone_id = get_zone_id(_context)
+                    zone_id = get_zone_id(context)
                     deleted = self.nexus_fs.rebac_delete_object_tuples(
                         object=("file", mount_point), zone_id=zone_id
                     )
@@ -398,6 +318,49 @@ class MountService:
             return result
 
         return await asyncio.to_thread(_remove_mount_sync)
+
+    @rpc_expose(description="Delete connector with bundled cleanup")
+    async def delete_connector(
+        self,
+        mount_point: str,
+        revoke_oauth: bool = False,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Delete a connector completely with bundled operations.
+
+        Combines: deactivate mount, delete saved config, optional OAuth
+        credential revocation, and directory cleanup.
+
+        Args:
+            mount_point: Virtual path of connector mount to delete
+            revoke_oauth: If True, also revoke associated OAuth credentials
+            provider: OAuth provider name (required if revoke_oauth=True)
+            user_email: User email for OAuth revocation (required if revoke_oauth=True)
+            context: Operation context for permission checks
+
+        Returns:
+            Dict with removal details including removed, config_deleted,
+            oauth_revoked, errors, and warnings lists.
+
+        Raises:
+            RuntimeError: If nexus_fs not configured
+        """
+        if not self.nexus_fs or not hasattr(self.nexus_fs, "delete_connector"):
+            raise RuntimeError(
+                "delete_connector requires NexusFS integration. "
+                "Set nexus_fs in MountService.__init__"
+            )
+
+        return await asyncio.to_thread(
+            self.nexus_fs.delete_connector,
+            mount_point=mount_point,
+            revoke_oauth=revoke_oauth,
+            provider=provider,
+            user_email=user_email,
+            context=context,
+        )
 
     @rpc_expose(description="List available connector types")
     async def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
@@ -436,14 +399,14 @@ class MountService:
         return await asyncio.to_thread(_list_connectors_sync)
 
     @rpc_expose(description="List all backend mounts")
-    async def list_mounts(self, _context: OperationContext | None = None) -> list[dict[str, Any]]:
+    async def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
         """List all active backend mounts that the user has permission to access.
 
         Automatically filters mounts based on the user's permissions. Only mounts
         where the user has read access (viewer or direct_owner) are returned.
 
         Args:
-            _context: Operation context (automatically provided by RPC server)
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             List of mount info dictionaries, each containing:
@@ -462,11 +425,11 @@ class MountService:
             mounts = []
 
             # Log context details for debugging
-            logger.info(f"[LIST_MOUNTS] Called with context: {_context}")
-            if _context:
-                logger.info(f"[LIST_MOUNTS] Context type: {type(_context)}")
-                subject_type, subject_id = get_user_identity(_context)
-                zone_id = get_zone_id(_context)
+            logger.info(f"[LIST_MOUNTS] Called with context: {context}")
+            if context:
+                logger.info(f"[LIST_MOUNTS] Context type: {type(context)}")
+                subject_type, subject_id = get_user_identity(context)
+                zone_id = get_zone_id(context)
                 logger.info(
                     f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, zone={zone_id}"
                 )
@@ -481,10 +444,10 @@ class MountService:
 
                 # Check if user has permission to access this mount
                 has_permission = False
-                if _context and self.nexus_fs and hasattr(self.nexus_fs, "rebac_check"):
+                if context and self.nexus_fs and hasattr(self.nexus_fs, "rebac_check"):
                     try:
-                        subject_type, subject_id = get_user_identity(_context)
-                        zone_id = get_zone_id(_context)
+                        subject_type, subject_id = get_user_identity(context)
+                        zone_id = get_zone_id(context)
 
                         logger.info(
                             f"[LIST_MOUNTS] Checking permission for {subject_type}:{subject_id} "
@@ -492,7 +455,7 @@ class MountService:
                         )
 
                         # Admin users can see all mounts
-                        is_admin = getattr(_context, "is_admin", False)
+                        is_admin = getattr(context, "is_admin", False)
                         if is_admin:
                             has_permission = True
                             logger.info(
@@ -523,7 +486,7 @@ class MountService:
                         )
                         has_permission = False
                 else:
-                    # No context or no ReBAC - include all mounts (backward compatibility)
+                    # No context or no ReBAC configured — include all mounts
                     logger.info(
                         f"[LIST_MOUNTS] No context or no rebac_check - allowing {mount_point}"
                     )
@@ -545,7 +508,11 @@ class MountService:
         return await asyncio.to_thread(_list_mounts_sync)
 
     @rpc_expose(description="Get mount details")
-    async def get_mount(self, mount_point: str) -> dict[str, Any] | None:
+    async def get_mount(
+        self,
+        mount_point: str,
+        context: OperationContext | None = None,  # noqa: ARG002 - Protocol compliance
+    ) -> dict[str, Any] | None:
         """Get details about a specific mount.
 
         Args:
@@ -783,7 +750,7 @@ class MountService:
 
         # Normalize token_manager_db for OAuth-backed mounts
         backend_type = mount_config["backend_type"]
-        if backend_type in ("gdrive_connector", "gmail_connector", "x_connector"):
+        if _needs_token_manager_db(backend_type, backend_config):
             if self.nexus_fs:
                 try:
                     database_url = get_database_url(self.nexus_fs)
@@ -849,6 +816,7 @@ class MountService:
         generate_embeddings: bool = False,
         context: OperationContext | None = None,
         progress_callback: ProgressCallback | None = None,
+        full_sync: bool = False,
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s) to Nexus database.
 
@@ -896,6 +864,7 @@ class MountService:
                 generate_embeddings=generate_embeddings,
                 context=context,
                 progress_callback=progress_callback,
+                full_sync=full_sync,
             ),
         )
 
@@ -1090,7 +1059,7 @@ class MountService:
             )
 
     def _generate_connector_skill(
-        self, mount_point: str, backend_type: str, _context: OperationContext | None
+        self, mount_point: str, backend_type: str, context: OperationContext | None
     ) -> bool:
         """Generate SKILL.md for a connector mount.
 
@@ -1099,7 +1068,7 @@ class MountService:
         Args:
             mount_point: The virtual path of the mount
             backend_type: Backend type identifier
-            _context: Operation context
+            context: Operation context
 
         Returns:
             True if skill was generated successfully
@@ -1129,7 +1098,7 @@ Use sync_mount() to refresh metadata from the backend.
 """
 
             skill_path = f"{mount_point}/SKILL.md"
-            self.nexus_fs.write(skill_path, skill_content.encode("utf-8"), context=_context)
+            self.nexus_fs.write(skill_path, skill_content.encode("utf-8"), context=context)
             logger.info(f"✓ Generated SKILL.md for connector mount: {skill_path}")
             return True
         except Exception as e:

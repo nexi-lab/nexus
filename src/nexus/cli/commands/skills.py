@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -27,64 +26,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-
-
-class SQLAlchemyDatabaseConnection:
-    """Wrapper for SQLAlchemy session to match DatabaseConnection protocol."""
-
-    def __init__(self, session: Any) -> None:
-        self._session = session
-
-    def execute(self, query: str, params: dict | None = None) -> Any:
-        """Execute a query."""
-        from sqlalchemy import text
-
-        return self._session.execute(text(query), params or {})
-
-    def fetchall(self, query: str, params: dict | None = None) -> list[dict]:
-        """Fetch all results from a query."""
-        from sqlalchemy import text
-
-        result = self._session.execute(text(query), params or {})
-        return [dict(row._mapping) for row in result]
-
-    def fetchone(self, query: str, params: dict | None = None) -> dict | None:
-        """Fetch one result from a query."""
-        from sqlalchemy import text
-
-        result = self._session.execute(text(query), params or {})
-        row = result.fetchone()
-        return dict(row._mapping) if row else None
-
-    def commit(self) -> None:
-        """Commit the transaction."""
-        self._session.commit()
-
-
-def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
-    """Get database connection for skill governance.
-
-    Returns wrapped SQLAlchemy session using NEXUS_DATABASE_URL environment variable.
-    Returns None if not configured (falls back to in-memory storage).
-    """
-    import os
-
-    db_url = os.getenv("NEXUS_DATABASE_URL")
-    if not db_url:
-        return None
-
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-
-    try:
-        engine = create_engine(db_url, echo=False)
-        SessionLocal = sessionmaker(bind=engine)
-        session = SessionLocal()
-        return SQLAlchemyDatabaseConnection(session)
-    except Exception as e:
-        console.print(f"[yellow]Warning:[/yellow] Could not connect to database: {e}")
-        console.print("[dim]Falling back to in-memory governance storage[/dim]")
-        return None
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 
 def register_commands(cli: click.Group) -> None:
@@ -1401,7 +1343,7 @@ def skills_mcp_export_tools(
     try:
         import asyncio
 
-        from nexus.skills.mcp_exporter import MCPToolExporter
+        from nexus.mcp.exporter import MCPToolExporter
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         exporter = MCPToolExporter(nx)
@@ -1445,7 +1387,7 @@ def skills_mcp_list_tools(
         nexus skills mcp list-tools --category search
     """
     try:
-        from nexus.skills.mcp_exporter import NEXUS_TOOLS
+        from nexus.mcp.exporter import NEXUS_TOOLS
 
         # Filter by category if specified
         tools = NEXUS_TOOLS
@@ -1566,8 +1508,8 @@ def skills_mcp_mount(
     try:
         import asyncio
 
-        from nexus.skills.mcp_models import MCPMount
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.models import MCPMount
+        from nexus.mcp.mount import MCPMountManager
 
         # Validate: need either command or url
         if not command and not url:
@@ -1670,7 +1612,9 @@ def skills_mcp_mount(
 
                 # First check if credential exists
                 async def check_credential() -> bool:
-                    cred = await token_manager.get_credential(oauth_provider, oauth_user, "default")
+                    cred = await token_manager.get_credential(
+                        oauth_provider, oauth_user, ROOT_ZONE_ID
+                    )
                     return cred is not None
 
                 credential_exists = asyncio.run(check_credential())
@@ -1779,7 +1723,7 @@ def skills_mcp_mount(
                             provider=oauth_provider if oauth_provider != "x" else "twitter",
                             user_email=oauth_user,
                             credential=credential,
-                            zone_id="default",
+                            zone_id=ROOT_ZONE_ID,
                             created_by=oauth_user,
                         )
 
@@ -1794,7 +1738,7 @@ def skills_mcp_mount(
 
                 async def get_oauth_token() -> str:
                     return await token_manager.get_valid_token(
-                        oauth_provider, oauth_user, "default"
+                        oauth_provider, oauth_user, ROOT_ZONE_ID
                     )
 
                 # Get the token
@@ -1895,7 +1839,7 @@ def skills_mcp_unmount(
     try:
         import asyncio
 
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -1927,7 +1871,7 @@ def skills_mcp_list_mounts(
         nexus skills mcp list-mounts --all
     """
     try:
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -1985,7 +1929,7 @@ def skills_mcp_tools(
         nexus skills mcp tools github --json
     """
     try:
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -2108,7 +2052,7 @@ def skills_mcp_remove(
     try:
         import asyncio
 
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)

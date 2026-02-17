@@ -30,7 +30,7 @@ from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
+    from nexus.rebac.async_manager import AsyncReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -143,21 +143,23 @@ class AsyncReBACBridge:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     async def _init_manager(self) -> None:
-        """Initialize the async ReBAC manager."""
-        from nexus.services.permissions.async_rebac_manager import (
-            AsyncReBACManager,
-            create_async_engine_from_url,
-        )
+        """Initialize the async ReBAC manager.
 
-        engine = create_async_engine_from_url(self.database_url)
-        self._manager = AsyncReBACManager(
-            engine=engine,
+        Issue #1385: AsyncReBACManager is now a thin asyncio.to_thread() wrapper
+        around the sync ReBACManager. We create a sync manager and wrap it.
+        """
+        from sqlalchemy import create_engine
+
+        from nexus.rebac.async_manager import AsyncReBACManager
+        from nexus.rebac.manager import ReBACManager
+
+        sync_engine = create_engine(self.database_url)
+        sync_manager = ReBACManager(
+            engine=sync_engine,
             cache_ttl_seconds=self.cache_ttl_seconds,
             max_depth=self.max_depth,
-            enable_l1_cache=self.enable_l1_cache,
-            l1_cache_size=self.l1_cache_size,
-            l1_cache_ttl=self.l1_cache_ttl,
         )
+        self._manager = AsyncReBACManager(sync_manager)
 
     def rebac_check(
         self,
@@ -182,7 +184,9 @@ class AsyncReBACBridge:
         if not self._manager:
             raise RuntimeError("AsyncReBACBridge not started")
 
-        future = self._run_coro(self._manager.rebac_check(subject, permission, object, zone_id))
+        future = self._run_coro(
+            self._manager.rebac_check(subject, permission, object, zone_id=zone_id)
+        )
         result: bool = future.result(timeout=timeout)
         return result
 

@@ -20,14 +20,17 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import (
+    Entity,
+    NamespaceConfig,
+)
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.services.permissions.default_namespaces import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
     DEFAULT_PLAYBOOK_NAMESPACE,
     DEFAULT_SKILL_NAMESPACE,
     DEFAULT_TRAJECTORY_NAMESPACE,
-    Entity,
-    NamespaceConfig,
 )
 from nexus.services.permissions.graph.expand import ExpandEngine
 from nexus.services.permissions.graph.traversal import PermissionComputer
@@ -86,7 +89,6 @@ class ReBACManager:
         l1_cache_ttl: int = 300,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
-        l1_cache_quantization_interval: int = 0,  # DEPRECATED: Use l1_cache_revision_window
         l1_cache_revision_window: int = 10,
     ):
         """Initialize ReBAC manager.
@@ -100,7 +102,6 @@ class ReBACManager:
             l1_cache_ttl: L1 cache TTL in seconds (default: 300s)
             enable_metrics: Track cache metrics (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
-            l1_cache_quantization_interval: DEPRECATED - was broken (Issue #909). Ignored.
             l1_cache_revision_window: Number of revisions per cache key bucket (default: 10).
                 Cache keys remain stable within a revision window. See Issue #909.
         """
@@ -132,17 +133,6 @@ class ReBACManager:
                 stacklevel=2,
             )
 
-        # Deprecation warning for old parameter (Issue #909)
-        if l1_cache_quantization_interval > 0:
-            import warnings
-
-            warnings.warn(
-                "l1_cache_quantization_interval is deprecated and was broken (Issue #909). "
-                "Use l1_cache_revision_window for revision-based quantization.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         # Initialize L1 in-memory cache with revision-based quantization (Issue #909)
         self._l1_cache: ReBACPermissionCache | None = None
         if enable_l1_cache:
@@ -154,7 +144,7 @@ class ReBACManager:
                 revision_quantization_window=l1_cache_revision_window,
             )
             # Wire up revision fetcher for revision-based cache keys
-            self._l1_cache.set_revision_fetcher(lambda zone_id: self._get_zone_revision(zone_id))
+            self._l1_cache.set_revision_fetcher(lambda zone_id: self.get_zone_revision(zone_id))
             logger.info(
                 f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, "
                 f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, "
@@ -192,7 +182,7 @@ class ReBACManager:
         """
         return self._repo.supports_old_new_returning
 
-    def _get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:
+    def get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:
         """Get current revision for a zone. Delegates to TupleRepository (Issue #1459)."""
         return self._repo.get_zone_revision(zone_id, conn)
 
@@ -228,14 +218,85 @@ class ReBACManager:
                     logger.info("Default namespaces initialized successfully")
                 except Exception as e:
                     sa_conn.rollback()
-                    logger.warning(f"Failed to initialize namespaces: {type(e).__name__}: {e}")
-                    import traceback
-
-                    logger.debug(traceback.format_exc())
+                    logger.warning(
+                        "Failed to initialize namespaces: %s: %s",
+                        type(e).__name__,
+                        e,
+                        exc_info=True,
+                    )
 
     def _fix_sql_placeholders(self, sql: str) -> str:
         """Convert SQLite ? placeholders to PostgreSQL %s. Delegates to TupleRepository (Issue #1459)."""
         return self._repo.fix_sql_placeholders(sql)
+
+    def list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        relation_in: list[str] | None = None,
+        object: tuple[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """List ReBAC tuples with optional filters.
+
+        Args:
+            subject: (subject_type, subject_id) filter
+            relation: Single relation filter
+            relation_in: Multiple relation filter (mutually exclusive with relation)
+            object: (object_type, object_id) filter
+
+        Returns:
+            List of tuple dicts with keys: tuple_id, subject_type, subject_id,
+            relation, object_type, object_id, created_at, expires_at, zone_id.
+        """
+        conn = self._get_connection()
+        try:
+            query = "SELECT * FROM rebac_tuples WHERE 1=1"
+            params: list[Any] = []
+
+            if subject:
+                query += " AND subject_type = ? AND subject_id = ?"
+                params.extend([subject[0], subject[1]])
+
+            if relation:
+                query += " AND relation = ?"
+                params.append(relation)
+            elif relation_in:
+                placeholders = ", ".join("?" * len(relation_in))
+                query += f" AND relation IN ({placeholders})"
+                params.extend(relation_in)
+
+            if object:
+                query += " AND object_type = ? AND object_id = ?"
+                params.extend([object[0], object[1]])
+
+            query = self._fix_sql_placeholders(query)
+            cursor = self._create_cursor(conn)
+            cursor.execute(query, params)
+
+            results = []
+            for row in cursor.fetchall():
+                try:
+                    zone_id_val = row["zone_id"]
+                except (KeyError, IndexError):
+                    zone_id_val = None
+
+                results.append(
+                    {
+                        "tuple_id": row["tuple_id"],
+                        "subject_type": row["subject_type"],
+                        "subject_id": row["subject_id"],
+                        "relation": row["relation"],
+                        "object_type": row["object_type"],
+                        "object_id": row["object_id"],
+                        "created_at": row["created_at"],
+                        "expires_at": row["expires_at"],
+                        "zone_id": zone_id_val,
+                    }
+                )
+
+            return results
+        finally:
+            self._close_connection(conn)
 
     def _would_create_cycle_with_conn(
         self, conn: Any, subject: Entity, object_entity: Entity, zone_id: str | None
@@ -314,10 +375,9 @@ class ReBACManager:
             import logging
 
             logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
-            import traceback
-
-            logger.debug(traceback.format_exc())
+            logger.warning(
+                "Failed to register default namespaces: %s: %s", type(e).__name__, e, exc_info=True
+            )
 
     def _initialize_default_namespaces(self) -> None:
         """Initialize default namespace configurations if not present."""
@@ -435,7 +495,7 @@ class ReBACManager:
         object: tuple[str, str],
         expires_at: datetime | None = None,
         conditions: dict[str, Any] | None = None,
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         subject_zone_id: str | None = None,  # Defaults to zone_id if not provided
         object_zone_id: str | None = None,  # Defaults to zone_id if not provided
     ) -> str:
@@ -491,9 +551,9 @@ class ReBACManager:
             raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
         object_entity = Entity(object[0], object[1])
 
-        # Issue #773: Default zone_id to "default" if not provided
+        # Issue #773: Default zone_id to "root" if not provided
         if zone_id is None:
-            zone_id = "default"
+            zone_id = "root"
         # Default subject/object zone to main zone_id if not provided
         if subject_zone_id is None:
             subject_zone_id = zone_id
@@ -597,7 +657,7 @@ class ReBACManager:
                     relation,
                     object_entity.entity_type,
                     object_entity.entity_id,
-                    zone_id or "default",
+                    zone_id or "root",
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -660,7 +720,7 @@ class ReBACManager:
                 - subject: (type, id) or (type, id, relation) tuple
                 - relation: str
                 - object: (type, id) tuple
-                - zone_id: str | None (optional, defaults to "default")
+                - zone_id: str | None (optional, defaults to "root")
                 - expires_at: datetime | None (optional)
                 - conditions: dict | None (optional)
                 - subject_zone_id: str | None (optional)
@@ -728,7 +788,7 @@ class ReBACManager:
 
                     # Issue #773: Default zone_id values if not provided
                     if zone_id is None:
-                        zone_id = "default"
+                        zone_id = "root"
                     if subject_zone_id is None:
                         subject_zone_id = zone_id
                     if object_zone_id is None:
@@ -844,7 +904,7 @@ class ReBACManager:
                         pt["relation"],
                         pt["object_type"],
                         pt["object_id"],
-                        pt["zone_id"] or "default",
+                        pt["zone_id"] or "root",
                         now,
                     )
                     for pt in tuples_to_create
@@ -904,9 +964,7 @@ class ReBACManager:
                             "(zone_id = ? AND subject_type = ? AND subject_id = ? "
                             "AND object_type = ? AND object_id = ?)"
                         )
-                        delete_params.extend(
-                            [tid or "default", subj_type, subj_id, obj_type, obj_id]
-                        )
+                        delete_params.extend([tid or "root", subj_type, subj_id, obj_type, obj_id])
 
                     # Chunk the deletes to avoid too large SQL
                     CHUNK_SIZE = 50
@@ -925,7 +983,7 @@ class ReBACManager:
                 if created_count > 0:
                     affected_zones = set()
                     for pt in parsed_tuples:
-                        affected_zones.add(pt["zone_id"] or "default")
+                        affected_zones.add(pt["zone_id"] or "root")
                         if pt["subject_zone_id"] and pt["subject_zone_id"] != pt["zone_id"]:
                             affected_zones.add(pt["subject_zone_id"])
                     for zone in affected_zones:
@@ -1044,7 +1102,7 @@ class ReBACManager:
                     relation,
                     obj.entity_type,
                     obj.entity_id,
-                    zone_id or "default",
+                    zone_id or "root",
                     now,
                 ),
             )
@@ -1211,7 +1269,7 @@ class ReBACManager:
                             row["relation"],
                             object_type,
                             new_object_id,
-                            row["zone_id"] or "default",
+                            row["zone_id"] or "root",
                             now_iso,
                         )
                     )
@@ -1248,7 +1306,7 @@ class ReBACManager:
                         subject, relation, old_obj, zone_id, subject_relation, conn=conn
                     )
 
-                    # BUG FIX (Issue #XXX): Also invalidate Tiger Cache for the subject
+                    # BUG FIX (PR #969): Also invalidate Tiger Cache for the subject
                     # Tiger Cache stores materialized permissions - when a file is renamed,
                     # the cached permissions for the subject are stale and must be invalidated
                     if hasattr(self, "tiger_invalidate_cache"):
@@ -1256,7 +1314,7 @@ class ReBACManager:
                             self.tiger_invalidate_cache(
                                 subject=(subject.entity_type, subject.entity_id),
                                 resource_type=old_obj.entity_type,
-                                zone_id=zone_id or "default",
+                                zone_id=zone_id or "root",
                             )
                         except Exception as e:
                             logger.warning(f"Tiger Cache invalidation failed during rename: {e}")
@@ -1379,7 +1437,7 @@ class ReBACManager:
                             row["relation"],
                             row["object_type"],
                             row["object_id"],
-                            row["zone_id"] or "default",
+                            row["zone_id"] or "root",
                             now_iso,
                         )
                     )
@@ -1526,9 +1584,9 @@ class ReBACManager:
         # Ensure default namespaces are initialized
         self._ensure_namespaces_initialized()
 
-        # Issue #773: Default zone_id to "default" if not provided
+        # Issue #773: Default zone_id to "root" if not provided
         if zone_id is None:
-            zone_id = "default"
+            zone_id = "root"
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
@@ -2142,6 +2200,63 @@ class ReBACManager:
         """
         return self._expander.expand(permission, object)
 
+    def get_cross_zone_shared_paths(
+        self,
+        subject_type: str,
+        subject_id: str,
+        zone_id: str,
+        object_type: str = "file",
+        prefix: str = "",
+    ) -> list[str]:
+        """Return distinct object_id paths shared with a subject from other zones.
+
+        Queries rebac_tuples for cross-zone sharing relations (shared-viewer,
+        shared-editor, shared-owner) where the subject matches and the zone
+        differs from the given zone_id. Optionally filters by object_type and
+        path prefix.
+
+        Args:
+            subject_type: Subject entity type (e.g., "user").
+            subject_id: Subject entity ID.
+            zone_id: Current zone to exclude from results.
+            object_type: Object type filter (default: "file").
+            prefix: If non-empty, only return paths starting with this prefix.
+
+        Returns:
+            List of distinct object_id strings matching the criteria.
+        """
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+            cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
+            placeholders = ", ".join("?" * len(cross_zone_relations))
+            query = f"""
+                SELECT DISTINCT object_id
+                FROM rebac_tuples
+                WHERE relation IN ({placeholders})
+                  AND subject_type = ? AND subject_id = ?
+                  AND object_type = ?
+                  AND zone_id != ?
+                  AND (expires_at IS NULL OR expires_at > ?)
+            """
+            params: tuple[Any, ...] = (
+                *cross_zone_relations,
+                subject_type,
+                subject_id,
+                object_type,
+                zone_id,
+                datetime.now(UTC).isoformat(),
+            )
+            if prefix:
+                query += " AND object_id LIKE ?"
+                params = (*params, f"{prefix}%")
+
+            cursor.execute(self._fix_sql_placeholders(query), params)
+            paths = []
+            for row in cursor.fetchall():
+                path = row["object_id"] if isinstance(row, dict) else row[0]
+                paths.append(path)
+            return paths
+
     def _get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object. Delegates to TupleRepository."""
         return self._repo.get_direct_subjects(relation, obj)
@@ -2361,8 +2476,8 @@ class ReBACManager:
         computed_at = datetime.now(UTC)
         expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
 
-        # Use "default" zone if not specified (for backward compatibility)
-        effective_zone_id = zone_id if zone_id is not None else "default"
+        # Use "root" zone if not specified
+        effective_zone_id = zone_id if zone_id is not None else "root"
 
         # Use provided connection or create new one (avoids SQLite lock contention)
         should_close = conn is None
@@ -2453,8 +2568,8 @@ class ReBACManager:
             subject_relation: Optional subject relation for userset-as-subject
             expires_at: Optional expiration time (disables eager recomputation)
         """
-        # Use "default" zone if not specified
-        effective_zone_id = zone_id if zone_id is not None else "default"
+        # Use "root" zone if not specified
+        effective_zone_id = zone_id if zone_id is not None else "root"
 
         import logging
 
@@ -2487,7 +2602,7 @@ class ReBACManager:
                 and subject.entity_id != "*"
             )
 
-            # BUG FIX (Issue #XXX): ALWAYS invalidate L1 cache first, regardless of eager recompute
+            # BUG FIX (PR #969): ALWAYS invalidate L1 cache first, regardless of eager recompute
             # The eager recompute only updates L2 (database) cache, but L1 (in-memory) cache
             # will still have stale entries. We must invalidate L1 before any recomputation.
             if self._l1_cache:
@@ -2841,7 +2956,7 @@ class ReBACManager:
                         relation,
                         object_type,
                         object_id,
-                        zone_id or "default",
+                        zone_id or "root",
                         datetime.now(UTC).isoformat(),
                     ),
                 )

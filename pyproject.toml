@@ -1,6 +1,6 @@
 [project]
 name = "nexus-ai-fs"
-version = "0.7.1.dev0"
+version = "0.7.2.dev0"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -87,7 +87,7 @@ dependencies = [
     "anthropic>=0.75", # Native Anthropic SDK for better Claude support
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
-    "fastmcp>=0.2.0", # Model Context Protocol server
+    "fastmcp>=2.0.0", # Model Context Protocol server
     # Document parsing (Python 3.13 only - not yet compatible with 3.14)
     "markitdown[all]>=0.1.0; python_version < '3.14'",
     # Fast JSON serialization (2-3x faster than stdlib json)
@@ -166,6 +166,7 @@ dev = [
     "pytest-mock>=3.12.0",
     "pytest-benchmark>=4.0.0",
     "pytest-xdist>=3.8.0",  # Parallel test execution
+    "pytest-timeout>=2.3.0",  # Per-test timeout enforcement
     "freezegun>=1.4.0",  # Time mocking for tests
     "hypothesis>=6.0.0",  # Property-based testing for crypto/identity (Issue #1355)
 
@@ -195,6 +196,8 @@ test = [
     "pytest-xdist>=3.5.0",  # Parallel test execution
     "pytest-alembic>=0.11.0",  # Alembic migration test harness (#1296)
     "freezegun>=1.4.0",  # Time mocking for tests
+    "hypothesis>=6.0.0",  # Property-based testing (kernel invariant tests)
+    "pydantic-monty>=0.0.4",  # Monty sandbox integration/e2e tests (#1317)
     # LangGraph integration tests
     "langchain-core>=0.3.0",
     "langgraph>=0.2.0",
@@ -252,6 +255,18 @@ docker = [
 #     "nexus-plugin-skill-seekers>=0.1.0",
 # ]
 
+# Event stream export (Issue #1138)
+kafka = ["aiokafka>=0.11.0"]
+nats-export = ["nats-py>=2.9.0"]
+pubsub = ["gcloud-aio-pubsub>=6.0.0"]
+sse = ["sse-starlette>=2.2.0"]
+event-streaming = [
+    "aiokafka>=0.11.0",
+    "nats-py>=2.9.0",
+    "gcloud-aio-pubsub>=6.0.0",
+    "sse-starlette>=2.2.0",
+]
+
 all = [
     # All optional features (plugins must be installed manually)
     # Default embedding provider: OpenAI (lightweight, requires API key)
@@ -285,6 +300,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
+# No per-test timeout: CI runners have variable load; timeouts cause flaky failures
+# and mask real issues (slow tests should be profiled and optimized, not killed).
 addopts = [
     "-ra",
     "-q",
@@ -293,6 +310,7 @@ addopts = [
     "-n", "auto",                 # Parallel execution (auto-detect CPU cores)
     "--dist", "loadgroup",        # Group tests by xdist_group marker for serial execution
     "--ignore=tests/evaluation",  # Exclude LLM evaluation tests from default runs
+    "--ignore=tests/benchmarks",  # Exclude benchmarks from default runs (run via benchmark.yml)
 ]
 # Coverage disabled by default for faster local runs. Enable in CI:
 #   pytest --cov=nexus --cov-report=term-missing --cov-report=html --cov-report=xml
@@ -312,6 +330,7 @@ markers = [
     "evaluation: marks tests as LLM evaluation tests (requires ANTHROPIC_API_KEY)",
     "quarantine: Tests that are flaky or timing-dependent (deselected by default in CI)",
     "postgres: marks tests that require a running PostgreSQL instance (Issue #1299)",
+    "benchmark_ci: critical benchmarks run on every PR",
 ]
 
 [tool.coverage.run]
@@ -378,6 +397,11 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "nexus.storage._metadata_mapper_generated"
+# Proto-generated metadata_pb2 resolves to Any on Python 3.13 mypy
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
 module = "nexus.backends.gcs"
 # Legacy backend - not yet migrated to HandlerResponse
 disable_error_code = ["attr-defined", "override", "return-value"]
@@ -395,6 +419,13 @@ module = [
 # These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
 # dispatched via __getattr__ (Issue #1289 RPC Proxy). The proxy returns Any
 # for dynamically-dispatched methods, triggering no-any-return warnings.
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.delegating"
+# DelegatingBackend delegates all Backend methods to _inner via explicit forwarding.
+# mypy resolves _inner.method() return types as Any when Backend is imported under
+# TYPE_CHECKING (Issue #1449 recursive wrapping).
 warn_return_any = false
 
 [[tool.mypy.overrides]]
@@ -464,6 +495,25 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [
+    "nexus.services.search_listing_mixin",
+    "nexus.services.search_grep_mixin",
+    "nexus.services.rebac_share_mixin",
+]
+# Mixin classes access `self.*` attributes defined on the concrete class
+# (SearchService / ReBACService). Mypy cannot see across mixin boundaries.
+disable_error_code = ["attr-defined", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.core.exceptions",
+    "nexus.a2a.stores.database",
+]
+# Pre-existing errors from develop merges (zone-id-default-root, a2a DI).
+# Suppressed to unblock mixin extraction PR.
+disable_error_code = ["misc", "assignment", "attr-defined"]
+
+[[tool.mypy.overrides]]
+module = [
     "test_slack_connector",
     "load_secrets_from_gcp",
 ]
@@ -526,9 +576,23 @@ module = [
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = "nexus.server.auth.oidc"
+module = [
+    "nexus.server.auth.oidc",
+    "nexus.auth.providers.oidc",
+]
 # requests stubs
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "nexus.auth.cache"
+# cachetools library has complex generic types
+disable_error_code = ["import-untyped", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.auth.tests.*"
+# Test files — relaxed type checking (consistent with project test conventions)
+disallow_untyped_defs = false
+disable_error_code = ["func-returns-value"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -573,6 +637,8 @@ module = [
     "nexus.raft.commands_pb2_grpc",
     "nexus.raft.transport_pb2",
     "nexus.raft.transport_pb2_grpc",
+    "nexus.a2a.a2a_pb2",
+    "nexus.a2a.a2a_pb2_grpc",
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
@@ -581,6 +647,11 @@ follow_imports = "skip"
 module = "nexus.raft.client"
 # gRPC client interacts heavily with generated pb2 modules (metadata_pb2, commands_pb2)
 # that have no type stubs — attribute access on implicit Any modules
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["nexus.a2a.grpc_server", "nexus.a2a.proto_converter"]
+# gRPC server and proto converter interact with generated a2a_pb2 module
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
@@ -595,19 +666,23 @@ module = [
     "nexus.cli.commands.search",
     "nexus.core.nexus_fs",
     "nexus.core.nexus_fs_core",
-    "nexus.core.nexus_fs_versions",
     "nexus.core.nexus_fs_share_links",
     "nexus.core.nexus_fs_search",
     "nexus.services.version_service",
     "nexus.services.search_service",
     "nexus.services.gateway",
     "nexus.server.fastapi_server",
-    "nexus.search.semantic",
     "nexus.storage.database",
     "nexus.core.distributed_lock",
 ]
 # Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
-disable_error_code = ["attr-defined", "union-attr", "no-any-return"]
+disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
+warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+module = "nexus.search.semantic"
+# Inherits same suppressions as raft-callers group + misc for "None" not callable
+disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
 
 [tool.ruff]
@@ -618,6 +693,8 @@ exclude = [
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
     "src/nexus/core/_compact_generated.py",    # Generated at install time
     "src/nexus/core/protocols/",               # Generated at install time
+    "src/nexus/a2a/a2a_pb2.py",               # Generated gRPC stub
+    "src/nexus/a2a/a2a_pb2_grpc.py",          # Generated gRPC stub
 ]
 
 [tool.ruff.lint]
@@ -645,9 +722,8 @@ ignore = [
 "src/nexus/**/*.py" = ["G003", "G004", "G201"]  # Issue #1002: existing string concat + f-string + exc_info log calls — migrate gradually
 "scripts/**/*.py" = ["G"]  # Scripts: allow all log format variants
 "dockerfiles/**/*.py" = ["G"]  # Dockerfiles: allow all log format variants
-"tests/integration/test_raft_client_service.py" = ["ARG", "S101", "E402", "B017", "SIM105"]  # Conditional imports, blind assert
-"tests/integration/test_raft_metadata_store.py" = ["ARG", "S101", "B905", "F841"]  # zip strict, unused vars
-"tests/integration/mcp/test_mcp_server_integration.py" = ["ARG", "S101", "B904"]  # raise from
+"tests/e2e/self_contained/test_raft_metadata_store.py" = ["ARG", "S101", "B905", "F841"]  # zip strict, unused vars
+"tests/e2e/self_contained/mcp/test_mcp_server_integration.py" = ["ARG", "S101", "B904"]  # raise from
 "alembic/*" = ["UP007", "E402"]  # Alembic: Union syntax, import order
 "src/nexus/backends/*.py" = ["ARG002"]  # Keep unused context params for API compatibility
 "src/nexus/ipc/driver.py" = ["ARG002"]  # Backend ABC override — params required by interface

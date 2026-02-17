@@ -36,7 +36,7 @@ class PersistentView:
     Attributes:
         subject_type: Subject type (e.g., "user", "agent")
         subject_id: Subject identifier
-        zone_id: Zone for multi-zone isolation (None → "default")
+        zone_id: Zone for multi-zone isolation (None → "root")
         mount_paths: Sorted tuple of mount prefix strings (immutable)
         grants_hash: 16-char SHA-256 hex digest of sorted grants
         revision_bucket: Zone revision bucket when view was built
@@ -78,7 +78,7 @@ class PersistentViewStore(Protocol):
         Args:
             subject_type: Subject type (e.g., "user", "agent")
             subject_id: Subject identifier
-            zone_id: Zone ID (None → stored as "default")
+            zone_id: Zone ID (None → stored as "root")
             mount_paths: Sorted list of mount prefix strings
             grants_hash: 16-char SHA-256 hex digest of sorted grants
             revision_bucket: Zone revision bucket when view was built
@@ -96,7 +96,7 @@ class PersistentViewStore(Protocol):
         Args:
             subject_type: Subject type
             subject_id: Subject identifier
-            zone_id: Zone ID (None → looked up as "default")
+            zone_id: Zone ID (None → looked up as "root")
 
         Returns:
             PersistentView if found, None if no view exists for this subject/zone.
@@ -113,6 +113,16 @@ class PersistentViewStore(Protocol):
         Args:
             subject_type: Subject type
             subject_id: Subject identifier
+
+        Returns:
+            Number of views deleted.
+        """
+        ...
+
+    def delete_all_views(self) -> int:
+        """Delete all persisted views across all subjects and zones.
+
+        Used by invalidate_all() for full cache reset.
 
         Returns:
             Number of views deleted.

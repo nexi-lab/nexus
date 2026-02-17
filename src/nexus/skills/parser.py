@@ -8,13 +8,13 @@ from typing import Any
 
 import yaml
 
-from nexus.core.exceptions import ValidationError
+from nexus.skills.exceptions import SkillValidationError
 from nexus.skills.models import Skill, SkillMetadata
 
 logger = logging.getLogger(__name__)
 
 
-class SkillParseError(ValidationError):
+class SkillParseError(SkillValidationError):
     """Raised when parsing a SKILL.md file fails."""
 
     pass

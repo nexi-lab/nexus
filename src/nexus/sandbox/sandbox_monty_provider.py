@@ -26,6 +26,7 @@ from typing import Any
 
 from nexus.sandbox.sandbox_provider import (
     CodeExecutionResult,
+    EscalationNeeded,
     ExecutionTimeoutError,
     SandboxInfo,
     SandboxNotFoundError,
@@ -333,14 +334,19 @@ class MontySandboxProvider(SandboxProvider):
         except MontyRuntimeError as e:
             elapsed = time.monotonic() - start_time
             stderr = str(e)
-            exit_code = 1
             # Distinguish timeout from other runtime errors
             if "time limit" in stderr.lower() or "timeout" in stderr.lower():
                 raise ExecutionTimeoutError(f"Code execution timed out after {elapsed:.1f}s") from e
+            # Detect import/module errors that signal need for escalation
+            if self._is_escalation_error(stderr):
+                raise EscalationNeeded(
+                    reason=f"Monty cannot handle: {stderr[:200]}",
+                    suggested_tier="docker",
+                ) from e
             return CodeExecutionResult(
                 stdout="".join(stdout_parts),
                 stderr=f"Runtime error:\n{stderr}",
-                exit_code=exit_code,
+                exit_code=1,
                 execution_time=elapsed,
             )
 
@@ -536,6 +542,38 @@ class MontySandboxProvider(SandboxProvider):
                 )
 
         return progress.output
+
+    # Patterns in runtime error messages that indicate escalation is needed.
+    # These are specifically for module/import errors and missing capabilities —
+    # not generic NameErrors or TypeErrors which are genuine code bugs.
+    _ESCALATION_PATTERNS = (
+        "modulenotfounderror",
+        "no module named",
+        "importerror",
+        "cannot import name",
+        "filenotfounderror",
+        "permissionerror: [errno",
+    )
+
+    # Pattern for module attribute errors — e.g., Monty has an `os` stub but
+    # `os.getcwd()` is not implemented. This means the code needs real OS access.
+    _MODULE_ATTR_PATTERN = "module '"
+
+    def _is_escalation_error(self, stderr: str) -> bool:
+        """Check if a runtime error indicates need for escalation.
+
+        Returns True for:
+        - Missing module imports (ModuleNotFoundError, ImportError)
+        - Missing module attributes (AttributeError: module 'X' has no attribute 'Y')
+        - Filesystem access errors (FileNotFoundError, PermissionError)
+
+        Returns False for genuine code bugs (NameError, ZeroDivision, TypeError, etc.).
+        """
+        lower = stderr.lower()
+        if any(pattern in lower for pattern in self._ESCALATION_PATTERNS):
+            return True
+        # Detect "AttributeError: module 'os' has no attribute 'getcwd'" etc.
+        return "attributeerror" in lower and self._MODULE_ATTR_PATTERN in stderr
 
     @staticmethod
     def _build_type_stubs(

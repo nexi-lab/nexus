@@ -98,7 +98,10 @@ def assert_protocol_compliance(
                 impl_is_async = inspect.iscoroutinefunction(
                     impl_attr
                 ) or inspect.isasyncgenfunction(impl_attr)
-                if proto_is_async != impl_is_async:
+                # Async generators (async def + yield) are compatible with
+                # sync protocol stubs returning AsyncIterator (def -> AsyncIterator).
+                impl_is_asyncgen = inspect.isasyncgenfunction(impl_attr)
+                if proto_is_async != impl_is_async and not impl_is_asyncgen:
                     proto_kind = "async" if proto_is_async else "sync"
                     impl_kind = "async" if impl_is_async else "sync"
                     errors.append(
@@ -152,7 +155,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "LLMProtocol",
         "nexus.services.protocols.llm",
         "nexus.services.llm_service.LLMService",
-        True,
+        True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
     ),
     # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
     (
@@ -165,7 +168,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "MountProtocol",
         "nexus.services.protocols.mount",
         "nexus.services.mount_service.MountService",
-        False,  # MountService is async but has pre-existing param mismatches (delete_connector, context naming)
+        True,  # Fixed: added delete_connector, context param naming, full_sync param
     ),
     (
         "OAuthProtocol",
@@ -183,20 +186,33 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "PermissionProtocol",
         "nexus.services.protocols.permission",
         "nexus.services.rebac_service.ReBACService",
-        False,  # Many methods are stubs
+        True,  # Fixed: protocol updated to match async ReBACService interface
     ),
-    # ── Not yet extracted (expect fail) ────────────────────────────────
+    # ── ShareLinkService extracted (Issue #1387) ────────────────────────
     (
         "ShareLinkProtocol",
         "nexus.services.protocols.share_link",
-        "nexus.core.nexus_fs_share_links.NexusFSShareLinksMixin",
+        "nexus.services.share_link_service.ShareLinkService",
         True,  # Method names match (async/sync checked separately)
     ),
     (
-        "EventsProtocol",
-        "nexus.services.protocols.events",
+        "WatchProtocol",
+        "nexus.services.protocols.watch",
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
-        True,  # Method names match (async/sync checked separately)
+        True,  # wait_for_changes method match
+    ),
+    (
+        "LockProtocol",
+        "nexus.services.protocols.lock",
+        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
+        True,  # lock/extend_lock/unlock methods match
+    ),
+    # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
+    (
+        "SnapshotServiceProtocol",
+        "nexus.services.protocols.snapshot",
+        "nexus.services.snapshot.service.TransactionalSnapshotService",
+        True,
     ),
 ]
 
@@ -239,3 +255,84 @@ def test_service_protocol_compliance(
         return
 
     assert_protocol_compliance(impl_cls, protocol_cls)
+
+
+# =========================================================================
+# Protocol file import cleanliness (Issue #1291)
+# =========================================================================
+
+_PROTOCOL_FILES: list[tuple[str, str]] = [
+    ("agent_registry", "nexus/services/protocols/agent_registry.py"),
+    ("context_manifest", "nexus/services/protocols/context_manifest.py"),
+    ("event_log", "nexus/services/protocols/event_log.py"),
+    ("hook_engine", "nexus/services/protocols/hook_engine.py"),
+    ("llm", "nexus/services/protocols/llm.py"),
+    ("lock", "nexus/services/protocols/lock.py"),
+    ("mount", "nexus/services/protocols/mount.py"),
+    ("namespace_manager", "nexus/services/protocols/namespace_manager.py"),
+    ("oauth", "nexus/services/protocols/oauth.py"),
+    ("permission", "nexus/services/protocols/permission.py"),
+    ("scheduler", "nexus/services/protocols/scheduler.py"),
+    ("search", "nexus/services/protocols/search.py"),
+    ("share_link", "nexus/services/protocols/share_link.py"),
+    ("skills", "nexus/services/protocols/skills.py"),
+    ("vfs_router", "nexus/core/protocols/vfs_router.py"),
+    ("watch", "nexus/services/protocols/watch.py"),
+    ("vfs_core", "nexus/core/protocols/vfs_core.py"),
+    ("content_service", "nexus/core/protocols/content_service.py"),
+    ("revision_service", "nexus/core/protocols/revision_service.py"),
+    ("snapshot", "nexus/services/protocols/snapshot.py"),
+]
+
+# Leaf modules that are safe to import at module level in protocol files
+_ALLOWED_LEAF_MODULES = {"nexus.constants"}
+
+
+@pytest.mark.parametrize(
+    "name,rel_path",
+    _PROTOCOL_FILES,
+    ids=[p[0] for p in _PROTOCOL_FILES],
+)
+def test_protocol_file_no_heavy_runtime_imports(name: str, rel_path: str) -> None:
+    """Protocol files should not have runtime imports from non-leaf nexus modules.
+
+    All nexus.* imports (except leaf modules like constants) should be
+    inside TYPE_CHECKING blocks to prevent circular import chains.
+    """
+    import ast
+    from pathlib import Path
+
+    filepath = Path("src") / rel_path
+    if not filepath.exists():
+        pytest.skip(f"Protocol file not found: {filepath}")
+
+    source = filepath.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(filepath))
+
+    violations: list[str] = []
+    for node in ast.iter_child_nodes(tree):
+        # Skip TYPE_CHECKING blocks
+        if isinstance(node, ast.If):
+            test = node.test
+            if (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+                isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+            ):
+                continue
+
+        if isinstance(node, ast.ImportFrom):
+            if (
+                node.module
+                and node.module.startswith("nexus")
+                and node.module not in _ALLOWED_LEAF_MODULES
+            ):
+                names = ", ".join(a.name for a in node.names)
+                violations.append(f"from {node.module} import {names}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("nexus") and alias.name not in _ALLOWED_LEAF_MODULES:
+                    violations.append(f"import {alias.name}")
+
+    assert violations == [], (
+        f"Protocol file {rel_path} has runtime nexus imports "
+        f"(should use TYPE_CHECKING): {violations}"
+    )

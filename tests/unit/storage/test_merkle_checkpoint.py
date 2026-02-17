@@ -61,7 +61,7 @@ def _seed_records(audit_logger: ExchangeAuditLogger, count: int) -> list[str]:
             amount=Decimal("10"),
             status="settled",
             application="gateway",
-            zone_id="default",
+            zone_id="root",
             transfer_id=f"merkle-seed-{i}",
         )
         ids.append(rid)

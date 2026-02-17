@@ -45,12 +45,14 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import register_connector
 from nexus.backends.slack_connector_utils import (
     list_channels,
     list_messages_from_channel,
 )
 from nexus.core.exceptions import BackendError
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -58,7 +60,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SlackConnectorBackend(Backend, CacheConnectorMixin):
+@register_connector(
+    "slack_connector",
+    description="Slack workspace with OAuth 2.0 authentication",
+    category="oauth",
+    requires=["slack-sdk"],
+    service_name="slack",
+)
+class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
     """
     Slack connector backend with OAuth 2.0 authentication.
 
@@ -121,23 +130,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             For single-user scenarios (demos), set user_email explicitly.
             For multi-user production, leave user_email=None to auto-detect from context.
         """
-        # Import TokenManager here to avoid circular imports
-        from nexus.server.auth.token_manager import TokenManager
-
-        # Store original token_manager_db for config updates
-        self.token_manager_db = token_manager_db
-
-        # Resolve database URL using base class method (checks TOKEN_MANAGER_DB env var)
-        resolved_db = self.resolve_database_url(token_manager_db)
-
-        # Support both file paths and database URLs
-        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
-        else:
-            self.token_manager = TokenManager(db_path=resolved_db)
-
-        self.user_email = user_email  # None means use context.user_id
-        self.provider = provider
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
         # Store session factory for caching (CacheConnectorMixin)
         self.session_factory = session_factory
@@ -239,11 +232,11 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
         from nexus.core.sync_bridge import run_sync
 
         try:
-            # Default to 'default' zone if not specified
+            # Default to 'root' zone if not specified
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id
-                else "default"
+                else "root"
             )
 
             access_token = run_sync(
@@ -409,6 +402,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
         except Exception as e:
             raise BackendError(f"Failed to write message: {e}", backend="slack") from e
 
+    @timed_response
     def read_content(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> "HandlerResponse[bytes]":
@@ -428,15 +422,10 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             NexusFileNotFoundError: If channel doesn't exist
             BackendError: If read operation fails
         """
-        import time
-
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.error(
                 message="Slack connector requires backend_path in OperationContext",
                 code=400,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="slack",
                 path=content_hash,
             )
@@ -450,7 +439,6 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Invalid Slack path format: {backend_path}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="slack",
             )
 
@@ -460,7 +448,6 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Invalid folder type: {folder_type}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="slack",
             )
 
@@ -468,7 +455,6 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Not a valid YAML file: {filename}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="slack",
             )
 
@@ -484,77 +470,67 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             if cached and not cached.stale and cached.content_binary:
                 return HandlerResponse.ok(
                     data=cached.content_binary,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name="slack",
                     path=backend_path,
                 )
 
         # Fetch from Slack API
-        try:
-            # Get channel info
-            channel = self._get_channel_by_name(channel_name, context)
-            if not channel:
-                return HandlerResponse.not_found(
-                    path=backend_path,
-                    message=f"Channel not found: {channel_name}",
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name="slack",
-                )
-
-            channel_id = channel["id"]
-
-            # Fetch all messages from channel
-            client = self._get_slack_client(context)
-            messages = list_messages_from_channel(
-                client=client,
-                channel_id=channel_id,
-                channel_name=channel_name,
-                limit=self.max_messages_per_channel,
-                silent=True,
+        # Get channel info
+        channel = self._get_channel_by_name(channel_name, context)
+        if not channel:
+            return HandlerResponse.not_found(
+                path=backend_path,
+                message=f"Channel not found: {channel_name}",
+                backend_name="slack",
             )
 
-            # Add channel context to each message
-            for msg in messages:
-                msg["channel_id"] = channel_id
-                msg["channel_name"] = channel_name
+        channel_id = channel["id"]
 
-            # If no messages, add metadata about why
-            if not messages:
-                # Check if this is likely a "not_in_channel" issue
-                # by trying to get channel info
-                try:
-                    info = client.conversations_info(channel=channel_id)
-                    if info.get("ok") and not info.get("channel", {}).get("is_member"):
-                        messages = [
-                            {
-                                "_metadata": {
-                                    "channel_id": channel_id,
-                                    "channel_name": channel_name,
-                                    "status": "bot_not_member",
-                                    "message": f"Bot is not a member of #{channel_name}. Please invite the bot to this channel using: /invite @YourBotName",
-                                }
-                            }
-                        ]
-                except Exception:
-                    # If we can't get channel info, just note that no messages were found
+        # Fetch all messages from channel
+        client = self._get_slack_client(context)
+        messages = list_messages_from_channel(
+            client=client,
+            channel_id=channel_id,
+            channel_name=channel_name,
+            limit=self.max_messages_per_channel,
+            silent=True,
+        )
+
+        # Add channel context to each message
+        for msg in messages:
+            msg["channel_id"] = channel_id
+            msg["channel_name"] = channel_name
+
+        # If no messages, add metadata about why
+        if not messages:
+            # Check if this is likely a "not_in_channel" issue
+            # by trying to get channel info
+            try:
+                info = client.conversations_info(channel=channel_id)
+                if info.get("ok") and not info.get("channel", {}).get("is_member"):
                     messages = [
                         {
                             "_metadata": {
                                 "channel_id": channel_id,
                                 "channel_name": channel_name,
-                                "status": "no_messages",
-                                "message": f"No messages found in #{channel_name}. This could mean the channel is empty or the bot doesn't have access.",
+                                "status": "bot_not_member",
+                                "message": f"Bot is not a member of #{channel_name}. Please invite the bot to this channel using: /invite @YourBotName",
                             }
                         }
                     ]
-
-        except Exception as e:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Failed to fetch channel messages: {e}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name="slack",
-            )
+            except Exception as e:
+                logger.debug("Failed to get channel info for %s: %s", channel_name, e)
+                # If we can't get channel info, just note that no messages were found
+                messages = [
+                    {
+                        "_metadata": {
+                            "channel_id": channel_id,
+                            "channel_name": channel_name,
+                            "status": "no_messages",
+                            "message": f"No messages found in #{channel_name}. This could mean the channel is empty or the bot doesn't have access.",
+                        }
+                    }
+                ]
 
         # Format as YAML
         content = self._format_messages_as_yaml(messages)
@@ -569,12 +545,11 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                     backend_version=IMMUTABLE_VERSION,  # Messages are immutable
                     zone_id=zone_id,
                 )
-            except Exception:
-                pass  # Don't fail on cache write errors
+            except Exception as e:
+                logger.debug("Slack cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=content,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name="slack",
             path=backend_path,
         )
@@ -611,9 +586,10 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
 
         try:
             # Try to read the message
-            self.read_content(content_hash, context)
+            self.read_content(content_hash, context).unwrap()
             return True
-        except Exception:
+        except Exception as e:
+            logger.debug("Slack content existence check failed: %s", e)
             return False
 
     def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
@@ -640,7 +616,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                 return cached_size
 
         # Fallback: Read content to get size
-        content = self.read_content(content_hash, context)
+        content = self.read_content(content_hash, context).unwrap()
         return len(content)
 
     def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
@@ -687,7 +663,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             # Return fixed version for immutable Slack messages
             return IMMUTABLE_VERSION
 
-        except Exception:
+        except Exception as e:
+            logger.debug("Slack version check failed: %s", e)
             return None
 
     def mkdir(

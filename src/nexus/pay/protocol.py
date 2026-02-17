@@ -5,7 +5,7 @@ Replaces hardcoded dual-routing (x402/credits) with a registry pattern
 that supports future protocols (ACP, AP2).
 
 Architecture:
-    PaymentProtocol (ABC) → concrete implementations (X402, Credits)
+    PaymentProtocol (typing.Protocol) → structural implementations (X402, Credits)
     ProtocolDetector → ordered chain detection (auto-routing)
     ProtocolRegistry → name-based lookup + auto-detection
 
@@ -18,26 +18,20 @@ Detection chain order:
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from nexus.pay.audit_types import TransactionProtocol
-from nexus.pay.x402 import validate_wallet_address
 
 if TYPE_CHECKING:
     from nexus.pay.x402 import X402Client
+    from nexus.services.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
 
-# Legacy method name mapping: old name → TransactionProtocol value
-_LEGACY_METHOD_MAP: dict[str, str] = {
-    "credits": "internal",
-}
-
-# Reverse mapping: TransactionProtocol → user-facing method name for Receipt
+# Mapping: TransactionProtocol → user-facing method name for Receipt
 _PROTOCOL_TO_METHOD: dict[TransactionProtocol, str] = {
     TransactionProtocol.INTERNAL: "credits",
     TransactionProtocol.X402: "x402",
@@ -95,34 +89,6 @@ class ProtocolTransferResult:
 
 
 # =============================================================================
-# ABC
-# =============================================================================
-
-
-class PaymentProtocol(ABC):
-    """Abstract base for payment protocol implementations.
-
-    Each protocol must provide:
-        protocol_name: TransactionProtocol enum value
-        can_handle(to, metadata): sync detection (no I/O)
-        transfer(request): async payment execution
-    """
-
-    @property
-    @abstractmethod
-    def protocol_name(self) -> TransactionProtocol:
-        """Return the protocol identifier."""
-
-    @abstractmethod
-    def can_handle(self, to: str, metadata: dict[str, Any] | None = None) -> bool:
-        """Check if this protocol can handle the given destination."""
-
-    @abstractmethod
-    async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult:
-        """Execute a transfer using this protocol."""
-
-
-# =============================================================================
 # Detector
 # =============================================================================
 
@@ -169,17 +135,16 @@ class ProtocolRegistry:
     """Registry for payment protocols with name-based lookup and auto-detection.
 
     Supports:
-        - register/get/unregister by protocol name
+        - register/get/unregister by protocol method name
         - resolve() with explicit method or auto-detection
-        - Legacy name mapping (e.g., 'credits' → 'internal')
     """
 
     def __init__(self) -> None:
         self._protocols: dict[str, PaymentProtocol] = {}
 
     def register(self, protocol: PaymentProtocol) -> None:
-        """Register a protocol by its name."""
-        name = str(protocol.protocol_name)
+        """Register a protocol by its user-facing method name."""
+        name = get_protocol_method_name(protocol.protocol_name)
         self._protocols[name] = protocol
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Registered protocol: %s", name)
@@ -190,9 +155,7 @@ class ProtocolRegistry:
         Raises:
             ProtocolNotFoundError: If protocol not found.
         """
-        # Apply legacy mapping
-        resolved_name = _LEGACY_METHOD_MAP.get(name, name)
-        protocol = self._protocols.get(resolved_name)
+        protocol = self._protocols.get(name)
         if protocol is None:
             raise ProtocolNotFoundError(
                 f"Protocol '{name}' not found. Available: {', '.join(self._protocols.keys())}"
@@ -201,8 +164,7 @@ class ProtocolRegistry:
 
     def unregister(self, name: str) -> None:
         """Remove a protocol by name. No-op if not registered."""
-        resolved_name = _LEGACY_METHOD_MAP.get(name, name)
-        self._protocols.pop(resolved_name, None)
+        self._protocols.pop(name, None)
 
     def resolve(
         self,
@@ -237,10 +199,11 @@ class ProtocolRegistry:
 # =============================================================================
 
 
-class X402PaymentProtocol(PaymentProtocol):
+class X402PaymentProtocol:
     """x402 protocol implementation wrapping X402Client.
 
     Handles payments to EVM wallet addresses (0x...).
+    Structurally satisfies ``PaymentProtocol``.
     """
 
     def __init__(self, client: X402Client) -> None:
@@ -255,6 +218,8 @@ class X402PaymentProtocol(PaymentProtocol):
         to: str,
         metadata: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> bool:
+        from nexus.pay.x402 import validate_wallet_address
+
         return validate_wallet_address(to)
 
     async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult:
@@ -282,13 +247,14 @@ class X402PaymentProtocol(PaymentProtocol):
 # =============================================================================
 
 
-class CreditsPaymentProtocol(PaymentProtocol):
+class CreditsPaymentProtocol:
     """Internal credits protocol wrapping CreditsService.
 
     Catch-all for agent-to-agent transfers (non-wallet destinations).
+    Structurally satisfies ``PaymentProtocol``.
     """
 
-    def __init__(self, service: Any, zone_id: str = "default") -> None:
+    def __init__(self, service: Any, zone_id: str = "root") -> None:
         self._service = service
         self._zone_id = zone_id
 
@@ -301,9 +267,13 @@ class CreditsPaymentProtocol(PaymentProtocol):
         to: str,
         metadata: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> bool:
+        from nexus.pay.x402 import validate_wallet_address
+
         return not validate_wallet_address(to)
 
     async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult:
+        from nexus.pay.credits import CreditsError
+
         try:
             tx_id = await self._service.transfer(
                 from_id=request.from_agent,
@@ -323,6 +293,8 @@ class CreditsPaymentProtocol(PaymentProtocol):
                 timestamp=datetime.now(UTC),
                 metadata={},
             )
+        except CreditsError:
+            raise
         except Exception as e:
             raise ProtocolError(f"Credits transfer failed: {e}") from e
 
@@ -335,15 +307,13 @@ class CreditsPaymentProtocol(PaymentProtocol):
 def get_protocol_method_name(protocol: TransactionProtocol) -> str:
     """Get user-facing method name for a protocol enum value.
 
-    Maps protocol enums to backwards-compatible method names
-    (e.g., INTERNAL → "credits").
+    Maps protocol enums to method names (e.g., INTERNAL → "credits").
     """
     return _PROTOCOL_TO_METHOD.get(protocol, str(protocol))
 
 
 __all__ = [
     "CreditsPaymentProtocol",
-    "PaymentProtocol",
     "ProtocolDetectionError",
     "ProtocolDetector",
     "ProtocolError",

@@ -20,8 +20,8 @@ import pytest
 from nexus.core.permissions import (
     OperationContext,
     Permission,
-    PermissionEnforcer,
 )
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 # ---------------------------------------------------------------------------
 # OperationContext creation and validation
@@ -284,7 +284,7 @@ class TestAdminBypassBehaviour:
 
     def test_admin_with_manage_zones_can_access_cross_zone(self):
         """Admin with MANAGE_ZONES capability can access any zone path."""
-        from nexus.services.permissions.permissions_enhanced import AdminCapability
+        from nexus.rebac.permissions_enhanced import AdminCapability
 
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
@@ -416,9 +416,9 @@ class TestZoneIdPropagation:
         enforcer.check("/file.txt", Permission.READ, ctx)
 
         call_args = rebac.rebac_check.call_args
-        # zone_id should be "default" (positional or keyword)
+        # zone_id should be "root" (positional or keyword)
         zone_id_arg = call_args.kwargs.get("zone_id") or call_args[1].get("zone_id")
-        assert zone_id_arg == "default"
+        assert zone_id_arg == "root"
 
     def test_zone_id_preserved_in_context(self):
         """zone_id set at construction is retrievable."""

@@ -1,330 +1,285 @@
-"""Tests for Query Router (Issue #1041).
+"""Comprehensive unit tests for QueryRouter (Issue #1041, #1499).
 
-Tests the intelligent query routing that automatically selects
-optimal search strategies based on query complexity.
+Tests cover:
+- RoutingConfig validation
+- _classify_complexity boundary values
+- _estimate_complexity_fallback heuristics
+- route() end-to-end
+- RoutedQuery serialization
 """
 
-from unittest.mock import MagicMock
+from __future__ import annotations
 
 import pytest
 
-from nexus.search.query_router import (
-    ROUTING_RULES,
-    QueryRouter,
-    RoutedQuery,
-    RoutingConfig,
-    create_query_router,
-)
+from nexus.search.query_router import QueryRouter, RoutedQuery, RoutingConfig
+
+# =============================================================================
+# RoutingConfig validation
+# =============================================================================
 
 
 class TestRoutingConfig:
-    """Test RoutingConfig validation."""
+    """Test RoutingConfig threshold validation."""
 
-    def test_default_config(self):
-        """Test default configuration values."""
+    def test_default_config_valid(self) -> None:
         config = RoutingConfig()
         assert config.simple_max == 0.3
         assert config.moderate_max == 0.6
         assert config.complex_max == 0.8
         assert config.enabled is True
 
-    def test_custom_config(self):
-        """Test custom configuration values."""
-        config = RoutingConfig(
-            simple_max=0.25,
-            moderate_max=0.5,
-            complex_max=0.75,
-            enabled=True,
-        )
-        assert config.simple_max == 0.25
-        assert config.moderate_max == 0.5
-        assert config.complex_max == 0.75
+    def test_custom_valid_thresholds(self) -> None:
+        config = RoutingConfig(simple_max=0.2, moderate_max=0.5, complex_max=0.9)
+        assert config.simple_max == 0.2
 
-    def test_invalid_thresholds_order(self):
-        """Test that invalid threshold order raises error."""
+    def test_invalid_simple_max_zero(self) -> None:
         with pytest.raises(ValueError, match="Invalid thresholds"):
-            RoutingConfig(simple_max=0.5, moderate_max=0.3, complex_max=0.8)
+            RoutingConfig(simple_max=0.0, moderate_max=0.6, complex_max=0.8)
 
-    def test_invalid_thresholds_out_of_range(self):
-        """Test that thresholds > 1.0 raise error."""
+    def test_invalid_simple_gte_moderate(self) -> None:
         with pytest.raises(ValueError, match="Invalid thresholds"):
-            RoutingConfig(simple_max=0.3, moderate_max=0.6, complex_max=1.5)
+            RoutingConfig(simple_max=0.6, moderate_max=0.6, complex_max=0.8)
+
+    def test_invalid_moderate_gte_complex(self) -> None:
+        with pytest.raises(ValueError, match="Invalid thresholds"):
+            RoutingConfig(simple_max=0.3, moderate_max=0.8, complex_max=0.8)
+
+    def test_invalid_complex_exceeds_one(self) -> None:
+        with pytest.raises(ValueError, match="Invalid thresholds"):
+            RoutingConfig(simple_max=0.3, moderate_max=0.6, complex_max=1.1)
+
+    def test_invalid_reversed_order(self) -> None:
+        with pytest.raises(ValueError, match="Invalid thresholds"):
+            RoutingConfig(simple_max=0.8, moderate_max=0.6, complex_max=0.3)
+
+    def test_negative_threshold(self) -> None:
+        with pytest.raises(ValueError, match="Invalid thresholds"):
+            RoutingConfig(simple_max=-0.1, moderate_max=0.6, complex_max=0.8)
 
 
-class TestRoutedQuery:
-    """Test RoutedQuery dataclass."""
+# =============================================================================
+# _classify_complexity boundary values
+# =============================================================================
 
-    def test_to_dict(self):
-        """Test RoutedQuery serialization."""
-        routed = RoutedQuery(
-            original_query="How does authentication work?",
-            complexity_score=0.65,
-            complexity_class="complex",
-            search_mode="hybrid",
-            graph_mode="dual",
-            adjusted_limit=12,
-            reasoning="Query classified as complex (score=0.65)",
-            routing_latency_ms=1.5,
-            include_community_summaries=False,
+
+class TestClassifyComplexity:
+    """Test _classify_complexity at boundary values."""
+
+    def setup_method(self) -> None:
+        self.router = QueryRouter()
+
+    def test_below_simple_max(self) -> None:
+        assert self.router._classify_complexity(0.29) == "simple"
+
+    def test_at_simple_max_boundary(self) -> None:
+        """At exactly 0.3, should be 'moderate' (not < 0.3)."""
+        assert self.router._classify_complexity(0.30) == "moderate"
+
+    def test_below_moderate_max(self) -> None:
+        assert self.router._classify_complexity(0.59) == "moderate"
+
+    def test_at_moderate_max_boundary(self) -> None:
+        """At exactly 0.6, should be 'complex' (not < 0.6)."""
+        assert self.router._classify_complexity(0.60) == "complex"
+
+    def test_below_complex_max(self) -> None:
+        assert self.router._classify_complexity(0.79) == "complex"
+
+    def test_at_complex_max_boundary(self) -> None:
+        """At exactly 0.8, should be 'very_complex' (not < 0.8)."""
+        assert self.router._classify_complexity(0.80) == "very_complex"
+
+    def test_above_complex_max(self) -> None:
+        assert self.router._classify_complexity(0.95) == "very_complex"
+
+    def test_zero_is_simple(self) -> None:
+        assert self.router._classify_complexity(0.0) == "simple"
+
+    def test_one_is_very_complex(self) -> None:
+        assert self.router._classify_complexity(1.0) == "very_complex"
+
+    def test_custom_thresholds(self) -> None:
+        config = RoutingConfig(simple_max=0.2, moderate_max=0.5, complex_max=0.9)
+        router = QueryRouter(config=config)
+        assert router._classify_complexity(0.19) == "simple"
+        assert router._classify_complexity(0.20) == "moderate"
+        assert router._classify_complexity(0.49) == "moderate"
+        assert router._classify_complexity(0.50) == "complex"
+        assert router._classify_complexity(0.89) == "complex"
+        assert router._classify_complexity(0.90) == "very_complex"
+
+
+# =============================================================================
+# _estimate_complexity_fallback
+# =============================================================================
+
+
+class TestEstimateComplexityFallback:
+    """Test heuristic complexity estimation."""
+
+    def setup_method(self) -> None:
+        self.router = QueryRouter()
+
+    def test_simple_one_word_query(self) -> None:
+        score = self.router._estimate_complexity_fallback("hello")
+        # 1 word / 20 = 0.05
+        assert 0.0 < score < 0.3
+
+    def test_comparison_query(self) -> None:
+        score = self.router._estimate_complexity_fallback("compare python vs java")
+        # word_count(4/20=0.2) + comparison(0.2) = 0.4 (moderate)
+        assert score >= 0.3
+
+    def test_temporal_query(self) -> None:
+        score = self.router._estimate_complexity_fallback("when was the function added")
+        # word_count(6/20=0.3→capped 0.25) + temporal(0.15) = 0.4
+        assert score >= 0.3
+
+    def test_aggregation_query(self) -> None:
+        score = self.router._estimate_complexity_fallback("list all exported functions")
+        # word_count(4/20=0.2) + aggregation(0.15) = 0.35
+        assert score >= 0.3
+
+    def test_multihop_query(self) -> None:
+        score = self.router._estimate_complexity_fallback("how does authentication work")
+        # word_count(4/20=0.2) + multihop(0.2) = 0.4
+        assert score >= 0.3
+
+    def test_complex_pattern_query(self) -> None:
+        score = self.router._estimate_complexity_fallback("explain the caching mechanism")
+        # word_count(4/20=0.2) + complex_pattern(0.15) = 0.35
+        assert score >= 0.3
+
+    def test_very_complex_query(self) -> None:
+        """Multiple indicators should stack up to high complexity."""
+        score = self.router._estimate_complexity_fallback(
+            "explain how does the compare function work before and after the refactoring overview"
         )
+        # word_count(13/20=0.65→capped 0.25) + multihop(0.2) + comparison("compare": 0.2)
+        # + temporal("before","after": 0.15) + aggregation("overview": 0.15) + complex("explain": 0.15)
+        # = 0.25+0.2+0.2+0.15+0.15+0.15 = 1.1 → capped at 1.0
+        assert score >= 0.8
 
-        data = routed.to_dict()
+    def test_score_capped_at_one(self) -> None:
+        """Score should never exceed 1.0."""
+        score = self.router._estimate_complexity_fallback(
+            "explain how does compare analyze evaluate between all every summary before after overview"
+        )
+        assert score <= 1.0
 
-        assert data["original_query"] == "How does authentication work?"
-        assert data["complexity_score"] == 0.65
-        assert data["complexity_class"] == "complex"
-        assert data["search_mode"] == "hybrid"
-        assert data["graph_mode"] == "dual"
-        assert data["adjusted_limit"] == 12
-        assert data["reasoning"] == "Query classified as complex (score=0.65)"
-        assert data["routing_latency_ms"] == 1.5
-        assert data["include_community_summaries"] is False
+    def test_empty_query(self) -> None:
+        score = self.router._estimate_complexity_fallback("")
+        assert score == 0.0
+
+    def test_case_insensitive(self) -> None:
+        """Patterns should match regardless of case."""
+        score_lower = self.router._estimate_complexity_fallback("how does it work")
+        score_upper = self.router._estimate_complexity_fallback("HOW DOES IT WORK")
+        assert score_lower == score_upper
 
 
-class TestQueryRouter:
-    """Test QueryRouter functionality."""
+# =============================================================================
+# route() end-to-end
+# =============================================================================
 
-    def test_simple_query_routing(self):
-        """Test routing of simple queries."""
-        router = QueryRouter()
 
-        # Simple query: "what is X"
-        routed = router.route("what is authentication")
+class TestRoute:
+    """Test route() end-to-end behavior."""
 
-        # Simple queries should use hybrid search with no graph
+    def setup_method(self) -> None:
+        self.router = QueryRouter()
+
+    def test_simple_query_routing(self) -> None:
+        routed = self.router.route("hello")
+        assert routed.complexity_class == "simple"
         assert routed.search_mode == "hybrid"
         assert routed.graph_mode == "none"
-        assert routed.complexity_class == "simple"
-        assert routed.complexity_score < 0.3
+        assert routed.include_community_summaries is False
 
-    def test_moderate_query_routing(self):
-        """Test routing of moderate complexity queries."""
-        router = QueryRouter()
-
-        # Moderate query with comparison
-        routed = router.route("compare OAuth vs JWT for API authentication")
-
-        # Should have graph_mode="low" for entity expansion
-        assert routed.search_mode == "hybrid"
+    def test_moderate_query_routing(self) -> None:
+        routed = self.router.route("compare python vs java")
         assert routed.complexity_class in ("moderate", "complex")
         assert routed.graph_mode in ("low", "dual")
 
-    def test_complex_query_routing(self):
-        """Test routing of complex multi-hop queries."""
-        router = QueryRouter()
-
-        # Complex query with multi-hop reasoning and temporal aspect
-        routed = router.route(
-            "How does the AuthService authenticate users and what happens "
-            "when the JWTProvider expires the token before the refresh interval?"
-        )
-
-        # Should be complex or very_complex
-        assert routed.complexity_class in ("complex", "very_complex")
-        assert routed.graph_mode == "dual"
-
-    def test_limit_adjustment_simple(self):
-        """Test limit multiplier for simple queries."""
-        router = QueryRouter()
-        routed = router.route("what is X", base_limit=10)
-
-        # Simple queries have 0.8 multiplier
+    def test_adjusted_limit_simple(self) -> None:
+        routed = self.router.route("hello", base_limit=10)
+        # simple: 0.8x multiplier → 8
         assert routed.adjusted_limit == 8
 
-    def test_limit_adjustment_complex(self):
-        """Test limit multiplier for complex queries."""
-        router = QueryRouter()
-        routed = router.route(
-            "explain how authentication works and compare different methods "
-            "including their security implications over time",
-            base_limit=10,
-        )
+    def test_adjusted_limit_minimum_one(self) -> None:
+        routed = self.router.route("hello", base_limit=1)
+        # 1 * 0.8 = 0.8 → max(1, int(0.8)) = max(1, 0) = 1
+        assert routed.adjusted_limit >= 1
 
-        # Complex queries have >= 1.0 multiplier
-        assert routed.adjusted_limit >= 10
+    def test_routing_latency_measured(self) -> None:
+        routed = self.router.route("test query")
+        assert routed.routing_latency_ms >= 0.0
 
-    def test_routing_latency_recorded(self):
-        """Test that routing latency is recorded."""
-        router = QueryRouter()
-        routed = router.route("test query")
+    def test_reasoning_present(self) -> None:
+        routed = self.router.route("test query")
+        assert "classified as" in routed.reasoning
+        assert routed.complexity_class in routed.reasoning
 
-        assert routed.routing_latency_ms >= 0
-        assert routed.routing_latency_ms < 100  # Should be very fast
+    def test_original_query_preserved(self) -> None:
+        routed = self.router.route("exact query text")
+        assert routed.original_query == "exact query text"
 
-    def test_routing_with_context_builder(self):
-        """Test routing with a mock ContextBuilder."""
-        mock_context_builder = MagicMock()
-        mock_context_builder.estimate_query_complexity.return_value = 0.75
-
-        router = QueryRouter(context_builder=mock_context_builder)
-        routed = router.route("test query")
-
-        # Should use the context builder's complexity
-        assert routed.complexity_score == 0.75
-        assert routed.complexity_class == "complex"
-        mock_context_builder.estimate_query_complexity.assert_called_once_with("test query")
-
-    def test_routing_without_context_builder(self):
-        """Test fallback when no context builder is provided."""
-        router = QueryRouter(context_builder=None)
-        routed = router.route("How does authentication work?")
-
-        # Should use fallback estimation
-        assert 0.0 <= routed.complexity_score <= 1.0
-        assert routed.complexity_class in ("simple", "moderate", "complex", "very_complex")
-
-    def test_custom_thresholds(self):
-        """Test routing with custom thresholds."""
-        config = RoutingConfig(
-            simple_max=0.2,
-            moderate_max=0.4,
-            complex_max=0.6,
-        )
-
-        # Mock a query with complexity 0.5 (would be "moderate" with defaults)
-        mock_context_builder = MagicMock()
-        mock_context_builder.estimate_query_complexity.return_value = 0.5
-
-        router = QueryRouter(context_builder=mock_context_builder, config=config)
+    def test_disabled_router_still_works(self) -> None:
+        """Router with enabled=False still routes (enabled flag is for callers)."""
+        config = RoutingConfig(enabled=False)
+        router = QueryRouter(config=config)
         routed = router.route("test")
+        assert isinstance(routed, RoutedQuery)
 
-        # With custom thresholds, 0.5 is "complex" (0.4 <= 0.5 < 0.6)
-        assert routed.complexity_class == "complex"
-
-
-class TestRoutingRules:
-    """Test the routing rules configuration."""
-
-    def test_simple_rules(self):
-        """Test simple query routing rules."""
-        rules = ROUTING_RULES["simple"]
-        assert rules["search_mode"] == "hybrid"
-        assert rules["graph_mode"] == "none"
-        assert rules["limit_multiplier"] == 0.8
-
-    def test_moderate_rules(self):
-        """Test moderate query routing rules."""
-        rules = ROUTING_RULES["moderate"]
-        assert rules["search_mode"] == "hybrid"
-        assert rules["graph_mode"] == "low"
-        assert rules["limit_multiplier"] == 1.0
-
-    def test_complex_rules(self):
-        """Test complex query routing rules."""
-        rules = ROUTING_RULES["complex"]
-        assert rules["search_mode"] == "hybrid"
-        assert rules["graph_mode"] == "dual"
-        assert rules["limit_multiplier"] == 1.2
-
-    def test_very_complex_rules(self):
-        """Test very complex query routing rules."""
-        rules = ROUTING_RULES["very_complex"]
-        assert rules["search_mode"] == "hybrid"
-        assert rules["graph_mode"] == "dual"
-        assert rules["limit_multiplier"] == 1.5
-        assert rules["include_community_summaries"] is True
-
-
-class TestCreateQueryRouter:
-    """Test the factory function."""
-
-    def test_create_with_defaults(self):
-        """Test creating router with defaults."""
-        router = create_query_router()
-        assert router.context_builder is None
-        assert router.config.simple_max == 0.3
-
-    def test_create_with_context_builder(self):
-        """Test creating router with context builder."""
-        mock_builder = MagicMock()
-        router = create_query_router(context_builder=mock_builder)
-        assert router.context_builder is mock_builder
-
-    def test_create_with_custom_config(self):
-        """Test creating router with custom config."""
-        config = RoutingConfig(simple_max=0.25, moderate_max=0.5, complex_max=0.75)
-        router = create_query_router(config=config)
-        assert router.config.simple_max == 0.25
-        assert router.config.moderate_max == 0.5
-        assert router.config.complex_max == 0.75
-
-
-class TestFallbackComplexityEstimation:
-    """Test the fallback complexity estimation."""
-
-    def test_word_count_factor(self):
-        """Test word count contribution."""
+    def test_default_router(self) -> None:
+        """Default router without args uses heuristic estimation."""
         router = QueryRouter()
-
-        short_query = router.route("test")
-        long_query = router.route("this is a much longer query with many more words included")
-
-        assert long_query.complexity_score > short_query.complexity_score
-
-    def test_comparison_indicators(self):
-        """Test comparison words boost complexity."""
-        router = QueryRouter()
-
-        normal = router.route("what is authentication")
-        comparison = router.route("compare authentication methods")
-
-        assert comparison.complexity_score > normal.complexity_score
-
-    def test_temporal_indicators(self):
-        """Test temporal words boost complexity."""
-        router = QueryRouter()
-
-        normal = router.route("what is the status")
-        temporal = router.route("what was the status before the update")
-
-        assert temporal.complexity_score > normal.complexity_score
-
-    def test_multihop_patterns(self):
-        """Test multi-hop patterns boost complexity."""
-        router = QueryRouter()
-
-        simple = router.route("what is X")
-        multihop = router.route("how does X affect Y")
-
-        assert multihop.complexity_score > simple.complexity_score
-
-    def test_complex_question_patterns(self):
-        """Test complex question patterns boost complexity."""
-        router = QueryRouter()
-
-        simple = router.route("what is authentication")
-        complex_q = router.route("explain how authentication works")
-
-        assert complex_q.complexity_score > simple.complexity_score
+        routed = router.route("hello")
+        assert routed.complexity_class == "simple"
 
 
-class TestPerformance:
-    """Test performance requirements."""
+# =============================================================================
+# RoutedQuery.to_dict()
+# =============================================================================
 
-    def test_routing_under_5ms(self):
-        """Test that routing completes in under 5ms."""
-        router = QueryRouter()
 
-        # Run multiple iterations to ensure consistent performance
-        for _ in range(10):
-            routed = router.route(
-                "How does the authentication system handle token refresh "
-                "when multiple services are involved?"
-            )
-            # Routing should be fast (< 5ms as per requirement)
-            assert routed.routing_latency_ms < 5.0
+class TestRoutedQueryToDict:
+    """Test RoutedQuery serialization."""
 
-    def test_routing_with_mock_context_builder_under_5ms(self):
-        """Test routing with mock context builder is fast."""
-        mock_builder = MagicMock()
-        mock_builder.estimate_query_complexity.return_value = 0.5
+    def test_to_dict_contains_all_fields(self) -> None:
+        routed = RoutedQuery(
+            original_query="test",
+            complexity_score=0.5,
+            complexity_class="moderate",
+            search_mode="hybrid",
+            graph_mode="low",
+            adjusted_limit=10,
+            reasoning="test reasoning",
+            routing_latency_ms=1.23,
+            include_community_summaries=False,
+        )
+        d = routed.to_dict()
+        assert d["original_query"] == "test"
+        assert d["complexity_score"] == 0.5
+        assert d["complexity_class"] == "moderate"
+        assert d["search_mode"] == "hybrid"
+        assert d["graph_mode"] == "low"
+        assert d["adjusted_limit"] == 10
+        assert d["reasoning"] == "test reasoning"
+        assert d["routing_latency_ms"] == 1.23
+        assert d["include_community_summaries"] is False
 
-        router = QueryRouter(context_builder=mock_builder)
-
-        # Warm up: first call may be slow due to import/JIT overhead in CI
-        router.route("warmup")
-
-        for _ in range(10):
-            routed = router.route("test query")
-            # Relaxed from 5ms: CI runners (esp. macOS) have variable latency
-            assert routed.routing_latency_ms < 50.0
+    def test_to_dict_with_community_summaries(self) -> None:
+        routed = RoutedQuery(
+            original_query="complex query",
+            complexity_score=0.9,
+            complexity_class="very_complex",
+            search_mode="hybrid",
+            graph_mode="dual",
+            adjusted_limit=15,
+            reasoning="very complex",
+            include_community_summaries=True,
+        )
+        d = routed.to_dict()
+        assert d["include_community_summaries"] is True

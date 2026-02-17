@@ -75,6 +75,10 @@ class FeaturesConfig(BaseModel):
         default=True,
         description="Enable Google A2A (Agent-to-Agent) protocol endpoint",
     )
+    a2a_grpc_port: int = Field(
+        default=0,
+        description="Port for A2A gRPC transport binding. 0 = disabled.",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -151,11 +155,6 @@ class NexusConfig(BaseModel):
         description="Custom namespace configurations (list of dicts with name, readonly, admin_only, requires_zone)",
     )
 
-    # Parser configurations (v0.2.0)
-    parsers: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="(Deprecated) Custom parser configurations. Use parse_providers instead.",
-    )
     auto_parse: bool = Field(
         default=True,
         description="Automatically parse files on upload (default: True)",
@@ -295,6 +294,12 @@ class NexusConfig(BaseModel):
     upload_cleanup_interval_seconds: int = Field(
         default=3600,
         description="Interval between expired session cleanup sweeps in seconds (default: 3600)",
+    )
+
+    # Log redaction settings (Issue #86)
+    log_redaction_enabled: bool = Field(
+        default=True,
+        description="Enable secret masking in log output (default: True for security)",
     )
 
     # Docker sandbox template configuration
@@ -464,6 +469,8 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_UPLOAD_MAX_CONCURRENT": "upload_max_concurrent",
         "NEXUS_UPLOAD_SESSION_TTL_HOURS": "upload_session_ttl_hours",
         "NEXUS_UPLOAD_CLEANUP_INTERVAL": "upload_cleanup_interval_seconds",
+        # Log redaction settings (Issue #86)
+        "NEXUS_LOG_REDACTION_ENABLED": "log_redaction_enabled",
     }
 
     for env_var, config_key in env_mapping.items():
@@ -504,31 +511,12 @@ def _load_from_environment() -> NexusConfig:
                 "enforce_permissions",
                 "allow_admin_bypass",
                 "enforce_zone_isolation",
+                "log_redaction_enabled",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:
                 converted_value = value
             env_config[config_key] = converted_value
-
-    # Handle NEXUS_PARSERS environment variable
-    # Format: "module:class:priority,module:class:priority,..."
-    # Example: "my_parsers.csv:CSVParser:60,my_parsers.log:LogParser:50"
-    parsers_env = os.getenv("NEXUS_PARSERS")
-    if parsers_env:
-        parsers_list = []
-        for parser_spec in parsers_env.split(","):
-            parts = parser_spec.strip().split(":")
-            if len(parts) >= 2:
-                parser_dict: dict[str, Any] = {
-                    "module": parts[0],
-                    "class": parts[1],
-                    "enabled": True,
-                }
-                if len(parts) >= 3:
-                    parser_dict["priority"] = int(parts[2])
-                parsers_list.append(parser_dict)
-        if parsers_list:
-            env_config["parsers"] = parsers_list
 
     # Auto-discover parse providers from environment variables
     # UNSTRUCTURED_API_KEY, LLAMA_CLOUD_API_KEY enable respective providers

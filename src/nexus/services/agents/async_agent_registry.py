@@ -1,14 +1,18 @@
-"""Async wrapper for AgentRegistry (Issue #1440).
+"""Async wrapper for AgentRegistry (Issue #1440, #1274).
 
 Thin adapter that wraps the sync ``AgentRegistry`` to satisfy
 ``AgentRegistryProtocol`` (all-async signatures).  Uses
 ``asyncio.to_thread`` for I/O-bound methods (DB access).
+
+Emits ``AgentStateEvent`` on successful state transitions when
+an ``AgentStateEmitter`` is provided (Issue #1274).
 
 Follows the established ``AsyncFileMetadataWrapper`` pattern.
 
 References:
     - Issue #1440: Async wrappers for 4 sync kernel protocols
     - Issue #1383: Define 6 kernel protocol interfaces
+    - Issue #1274: Astraea-style state-aware scheduler
 """
 
 from __future__ import annotations
@@ -16,12 +20,13 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.agent_record import AgentState
+from nexus.services.agents.agent_record import AgentState
 from nexus.services.protocols.agent_registry import AgentInfo
 
 if TYPE_CHECKING:
-    from nexus.core.agent_record import AgentRecord
-    from nexus.core.agent_registry import AgentRegistry
+    from nexus.scheduler.events import AgentStateEmitter
+    from nexus.services.agents.agent_record import AgentRecord
+    from nexus.services.agents.agent_registry import AgentRegistry
 
 
 def _to_agent_info(record: AgentRecord) -> AgentInfo:
@@ -53,8 +58,14 @@ class AsyncAgentRegistry:
     is safe due to the session-per-operation pattern.
     """
 
-    def __init__(self, inner: AgentRegistry) -> None:
+    def __init__(
+        self,
+        inner: AgentRegistry,
+        *,
+        state_emitter: AgentStateEmitter | None = None,
+    ) -> None:
         self._inner = inner
+        self._state_emitter = state_emitter
 
     async def register(
         self,
@@ -96,13 +107,35 @@ class AsyncAgentRegistry:
                 f"Invalid target state {target_state!r}. Valid: {', '.join(valid)}"
             ) from None
 
+        # Capture previous state before transition (for event emission)
+        previous_state: str | None = None
+        if self._state_emitter is not None:
+            before_record = await asyncio.to_thread(self._inner.get, agent_id)
+            if before_record is not None:
+                previous_state = before_record.state.value
+
         record = await asyncio.to_thread(
             self._inner.transition,
             agent_id,
             state_enum,
             expected_generation=expected_generation,
         )
-        return _to_agent_info(record)
+        info = _to_agent_info(record)
+
+        # Emit state change event if emitter is configured
+        if self._state_emitter is not None and previous_state is not None:
+            from nexus.scheduler.events import AgentStateEvent
+
+            event = AgentStateEvent(
+                agent_id=agent_id,
+                previous_state=previous_state,
+                new_state=info.state,
+                generation=info.generation,
+                zone_id=info.zone_id,
+            )
+            await self._state_emitter.emit(event)
+
+        return info
 
     async def heartbeat(self, agent_id: str) -> None:
         await asyncio.to_thread(self._inner.heartbeat, agent_id)

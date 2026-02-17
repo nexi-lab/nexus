@@ -132,7 +132,7 @@ class TestSyncServiceInit:
         """SyncService initializes a ChangeLogStore."""
         service = SyncService(gateway=mock_gateway)
         assert service._change_log is not None
-        assert service._change_log._gw is mock_gateway
+        assert service._change_log._session_factory is mock_gateway.session_factory
 
 
 # =============================================================================
@@ -313,7 +313,7 @@ class TestSyncMountDryRun:
         mount = mock_gateway.router.get_mount.return_value
         backend = mount.backend
         backend.list_dir.return_value = []
-        backend.sync = MagicMock()
+        backend.sync_content_to_cache = MagicMock()
 
         ctx = SyncContext(
             mount_point="/mnt/gcs",
@@ -324,7 +324,7 @@ class TestSyncMountDryRun:
         )
 
         sync_service.sync_mount(ctx)
-        backend.sync.assert_not_called()
+        backend.sync_content_to_cache.assert_not_called()
 
 
 # =============================================================================

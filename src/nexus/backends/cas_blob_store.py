@@ -50,6 +50,19 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class WriteResult:
+    """Result of a streaming write to CAS.
+
+    Returned by ``store_streaming()`` so callers get hash + size
+    without a redundant disk stat.
+    """
+
+    content_hash: str
+    size: int
+    is_new: bool
+
+
+@dataclass(frozen=True, slots=True)
 class CASMeta:
     """Immutable metadata for a CAS entry.
 
@@ -143,16 +156,30 @@ class _StripeLock:
     without any disk I/O. Much cheaper than FileLock (~μs vs ~ms).
     """
 
-    __slots__ = ("_locks",)
+    __slots__ = ("_contention_count", "_locks")
 
     def __init__(self, num_stripes: int = _NUM_STRIPES) -> None:
         self._locks = [threading.Lock() for _ in range(num_stripes)]
+        self._contention_count = 0
 
     def acquire_for(self, content_hash: str) -> threading.Lock:
         """Return the stripe lock for a given content hash (not acquired)."""
         # Use last 4 hex chars for even distribution
         idx = int(content_hash[-4:], 16) % len(self._locks)
         return self._locks[idx]
+
+    @property
+    def contention_count(self) -> int:
+        """Number of times a stripe lock was already held on acquire attempt."""
+        return self._contention_count
+
+    def acquire_with_contention_tracking(self, content_hash: str) -> threading.Lock:
+        """Acquire stripe lock and track contention (Issue #1752)."""
+        lock = self.acquire_for(content_hash)
+        if not lock.acquire(blocking=False):
+            self._contention_count += 1
+            lock.acquire()
+        return lock
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +426,105 @@ class CASBlobStore:
             is_new = meta.ref_count == 1
 
         return is_new
+
+    def store_streaming(
+        self,
+        chunks: Iterator[bytes],
+        *,
+        extra_meta: dict[str, Any] | None = None,
+    ) -> WriteResult:
+        """Stream chunks to disk with incremental hashing, then promote to CAS.
+
+        Uses a staging temp file so that only *one* copy of the data
+        touches disk — no ``b"".join()`` buffer in memory.
+
+        Args:
+            chunks: Iterator yielding raw byte chunks.
+            extra_meta: Additional metadata fields (e.g. ``is_chunk``).
+
+        Returns:
+            WriteResult with content_hash, total size, and whether blob was new.
+        """
+        from nexus.core.hash_fast import create_hasher
+
+        staging_dir = self.cas_root / ".staging"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+
+        tmp_path: Path | None = None
+        try:
+            hasher = create_hasher()
+            total_size = 0
+
+            with tempfile.NamedTemporaryFile(mode="wb", dir=staging_dir, delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+                for chunk in chunks:
+                    hasher.update(chunk)
+                    tmp.write(chunk)
+                    total_size += len(chunk)
+                tmp.flush()
+                if self._fsync_blobs:
+                    os.fsync(tmp.fileno())
+
+            content_hash: str = hasher.hexdigest()
+            blob_path = self.hash_to_path(content_hash)
+
+            if blob_path.exists():
+                # Blob already on disk — just bump ref_count
+                tmp_path.unlink()
+                tmp_path = None
+                lock = self._meta_locks.acquire_for(content_hash)
+                with lock:
+                    meta = self.read_meta(content_hash)
+                    self.write_meta(content_hash, meta.inc_ref())
+                return WriteResult(content_hash=content_hash, size=total_size, is_new=False)
+
+            # New blob — promote staging file into CAS tree
+            blob_path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(str(tmp_path), str(blob_path))
+            tmp_path = None  # replaced successfully
+
+            # Write metadata under stripe lock
+            lock = self._meta_locks.acquire_for(content_hash)
+            with lock:
+                extra: tuple[tuple[str, Any], ...] = ()
+                if extra_meta:
+                    extra = tuple(extra_meta.items())
+                meta = CASMeta(ref_count=1, size=total_size, extra=extra)
+                self.write_meta(content_hash, meta)
+
+            return WriteResult(content_hash=content_hash, size=total_size, is_new=True)
+        finally:
+            # Clean up on any failure
+            if tmp_path is not None and tmp_path.exists():
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
+
+    def hold_reference(self, content_hash: str) -> bool:
+        """Increment ref_count for existing blob to prevent GC (Issue #1752).
+
+        Used by transactional snapshots to hold a reference to the
+        pre-modification content so it cannot be garbage collected
+        during the transaction window.
+
+        Args:
+            content_hash: Hash of the content to hold.
+
+        Returns:
+            True if hold was acquired (blob exists and ref_count incremented),
+            False if blob does not exist.
+        """
+        lock = self._meta_locks.acquire_for(content_hash)
+        with lock:
+            if not self.blob_exists(content_hash):
+                return False
+            meta = self.read_meta(content_hash)
+            self.write_meta(content_hash, meta.inc_ref())
+            return True
+
+    @property
+    def stripe_lock_contention(self) -> int:
+        """Contention metric for stripe locks (Issue #1752)."""
+        return self._meta_locks.contention_count
 
     def release(self, content_hash: str) -> bool:
         """Decrement ref_count; delete blob + meta when it reaches zero.

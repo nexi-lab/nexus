@@ -21,7 +21,7 @@ from nexus.ipc.conventions import (
     agent_dir,
     inbox_path,
 )
-from nexus.ipc.protocols import VFSOperations
+from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,12 @@ class AgentProvisioner:
     """Creates IPC directory structure for newly registered agents.
 
     Args:
-        vfs: VFS operations for directory and file creation.
+        storage: Storage driver for IPC directory and file creation.
         zone_id: Zone ID for multi-zone isolation.
     """
 
-    def __init__(self, vfs: VFSOperations, zone_id: str = "default") -> None:
-        self._vfs = vfs
+    def __init__(self, storage: IPCStorageDriver, zone_id: str = "root") -> None:
+        self._storage = storage
         self._zone_id = zone_id
 
     async def provision(
@@ -66,9 +66,9 @@ class AgentProvisioner:
         root = agent_dir(agent_id)
 
         # Create root and subdirectories
-        await self._vfs.mkdir(root, self._zone_id)
+        await self._storage.mkdir(root, self._zone_id)
         for subdir in AGENT_SUBDIRS:
-            await self._vfs.mkdir(f"{root}/{subdir}", self._zone_id)
+            await self._storage.mkdir(f"{root}/{subdir}", self._zone_id)
 
         # Write AGENT.json card
         card = {
@@ -82,7 +82,7 @@ class AgentProvisioner:
         }
         card_data = json.dumps(card, indent=2).encode("utf-8")
         card_file = agent_card_path(agent_id)
-        await self._vfs.write(card_file, card_data, self._zone_id)
+        await self._storage.write(card_file, card_data, self._zone_id)
 
         logger.info(
             "Provisioned IPC directories for agent %s (%d subdirs + AGENT.json)",
@@ -113,7 +113,7 @@ class AgentProvisioner:
                 },
                 indent=2,
             ).encode("utf-8")
-            await self._vfs.write(card_file, card_data, self._zone_id)
+            await self._storage.write(card_file, card_data, self._zone_id)
             logger.info("Deprovisioned IPC for agent %s", agent_id)
         except Exception:
             logger.warning(
@@ -131,4 +131,4 @@ class AgentProvisioner:
         Returns:
             True if the agent's inbox directory exists.
         """
-        return await self._vfs.exists(inbox_path(agent_id), self._zone_id)
+        return await self._storage.exists(inbox_path(agent_id), self._zone_id)

@@ -4,6 +4,7 @@ from nexus.server.api.v2.routers import (
     conflicts,
     consolidation,
     curate,
+    events_replay,
     feedback,
     memories,
     mobile_search,
@@ -14,10 +15,12 @@ from nexus.server.api.v2.routers import (
     reputation,
     sync_push,
     trajectories,
+    workflows,
 )
 
 __all__ = [
     "conflicts",
+    "events_replay",
     "memories",
     "trajectories",
     "feedback",
@@ -30,4 +33,5 @@ __all__ = [
     "pay",
     "reputation",
     "sync_push",
+    "workflows",
 ]

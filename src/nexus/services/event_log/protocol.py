@@ -5,7 +5,9 @@ NOT a kernel pillar ABC. It serves as the durability backend for EventBus.
 
 Current implementations:
 - WALEventLog: Rust-backed WAL (sub-5μs writes, local disk)
-- PGEventLog: PostgreSQL fallback (correctness, not speed)
+
+Note: PGEventLog was removed in Issue #1241.  Event delivery from
+``operation_log`` is now handled by ``EventDeliveryWorker`` (outbox).
 
 Tracked by: #1397 (Rust-Accelerated Event Log WAL)
 """

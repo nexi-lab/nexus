@@ -1,6 +1,6 @@
-"""Tests for LLM cancellation handling."""
+"""Tests for cancellation handling (src/nexus/llm/cancellation.py)."""
 
-import pytest
+from __future__ import annotations
 
 from nexus.llm.cancellation import (
     AsyncCancellationToken,
@@ -12,255 +12,236 @@ from nexus.llm.cancellation import (
 
 
 class TestShutdownFlag:
-    """Test global shutdown flag functions."""
+    """Tests for the global shutdown flag functions."""
 
-    def setup_method(self):
-        """Reset shutdown flag before each test."""
+    def setup_method(self) -> None:
+        """Reset global shutdown flag before each test."""
         reset_shutdown_flag()
 
-    def teardown_method(self):
-        """Reset shutdown flag after each test."""
+    def teardown_method(self) -> None:
+        """Reset global shutdown flag after each test."""
         reset_shutdown_flag()
 
-    def test_should_continue_initially_true(self):
-        """Test that should_continue is initially True."""
+    def test_should_continue_initially_true(self) -> None:
+        """should_continue returns True when no shutdown has been requested."""
         assert should_continue() is True
 
-    def test_request_shutdown(self):
-        """Test requesting shutdown."""
-        assert should_continue() is True
+    def test_request_shutdown(self) -> None:
+        """After request_shutdown, should_continue returns False."""
         request_shutdown()
         assert should_continue() is False
 
-    def test_reset_shutdown_flag(self):
-        """Test resetting shutdown flag."""
+    def test_reset_shutdown_flag(self) -> None:
+        """reset_shutdown_flag restores should_continue to True."""
         request_shutdown()
         assert should_continue() is False
+
         reset_shutdown_flag()
         assert should_continue() is True
 
 
 class TestCancellationToken:
-    """Test CancellationToken class."""
+    """Tests for the synchronous CancellationToken."""
 
-    def setup_method(self):
-        """Reset shutdown flag before each test."""
+    def setup_method(self) -> None:
+        """Reset global shutdown flag before each test."""
         reset_shutdown_flag()
 
-    def teardown_method(self):
-        """Reset shutdown flag after each test."""
+    def teardown_method(self) -> None:
+        """Reset global shutdown flag after each test."""
         reset_shutdown_flag()
 
-    def test_token_not_cancelled_initially(self):
-        """Test that token is not cancelled initially."""
+    def test_token_not_cancelled_initially(self) -> None:
+        """A fresh token should not be cancelled."""
         token = CancellationToken()
         assert token.is_cancelled() is False
 
-    def test_token_cancel(self):
-        """Test cancelling a token."""
+    def test_token_cancel(self) -> None:
+        """Calling cancel() should make is_cancelled return True."""
         token = CancellationToken()
-        assert token.is_cancelled() is False
         token.cancel()
         assert token.is_cancelled() is True
 
-    def test_token_check_shutdown_enabled(self):
-        """Test token checks global shutdown flag when enabled."""
+    def test_token_check_shutdown_enabled(self) -> None:
+        """With check_shutdown=True, global shutdown flag cancels the token."""
         token = CancellationToken(check_shutdown=True)
         assert token.is_cancelled() is False
+
         request_shutdown()
         assert token.is_cancelled() is True
 
-    def test_token_check_shutdown_disabled(self):
-        """Test token ignores global shutdown flag when disabled."""
+    def test_token_check_shutdown_disabled(self) -> None:
+        """With check_shutdown=False, global shutdown flag is ignored."""
         token = CancellationToken(check_shutdown=False)
-        assert token.is_cancelled() is False
         request_shutdown()
         assert token.is_cancelled() is False
 
-    def test_token_with_callback_not_cancelled(self):
-        """Test token with callback that returns False."""
-        callback_called = []
-
-        def on_cancel():
-            callback_called.append(True)
-            return False
-
-        token = CancellationToken(on_cancel_fn=on_cancel, check_shutdown=False)
+    def test_token_with_callback_not_cancelled(self) -> None:
+        """Token with callback returning False is not cancelled."""
+        token = CancellationToken(on_cancel_fn=lambda: False)
         assert token.is_cancelled() is False
-        assert len(callback_called) == 1
 
-    def test_token_with_callback_cancelled(self):
-        """Test token with callback that returns True."""
-        callback_called = []
-
-        def on_cancel():
-            callback_called.append(True)
-            return True
-
-        token = CancellationToken(on_cancel_fn=on_cancel, check_shutdown=False)
+    def test_token_with_callback_cancelled(self) -> None:
+        """Token with callback returning True is cancelled."""
+        token = CancellationToken(on_cancel_fn=lambda: True)
         assert token.is_cancelled() is True
-        assert len(callback_called) == 1
 
-    def test_token_callback_checked_each_time(self):
-        """Test that callback is checked on each is_cancelled call."""
-        call_count = [0]
+    def test_token_callback_checked_each_time(self) -> None:
+        """Callback is re-evaluated on each is_cancelled call."""
+        call_count = 0
 
-        def on_cancel():
-            call_count[0] += 1
-            return call_count[0] > 2
+        def toggle_cancel() -> bool:
+            nonlocal call_count
+            call_count += 1
+            # Cancel on third call
+            return call_count >= 3
 
-        token = CancellationToken(on_cancel_fn=on_cancel, check_shutdown=False)
-        assert token.is_cancelled() is False  # call 1
-        assert token.is_cancelled() is False  # call 2
-        assert token.is_cancelled() is True  # call 3
-        assert call_count[0] == 3
+        token = CancellationToken(on_cancel_fn=toggle_cancel)
+        assert token.is_cancelled() is False  # call_count=1
+        assert token.is_cancelled() is False  # call_count=2
+        assert token.is_cancelled() is True  # call_count=3
+        assert token.is_cancelled() is True  # call_count=4 (still True)
 
-    def test_token_manual_cancel_takes_precedence(self):
-        """Test that manual cancel takes precedence."""
+    def test_token_manual_cancel_takes_precedence(self) -> None:
+        """Manual cancel returns True even if callback returns False."""
+        token = CancellationToken(on_cancel_fn=lambda: False)
+        assert token.is_cancelled() is False
 
-        def on_cancel():
-            return False
-
-        token = CancellationToken(on_cancel_fn=on_cancel, check_shutdown=False)
         token.cancel()
         assert token.is_cancelled() is True
 
-    def test_token_all_cancellation_sources(self):
-        """Test token with all cancellation sources."""
+    def test_token_all_cancellation_sources(self) -> None:
+        """Test interaction of manual cancel, callback, and shutdown flag."""
+        # Start with nothing cancelled
+        token = CancellationToken(on_cancel_fn=lambda: False, check_shutdown=True)
+        assert token.is_cancelled() is False
 
-        def on_cancel():
-            return False
-
-        # None should be cancelled
-        token1 = CancellationToken(on_cancel_fn=on_cancel, check_shutdown=True)
-        assert token1.is_cancelled() is False
-
-        # Manual cancel
-        token2 = CancellationToken(on_cancel_fn=on_cancel, check_shutdown=True)
-        token2.cancel()
-        assert token2.is_cancelled() is True
-
-        # Shutdown flag
+        # Global shutdown triggers cancellation
         request_shutdown()
-        token3 = CancellationToken(on_cancel_fn=on_cancel, check_shutdown=True)
-        assert token3.is_cancelled() is True
+        assert token.is_cancelled() is True
+
+        # Reset shutdown, still not cancelled (callback returns False)
+        reset_shutdown_flag()
+        assert token.is_cancelled() is False
+
+        # Manual cancel overrides everything
+        token.cancel()
+        assert token.is_cancelled() is True
 
 
 class TestAsyncCancellationToken:
-    """Test AsyncCancellationToken class."""
+    """Tests for the AsyncCancellationToken."""
 
-    def setup_method(self):
-        """Reset shutdown flag before each test."""
+    def setup_method(self) -> None:
+        """Reset global shutdown flag before each test."""
         reset_shutdown_flag()
 
-    def teardown_method(self):
-        """Reset shutdown flag after each test."""
+    def teardown_method(self) -> None:
+        """Reset global shutdown flag after each test."""
         reset_shutdown_flag()
 
-    def test_async_token_inherits_sync_behavior(self):
-        """Test that async token has all sync token behavior."""
+    def test_async_token_inherits_sync_behavior(self) -> None:
+        """AsyncCancellationToken should be an instance of CancellationToken."""
         token = AsyncCancellationToken()
-        assert token.is_cancelled() is False
-        token.cancel()
-        assert token.is_cancelled() is True
+        assert isinstance(token, CancellationToken)
 
-    @pytest.mark.asyncio
-    async def test_async_token_not_cancelled_initially(self):
-        """Test that async token is not cancelled initially."""
+    async def test_async_token_not_cancelled_initially(self) -> None:
+        """A fresh async token should not be cancelled."""
         token = AsyncCancellationToken()
         assert await token.is_cancelled_async() is False
 
-    @pytest.mark.asyncio
-    async def test_async_token_manual_cancel(self):
-        """Test manually cancelling async token."""
+    async def test_async_token_manual_cancel(self) -> None:
+        """Calling cancel() on async token makes is_cancelled_async return True."""
         token = AsyncCancellationToken()
         token.cancel()
         assert await token.is_cancelled_async() is True
 
-    @pytest.mark.asyncio
-    async def test_async_token_check_shutdown(self):
-        """Test async token checks shutdown flag."""
+    async def test_async_token_check_shutdown(self) -> None:
+        """Async token respects global shutdown flag."""
         token = AsyncCancellationToken(check_shutdown=True)
+        assert await token.is_cancelled_async() is False
+
         request_shutdown()
         assert await token.is_cancelled_async() is True
 
-    @pytest.mark.asyncio
-    async def test_async_token_with_sync_callback(self):
-        """Test async token with sync callback."""
-
-        def on_cancel():
-            return True
-
-        token = AsyncCancellationToken(on_cancel_fn=on_cancel, check_shutdown=False)
+    async def test_async_token_with_sync_callback(self) -> None:
+        """Async token respects sync on_cancel_fn callback."""
+        token = AsyncCancellationToken(on_cancel_fn=lambda: True)
         assert await token.is_cancelled_async() is True
 
-    @pytest.mark.asyncio
-    async def test_async_token_with_async_callback_not_cancelled(self):
-        """Test async token with async callback that returns False."""
+    async def test_async_token_with_async_callback_not_cancelled(self) -> None:
+        """Async callback returning False does not cancel the token."""
 
-        async def on_cancel_async():
+        async def not_cancelled() -> bool:
             return False
 
-        token = AsyncCancellationToken(on_cancel_async_fn=on_cancel_async, check_shutdown=False)
+        token = AsyncCancellationToken(on_cancel_async_fn=not_cancelled)
         assert await token.is_cancelled_async() is False
 
-    @pytest.mark.asyncio
-    async def test_async_token_with_async_callback_cancelled(self):
-        """Test async token with async callback that returns True."""
+    async def test_async_token_with_async_callback_cancelled(self) -> None:
+        """Async callback returning True cancels the token."""
 
-        async def on_cancel_async():
+        async def is_cancelled() -> bool:
             return True
 
-        token = AsyncCancellationToken(on_cancel_async_fn=on_cancel_async, check_shutdown=False)
+        token = AsyncCancellationToken(on_cancel_async_fn=is_cancelled)
         assert await token.is_cancelled_async() is True
 
-    @pytest.mark.asyncio
-    async def test_async_token_callback_exception_ignored(self):
-        """Test that async callback exceptions don't cancel."""
+    async def test_async_token_callback_exception_ignored(self) -> None:
+        """If async callback raises, the exception is caught and token is not cancelled."""
 
-        async def on_cancel_async():
+        async def failing_callback() -> bool:
             raise RuntimeError("Test error")
 
-        token = AsyncCancellationToken(on_cancel_async_fn=on_cancel_async, check_shutdown=False)
+        token = AsyncCancellationToken(on_cancel_async_fn=failing_callback)
+        # Exception should be silently caught, token should NOT be cancelled
         assert await token.is_cancelled_async() is False
 
-    @pytest.mark.asyncio
-    async def test_async_token_multiple_cancellation_sources(self):
-        """Test async token with multiple cancellation sources."""
-        call_count = [0]
+    async def test_async_token_multiple_cancellation_sources(self) -> None:
+        """Test interaction of all cancellation sources for async token."""
+        cancel_via_async = False
 
-        def on_cancel_sync():
-            call_count[0] += 1
-            return False
-
-        async def on_cancel_async():
-            call_count[0] += 10
-            return False
+        async def async_check() -> bool:
+            return cancel_via_async
 
         token = AsyncCancellationToken(
-            on_cancel_fn=on_cancel_sync,
-            on_cancel_async_fn=on_cancel_async,
+            on_cancel_fn=lambda: False,
+            on_cancel_async_fn=async_check,
             check_shutdown=True,
         )
 
-        # Should check sync callback first
+        # Nothing cancelled
         assert await token.is_cancelled_async() is False
-        # Sync callback called via is_cancelled(), async callback also called
-        assert call_count[0] >= 10
 
-    @pytest.mark.asyncio
-    async def test_async_token_sync_check_before_async(self):
-        """Test that sync checks happen before async callback."""
-        async_called = []
+        # Async callback triggers cancellation
+        cancel_via_async = True
+        assert await token.is_cancelled_async() is True
 
-        async def on_cancel_async():
-            async_called.append(True)
-            return True
+        # Reset async, check global shutdown
+        cancel_via_async = False
+        assert await token.is_cancelled_async() is False
 
-        token = AsyncCancellationToken(on_cancel_async_fn=on_cancel_async, check_shutdown=False)
-        token.cancel()  # Manual cancel
+        request_shutdown()
+        assert await token.is_cancelled_async() is True
 
-        # Async callback should not be called because manual cancel is checked first
-        result = await token.is_cancelled_async()
-        assert result is True
-        assert len(async_called) == 0  # Async callback not called due to early return
+        # Reset shutdown, manual cancel takes effect
+        reset_shutdown_flag()
+        token.cancel()
+        assert await token.is_cancelled_async() is True
+
+    async def test_async_token_sync_check_before_async(self) -> None:
+        """Manual cancel is checked synchronously before async callback is awaited."""
+        call_count = 0
+
+        async def async_check() -> bool:
+            nonlocal call_count
+            call_count += 1
+            return False
+
+        token = AsyncCancellationToken(on_cancel_async_fn=async_check)
+
+        # Manual cancel should short-circuit: async callback should NOT be called
+        token.cancel()
+        assert await token.is_cancelled_async() is True
+        # The sync is_cancelled() returns True first, so async callback is never reached
+        assert call_count == 0

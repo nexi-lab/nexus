@@ -39,6 +39,8 @@ import yaml
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -56,7 +58,7 @@ from nexus.connectors.calendar.schemas import (
     UpdateEventSchema,
 )
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 # Suppress annoying googleapiclient discovery cache warnings
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
@@ -69,9 +71,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@register_connector(
+    "gcalendar_connector",
+    description="Google Calendar with OAuth 2.0 authentication (full CRUD)",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+    service_name="google-calendar",
+)
 class GoogleCalendarConnectorBackend(
     Backend,
     CacheConnectorMixin,
+    OAuthConnectorMixin,
     SkillDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
@@ -181,6 +191,32 @@ send_notifications: true
     # Enable metadata-based listing for fast database queries
     use_metadata_listing = True
 
+    # Connection arguments for registry-based instantiation
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name from config",
+            required=False,
+            default="gcalendar",
+        ),
+        "max_events_per_calendar": ConnectionArg(
+            type=ArgType.INTEGER,
+            description="Maximum number of events to fetch per calendar",
+            required=False,
+            default=250,
+        ),
+    }
+
     def __init__(
         self,
         token_manager_db: str,
@@ -206,22 +242,7 @@ send_notifications: true
             For single-user scenarios (demos), set user_email explicitly.
             For multi-user production, leave user_email=None to auto-detect from context.
         """
-        from nexus.server.auth.token_manager import TokenManager
-
-        # Store original token_manager_db for config updates
-        self.token_manager_db = token_manager_db
-
-        # Resolve database URL using base class method
-        resolved_db = self.resolve_database_url(token_manager_db)
-
-        # Support both file paths and database URLs
-        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
-        else:
-            self.token_manager = TokenManager(db_path=resolved_db)
-
-        self.user_email = user_email
-        self.provider = provider
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
         self.session_factory = session_factory
         self.max_events_per_calendar = max_events_per_calendar
         self.metadata_store = metadata_store
@@ -309,7 +330,7 @@ send_notifications: true
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id
-                else "default"
+                else "root"
             )
 
             access_token = run_sync(
@@ -411,6 +432,7 @@ send_notifications: true
     # Backend Interface - Read Operations
     # =========================================================================
 
+    @timed_response
     def read_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
@@ -489,6 +511,7 @@ send_notifications: true
     # Backend Interface - Write Operations (CUD)
     # =========================================================================
 
+    @timed_response
     def write_content(
         self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
@@ -668,6 +691,7 @@ send_notifications: true
                 self.clear_checkpoint(checkpoint.checkpoint_id)
             raise BackendError(f"Failed to update event: {e}", backend="gcalendar") from e
 
+    @timed_response
     def delete_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]:
@@ -806,6 +830,7 @@ send_notifications: true
     # Backend Interface - Directory Operations
     # =========================================================================
 
+    @timed_response
     def content_exists(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
@@ -824,6 +849,7 @@ send_notifications: true
                 data=False, backend_name="gcalendar", path=context.backend_path
             )
 
+    @timed_response
     def get_content_size(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
@@ -841,6 +867,7 @@ send_notifications: true
         response = self.read_content(content_hash, context)
         return HandlerResponse.ok(data=len(response.unwrap()), backend_name="gcalendar")
 
+    @timed_response
     def get_ref_count(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
@@ -869,6 +896,7 @@ send_notifications: true
         except Exception:
             return None
 
+    @timed_response
     def is_directory(
         self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
@@ -963,6 +991,7 @@ send_notifications: true
                 backend="gcalendar",
             ) from e
 
+    @timed_response
     def mkdir(
         self,
         path: str,
@@ -977,6 +1006,7 @@ send_notifications: true
             backend="gcalendar",
         )
 
+    @timed_response
     def rmdir(
         self,
         path: str,

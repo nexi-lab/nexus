@@ -21,7 +21,6 @@ EXPECTED_MODELS = [
     "ContentChunkModel",
     "WorkspaceSnapshotModel",
     "DocumentChunkModel",
-    "ContentCacheModel",
     # Permissions
     "ReBACTupleModel",
     "ReBACNamespaceModel",
@@ -71,6 +70,8 @@ EXPECTED_MODELS = [
     # Agents
     "AgentRecordModel",
     "AgentEventModel",
+    # Delegation (Issue #1271)
+    "DelegationRecordModel",
     # ACE
     "TrajectoryModel",
     "TrajectoryFeedbackModel",
@@ -94,6 +95,27 @@ EXPECTED_MODELS = [
     "SpendingApprovalModel",
     # IPC (Issue #1469)
     "IPCMessageModel",
+    # OAuth Token Rotation (Issue #997)
+    "RefreshTokenHistoryModel",
+    # Secrets Audit (Issue #997)
+    "SecretsAuditLogModel",
+    # Scheduler (Issue #1469)
+    "ScheduledTaskModel",
+    # Sync
+    "PendingOperationModel",
+    # Identity
+    "AgentKeyModel",
+    # Permissions
+    "AdminBypassAuditModel",
+    # A2A
+    "A2ATaskModel",
+    # Dead Letter Queue (Issue #1138)
+    "DeadLetterModel",
+    # Transactional Snapshots (Issue #1752)
+    "TransactionSnapshotModel",
+    "SnapshotEntryModel",
+    # Context Branching (Issue #1315)
+    "ContextBranchModel",
 ]
 
 

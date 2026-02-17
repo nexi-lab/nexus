@@ -6,7 +6,7 @@ never on a concrete implementation.
 
 Implementations:
 - ``VFSStorageDriver`` — delegates to VFSOperations (filesystem-backed)
-- ``PostgreSQLStorageDriver`` — stores messages in PostgreSQL via RecordStoreABC
+- ``RecordStoreStorageDriver`` — stores messages via RecordStoreABC (dialect-neutral)
 - ``InMemoryStorageDriver`` — in-memory fake for testing
 """
 

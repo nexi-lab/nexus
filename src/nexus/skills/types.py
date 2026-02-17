@@ -8,7 +8,28 @@ for independent evolution of internal and external representations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class SkillOperationContext(Protocol):
+    """Narrow protocol for operation context used by skills module.
+
+    This decouples the skills brick from nexus.core.permissions.OperationContext.
+    Any object satisfying this interface can be used as a context.
+    """
+
+    @property
+    def user_id(self) -> str | None: ...
+
+    @property
+    def zone_id(self) -> str | None: ...
+
+    @property
+    def agent_id(self) -> str | None: ...
+
+    @property
+    def is_admin(self) -> bool: ...
 
 
 @dataclass

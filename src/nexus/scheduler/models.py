@@ -3,7 +3,7 @@
 Uses frozen dataclasses for immutability (SDK-side models).
 Pydantic models for API request/response are in the router module.
 
-Related: Issue #1212
+Related: Issue #1212, #1274
 """
 
 from __future__ import annotations
@@ -13,7 +13,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from nexus.scheduler.constants import TASK_STATUS_QUEUED, PriorityTier
+from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.scheduler.constants import (
+    DEFAULT_EST_SERVICE_TIME_SECS,
+    TASK_STATUS_QUEUED,
+    PriorityClass,
+    PriorityTier,
+    RequestState,
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +39,10 @@ class TaskSubmission:
     deadline: datetime | None = None
     boost_amount: Decimal = Decimal("0")
     idempotency_key: str | None = None
+    # Astraea extensions (Issue #1274)
+    request_state: RequestState = RequestState.PENDING
+    priority_class: PriorityClass | None = None  # None = auto-classify
+    estimated_service_time: float = DEFAULT_EST_SERVICE_TIME_SECS
 
 
 @dataclass(frozen=True)
@@ -58,5 +69,10 @@ class ScheduledTask:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_message: str | None = None
-    zone_id: str = "default"
+    zone_id: str = ROOT_ZONE_ID
     idempotency_key: str | None = None
+    # Astraea extensions (Issue #1274)
+    request_state: str = "pending"
+    priority_class: str = "batch"
+    executor_state: str = "UNKNOWN"
+    estimated_service_time: float = DEFAULT_EST_SERVICE_TIME_SECS

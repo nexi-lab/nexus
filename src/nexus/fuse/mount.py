@@ -172,14 +172,11 @@ class NexusFUSE:
             )
 
             # A2-B: Try to obtain NamespaceManager for direct visibility checks
-            try:
-                enforcer = getattr(self.nexus_fs, "_permission_enforcer", None)
-                if enforcer is not None:
-                    namespace_manager = getattr(enforcer, "namespace_manager", None)
-            except Exception:
-                pass  # Not available — fallback to is_directory() proxy
+            namespace_manager = getattr(self.nexus_fs, "namespace_manager", None)
 
         # Create FUSE operations
+        event_bus = getattr(self.nexus_fs, "_event_bus", None)
+        subscription_manager = getattr(self.nexus_fs, "subscription_manager", None)
         operations = NexusFUSEOperations(
             self.nexus_fs,
             self.mode,
@@ -187,6 +184,8 @@ class NexusFUSE:
             context=context,
             namespace_manager=namespace_manager,
             use_rust=self._use_rust,
+            event_bus=event_bus,
+            subscription_manager=subscription_manager,
         )
 
         # Issue #1115: Set up event loop for async event dispatch

@@ -21,21 +21,26 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import StaticPool
 
 from nexus.services.permissions.rebac_manager_enhanced import (
     ConsistencyLevel,
-    ConsistencyMode,
     ConsistencyRequirement,
     EnhancedReBACManager,
     WriteResult,
 )
+from nexus.services.permissions.types import ConsistencyMode
 from nexus.storage.models import Base
 
 
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database."""
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     # Also create rebac_group_closure table for Leopard
     with engine.begin() as conn:
@@ -598,34 +603,38 @@ class TestBulkCheck:
 
     def test_bulk_check_returns_dict_of_results(self, manager):
         """rebac_check_bulk returns dict of results."""
-        # Setup permissions
+        # Setup permissions — use "direct_viewer" which is a valid relation in
+        # the default file namespace schema, ensuring both the Rust and Python
+        # bulk-check paths resolve it identically (the old "viewer-of" relation
+        # was not in the namespace config, so the Rust graph checker could not
+        # resolve it while the Python fallback only did a direct-match).
         manager.rebac_write(
             subject=("user", "alice"),
-            relation="viewer-of",
+            relation="direct_viewer",
             object=("file", "/bulk1.txt"),
             zone_id="org_123",
         )
         manager.rebac_write(
             subject=("user", "alice"),
-            relation="viewer-of",
+            relation="direct_viewer",
             object=("file", "/bulk2.txt"),
             zone_id="org_123",
         )
 
         # Bulk check
         checks = [
-            (("user", "alice"), "viewer-of", ("file", "/bulk1.txt")),
-            (("user", "alice"), "viewer-of", ("file", "/bulk2.txt")),
-            (("user", "alice"), "viewer-of", ("file", "/bulk3.txt")),  # No permission
+            (("user", "alice"), "direct_viewer", ("file", "/bulk1.txt")),
+            (("user", "alice"), "direct_viewer", ("file", "/bulk2.txt")),
+            (("user", "alice"), "direct_viewer", ("file", "/bulk3.txt")),  # No permission
         ]
 
         results = manager.rebac_check_bulk(checks, zone_id="org_123")
 
         assert isinstance(results, dict)
         assert len(results) == 3
-        assert results[(("user", "alice"), "viewer-of", ("file", "/bulk1.txt"))] is True
-        assert results[(("user", "alice"), "viewer-of", ("file", "/bulk2.txt"))] is True
-        assert results[(("user", "alice"), "viewer-of", ("file", "/bulk3.txt"))] is False
+        assert results[(("user", "alice"), "direct_viewer", ("file", "/bulk1.txt"))] is True
+        assert results[(("user", "alice"), "direct_viewer", ("file", "/bulk2.txt"))] is True
+        assert results[(("user", "alice"), "direct_viewer", ("file", "/bulk3.txt"))] is False
 
     def test_bulk_check_empty_list(self, manager):
         """rebac_check_bulk with empty list."""
@@ -730,3 +739,90 @@ class TestCacheBehavior:
             zone_id="org_123",
         )
         assert result2 is False
+
+
+class TestConsistencyModuleIntegration:
+    """Integration tests verifying delegation to consistency module (Issue #1459 Phase 9)."""
+
+    def test_write_returns_monotonic_consistency_tokens(self, manager):
+        """Multiple writes produce monotonically increasing version tokens."""
+        tokens = []
+        for i in range(3):
+            result = manager.rebac_write(
+                subject=("user", f"user_{i}"),
+                relation="viewer-of",
+                object=("file", f"/token_test_{i}.txt"),
+            )
+            tokens.append(result.consistency_token)
+
+        # All tokens must be non-None strings
+        assert all(isinstance(t, str) for t in tokens)
+        assert all(t.startswith("v") for t in tokens)
+
+        # Extract version numbers and verify monotonic ordering
+        versions = [int(t[1:]) for t in tokens]
+        assert versions == sorted(versions)
+        assert versions[-1] > versions[0]
+
+    def test_zone_validation_delegates_to_zone_manager(self, engine):
+        """Zone-aware manager delegates zone validation to ZoneManager."""
+        mgr = EnhancedReBACManager(
+            engine=engine,
+            cache_ttl_seconds=300,
+            max_depth=50,
+            enforce_zone_isolation=True,
+            enable_graph_limits=True,
+            enable_leopard=False,
+            enable_tiger_cache=False,
+        )
+        try:
+            # Same-zone write should succeed
+            result = mgr.rebac_write(
+                subject=("user", "alice"),
+                relation="viewer-of",
+                object=("file", "/doc.txt"),
+                zone_id="org_a",
+                subject_zone_id="org_a",
+                object_zone_id="org_a",
+            )
+            assert isinstance(result, WriteResult)
+
+            # Cross-zone write with non-shared relation should fail
+            from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
+
+            with pytest.raises(ZoneIsolationError):
+                mgr.rebac_write(
+                    subject=("user", "bob"),
+                    relation="editor-of",
+                    object=("file", "/secret.txt"),
+                    zone_id="org_a",
+                    subject_zone_id="org_a",
+                    object_zone_id="org_b",
+                )
+        finally:
+            mgr.close()
+
+    def test_cross_zone_shared_viewer_write_succeeds(self, engine):
+        """Cross-zone shared-viewer writes are allowed when zone isolation is enforced."""
+        mgr = EnhancedReBACManager(
+            engine=engine,
+            cache_ttl_seconds=300,
+            max_depth=50,
+            enforce_zone_isolation=True,
+            enable_graph_limits=True,
+            enable_leopard=False,
+            enable_tiger_cache=False,
+        )
+        try:
+            result = mgr.rebac_write(
+                subject=("user", "alice"),
+                relation="shared-viewer",
+                object=("file", "/shared.txt"),
+                zone_id="org_a",
+                subject_zone_id="org_a",
+                object_zone_id="org_b",
+            )
+            assert isinstance(result, WriteResult)
+            assert result.tuple_id is not None
+        finally:
+            mgr.close()

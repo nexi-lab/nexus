@@ -9,23 +9,23 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from nexus.auth.providers.database_local import DatabaseLocalAuth
+from nexus.auth.zone_helpers import (
+    create_zone,
+    normalize_to_slug,
+    suggest_zone_id,
+    validate_zone_id,
+)
 from nexus.server.auth.auth_routes import (
     get_auth_provider,
     get_authenticated_user,
     get_nexus_instance,
 )
-from nexus.server.auth.database_local import DatabaseLocalAuth
 from nexus.server.auth.user_helpers import (
     add_user_to_zone,
     get_user_by_id,
     get_user_zones,
     user_belongs_to_zone,
-)
-from nexus.server.auth.zone_helpers import (
-    create_zone,
-    normalize_to_slug,
-    suggest_zone_id,
-    validate_zone_id,
 )
 from nexus.storage.models import ZoneModel
 
@@ -133,7 +133,9 @@ async def create_zone_endpoint(
                     )
                     logger.info(f"Added user {user_id} as owner of zone {zone_id}")
                 except Exception as e:
-                    logger.error(f"Failed to add user {user_id} as zone owner: {e}")
+                    logger.error(
+                        "Failed to add user %s as zone owner: %s", user_id, e, exc_info=True
+                    )
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail=f"Failed to assign creator as zone owner: {e}",
@@ -193,20 +195,11 @@ async def get_zone(
         is_global_admin = user and user.is_global_admin == 1
 
         # Check zone access (global admins can access any zone)
-        if not is_global_admin:
-            nx = get_nexus_instance()
-            if nx and hasattr(nx, "_rebac_manager"):
-                if not user_belongs_to_zone(nx._rebac_manager, user_id, zone_id):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Access denied: you are not a member of zone '{zone_id}'",
-                    )
-            else:
-                # If ReBAC not available, deny access for non-admins
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: zone membership verification unavailable",
-                )
+        if not is_global_admin and not user_belongs_to_zone(session, user_id, zone_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: you are not a member of zone '{zone_id}'",
+            )
 
         zone = session.get(ZoneModel, zone_id)
         if not zone:
@@ -273,11 +266,7 @@ async def list_zones(
             total = len(session.scalars(total_stmt).all())
         else:
             # Regular users only see zones they belong to
-            nx = get_nexus_instance()
-            if nx and hasattr(nx, "_rebac_manager"):
-                user_zone_ids = get_user_zones(nx._rebac_manager, user_id)
-            else:
-                user_zone_ids = []
+            user_zone_ids = get_user_zones(session, user_id)
 
             if not user_zone_ids:
                 return ZoneListResponse(zones=[], total=0)

@@ -8,7 +8,7 @@ Related: Issue #1212
 from __future__ import annotations
 
 from decimal import Decimal
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 
 
 class PriorityTier(IntEnum):
@@ -76,3 +76,51 @@ VALID_TASK_STATUSES = frozenset(
         TASK_STATUS_CANCELLED,
     }
 )
+
+
+# =============================================================================
+# Astraea-Style Enums (Issue #1274)
+# =============================================================================
+
+
+class RequestState(StrEnum):
+    """Request execution state for Astraea-style classification."""
+
+    IO_WAIT = "io_wait"
+    COMPUTE = "compute"
+    TOOL_CALL = "tool_call"
+    IDLE = "idle"
+    PENDING = "pending"
+
+
+class PriorityClass(StrEnum):
+    """Scheduling class derived from tier + runtime signals."""
+
+    INTERACTIVE = "interactive"
+    BATCH = "batch"
+    BACKGROUND = "background"
+
+
+# Maps PriorityTier → PriorityClass (base mapping before runtime adjustments)
+TIER_TO_CLASS: dict[PriorityTier, PriorityClass] = {
+    PriorityTier.CRITICAL: PriorityClass.INTERACTIVE,
+    PriorityTier.HIGH: PriorityClass.INTERACTIVE,
+    PriorityTier.NORMAL: PriorityClass.BATCH,
+    PriorityTier.LOW: PriorityClass.BACKGROUND,
+    PriorityTier.BEST_EFFORT: PriorityClass.BACKGROUND,
+}
+
+# =============================================================================
+# HRRN Constants
+# =============================================================================
+
+DEFAULT_EST_SERVICE_TIME_SECS: float = 30.0
+STARVATION_PROMOTION_THRESHOLD_SECS: float = 900.0
+
+# =============================================================================
+# Hook Phase Constants
+# =============================================================================
+
+HOOK_PRE_CLASSIFY = "pre_classify"
+HOOK_PRE_DEQUEUE = "pre_dequeue"
+HOOK_PRE_ADMIT = "pre_admit"

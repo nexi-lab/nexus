@@ -40,7 +40,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
             variables={"name": "world"},
         )
@@ -54,7 +54,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.FILE_WRITE,
             file_path="/docs/readme.md",
         )
@@ -69,7 +69,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.FILE_WRITE,
             file_path="/docs/readme.md",
             file_metadata={"author": "test_user", "size": 1024},
@@ -84,7 +84,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
             variables={},
         )
@@ -99,7 +99,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -116,6 +116,23 @@ class TestTagAction:
         action = TagAction(name="add_tag", config={"tags": ["important", "reviewed"]})
         assert action.name == "add_tag"
         assert action.config["tags"] == ["important", "reviewed"]
+
+    @pytest.mark.asyncio
+    async def test_tag_action_no_services(self):
+        """Test tag action without services returns graceful error."""
+        action = TagAction(name="add_tag", config={"tags": ["important"]})
+        context = WorkflowContext(
+            workflow_id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            zone_id="test-zone",
+            trigger_type=TriggerType.FILE_WRITE,
+            file_path="/docs/readme.md",
+            services=None,
+        )
+
+        result = await action.execute(context)
+        assert result.success is False
+        assert "not injected" in result.error or "not available" in result.error
 
 
 class TestMoveAction:
@@ -139,7 +156,7 @@ class TestMoveAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.FILE_WRITE,
             file_path="/docs/readme.md",
         )
@@ -149,6 +166,25 @@ class TestMoveAction:
 
         assert source == "/docs/readme.md"
         assert destination == "/archive/readme.md"
+
+    @pytest.mark.asyncio
+    async def test_move_action_no_services(self):
+        """Test move action without services returns graceful error."""
+        action = MoveAction(
+            name="move_file", config={"source": "/old/path.txt", "destination": "/new/path.txt"}
+        )
+        context = WorkflowContext(
+            workflow_id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            zone_id="test-zone",
+            trigger_type=TriggerType.FILE_WRITE,
+            file_path="/old/path.txt",
+            services=None,
+        )
+
+        result = await action.execute(context)
+        assert result.success is False
+        assert "not injected" in result.error or "not available" in result.error
 
 
 class TestMetadataAction:
@@ -161,6 +197,23 @@ class TestMetadataAction:
         )
         assert action.name == "set_metadata"
         assert action.config["metadata"] == {"status": "processed", "version": "1.0"}
+
+    @pytest.mark.asyncio
+    async def test_metadata_action_no_services(self):
+        """Test metadata action without services returns graceful error."""
+        action = MetadataAction(name="set_metadata", config={"metadata": {"status": "done"}})
+        context = WorkflowContext(
+            workflow_id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            zone_id="test-zone",
+            trigger_type=TriggerType.FILE_WRITE,
+            file_path="/docs/readme.md",
+            services=None,
+        )
+
+        result = await action.execute(context)
+        assert result.success is False
+        assert "not injected" in result.error or "not available" in result.error
 
 
 class TestPythonAction:
@@ -181,7 +234,7 @@ class TestPythonAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
             variables={"x": 10, "y": 20},
         )
@@ -198,7 +251,7 @@ class TestPythonAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -223,7 +276,7 @@ class TestBashAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -238,7 +291,7 @@ class TestBashAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -252,7 +305,7 @@ class TestBashAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
             variables={"greeting": "hello"},
         )

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import os
 from typing import Any
 
 from cachetools import TTLCache
@@ -48,6 +49,22 @@ def _set_cached_auth(token: str, result: dict[str, Any]) -> None:
 def _reset_auth_cache() -> None:
     """Reset the auth cache. Used by tests for isolation."""
     _AUTH_CACHE.clear()
+
+
+# NEXUS_STATIC_ADMINS: comma-separated subject IDs that get admin privileges
+# in open access mode (no api_key, no auth_provider). Parsed once at import.
+# WARNING: In open access mode, identity comes from unauthenticated headers.
+# This should ONLY be used in development/testing, never in production.
+_STATIC_ADMINS_CSV = os.environ.get("NEXUS_STATIC_ADMINS", "")
+_STATIC_ADMINS: frozenset[str] = frozenset(
+    a.strip() for a in _STATIC_ADMINS_CSV.split(",") if a.strip()
+)
+if _STATIC_ADMINS:
+    logger.warning(
+        "[AUTH] NEXUS_STATIC_ADMINS configured: %s. "
+        "Grants admin privileges in open access mode. DO NOT use in production.",
+        _STATIC_ADMINS,
+    )
 
 
 async def resolve_auth(
@@ -99,9 +116,11 @@ async def resolve_auth(
                 subject_type = "user"
                 subject_id = parsed.user
 
+        is_admin = subject_id in _STATIC_ADMINS if subject_id else False
+
         return {
             "authenticated": True,
-            "is_admin": False,
+            "is_admin": is_admin,
             "subject_type": subject_type,
             "subject_id": subject_id,
             "zone_id": zone_id,
@@ -231,7 +250,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"
-    zone_id = auth_result.get("zone_id") or "default"
+    zone_id = auth_result.get("zone_id") or "root"
     is_admin = auth_result.get("is_admin", False)
     agent_id = auth_result.get("x_agent_id")
     user_id = subject_id
@@ -239,8 +258,6 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     # Handle agent authentication
     if subject_type == "agent":
         agent_id = subject_id
-        metadata = auth_result.get("metadata", {})
-        user_id = metadata.get("legacy_user_id", subject_id)
 
     # Handle X-Agent-ID header
     if agent_id and subject_type == "user":
@@ -250,7 +267,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     # Admin capabilities
     admin_capabilities = set()
     if is_admin:
-        from nexus.services.permissions.permissions_enhanced import AdminCapability
+        from nexus.rebac.permissions_enhanced import AdminCapability
 
         admin_capabilities = {
             AdminCapability.READ_ALL,

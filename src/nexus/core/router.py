@@ -4,8 +4,10 @@ import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from nexus.core.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
+
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
+    from nexus.core.protocols.connector import ConnectorProtocol
 
 
 @dataclass
@@ -13,7 +15,7 @@ class MountConfig:
     """Mount configuration for path routing."""
 
     mount_point: str  # Virtual path prefix, e.g., "/workspace"
-    backend: "Backend"  # Backend instance
+    backend: "ConnectorProtocol"  # Backend instance
     priority: int = 0  # For tie-breaking (higher = preferred)
     readonly: bool = False
     conflict_strategy: str | None = None  # Per-mount override (Issue #1130)
@@ -23,7 +25,7 @@ class MountConfig:
 class RouteResult:
     """Result of path routing."""
 
-    backend: "Backend"
+    backend: "ConnectorProtocol"
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
@@ -35,7 +37,6 @@ class PathInfo:
 
     namespace: str  # e.g., "workspace", "shared", "external", "system", "archives"
     zone_id: str | None  # Zone identifier (if applicable)
-    agent_id: str | None  # DEPRECATED: No longer used for workspace (kept for backward compat)
     relative_path: str  # Remaining path after namespace/zone
 
 
@@ -47,24 +48,6 @@ class NamespaceConfig:
     readonly: bool = False  # Whether namespace is read-only
     admin_only: bool = False  # Whether namespace requires admin access
     requires_zone: bool = True  # Whether namespace requires zone isolation
-
-
-class PathNotMountedError(Exception):
-    """Raised when no mount exists for path."""
-
-    pass
-
-
-class InvalidPathError(Exception):
-    """Raised when path is invalid or contains security issues."""
-
-    pass
-
-
-class AccessDeniedError(Exception):
-    """Raised when access to path is denied."""
-
-    pass
 
 
 class PathRouter:
@@ -94,7 +77,7 @@ class PathRouter:
     def add_mount(
         self,
         mount_point: str,
-        backend: "Backend",
+        backend: "ConnectorProtocol",
         priority: int = 0,
         readonly: bool = False,
         replace: bool = False,
@@ -131,7 +114,6 @@ class PathRouter:
         self,
         virtual_path: str,
         zone_id: str | None = None,
-        agent_id: str | None = None,
         is_admin: bool = False,
         check_write: bool = False,
     ) -> RouteResult:
@@ -154,7 +136,6 @@ class PathRouter:
         Args:
             virtual_path: Virtual path to route
             zone_id: Current zone identifier (for access control)
-            agent_id: DEPRECATED - No longer used (kept for backward compatibility)
             is_admin: Whether requester has admin privileges
             check_write: Whether to check write permissions
 
@@ -174,12 +155,12 @@ class PathRouter:
         path_info = self.parse_path(virtual_path, _zone_id=zone_id)
 
         # Check access control
-        self._check_access(path_info, zone_id, agent_id, is_admin, check_write)
+        self._check_access(path_info, zone_id, is_admin, check_write)
 
         # Find longest matching prefix
         matched_mount = self._match_longest_prefix(virtual_path)
         if not matched_mount:
-            raise PathNotMountedError(f"No mount found for path: {virtual_path}")
+            raise PathNotMountedError(virtual_path)
 
         # Strip prefix
         backend_path = self._strip_mount_prefix(virtual_path, matched_mount.mount_point)
@@ -201,7 +182,6 @@ class PathRouter:
         self,
         path_info: PathInfo,
         zone_id: str | None,
-        _agent_id: str | None,
         is_admin: bool,
         check_write: bool,
     ) -> None:
@@ -211,8 +191,6 @@ class PathRouter:
         Args:
             path_info: Parsed path information
             zone_id: Current zone identifier
-            _agent_id: Agent identifier (unused)
-            agent_id: Current agent identifier
             is_admin: Whether requester has admin privileges
             check_write: Whether to check write permissions
 
@@ -367,15 +345,15 @@ class PathRouter:
         """
         # Ensure absolute path
         if not path.startswith("/"):
-            raise InvalidPathError(f"Path must be absolute: {path}")
+            raise InvalidPathError(path, "Path must be absolute")
 
         # Check for null bytes
         if "\0" in path:
-            raise InvalidPathError("Path contains null byte")
+            raise InvalidPathError(path, "Path contains null byte")
 
         # Check for control characters
         if any(ord(c) < 32 for c in path if c not in ("\t", "\n")):
-            raise InvalidPathError("Path contains control characters")
+            raise InvalidPathError(path, "Path contains control characters")
 
         # Normalize first - this resolves . and .. segments
         # SECURITY: Must normalize BEFORE checking for path traversal
@@ -385,7 +363,7 @@ class PathRouter:
         # After normalization, check for path traversal
         # If normalized path doesn't start with /, it escaped root
         if not normalized.startswith("/"):
-            raise InvalidPathError(f"Path traversal detected: {path}")
+            raise InvalidPathError(path, "Path traversal detected")
 
         # Additional security check: detect if path traversal changed the namespace
         # Extract first path component (namespace) before and after normalization
@@ -402,7 +380,7 @@ class PathRouter:
                 # If namespace changed or normalized to empty, path traversal occurred
                 if orig_namespace != norm_namespace or norm_namespace == "":
                     raise InvalidPathError(
-                        f"Path traversal detected: {path} (attempted to escape namespace)"
+                        path, "Path traversal detected (attempted to escape namespace)"
                     )
 
         return normalized
@@ -435,7 +413,7 @@ class PathRouter:
         parts = path.lstrip("/").split("/")
 
         if not parts or parts[0] == "":
-            raise InvalidPathError("Cannot parse root path")
+            raise InvalidPathError(path, "Cannot parse root path")
 
         namespace = parts[0]
 
@@ -446,7 +424,6 @@ class PathRouter:
             return PathInfo(
                 namespace=namespace,
                 zone_id=None,
-                agent_id=None,
                 relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
             )
 
@@ -461,7 +438,6 @@ class PathRouter:
                 return PathInfo(
                     namespace=namespace,
                     zone_id=parts[1],
-                    agent_id=None,
                     relative_path="/".join(parts[2:]) if len(parts) > 2 else "",
                 )
             else:
@@ -469,7 +445,6 @@ class PathRouter:
                 return PathInfo(
                     namespace=namespace,
                     zone_id=None,
-                    agent_id=None,
                     relative_path="",
                 )
 
@@ -479,7 +454,6 @@ class PathRouter:
             return PathInfo(
                 namespace=namespace,
                 zone_id=None,
-                agent_id=None,
                 relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
             )
 
@@ -492,7 +466,6 @@ class PathRouter:
                     return PathInfo(
                         namespace=namespace,
                         zone_id=parts[1],
-                        agent_id=None,
                         relative_path="/".join(parts[2:]) if len(parts) > 2 else "",
                     )
                 else:
@@ -500,7 +473,6 @@ class PathRouter:
                     return PathInfo(
                         namespace=namespace,
                         zone_id=None,
-                        agent_id=None,
                         relative_path="",
                     )
             else:
@@ -508,7 +480,6 @@ class PathRouter:
                 return PathInfo(
                     namespace=namespace,
                     zone_id=None,
-                    agent_id=None,
                     relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
                 )
 
@@ -623,7 +594,7 @@ class PathRouter:
         """
         return self._mounts.copy()
 
-    def get_backend_by_name(self, name: str) -> "Backend | None":
+    def get_backend_by_name(self, name: str) -> "ConnectorProtocol | None":
         """
         Look up backend by name.
 

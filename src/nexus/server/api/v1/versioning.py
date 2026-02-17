@@ -106,7 +106,7 @@ def build_v1_registry() -> RouterRegistry:
     try:
         from nexus.server.api.v1.routers.events import router as events_router
 
-        registry.add(RouterEntry(router=events_router, name="events", endpoint_count=3))
+        registry.add(RouterEntry(router=events_router, name="events", endpoint_count=4))
     except ImportError as e:
         logger.warning("Failed to import events router: %s", e)
 

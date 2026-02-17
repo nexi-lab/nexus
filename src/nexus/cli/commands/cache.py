@@ -170,14 +170,15 @@ def stats(
         cache_stats: dict[str, Any] = {}
 
         # Metadata cache stats
-        if hasattr(nx, "metadata") and hasattr(nx.metadata, "_cache"):
-            cache = nx.metadata._cache
-            if cache:
-                cache_stats["metadata_cache"] = {
-                    "path_cache_size": len(getattr(cache, "_path_cache", {})),
-                    "list_cache_size": len(getattr(cache, "_list_cache", {})),
-                    "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
-                }
+        cache = getattr(nx, "metadata_cache", None)
+        if cache is None and hasattr(nx, "metadata"):
+            cache = getattr(nx.metadata, "_cache", None)
+        if cache:
+            cache_stats["metadata_cache"] = {
+                "path_cache_size": len(getattr(cache, "_path_cache", {})),
+                "list_cache_size": len(getattr(cache, "_list_cache", {})),
+                "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
+            }
 
         # Content cache stats
         if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
@@ -288,16 +289,17 @@ def clear(
         cleared: list[str] = []
 
         # Clear metadata cache
-        if (metadata or clear_all) and hasattr(nx, "metadata") and hasattr(nx.metadata, "_cache"):
-            cache = nx.metadata._cache
-            if cache:
-                if hasattr(cache, "_path_cache"):
-                    cache._path_cache.clear()
-                if hasattr(cache, "_list_cache"):
-                    cache._list_cache.clear()
-                if hasattr(cache, "_exists_cache"):
-                    cache._exists_cache.clear()
-                cleared.append("metadata")
+        cache = getattr(nx, "metadata_cache", None)
+        if cache is None and hasattr(nx, "metadata"):
+            cache = getattr(nx.metadata, "_cache", None)
+        if (metadata or clear_all) and cache:
+            if hasattr(cache, "_path_cache"):
+                cache._path_cache.clear()
+            if hasattr(cache, "_list_cache"):
+                cache._list_cache.clear()
+            if hasattr(cache, "_exists_cache"):
+                cache._exists_cache.clear()
+            cleared.append("metadata")
 
         # Clear content cache
         if (

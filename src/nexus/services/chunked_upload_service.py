@@ -35,9 +35,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from nexus.backends.backend import Backend
     from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
     from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class ChunkedUploadService:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-        backend: Backend,
+        backend: ConnectorProtocol,
         metadata_store: FileMetadataProtocol | None = None,
         config: ChunkedUploadConfig | None = None,
     ):
@@ -118,7 +118,7 @@ class ChunkedUploadService:
         upload_length: int,
         *,
         metadata: dict[str, str] | None = None,
-        zone_id: str = "default",
+        zone_id: str = "root",
         user_id: str = "anonymous",
         checksum_algorithm: str | None = None,
     ) -> UploadSession:
@@ -701,10 +701,10 @@ class ChunkedUploadService:
             content_hash=session.content_hash,
         )
 
-        import contextlib
-
-        with contextlib.suppress(Exception):
+        try:
             await self._update_session(expired)
+        except Exception as e:
+            logger.debug("Failed to update expired session: %s", e)
 
         self._parts_registry.pop(session.upload_id, None)
         self._session_locks.pop(session.upload_id, None)

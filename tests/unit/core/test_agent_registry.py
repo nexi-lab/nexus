@@ -20,8 +20,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.agent_record import AgentState
-from nexus.core.agent_registry import (
+from nexus.services.agents.agent_record import AgentState
+from nexus.services.agents.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,
     StaleAgentError,
@@ -67,10 +67,10 @@ class TestRegistration:
 
     def test_register_new_agent(self, registry):
         """Registering a new agent returns AgentRecord with UNKNOWN state and generation 0."""
-        record = registry.register("agent-1", "alice", zone_id="default", name="Test Agent")
+        record = registry.register("agent-1", "alice", zone_id="root", name="Test Agent")
         assert record.agent_id == "agent-1"
         assert record.owner_id == "alice"
-        assert record.zone_id == "default"
+        assert record.zone_id == "root"
         assert record.name == "Test Agent"
         assert record.state is AgentState.UNKNOWN
         assert record.generation == 0
@@ -271,7 +271,7 @@ class TestHeartbeat:
         registry.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         registry.heartbeat("agent-1")
         # Buffer should contain the agent
-        assert "agent-1" in registry._heartbeat_buffer
+        assert "agent-1" in registry._heartbeat_buffer._buffer
 
     def test_flush_heartbeats(self, registry):
         """flush_heartbeats writes buffer to DB and clears it."""
@@ -280,7 +280,7 @@ class TestHeartbeat:
         registry.heartbeat("agent-1")
         flushed = registry.flush_heartbeats()
         assert flushed >= 1
-        assert len(registry._heartbeat_buffer) == 0
+        assert registry._heartbeat_buffer.stats()["buffer_size"] == 0
 
     def test_heartbeat_persists_after_flush(self, registry):
         """After flush, get() returns agent with updated last_heartbeat."""
@@ -299,7 +299,7 @@ class TestHeartbeat:
         reg.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         reg.heartbeat("agent-1")
         # Buffer should NOT have been auto-flushed
-        assert "agent-1" in reg._heartbeat_buffer
+        assert "agent-1" in reg._heartbeat_buffer._buffer
 
     def test_auto_flush_on_interval(self, session_factory):
         """Heartbeats auto-flush when flush_interval elapses."""
@@ -308,7 +308,7 @@ class TestHeartbeat:
         reg.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         reg.heartbeat("agent-1")
         # With flush_interval=0, should auto-flush immediately
-        assert len(reg._heartbeat_buffer) == 0
+        assert reg._heartbeat_buffer.stats()["buffer_size"] == 0
 
     def test_heartbeat_nonexistent_agent(self, registry):
         """Heartbeat for nonexistent agent raises ValueError."""
@@ -360,7 +360,7 @@ class TestFullLifecycle:
     def test_full_lifecycle(self, registry):
         """UNKNOWN -> CONNECTED (gen 0->1) -> IDLE -> CONNECTED (gen 1->2) -> SUSPENDED -> CONNECTED (gen 2->3)."""
         # Register
-        record = registry.register("agent-1", "alice", zone_id="default")
+        record = registry.register("agent-1", "alice", zone_id="root")
         assert record.state is AgentState.UNKNOWN
         assert record.generation == 0
 
@@ -486,3 +486,247 @@ class TestOwnershipValidation:
     def test_nonexistent_agent_ownership(self, registry):
         """validate_ownership returns False for nonexistent agent."""
         assert registry.validate_ownership("no-such", "alice") is False
+
+
+# ---------------------------------------------------------------------------
+# to_dict() tests (Decision #4A)
+# ---------------------------------------------------------------------------
+
+
+class TestToDict:
+    """Tests for AgentRecord.to_dict() backward-compat method."""
+
+    def test_basic_keys(self, registry):
+        """to_dict() returns all expected keys with correct values."""
+        record = registry.register("agent-1", "alice", zone_id="root", name="Test")
+        d = record.to_dict()
+        assert d["agent_id"] == "agent-1"
+        assert d["user_id"] == "alice"  # alias for owner_id
+        assert d["name"] == "Test"
+        assert d["zone_id"] == "root"
+        assert d["state"] == "UNKNOWN"
+        assert d["generation"] == 0
+        assert isinstance(d["created_at"], str)
+        assert isinstance(d["metadata"], dict)
+
+    def test_metadata_is_mutable_copy(self, registry):
+        """to_dict() metadata is a mutable dict (not MappingProxyType)."""
+        record = registry.register("agent-1", "alice", metadata={"k": "v"})
+        d = record.to_dict()
+        # Should be a regular dict, not a MappingProxyType
+        d["metadata"]["new_key"] = "new_val"
+        # Original record metadata should be unaffected (immutable)
+        assert "new_key" not in record.metadata
+
+    def test_includes_state_and_generation(self, registry):
+        """to_dict() includes state and generation after transitions."""
+        registry.register("agent-1", "alice")
+        record = registry.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
+        d = record.to_dict()
+        assert d["state"] == "CONNECTED"
+        assert d["generation"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Bridge reliability tests (Decision #8A)
+# ---------------------------------------------------------------------------
+
+
+class TestBridgeReliability:
+    """Tests for entity_registry bridge error handling."""
+
+    def test_bridge_success(self, session_factory):
+        """Bridge registers in entity_registry on successful register()."""
+        from nexus.services.permissions.entity_registry import EntityRegistry
+
+        entity_reg = EntityRegistry(session_factory)
+        entity_reg.register_entity("user", "alice")
+        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+
+        reg.register("agent-1", "alice", name="Test")
+        entity = entity_reg.get_entity("agent", "agent-1")
+        assert entity is not None
+        assert entity.parent_id == "alice"
+
+    def test_bridge_failure_raises(self, session_factory):
+        """Bridge failure raises exception instead of swallowing."""
+
+        class FailingRegistry:
+            def register_entity(self, **kwargs):
+                raise RuntimeError("DB connection lost")
+
+        reg = AgentRegistry(session_factory=session_factory, entity_registry=FailingRegistry())
+        with pytest.raises(RuntimeError, match="DB connection lost"):
+            reg.register("agent-1", "alice")
+
+    def test_no_bridge_when_none(self, registry):
+        """No bridge call when entity_registry is None (default)."""
+        # Should succeed without any bridge call
+        record = registry.register("agent-1", "alice")
+        assert record.agent_id == "agent-1"
+
+    def test_unregister_bridge_failure_raises(self, session_factory):
+        """Unregister bridge failure raises exception."""
+        from nexus.services.permissions.entity_registry import EntityRegistry
+
+        entity_reg = EntityRegistry(session_factory)
+        entity_reg.register_entity("user", "alice")
+        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg.register("agent-1", "alice")
+
+        # Now make entity_registry fail on delete
+        class FailingDelete:
+            def delete_entity(self, *args, **kwargs):
+                raise RuntimeError("Delete failed")
+
+        reg._entity_registry = FailingDelete()
+        with pytest.raises(RuntimeError, match="Delete failed"):
+            reg.unregister("agent-1")
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat capacity warning tests (Decision #15A)
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatCapacityWarning:
+    """Tests for heartbeat buffer 80% capacity warning."""
+
+    def test_warns_at_80_percent(self, session_factory, caplog):
+        """Warning is emitted when heartbeat buffer reaches 80% capacity."""
+        import logging
+
+        # Small buffer (max 10) so 80% = 8
+        reg = AgentRegistry(
+            session_factory=session_factory, flush_interval=9999, max_buffer_size=10
+        )
+        # Register 9 agents
+        for i in range(9):
+            reg.register(f"agent-{i}", "alice")
+            reg.transition(f"agent-{i}", AgentState.CONNECTED, expected_generation=0)
+
+        # Heartbeat 7 agents (below threshold)
+        with caplog.at_level(logging.WARNING, logger="nexus.core.heartbeat_buffer"):
+            caplog.clear()
+            for i in range(7):
+                reg.heartbeat(f"agent-{i}")
+            assert "capacity" not in caplog.text
+
+        # Heartbeat the 8th agent (hits 80%)
+        with caplog.at_level(logging.WARNING, logger="nexus.core.heartbeat_buffer"):
+            caplog.clear()
+            reg.heartbeat("agent-7")
+            assert "capacity" in caplog.text
+            assert "80%" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Migrated from test_agents.py: Registration with bridge (Decision #9A)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistrationWithBridge:
+    """Tests for registration with EntityRegistry bridge (migrated from test_agents.py)."""
+
+    def test_entity_registry_creation(self, session_factory):
+        """Registration creates entity in EntityRegistry via bridge."""
+        from nexus.services.permissions.entity_registry import EntityRegistry
+
+        entity_reg = EntityRegistry(session_factory)
+        entity_reg.register_entity("user", "alice")
+        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+
+        reg.register("agent_test", "alice", name="Test Agent")
+
+        entity = entity_reg.get_entity("agent", "agent_test")
+        assert entity is not None
+        assert entity.entity_type == "agent"
+        assert entity.entity_id == "agent_test"
+        assert entity.parent_type == "user"
+        assert entity.parent_id == "alice"
+
+    def test_multi_agent_same_user(self, session_factory):
+        """Multiple agents for same user are all tracked."""
+        from nexus.services.permissions.entity_registry import EntityRegistry
+
+        entity_reg = EntityRegistry(session_factory)
+        entity_reg.register_entity("user", "alice")
+        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+
+        reg.register("agent1", "alice", name="Agent 1")
+        reg.register("agent2", "alice", name="Agent 2")
+
+        children = entity_reg.get_children("user", "alice")
+        assert len(children) == 2
+        agent_ids = {c.entity_id for c in children}
+        assert agent_ids == {"agent1", "agent2"}
+
+    def test_unregister_preserves_others(self, session_factory):
+        """Unregistering one agent doesn't affect others."""
+        from nexus.services.permissions.entity_registry import EntityRegistry
+
+        entity_reg = EntityRegistry(session_factory)
+        entity_reg.register_entity("user", "alice")
+        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+
+        reg.register("agent1", "alice")
+        reg.register("agent2", "alice")
+
+        reg.unregister("agent1")
+
+        # agent2 still exists in both registries
+        assert reg.get("agent2") is not None
+        assert entity_reg.get_entity("agent", "agent2") is not None
+        # agent1 is gone from both
+        assert reg.get("agent1") is None
+        assert entity_reg.get_entity("agent", "agent1") is None
+
+
+# ---------------------------------------------------------------------------
+# Migrated from test_agents.py: Multi-zone isolation
+# ---------------------------------------------------------------------------
+
+
+class TestMultiZoneIsolation:
+    """Tests for cross-zone ownership isolation (migrated from test_agents.py)."""
+
+    def test_cross_zone_ownership(self, registry):
+        """Agents in different zones have independent ownership."""
+        registry.register("agent_acme", "alice", zone_id="acme")
+        registry.register("agent_initech", "bob", zone_id="initech")
+
+        assert registry.validate_ownership("agent_acme", "alice") is True
+        assert registry.validate_ownership("agent_initech", "bob") is True
+        assert registry.validate_ownership("agent_acme", "bob") is False
+        assert registry.validate_ownership("agent_initech", "alice") is False
+
+    def test_list_by_zone_isolation(self, registry):
+        """list_by_zone only returns agents from the specified zone."""
+        registry.register("a1", "alice", zone_id="acme")
+        registry.register("a2", "bob", zone_id="initech")
+
+        acme_agents = registry.list_by_zone("acme")
+        initech_agents = registry.list_by_zone("initech")
+
+        assert len(acme_agents) == 1
+        assert acme_agents[0].agent_id == "a1"
+        assert len(initech_agents) == 1
+        assert initech_agents[0].agent_id == "a2"
+
+
+# ---------------------------------------------------------------------------
+# Migrated from test_agents.py: Agent lifecycle integration
+# ---------------------------------------------------------------------------
+
+
+class TestAgentLifecycleIntegration:
+    """Full register → validate → unregister → verify lifecycle (migrated from test_agents.py)."""
+
+    def test_complete_lifecycle(self, registry):
+        """Register → validate ownership → unregister → verify gone."""
+        registry.register("agent_lifecycle", "alice", zone_id="root")
+        assert registry.validate_ownership("agent_lifecycle", "alice") is True
+
+        registry.unregister("agent_lifecycle")
+        assert registry.validate_ownership("agent_lifecycle", "alice") is False
+        assert registry.get("agent_lifecycle") is None

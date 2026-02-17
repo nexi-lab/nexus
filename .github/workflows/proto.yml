@@ -2,18 +2,22 @@ name: Protocol
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "proto/**"
       - "buf.yaml"
       - "buf.gen.yaml"
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "proto/**"
       - "buf.yaml"
       - "buf.gen.yaml"
       - "docs/protocol/nexus-exchange-v1.openapi.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   proto-check:

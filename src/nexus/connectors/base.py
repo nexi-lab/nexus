@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
+from nexus.core.exceptions import ValidationError as CoreValidationError
+
 if TYPE_CHECKING:
     from nexus.skills.registry import SkillRegistry
 
@@ -134,8 +136,11 @@ class ErrorDef:
     details: dict[str, Any] = field(default_factory=dict)
 
 
-class ValidationError(Exception):
+class ValidationError(CoreValidationError):
     """Validation error with self-correcting information.
+
+    Inherits from core.exceptions.ValidationError so centralized error handlers
+    can catch both connector and core validation errors uniformly.
 
     Contains error code, message, skill reference, and fix example
     so agents can self-correct their requests.
@@ -302,11 +307,8 @@ class SkillDocMixin:
             return result
 
         try:
-            import contextlib
-
             # Create .skill directory
-            with contextlib.suppress(Exception):
-                filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
 
             # Write SKILL.md
             skill_md_path = posixpath.join(skill_dir, "SKILL.md")
@@ -318,8 +320,7 @@ class SkillDocMixin:
             # Write examples if any
             if self.EXAMPLES:
                 examples_dir = posixpath.join(skill_dir, "examples")
-                with contextlib.suppress(Exception):
-                    filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
+                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
 
                 for filename, content in self.EXAMPLES.items():
                     example_path = posixpath.join(examples_dir, filename)
@@ -332,12 +333,6 @@ class SkillDocMixin:
         except Exception as e:
             logger.warning(f"Failed to write skill docs to {skill_dir}: {e}")
             return result
-
-    # Keep old method for backwards compatibility
-    def write_skill_doc(self, mount_path: str, filesystem: Any = None) -> str | None:
-        """Deprecated: Use write_skill_docs() instead."""
-        result = self.write_skill_docs(mount_path, filesystem)
-        return result.get("skill_md")
 
     def _format_display_name(self) -> str:
         """Format SKILL_NAME as display name."""

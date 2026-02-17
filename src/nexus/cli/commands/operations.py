@@ -89,7 +89,7 @@ def ops_diff(
 
             # Get diff between operations
             diff_result = time_travel.diff_operations(
-                path, operation_1, operation_2, zone_id=nx.zone_id
+                path, operation_1, operation_2, zone_id=nx._default_context.zone_id
             )
 
         nx.close()
@@ -384,7 +384,7 @@ def _undo_operation(nx: Any, logger: Any, operation: Any) -> None:
                     from nexus.core.permissions import OperationContext
 
                     context = OperationContext(
-                        user=nx.agent_id or "system",
+                        user=nx._default_context.agent_id or "system",
                         groups=[],
                         is_admin=True,
                         is_system=True,

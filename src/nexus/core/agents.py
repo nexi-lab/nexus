@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.rebac.entity_registry import EntityRegistry
 
 
 def register_agent(
@@ -137,7 +137,7 @@ def create_agent_with_api_key(
     agent = register_agent(user_id, agent_id, name, entity_registry=entity_registry, **kwargs)
 
     # 2. Create API key (provider-specific)
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
     key_id, raw_key = DatabaseAPIKeyAuth.create_key(
         session,

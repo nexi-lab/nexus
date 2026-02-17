@@ -225,7 +225,7 @@ async def test_approval_validation() -> None:
     """Test approval record validation."""
     from datetime import datetime
 
-    from nexus.core.exceptions import ValidationError
+    from nexus.skills.exceptions import SkillValidationError
 
     # Valid approval
     approval = SkillApproval(
@@ -239,5 +239,5 @@ async def test_approval_validation() -> None:
 
     # Invalid: missing skill_name
     approval.skill_name = ""
-    with pytest.raises(ValidationError, match="skill_name is required"):
+    with pytest.raises(SkillValidationError, match="skill_name is required"):
         approval.validate()

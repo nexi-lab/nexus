@@ -10,15 +10,15 @@ import json
 import logging
 import os
 import tempfile
-import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexus.backends.backend import AsyncBackend
 from nexus.backends.cas_blob_store import CASBlobStore
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AsyncLocalBackend:
+class AsyncLocalBackend(AsyncBackend):
     """
     Async local filesystem backend with Content-Addressable Storage (CAS).
 
@@ -92,6 +92,11 @@ class AsyncLocalBackend:
     def name(self) -> str:
         """Backend name identifier."""
         return "local"
+
+    @property
+    def has_root_path(self) -> bool:
+        """This backend has a local root_path for physical storage."""
+        return True
 
     async def initialize(self) -> None:
         """Initialize backend and create required directories."""
@@ -253,34 +258,24 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse with content hash in data field
         """
-        start_time = time.perf_counter()
-
         content_hash = await asyncio.to_thread(self._compute_hash, content)
 
         assert self._cas is not None  # noqa: S101
         cas = self._cas
 
+        @timed_response
         def _store() -> HandlerResponse[str]:
-            try:
-                cas.store(content_hash, content)
+            cas.store(content_hash, content)
 
-                # Add to cache
-                if self.content_cache is not None:
-                    self.content_cache.put(content_hash, content)
+            # Add to cache
+            if self.content_cache is not None:
+                self.content_cache.put(content_hash, content)
 
-                return HandlerResponse.ok(
-                    data=content_hash,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
+            return HandlerResponse.ok(
+                data=content_hash,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
         return await asyncio.to_thread(_store)
 
@@ -301,56 +296,48 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse with file content in data field
         """
-        start_time = time.perf_counter()
-
         # Check cache first for fast path
         if self.content_cache is not None:
             cached_content = self.content_cache.get(content_hash)
             if cached_content is not None:
                 return HandlerResponse.ok(
                     data=cached_content,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=content_hash,
                 )
 
+        @timed_response
         def _read() -> HandlerResponse[bytes]:
             assert self._cas is not None  # noqa: S101
             if not self._cas.blob_exists(content_hash):
                 return HandlerResponse.not_found(
                     path=content_hash,
                     message=f"CAS content not found: {content_hash}",
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                 )
 
-            try:
-                content = self._cas.read_blob(content_hash, verify=True)
+            content = self._cas.read_blob(content_hash, verify=True)
 
-                # Add to cache
-                if self.content_cache is not None:
-                    self.content_cache.put(content_hash, content)
+            # Add to cache
+            if self.content_cache is not None:
+                self.content_cache.put(content_hash, content)
 
-                return HandlerResponse.ok(
-                    data=content,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
+            return HandlerResponse.ok(
+                data=content,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
         return await asyncio.to_thread(_read)
 
     # === Batch Read Operations ===
 
     async def batch_read_content(
-        self, content_hashes: list[str], context: "OperationContext | None" = None
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """
         Optimized batch read for async backend with concurrent I/O.
@@ -358,6 +345,7 @@ class AsyncLocalBackend:
         Args:
             content_hashes: List of BLAKE3 hashes as hex strings
             context: Operation context (ignored for local backend)
+            contexts: Per-hash contexts (ignored — local backend uses CAS paths)
 
         Returns:
             Dictionary mapping hash to content (or None if not found)
@@ -414,38 +402,27 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse indicating success or failure
         """
-        start_time = time.perf_counter()
         content_path = self._hash_to_path(content_hash)
 
         assert self._cas is not None  # noqa: S101
         cas = self._cas
 
+        @timed_response
         def _delete() -> HandlerResponse[None]:
             if not content_path.exists():
                 return HandlerResponse.not_found(
                     path=content_hash,
                     message=f"CAS content not found: {content_hash}",
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                 )
 
-            try:
-                cas.release(content_hash)
+            cas.release(content_hash)
 
-                return HandlerResponse.ok(
-                    data=None,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
+            return HandlerResponse.ok(
+                data=None,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
         return await asyncio.to_thread(_delete)
 
@@ -464,7 +441,6 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse with True if content exists, False otherwise
         """
-        start_time = time.perf_counter()
         content_path = self._hash_to_path(content_hash)
 
         def _exists() -> bool:
@@ -474,7 +450,6 @@ class AsyncLocalBackend:
 
         return HandlerResponse.ok(
             data=exists,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name=self.name,
             path=content_hash,
         )
@@ -492,33 +467,23 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse with content size in bytes
         """
-        start_time = time.perf_counter()
         content_path = self._hash_to_path(content_hash)
 
+        @timed_response
         def _get_size() -> HandlerResponse[int]:
             if not content_path.exists():
                 return HandlerResponse.not_found(
                     path=content_hash,
                     message=f"CAS content not found: {content_hash}",
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                 )
 
-            try:
-                size = content_path.stat().st_size
-                return HandlerResponse.ok(
-                    data=size,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
+            size = content_path.stat().st_size
+            return HandlerResponse.ok(
+                data=size,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
         return await asyncio.to_thread(_get_size)
 
@@ -535,36 +500,25 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse with reference count
         """
-        start_time = time.perf_counter()
-
         exists_response = await self.content_exists(content_hash, context=context)
         if not exists_response.success or not exists_response.data:
             return HandlerResponse.not_found(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
         assert self._cas is not None  # noqa: S101
         cas = self._cas
 
+        @timed_response
         def _read_ref() -> HandlerResponse[int]:
-            try:
-                meta = cas.read_meta(content_hash)
-                return HandlerResponse.ok(
-                    data=meta.ref_count,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
+            meta = cas.read_meta(content_hash)
+            return HandlerResponse.ok(
+                data=meta.ref_count,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
         return await asyncio.to_thread(_read_ref)
 
@@ -573,11 +527,11 @@ class AsyncLocalBackend:
     async def stream_content(
         self,
         content_hash: str,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> AsyncIterator[bytes]:
         """
-        Stream content from disk in chunks without loading entire file.
+        Stream content from disk in chunks using aiofiles (truly async).
 
         Args:
             content_hash: BLAKE3 hash as hex string
@@ -587,51 +541,41 @@ class AsyncLocalBackend:
         Yields:
             Byte chunks of the content
         """
+        import aiofiles
+
         content_path = self._hash_to_path(content_hash)
 
-        def _check_exists() -> bool:
-            return content_path.exists()
-
-        if not await asyncio.to_thread(_check_exists):
+        if not await asyncio.to_thread(content_path.exists):
             raise NexusFileNotFoundError(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
             )
 
-        def _read_all_chunks() -> list[bytes]:
-            """Read all chunks from file in a thread."""
-            chunks: list[bytes] = []
-            try:
-                with open(content_path, "rb") as f:
-                    while True:
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-                        chunks.append(chunk)
-            except OSError as e:
-                raise BackendError(
-                    f"Failed to stream content: {e}",
-                    backend="local",
-                    path=content_hash,
-                ) from e
-            return chunks
-
-        # Read all chunks in a thread, then yield them
-        chunks = await asyncio.to_thread(_read_all_chunks)
-        for chunk in chunks:
-            yield chunk
+        try:
+            async with aiofiles.open(content_path, "rb") as f:
+                while True:
+                    chunk = await f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+        except OSError as e:
+            raise BackendError(
+                f"Failed to stream content: {e}",
+                backend="local",
+                path=content_hash,
+            ) from e
 
     async def stream_range(
         self,
         content_hash: str,
         start: int,
         end: int,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> AsyncIterator[bytes]:
         """Stream a byte range [start, end] inclusive from local CAS (async).
 
-        Uses seek-based I/O in a thread for efficiency.
+        Uses aiofiles with seek for truly async, bounded-memory I/O.
 
         Args:
             content_hash: Content hash (BLAKE3 hex)
@@ -643,41 +587,32 @@ class AsyncLocalBackend:
         Yields:
             Byte chunks covering the requested range
         """
+        import aiofiles
+
         content_path = self._hash_to_path(content_hash)
 
-        def _check_exists() -> bool:
-            return content_path.exists()
-
-        if not await asyncio.to_thread(_check_exists):
+        if not await asyncio.to_thread(content_path.exists):
             raise NexusFileNotFoundError(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
             )
 
-        def _read_range_chunks() -> list[bytes]:
-            """Read range chunks from file in a thread."""
-            result: list[bytes] = []
-            bytes_remaining = end - start + 1
-            try:
-                with open(content_path, "rb") as f:
-                    f.seek(start)
-                    while bytes_remaining > 0:
-                        chunk = f.read(min(chunk_size, bytes_remaining))
-                        if not chunk:
-                            break
-                        bytes_remaining -= len(chunk)
-                        result.append(chunk)
-            except OSError as e:
-                raise BackendError(
-                    f"Failed to stream range: {e}",
-                    backend="local",
-                    path=content_hash,
-                ) from e
-            return result
-
-        chunks = await asyncio.to_thread(_read_range_chunks)
-        for chunk in chunks:
-            yield chunk
+        try:
+            async with aiofiles.open(content_path, "rb") as f:
+                await f.seek(start)
+                bytes_remaining = end - start + 1
+                while bytes_remaining > 0:
+                    chunk = await f.read(min(chunk_size, bytes_remaining))
+                    if not chunk:
+                        break
+                    bytes_remaining -= len(chunk)
+                    yield chunk
+        except OSError as e:
+            raise BackendError(
+                f"Failed to stream range: {e}",
+                backend="local",
+                path=content_hash,
+            ) from e
 
     async def write_stream(
         self,
@@ -687,7 +622,8 @@ class AsyncLocalBackend:
         """
         Write content from an async iterator of chunks.
 
-        Collects all chunks, computes hash, and stores atomically.
+        Collects async chunks, then delegates to CASBlobStore.store_streaming()
+        in a thread for the actual streaming-to-disk + incremental hashing.
 
         Args:
             chunks: Async iterator yielding byte chunks
@@ -696,15 +632,29 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse with content hash in data field
         """
-        # Collect all chunks
-        collected_chunks: list[bytes] = []
+        # Collect async chunks (async-to-sync boundary)
+        collected: list[bytes] = []
         async for chunk in chunks:
-            collected_chunks.append(chunk)
+            collected.append(chunk)
 
-        content = b"".join(collected_chunks)
+        assert self._cas is not None  # noqa: S101
+        cas = self._cas
 
-        # Use write_content for the actual storage
-        return await self.write_content(content, context=context)
+        # Run blocking CAS write in thread — store_streaming handles
+        # temp file + incremental hash internally
+        result = await asyncio.to_thread(lambda: cas.store_streaming(iter(collected)))
+
+        # Add to cache if we have the content
+        if self.content_cache is not None and collected:
+            content = b"".join(collected)
+            self.content_cache.put(result.content_hash, content)
+
+        return HandlerResponse.ok(
+            data=result.content_hash,
+            backend_name=self.name,
+            path=result.content_hash,
+            affected_rows=result.size,
+        )
 
     # === Directory Operations ===
 
@@ -727,9 +677,9 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse indicating success or failure
         """
-        start_time = time.perf_counter()
         full_path = self.dir_root / path.lstrip("/")
 
+        @timed_response
         def _mkdir() -> HandlerResponse[None]:
             try:
                 if parents:
@@ -738,7 +688,6 @@ class AsyncLocalBackend:
                     full_path.mkdir(exist_ok=exist_ok)
                 return HandlerResponse.ok(
                     data=None,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=path,
                 )
@@ -746,14 +695,6 @@ class AsyncLocalBackend:
                 return HandlerResponse.error(
                     message=f"Directory already exists: {path}",
                     code=409,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=path,
-                )
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=path,
                 )
@@ -773,7 +714,6 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse with True if path is a directory
         """
-        start_time = time.perf_counter()
         full_path = self.dir_root / path.lstrip("/")
 
         def _is_dir() -> bool:
@@ -783,10 +723,67 @@ class AsyncLocalBackend:
 
         return HandlerResponse.ok(
             data=is_dir,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name=self.name,
             path=path,
         )
+
+    async def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: "OperationContext | None" = None,
+    ) -> HandlerResponse[None]:
+        """
+        Remove directory from virtual directory structure asynchronously.
+
+        Args:
+            path: Directory path (relative to backend root)
+            recursive: Remove non-empty directory (like rm -rf)
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            HandlerResponse indicating success or failure
+        """
+        import shutil
+
+        full_path = self.dir_root / path.lstrip("/")
+
+        @timed_response
+        def _rmdir() -> HandlerResponse[None]:
+            if not full_path.exists():
+                return HandlerResponse.not_found(
+                    path=path,
+                    message=f"Directory not found: {path}",
+                    backend_name=self.name,
+                )
+
+            if not full_path.is_dir():
+                return HandlerResponse.error(
+                    message=f"Not a directory: {path}",
+                    code=400,
+                    backend_name=self.name,
+                    path=path,
+                )
+
+            try:
+                if recursive:
+                    shutil.rmtree(full_path)
+                else:
+                    full_path.rmdir()
+                return HandlerResponse.ok(
+                    data=None,
+                    backend_name=self.name,
+                    path=path,
+                )
+            except OSError as e:
+                return HandlerResponse.error(
+                    message=f"Failed to remove directory: {e}",
+                    code=400,
+                    backend_name=self.name,
+                    path=path,
+                )
+
+        return await asyncio.to_thread(_rmdir)
 
     async def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """

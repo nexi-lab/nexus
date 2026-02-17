@@ -19,7 +19,6 @@ Example:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -29,9 +28,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.mcp.klavis_client import KlavisClient, KlavisError
+from nexus.mcp.models import MCPMount
+from nexus.mcp.mount import MCPMountManager
 from nexus.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
-from nexus.skills.mcp_models import MCPMount
-from nexus.skills.mcp_mount import MCPMountManager
 
 if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem
@@ -170,8 +169,12 @@ class MCPConnectionManager:
         try:
             if self.filesystem:
                 # Ensure directory exists
-                with contextlib.suppress(Exception):
+                try:
                     self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
+                except FileExistsError:
+                    pass
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", self.CONNECTIONS_PATH, e)
 
                 # Use provider_user as filename
                 filename = f"{conn.provider}_{conn.user_id.replace('@', '_at_')}.json"

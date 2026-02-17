@@ -28,7 +28,7 @@ class PersistentNamespaceViewModel(Base):
         id: UUID primary key
         subject_type: Subject type (e.g., "user", "agent")
         subject_id: Subject identifier
-        zone_id: Zone for multi-zone isolation (default: "default")
+        zone_id: Zone for multi-zone isolation (default: "root")
         mount_paths_json: JSON array of sorted mount path strings
         grants_hash: 16-char SHA-256 hex digest of sorted grants
         revision_bucket: Zone revision bucket when view was built
@@ -41,7 +41,7 @@ class PersistentNamespaceViewModel(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_generate_uuid)
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
     mount_paths_json: Mapped[str] = mapped_column(Text, nullable=False)
     grants_hash: Mapped[str] = mapped_column(String(16), nullable=False)
     revision_bucket: Mapped[int] = mapped_column(Integer, nullable=False)

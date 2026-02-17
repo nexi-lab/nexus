@@ -45,7 +45,7 @@ def _make_metadata(
     etag: str = "abc123",
     size: int = 100,
     version: int = 1,
-    zone_id: str = "default",
+    zone_id: str = "root",
     owner_id: str | None = "user1",
 ) -> FileMetadata:
     """Create a FileMetadata for testing."""
@@ -77,7 +77,7 @@ class TestOnWriteHappyPath:
         self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
     ) -> None:
         metadata = _make_metadata("/new.txt", etag="hash1")
-        syncer.on_write(metadata, is_new=True, path="/new.txt", zone_id="default")
+        syncer.on_write(metadata, is_new=True, path="/new.txt", zone_id="root")
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
@@ -101,11 +101,11 @@ class TestOnWriteHappyPath:
     ) -> None:
         # Create initial file
         m1 = _make_metadata("/file.txt", etag="v1hash")
-        syncer.on_write(m1, is_new=True, path="/file.txt", zone_id="default")
+        syncer.on_write(m1, is_new=True, path="/file.txt", zone_id="root")
 
         # Update file
         m2 = _make_metadata("/file.txt", etag="v2hash", version=2)
-        syncer.on_write(m2, is_new=False, path="/file.txt", zone_id="default")
+        syncer.on_write(m2, is_new=False, path="/file.txt", zone_id="root")
 
         with record_store.session_factory() as session:
             fp = (
@@ -142,10 +142,10 @@ class TestOnDeleteHappyPath:
     ) -> None:
         # Create file first
         m = _make_metadata("/del.txt", etag="delhash")
-        syncer.on_write(m, is_new=True, path="/del.txt", zone_id="default")
+        syncer.on_write(m, is_new=True, path="/del.txt", zone_id="root")
 
         # Delete it
-        syncer.on_delete(path="/del.txt", zone_id="default")
+        syncer.on_delete(path="/del.txt", zone_id="root")
 
         with record_store.session_factory() as session:
             # Should be soft-deleted (deleted_at set)
@@ -172,7 +172,7 @@ class TestOnDeleteHappyPath:
         self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Deleting a file that doesn't exist in RecordStore should not raise."""
-        syncer.on_delete(path="/nonexistent.txt", zone_id="default")
+        syncer.on_delete(path="/nonexistent.txt", zone_id="root")
 
         with record_store.session_factory() as session:
             ops = (
@@ -194,7 +194,7 @@ class TestOnRenameHappyPath:
         syncer.on_rename(
             old_path="/old.txt",
             new_path="/new.txt",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent1",
         )
 
@@ -217,7 +217,7 @@ class TestOnWriteBatchHappyPath:
             (_make_metadata("/b.txt", etag="hb"), True),
             (_make_metadata("/c.txt", etag="hc"), True),
         ]
-        syncer.on_write_batch(items, zone_id="default")
+        syncer.on_write_batch(items, zone_id="root")
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
@@ -365,9 +365,71 @@ class TestBatchPartialFailure:
             patch.object(VersionRecorder, "record_write", failing_on_second_call),
             pytest.raises(ValueError, match="simulated failure on second item"),
         ):
-            syncer.on_write_batch(items, zone_id="default")
+            syncer.on_write_batch(items, zone_id="root")
 
         # Nothing committed
         with record_store.session_factory() as session:
             fps = session.query(FilePathModel).all()
             assert len(fps) == 0
+
+
+# =========================================================================
+# Transactional outbox: delivered=FALSE tests (Issue #1241)
+# =========================================================================
+
+
+class TestDeliveredColumn:
+    """Verify that all syncer operations create records with delivered=FALSE."""
+
+    def test_on_write_sets_delivered_false(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_write() should create operation_log with delivered=FALSE."""
+        metadata = _make_metadata("/outbox.txt", etag="ohash")
+        syncer.on_write(metadata, is_new=True, path="/outbox.txt", zone_id="root")
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 1
+            assert ops[0].delivered is False
+
+    def test_on_delete_sets_delivered_false(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_delete() should create operation_log with delivered=FALSE."""
+        syncer.on_delete(path="/del-outbox.txt", zone_id="root")
+
+        with record_store.session_factory() as session:
+            ops = (
+                session.query(OperationLogModel)
+                .filter(OperationLogModel.operation_type == "delete")
+                .all()
+            )
+            assert len(ops) == 1
+            assert ops[0].delivered is False
+
+    def test_on_rename_sets_delivered_false(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_rename() should create operation_log with delivered=FALSE."""
+        syncer.on_rename(old_path="/old.txt", new_path="/new.txt", zone_id="root")
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 1
+            assert ops[0].delivered is False
+
+    def test_on_write_batch_sets_delivered_false(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_write_batch() should create all records with delivered=FALSE."""
+        items = [
+            (_make_metadata("/x.txt", etag="hx"), True),
+            (_make_metadata("/y.txt", etag="hy"), True),
+        ]
+        syncer.on_write_batch(items, zone_id="root")
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 2
+            assert all(op.delivered is False for op in ops)

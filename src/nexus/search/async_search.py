@@ -34,10 +34,9 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nexus.search.chunking import ChunkStrategy, DocumentChunker, EntropyAwareChunker
 from nexus.search.contextual_chunking import (
@@ -50,7 +49,7 @@ from nexus.search.embeddings import EmbeddingProvider
 from nexus.search.results import BaseSearchResult
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncEngine
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from nexus.search.bm25s_search import BM25SIndex
 
@@ -62,42 +61,23 @@ AsyncSearchResult = BaseSearchResult
 
 
 def create_async_engine_from_url(database_url: str) -> AsyncEngine:
-    """Create async engine from database URL.
+    """Create async engine from database URL via RecordStoreABC.
 
-    Converts sync URLs to async driver URLs:
-    - postgresql:// -> postgresql+asyncpg://
-    - sqlite:// -> sqlite+aiosqlite://
+    Delegates to SQLAlchemyRecordStore which handles URL conversion
+    (postgresql:// -> asyncpg://, sqlite:// -> aiosqlite://) internally.
 
     Args:
         database_url: Sync database URL
 
     Returns:
-        Async SQLAlchemy engine
+        Async SQLAlchemy engine (owned by a private RecordStore instance)
     """
-    is_sqlite = False
-    if database_url.startswith("postgresql://"):
-        async_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    elif database_url.startswith("sqlite:///"):
-        async_url = database_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
-        is_sqlite = True
-    elif database_url.startswith("sqlite://"):
-        async_url = database_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
-        is_sqlite = True
-    else:
-        async_url = database_url
+    from nexus.storage.record_store import SQLAlchemyRecordStore
 
-    # SQLite with aiosqlite uses NullPool and doesn't support pool parameters
-    if is_sqlite:
-        return create_async_engine(async_url)
-
-    # PostgreSQL with asyncpg supports full connection pooling
-    return create_async_engine(
-        async_url,
-        pool_pre_ping=True,
-        pool_size=20,
-        max_overflow=30,
-        pool_recycle=1800,
-    )
+    store = SQLAlchemyRecordStore(db_url=database_url)
+    # Trigger lazy async engine creation and return it
+    _ = store.async_session_factory
+    return cast("AsyncEngine", store._async_engine)
 
 
 class AsyncSemanticSearch:
@@ -123,6 +103,8 @@ class AsyncSemanticSearch:
         contextual_chunking: bool = False,
         contextual_config: ContextualChunkingConfig | None = None,
         context_generator: ContextGenerator | None = None,
+        *,
+        async_session_factory: Any | None = None,
     ):
         """Initialize async semantic search.
 
@@ -138,6 +120,8 @@ class AsyncSemanticSearch:
             contextual_chunking: Enable contextual chunking (Issue #1192)
             contextual_config: Configuration for contextual chunking
             context_generator: Callable that generates context for each chunk
+            async_session_factory: Injected async_sessionmaker from RecordStoreABC.
+                When provided, skips creating a private engine (Issue #1597).
         """
         self.database_url = database_url
         self.embedding_provider = embedding_provider
@@ -147,13 +131,17 @@ class AsyncSemanticSearch:
         self.entropy_threshold = entropy_threshold
         self.entropy_alpha = entropy_alpha
 
-        # Create async engine and session factory
-        self.engine = create_async_engine_from_url(database_url)
-        self.async_session = async_sessionmaker(
-            self.engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
+        # Use injected session factory or create via RecordStoreABC (Issue #1597)
+        if async_session_factory is not None:
+            self.engine = None  # Owned externally
+            self._record_store = None
+            self.async_session = async_session_factory
+        else:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            self._record_store = SQLAlchemyRecordStore(db_url=database_url)
+            self.engine = self._record_store._async_engine  # set after async_session_factory
+            self.async_session = self._record_store.async_session_factory
 
         # Chunker
         self.chunker = DocumentChunker(
@@ -542,7 +530,7 @@ class AsyncSemanticSearch:
         # Apply adaptive k if enabled (Issue #1021)
         if adaptive_k:
             # Lazy import to break search → llm hard dependency (Issue #1520)
-            from nexus.llm.context_builder import ContextBuilder as _CB
+            from nexus.services.llm_context_builder import ContextBuilder as _CB
 
             if not hasattr(self, "_context_builder") or self._context_builder is None:
                 self._context_builder = _CB()
@@ -1011,5 +999,9 @@ class AsyncSemanticSearch:
         return stats
 
     async def close(self) -> None:
-        """Close database connections."""
-        await self.engine.dispose()
+        """Close database connections.
+
+        No-op when engine is externally owned (async_session_factory path).
+        """
+        if self.engine is not None:
+            await self.engine.dispose()

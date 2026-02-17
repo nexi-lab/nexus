@@ -37,6 +37,8 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+from nexus.constants import DEFAULT_OTEL_ENDPOINT
+
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
 
@@ -94,9 +96,7 @@ def setup_telemetry(
 
         # Configuration from args or environment
         _service_name = service_name or os.environ.get("OTEL_SERVICE_NAME", "nexus")
-        _endpoint = endpoint or os.environ.get(
-            "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"
-        )
+        _endpoint = endpoint or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", DEFAULT_OTEL_ENDPOINT)
         _insecure = (
             insecure
             if insecure is not None
@@ -146,6 +146,11 @@ def setup_telemetry(
 
         # Auto-instrument libraries
         _instrument_libraries()
+
+        # Inject rebac tracer into permission tracing module
+        from nexus.services.permissions.rebac_tracing import set_tracer as _set_rebac_tracer
+
+        _set_rebac_tracer(trace.get_tracer("nexus.rebac"))
 
         _initialized = True
         logger.info(
@@ -339,3 +344,7 @@ def shutdown_telemetry() -> None:
     finally:
         _initialized = False
         _tracer = None
+        # Reset rebac tracer
+        from nexus.services.permissions.rebac_tracing import reset_tracer as _reset_rebac_tracer
+
+        _reset_rebac_tracer()

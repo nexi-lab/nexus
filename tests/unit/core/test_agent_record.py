@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.core.agent_record import (
+from nexus.services.agents.agent_record import (
     VALID_TRANSITIONS,
     AgentRecord,
     AgentState,
@@ -191,7 +191,7 @@ class TestAgentRecord:
         return AgentRecord(
             agent_id="agent-1",
             owner_id="alice",
-            zone_id="default",
+            zone_id="root",
             name="Test Agent",
             state=AgentState.UNKNOWN,
             generation=0,
@@ -210,7 +210,7 @@ class TestAgentRecord:
         """All fields are accessible."""
         assert record.agent_id == "agent-1"
         assert record.owner_id == "alice"
-        assert record.zone_id == "default"
+        assert record.zone_id == "root"
         assert record.name == "Test Agent"
         assert record.state is AgentState.UNKNOWN
         assert record.generation == 0

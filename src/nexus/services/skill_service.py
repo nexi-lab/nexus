@@ -22,7 +22,6 @@ Runner:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -92,6 +91,9 @@ class SkillService:
             gateway: NexusFSGateway for filesystem and ReBAC operations
         """
         self._gw = gateway
+
+        # Request-scoped cache for subscriptions keyed by (user_id, zone_id)
+        self._subscriptions_cache: dict[tuple[str, str], list[str]] = {}
 
         logger.info("[SkillService] Initialized")
 
@@ -248,7 +250,6 @@ class SkillService:
             f"[discover] START filter={filter}, context.user_id={context.user_id}, context.zone_id={context.zone_id}"
         )
 
-        rebac = self._get_rebac()
         subscribed_skills = set(self._load_subscriptions(context))
 
         # For "subscribed" filter, directly use subscribed skill paths
@@ -259,16 +260,7 @@ class SkillService:
                 is_public = self._is_skill_public(path)
                 metadata = self._load_skill_metadata(path, context, is_public=is_public)
                 results.append(
-                    SkillInfo(
-                        path=path,
-                        name=metadata.get("name", path.rstrip("/").split("/")[-1]),
-                        description=metadata.get("description", ""),
-                        owner=self._extract_owner_from_path(path),
-                        is_subscribed=True,
-                        is_public=is_public,
-                        version=metadata.get("version"),
-                        tags=metadata.get("tags", []),
-                    )
+                    self._build_skill_info(path, metadata, is_subscribed=True, is_public=is_public)
                 )
             return results
 
@@ -282,15 +274,8 @@ class SkillService:
                 is_public = self._is_skill_public(path)
                 metadata = self._load_skill_metadata(path, context, is_public=is_public)
                 results.append(
-                    SkillInfo(
-                        path=path,
-                        name=metadata.get("name", path.rstrip("/").split("/")[-1]),
-                        description=metadata.get("description", ""),
-                        owner=self._extract_owner_from_path(path),
-                        is_subscribed=path in subscribed_skills,
-                        is_public=is_public,
-                        version=metadata.get("version"),
-                        tags=metadata.get("tags", []),
+                    self._build_skill_info(
+                        path, metadata, is_subscribed=path in subscribed_skills, is_public=is_public
                     )
                 )
             return results
@@ -307,15 +292,8 @@ class SkillService:
                     continue
                 metadata = self._load_skill_metadata(path, context, is_public=is_public)
                 results.append(
-                    SkillInfo(
-                        path=path,
-                        name=metadata.get("name", path.rstrip("/").split("/")[-1]),
-                        description=metadata.get("description", ""),
-                        owner=self._extract_owner_from_path(path),
-                        is_subscribed=path in subscribed_skills,
-                        is_public=is_public,
-                        version=metadata.get("version"),
-                        tags=metadata.get("tags", []),
+                    self._build_skill_info(
+                        path, metadata, is_subscribed=path in subscribed_skills, is_public=is_public
                     )
                 )
             return results
@@ -328,75 +306,47 @@ class SkillService:
             for path in public_skill_paths:
                 metadata = self._load_skill_metadata(path, context, is_public=True)
                 results.append(
-                    SkillInfo(
-                        path=path,
-                        name=metadata.get("name", path.rstrip("/").split("/")[-1]),
-                        description=metadata.get("description", ""),
-                        owner=self._extract_owner_from_path(path),
-                        is_subscribed=path in subscribed_skills,
-                        is_public=True,
-                        version=metadata.get("version"),
-                        tags=metadata.get("tags", []),
+                    self._build_skill_info(
+                        path, metadata, is_subscribed=path in subscribed_skills, is_public=True
                     )
                 )
             return results
 
-        # TODO: Implement "zone" filter - skills shared with the zone
-        # if filter == "zone":
-        #     zone_skill_paths = self._find_zone_shared_skills(context)
-        #     ...
+        # TODO(#1443): implement "zone" filter for skills shared with the zone
 
-        # Collect skill paths from filesystem for other filters
-        skill_paths = self._collect_skill_paths(context)
+        # "all" filter: batch-collect paths and pre-compute permission sets
+        # to avoid per-skill ReBAC calls (O(1) set lookups instead of O(n) queries)
+        public_paths = self._find_public_skills()
+        shared_paths = self._find_direct_viewer_skills(context)
+        public_set = {p.rstrip("/") for p in public_paths}
+        shared_set = {p.rstrip("/") for p in shared_paths}
+
+        skill_paths = self._collect_skill_paths(
+            context, public_paths=public_paths, shared_paths=shared_paths
+        )
         logger.info(f"[discover] Found {len(skill_paths)} skill paths: {skill_paths[:5]}")
 
-        # Filter by permission and build results
-        # user_id is validated by _validate_context
-        assert context.user_id is not None
-        subject: tuple[str, str] = ("user", context.user_id)
         results = []
-
         for path in skill_paths:
-            # Check read permission (includes public check)
-            can_read = self._can_read_skill(path, context)
-            logger.info(f"[discover] path={path}, can_read={can_read}")
-            if not can_read:
+            normalized = path.rstrip("/")
+            is_public = normalized in public_set
+
+            # Fast-path: public and shared skills are always readable.
+            # Only call _can_read_skill for paths not in either set.
+            if (
+                not is_public
+                and normalized not in shared_set
+                and not self._can_read_skill(path, context)
+            ):
                 continue
 
-            # Check if public (for display purposes)
-            is_public = self._is_skill_public(path)
-
-            is_subscribed = path in subscribed_skills
-
-            # Apply filter
-            if filter == "public" and not is_public:
-                continue
-            if filter == "owned":
-                # Check ownership on SKILL.md file (where ownership tuples exist)
-                skill_md_path = f"{path.rstrip('/')}/SKILL.md"
-                has_ownership = rebac.rebac_check(
-                    subject=subject,
-                    permission="owner",
-                    object=("file", skill_md_path),
-                    zone_id=context.zone_id,
-                )
-                if not has_ownership:
-                    continue
-
-            # Load metadata (use cache if available)
-            # Pass is_public so we can read metadata for public skills from other zones
             metadata = self._load_skill_metadata(path, context, is_public=is_public)
-
             results.append(
-                SkillInfo(
-                    path=path,
-                    name=metadata.get("name", path.rstrip("/").split("/")[-1]),
-                    description=metadata.get("description", ""),
-                    owner=self._extract_owner_from_path(path),
-                    is_subscribed=is_subscribed,
+                self._build_skill_info(
+                    path,
+                    metadata,
+                    is_subscribed=path in subscribed_skills,
                     is_public=is_public,
-                    version=metadata.get("version"),
-                    tags=metadata.get("tags", []),
                 )
             )
 
@@ -511,13 +461,7 @@ class SkillService:
             metadata = self._load_skill_metadata(skill_path, context, is_public=is_public)
 
             skills_for_prompt.append(
-                SkillInfo(
-                    path=skill_path,
-                    name=metadata.get("name", skill_path.rstrip("/").split("/")[-1]),
-                    description=metadata.get("description", ""),
-                    owner=self._extract_owner_from_path(skill_path),
-                    version=metadata.get("version"),
-                )
+                self._build_skill_info(skill_path, metadata, is_public=is_public)
             )
 
         # Build XML format for system prompt
@@ -699,6 +643,30 @@ class SkillService:
         )
         return bool(result)
 
+    def _build_skill_info(
+        self,
+        path: str,
+        metadata: dict[str, Any],
+        *,
+        is_subscribed: bool = False,
+        is_public: bool = False,
+    ) -> SkillInfo:
+        """Build a SkillInfo from path and parsed metadata.
+
+        This is the single construction site for SkillInfo objects,
+        eliminating repetition across discover/prompt_context paths.
+        """
+        return SkillInfo(
+            path=path,
+            name=metadata.get("name", path.rstrip("/").split("/")[-1]),
+            description=metadata.get("description", ""),
+            owner=self._extract_owner_from_path(path),
+            is_subscribed=is_subscribed,
+            is_public=is_public,
+            version=metadata.get("version"),
+            tags=metadata.get("tags", []),
+        )
+
     def _parse_share_target(
         self, share_with: str, context: OperationContext
     ) -> tuple[str, str] | tuple[str, str, str]:
@@ -739,8 +707,16 @@ class SkillService:
         return f"/zone/{context.zone_id}/user/{context.user_id}/skill/.subscribed.yaml"
 
     def _load_subscriptions(self, context: OperationContext) -> list[str]:
-        """Load user's subscribed skills from config file."""
+        """Load user's subscribed skills from config file.
+
+        Uses a request-scoped cache keyed by (user_id, zone_id) to avoid
+        repeated YAML parsing within the same request.
+        """
         import yaml
+
+        cache_key = (context.user_id or "", context.zone_id or "")
+        if cache_key in self._subscriptions_cache:
+            return self._subscriptions_cache[cache_key]
 
         path = self._get_subscriptions_path(context)
 
@@ -752,12 +728,14 @@ class SkillService:
                 data = yaml.safe_load(content)
                 if data:
                     result: list[str] = data.get("subscribed_skills", [])
+                    self._subscriptions_cache[cache_key] = result
                     return result
         except FileNotFoundError:
             pass  # Expected: subscriptions file doesn't exist yet
         except (OSError, ValueError, yaml.YAMLError) as e:
             logger.debug(f"Could not load subscribed skills from {path}: {e}")
 
+        self._subscriptions_cache[cache_key] = []
         return []
 
     def _load_assigned_skills(self, context: OperationContext) -> list[str]:
@@ -819,19 +797,34 @@ class SkillService:
 
         # Ensure parent directory exists
         parent_dir = "/".join(path.split("/")[:-1])
-        with contextlib.suppress(Exception):
+        try:
             self._gw.mkdir(parent_dir, context=context)
+        except Exception as e:
+            logger.debug("Failed to create parent directory %s: %s", parent_dir, e)
 
         self._gw.write(path, content, context=context)
+
+        # Invalidate cache for this user/zone
+        cache_key = (context.user_id or "", context.zone_id or "")
+        self._subscriptions_cache.pop(cache_key, None)
 
     # =========================================================================
     # Helper Methods: Skill Discovery & Metadata
     # =========================================================================
 
-    def _collect_skill_paths(self, context: OperationContext) -> list[str]:
-        """Collect all skill paths from filesystem.
+    def _collect_skill_paths(
+        self,
+        context: OperationContext,
+        *,
+        public_paths: list[str] | None = None,
+        shared_paths: list[str] | None = None,
+    ) -> list[str]:
+        """Collect all skill paths from filesystem + ReBAC.
 
-        Finds directories containing SKILL.md files.
+        Args:
+            context: Operation context
+            public_paths: Pre-computed public skill paths (avoids double ReBAC call)
+            shared_paths: Pre-computed shared skill paths (avoids double ReBAC call)
         """
         skill_paths: list[str] = []
 
@@ -885,16 +878,15 @@ class SkillService:
         # User skills
         find_skills_in_dir(f"/zone/{context.zone_id}/user/{context.user_id}/skill/")
 
-        # Cross-zone public skills
-        # Find all skills shared with role:public from any zone
-        public_skill_paths = self._find_public_skills()
-        for path in public_skill_paths:
+        # Cross-zone public skills (use pre-computed if available)
+        for path in public_paths if public_paths is not None else self._find_public_skills():
             if path not in skill_paths:
                 skill_paths.append(path)
 
         # Skills shared directly with the user via direct_viewer
-        shared_skill_paths = self._find_direct_viewer_skills(context)
-        for path in shared_skill_paths:
+        for path in (
+            shared_paths if shared_paths is not None else self._find_direct_viewer_skills(context)
+        ):
             if path not in skill_paths:
                 skill_paths.append(path)
 
@@ -984,8 +976,8 @@ class SkillService:
                         if self._gw.exists(skill_md, context=context):
                             skill_paths.append(skill_path)
                             seen_skills.add(skill_name)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Failed to check skill existence at %s: %s", skill_md, e)
         except Exception as e:
             logger.warning(f"Failed to find skills in {base_dir}: {e}")
 
@@ -1094,8 +1086,10 @@ class SkillService:
             if len(parts) >= 3:
                 import yaml
 
-                with contextlib.suppress(Exception):
+                try:
                     metadata = yaml.safe_load(parts[1]) or {}
+                except Exception as e:
+                    logger.debug("Failed to parse skill YAML frontmatter: %s", e)
                 body = parts[2].strip()
         else:
             # Fallback: parse first heading as name
@@ -1131,7 +1125,7 @@ class SkillService:
         skill_name: str | None = None,
         output_path: str | None = None,
         format: str = "generic",
-        include_dependencies: bool = False,  # noqa: ARG002 - TODO: Implement dependency inclusion
+        include_dependencies: bool = False,  # noqa: ARG002 - reserved for future dependency graph support
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Export a skill to .skill (ZIP) format.

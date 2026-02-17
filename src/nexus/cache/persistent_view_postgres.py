@@ -60,6 +60,10 @@ _DELETE_SUBJECT = text("""
       AND subject_id = :subject_id
 """)
 
+_DELETE_ALL = text("""
+    DELETE FROM persistent_namespace_views
+""")
+
 
 class PostgresPersistentViewStore:
     """PostgreSQL-backed persistent namespace view store.
@@ -81,7 +85,7 @@ class PostgresPersistentViewStore:
         revision_bucket: int,
     ) -> None:
         """Persist a namespace view (upsert via DELETE + INSERT)."""
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         now = datetime.now(UTC)
         view_id = _generate_uuid()
 
@@ -113,7 +117,7 @@ class PostgresPersistentViewStore:
         zone_id: str | None,
     ) -> PersistentView | None:
         """Load a persisted namespace view."""
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
 
         with self._engine.connect() as conn:
             result = conn.execute(
@@ -143,7 +147,7 @@ class PostgresPersistentViewStore:
         return PersistentView(
             subject_type=row.subject_type,
             subject_id=row.subject_id,
-            zone_id=row.zone_id if row.zone_id != "default" else None,
+            zone_id=row.zone_id if row.zone_id != "root" else None,
             mount_paths=mount_paths,
             grants_hash=row.grants_hash,
             revision_bucket=int(row.revision_bucket),
@@ -164,4 +168,10 @@ class PostgresPersistentViewStore:
                     "subject_id": subject_id,
                 },
             )
+            return result.rowcount or 0
+
+    def delete_all_views(self) -> int:
+        """Delete all persisted views across all subjects and zones."""
+        with self._engine.begin() as conn:
+            result = conn.execute(_DELETE_ALL)
             return result.rowcount or 0

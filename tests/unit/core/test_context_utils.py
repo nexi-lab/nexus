@@ -38,7 +38,7 @@ class TestGetZoneId:
         context.zone_id = None
 
         result = get_zone_id(context)
-        assert result == "default"
+        assert result == "root"
 
     def test_get_zone_id_without_zone_id_attribute(self):
         """Test that missing zone_id attribute defaults to 'default'."""
@@ -49,12 +49,12 @@ class TestGetZoneId:
 
         context = SimpleContext()
         result = get_zone_id(context)
-        assert result == "default"
+        assert result == "root"
 
     def test_get_zone_id_with_none_context(self):
         """Test that None context defaults to 'default'."""
         result = get_zone_id(None)
-        assert result == "default"
+        assert result == "root"
 
     def test_get_zone_id_with_empty_string(self):
         """Test that empty string zone_id defaults to 'default'."""
@@ -62,7 +62,7 @@ class TestGetZoneId:
         context.zone_id = ""
 
         result = get_zone_id(context)
-        assert result == "default"
+        assert result == "root"
 
 
 class TestGetUserIdentity:
@@ -190,30 +190,12 @@ class TestGetDatabaseUrl:
             result = get_database_url(obj)
             assert result == "sqlite:///obj.db"
 
-    def test_get_database_url_from_metadata(self):
-        """Test that obj._record_store.database_url is used as fallback."""
-
-        # Use a simple object without _config or db_path
-        class MetadataObj:
-            def __init__(self):
-                self._record_store = Mock()
-                self._record_store.database_url = "postgresql://localhost/metadata"
-
-        obj = MetadataObj()
-
-        with pytest.MonkeyPatch().context() as m:
-            m.delenv("TOKEN_MANAGER_DB", raising=False)
-            result = get_database_url(obj)
-            assert result == "postgresql://localhost/metadata"
-
     def test_get_database_url_priority_order(self):
-        """Test that priority order is correct: env > config > obj.db_path > metadata."""
+        """Test that priority order is correct: env > config > obj.db_path."""
         obj = Mock()
         obj._config = Mock()
         obj._config.db_path = "sqlite:///config.db"
         obj.db_path = "sqlite:///obj.db"
-        obj._record_store = Mock()
-        obj._record_store.database_url = "postgresql://localhost/metadata"
 
         # Env var should take priority
         with pytest.MonkeyPatch().context() as m:
@@ -264,19 +246,17 @@ class TestGetDatabaseUrl:
             result = get_database_url(obj)
             assert result == "sqlite:///obj.db"
 
-    def test_get_database_url_with_none_db_path(self):
-        """Test that None db_path is skipped."""
+    def test_get_database_url_with_none_db_path_raises(self):
+        """Test that None db_path with no other source raises RuntimeError."""
         obj = Mock()
         obj._config = Mock()
         obj._config.db_path = None
         obj.db_path = None
-        obj._record_store = Mock()
-        obj._record_store.database_url = "postgresql://localhost/metadata"
 
         with pytest.MonkeyPatch().context() as m:
             m.delenv("TOKEN_MANAGER_DB", raising=False)
-            result = get_database_url(obj)
-            assert result == "postgresql://localhost/metadata"
+            with pytest.raises(RuntimeError, match="No database path configured"):
+                get_database_url(obj)
 
 
 class TestResolveSkillBasePath:

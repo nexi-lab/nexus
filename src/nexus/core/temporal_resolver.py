@@ -192,13 +192,9 @@ Resolved:"""
                 method="none",
             )
 
-        # Get or create LLM provider
+        # Require injected LLM provider; fall back to heuristic if absent
         provider = self.llm_provider
         if provider is None:
-            provider = self._get_default_provider()
-
-        if provider is None:
-            # Fall back to heuristic
             fallback = HeuristicTemporalResolver()
             result = fallback.resolve(text, reference_time, context)
             result.method = "heuristic"
@@ -345,34 +341,6 @@ Resolved:"""
                     )
 
         return replacements
-
-    def _get_default_provider(self) -> Any:
-        """Try to get a default LLM provider."""
-        import os
-
-        try:
-            from pydantic import SecretStr
-
-            from nexus.llm import LiteLLMProvider, LLMConfig
-
-            if os.environ.get("ANTHROPIC_API_KEY"):
-                config = LLMConfig(
-                    model="claude-sonnet-4-20250514",
-                    api_key=SecretStr(os.environ["ANTHROPIC_API_KEY"]),
-                    max_output_tokens=1024,
-                )
-                return LiteLLMProvider(config)
-            elif os.environ.get("OPENAI_API_KEY"):
-                config = LLMConfig(
-                    model="gpt-4o-mini",
-                    api_key=SecretStr(os.environ["OPENAI_API_KEY"]),
-                    max_output_tokens=1024,
-                )
-                return LiteLLMProvider(config)
-        except Exception:
-            pass
-
-        return None
 
 
 class HeuristicTemporalResolver(TemporalResolver):

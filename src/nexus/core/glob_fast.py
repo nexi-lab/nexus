@@ -58,7 +58,7 @@ def glob_match_bulk(
     try:
         result: list[str] = _rust_glob_match_bulk(patterns, paths)
         return result
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         # If Rust glob fails for any reason, return None to fallback to Python
         return None
 
@@ -95,7 +95,7 @@ def glob_match(path: str, patterns: list[str]) -> bool:
         try:
             matches = _rust_glob_match_bulk(patterns, [path])
             return len(matches) > 0
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             pass  # Fall through to Python
 
     # Python fallback
@@ -136,7 +136,7 @@ def glob_filter(
         if RUST_AVAILABLE and _rust_glob_match_bulk is not None:
             try:
                 result = list(_rust_glob_match_bulk(include_patterns, result))
-            except Exception:
+            except (OSError, ValueError, RuntimeError):
                 # Python fallback for include
                 result = [
                     p for p in result if any(fnmatch.fnmatch(p, pat) for pat in include_patterns)
@@ -151,7 +151,7 @@ def glob_filter(
                 # Get paths that match exclude patterns
                 excluded = set(_rust_glob_match_bulk(exclude_patterns, result))
                 result = [p for p in result if p not in excluded]
-            except Exception:
+            except (OSError, ValueError, RuntimeError):
                 # Python fallback for exclude
                 result = [
                     p

@@ -18,4 +18,5 @@ pub mod glob;
 pub mod hash;
 pub mod rebac;
 pub mod search;
+pub mod trigram;
 pub mod types;

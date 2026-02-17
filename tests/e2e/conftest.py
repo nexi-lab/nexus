@@ -2,10 +2,13 @@
 
 Provides fixtures for:
 - isolated_db: Isolated SQLite database for each test
+- metadata_store: Raft metadata store (from integration tests)
+- record_store: In-memory SQLAlchemy record store (from integration tests)
 - nexus_server: Actual nexus serve process running on a free port
-- test_client: httpx client for making real HTTP requests
+- test_app: httpx client for making real HTTP requests
+- nexus_fs: Direct NexusFS instance (no server)
 
-These are TRUE e2e tests that start the actual server process.
+Merged from tests/integration/conftest.py and tests/e2e/conftest.py.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from contextlib import closing, suppress
@@ -27,6 +31,13 @@ import pytest
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+# Conditionally ignore MCP tests if fastmcp is not installed
+# This must be done at collection time, before any imports from test files
+try:
+    import fastmcp  # noqa: F401
+except ImportError:
+    collect_ignore_glob = ["self_contained/mcp/*"]
 
 # Add src directory to Python path for local development
 _src_path = Path(__file__).parent.parent.parent / "src"
@@ -42,19 +53,23 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def wait_for_server(url: str, timeout: float = 30.0) -> bool:
-    """Wait for server to be ready by polling /health endpoint."""
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            # trust_env=False prevents proxy interference with localhost
-            response = httpx.get(f"{url}/health", timeout=1.0, trust_env=False)
-            if response.status_code == 200:
-                return True
-        except (httpx.ConnectError, httpx.ReadTimeout):
-            pass
-        time.sleep(0.1)
-    return False
+def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
+    """Read lines from a subprocess pipe (runs in daemon thread).
+
+    If *ready* is provided and a line contains "Application startup complete",
+    the event is set — giving the caller an event-driven readiness signal
+    instead of polling /health.
+    """
+    try:
+        for raw in iter(pipe.readline, b""):
+            decoded = raw.decode(errors="replace")
+            lines.append(decoded)
+            if ready and "Application startup complete" in decoded:
+                ready.set()
+    except ValueError:
+        pass  # pipe closed
+    finally:
+        pipe.close()
 
 
 # Aggressive cleanup to prevent SQLite "database is locked" errors
@@ -156,16 +171,32 @@ def nexus_server(isolated_db, tmp_path):
         preexec_fn=os.setsid if sys.platform != "win32" else None,
     )
 
-    # Wait for server to be ready (PG startup is heavier than SQLite)
-    _startup_timeout = 60.0 if "postgresql" in env.get("NEXUS_DATABASE_URL", "") else 30.0
-    if not wait_for_server(base_url, timeout=_startup_timeout):
-        # Server failed to start, get output for debugging
+    # Event-driven readiness: drain stdout/stderr in background threads and
+    # wait for uvicorn's "Application startup complete" log line.  This is
+    # deterministic (no polling race) and prevents pipe-buffer deadlocks.
+    stderr_lines: list[str] = []
+    stdout_lines: list[str] = []
+    ready = threading.Event()
+
+    t_err = threading.Thread(
+        target=_drain_pipe, args=(process.stderr, stderr_lines, ready), daemon=True
+    )
+    t_out = threading.Thread(target=_drain_pipe, args=(process.stdout, stdout_lines), daemon=True)
+    t_err.start()
+    t_out.start()
+
+    # 120s safety ceiling — NOT a polling interval.  The event fires the
+    # instant the server emits the log line, so this only triggers on a
+    # genuine hang.
+    if not ready.wait(timeout=120.0):
         process.terminate()
-        stdout, stderr = process.communicate(timeout=5)
+        t_err.join(timeout=2)
+        t_out.join(timeout=2)
         pytest.fail(
-            f"Server failed to start on port {port}.\n"
-            f"stdout: {stdout.decode()}\n"
-            f"stderr: {stderr.decode()}"
+            f"Server failed to start on port {port} "
+            f"(never saw 'Application startup complete').\n"
+            f"stdout: {''.join(stdout_lines)}\n"
+            f"stderr: {''.join(stderr_lines)}"
         )
 
     yield {
@@ -234,3 +265,48 @@ def nexus_fs(isolated_db, tmp_path):
     yield nx
 
     nx.close()
+
+
+def wait_for_server(url: str, timeout: float = 30.0) -> bool:
+    """Wait for server to be ready by polling /health endpoint.
+
+    Shared helper — previously duplicated across multiple test files.
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            response = httpx.get(f"{url}/health", timeout=1.0, trust_env=False)
+            if response.status_code == 200:
+                return True
+        except (httpx.ConnectError, httpx.ReadTimeout):
+            pass
+        time.sleep(0.1)
+    return False
+
+
+@pytest.fixture
+def metadata_store(tmp_path):
+    """Create Raft metadata store for tests (primary production path).
+
+    Uses RaftMetadataStore (Strong Consistency, primary production default).
+
+    Returns:
+        RaftMetadataStore: Raft-backed metadata store (SC mode)
+    """
+    store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+    yield store
+    # Cleanup handled by tmp_path
+
+
+@pytest.fixture
+def record_store():
+    """Create in-memory RecordStore for tests.
+
+    Uses in-memory SQLite for test isolation.
+
+    Returns:
+        SQLAlchemyRecordStore: In-memory SQLite record store
+    """
+    store = SQLAlchemyRecordStore()  # defaults to sqlite:///:memory:
+    yield store
+    store.close()

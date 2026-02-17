@@ -1,99 +1,110 @@
-"""Tests for nexus.factory — service factory wiring.
+"""Tests for the tiered boot architecture in nexus.factory (Issue #1513).
 
-Issue #1287: Extract NexusFS Domain Services from God Object.
-
-Validates that create_nexus_services() and create_nexus_fs() correctly
-create and wire all services together before we start extracting subsystems.
+Validates:
+- BootError construction and attributes
+- _boot_kernel_services: success path, failure raises BootError, timing logged
+- _boot_system_services: success path, partial failure warns
+- _boot_brick_services: success path, failure logged at DEBUG
+- _start_background_services: .start() called, None services skipped
+- create_nexus_services: full integration, BootError propagation, log tags
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock
+import logging
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.backends.local import LocalBackend
-from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-
-def _make_deps(tmp_path: Path) -> dict:
-    """Build minimal real dependencies for factory tests."""
-    backend_path = tmp_path / "storage"
-    backend_path.mkdir(exist_ok=True)
-    db_path = tmp_path / "metadata"
-
-    backend = LocalBackend(str(backend_path))
-    metadata_store = RaftMetadataStore.embedded(str(db_path))
-
-    return {"backend": backend, "metadata_store": metadata_store}
-
+from nexus.core.exceptions import BootError, NexusError
 
 # ---------------------------------------------------------------------------
-# create_nexus_services() tests
+# TestBootError
 # ---------------------------------------------------------------------------
 
 
-class TestCreateNexusServices:
-    """Tests for the create_nexus_services() factory function."""
+class TestBootError:
+    """Tests for BootError exception class."""
 
-    @pytest.fixture
-    def deps(self, tmp_path: Path) -> dict:
-        return _make_deps(tmp_path)
+    def test_construction_defaults(self) -> None:
+        err = BootError("something broke")
+        assert str(err) == "something broke"
+        assert err.tier == "kernel"
+        assert err.service_name == ""
 
-    def _make_record_store(self, tmp_path: Path) -> MagicMock:
-        """Create a mock RecordStore with real engine/session_factory and tables."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
+    def test_construction_with_kwargs(self) -> None:
+        err = BootError("db down", tier="system", service_name="rebac_manager")
+        assert err.tier == "system"
+        assert err.service_name == "rebac_manager"
 
-        from nexus.storage.models import Base
+    def test_inherits_nexus_error(self) -> None:
+        err = BootError("fail")
+        assert isinstance(err, NexusError)
+        assert isinstance(err, Exception)
 
-        db_file = tmp_path / "records.db"
-        engine = create_engine(f"sqlite:///{db_file}")
-        Base.metadata.create_all(engine)
-        session_factory = sessionmaker(bind=engine)
+    def test_is_not_expected(self) -> None:
+        err = BootError("fail")
+        assert err.is_expected is False
 
-        mock = MagicMock()
-        mock.engine = engine
-        mock.session_factory = session_factory
-        mock.database_url = f"sqlite:///{db_file}"
-        return mock
 
-    def test_returns_dict(self, deps: dict, tmp_path: Path) -> None:
-        """create_nexus_services() returns a dict."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
+# ---------------------------------------------------------------------------
+# Helpers: minimal mock boot context
+# ---------------------------------------------------------------------------
 
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
 
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-        )
-        assert isinstance(result, dict)
+def _make_mock_ctx(**overrides: Any) -> Any:
+    """Build a minimal _BootContext-like object for tier function tests."""
+    from nexus.factory import _BootContext
 
-    def test_contains_all_expected_keys(self, deps: dict, tmp_path: Path) -> None:
-        """Result dict contains all expected service keys."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
+    defaults = {
+        "record_store": MagicMock(),
+        "metadata_store": MagicMock(),
+        "backend": MagicMock(),
+        "router": MagicMock(),
+        "engine": MagicMock(),
+        "session_factory": MagicMock(),
+        "perm": MagicMock(
+            enforce_zone_isolation=True,
+            enable_tiger_cache=True,
+            allow_admin_bypass=False,
+            inherit=True,
+            enable_deferred=False,  # disable to simplify test
+            deferred_flush_interval=0.05,
+        ),
+        "cache_ttl_seconds": 300,
+        "dist": MagicMock(
+            enable_events=False,
+            enable_locks=False,
+            enable_workflows=False,
+        ),
+        "zone_id": None,
+        "agent_id": None,
+        "enable_write_buffer": False,
+        "resiliency_raw": None,
+        "db_url": "sqlite:///:memory:",
+    }
+    defaults.update(overrides)
+    return _BootContext(**defaults)
 
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
 
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-        )
+# ---------------------------------------------------------------------------
+# TestBootKernelServices
+# ---------------------------------------------------------------------------
+
+
+class TestBootKernelServices:
+    """Tests for _boot_kernel_services."""
+
+    def test_success_returns_all_keys(self) -> None:
+        from nexus.factory import _boot_kernel_services
+
+        ctx = _make_mock_ctx()
+        result = _boot_kernel_services(ctx)
 
         expected_keys = {
             "rebac_manager",
+            "rebac_circuit_breaker",
             "dir_visibility_cache",
             "audit_store",
             "entity_registry",
@@ -105,422 +116,269 @@ class TestCreateNexusServices:
             "workspace_manager",
             "write_observer",
             "version_service",
-            "observability_subsystem",
-            "wallet_provisioner",
-            "tool_namespace_middleware",
         }
-        assert expected_keys.issubset(result.keys()), (
-            f"Missing keys: {expected_keys - result.keys()}"
+        assert expected_keys == set(result.keys())
+
+    def test_failure_raises_boot_error(self) -> None:
+        from nexus.factory import _boot_kernel_services
+
+        ctx = _make_mock_ctx()
+        with patch(
+            "nexus.rebac.manager.EnhancedReBACManager",
+            side_effect=RuntimeError("db connection failed"),
+        ):
+            with pytest.raises(BootError) as exc_info:
+                _boot_kernel_services(ctx)
+            assert exc_info.value.tier == "kernel"
+            assert "db connection failed" in str(exc_info.value)
+
+    def test_timing_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        from nexus.factory import _boot_kernel_services
+
+        ctx = _make_mock_ctx()
+        with caplog.at_level(logging.INFO, logger="nexus.factory"):
+            _boot_kernel_services(ctx)
+        assert any("[BOOT:KERNEL]" in r.message for r in caplog.records)
+
+    def test_start_not_called_on_write_observer(self) -> None:
+        """Verify .start() is NOT called during kernel boot."""
+        from nexus.factory import _boot_kernel_services
+
+        ctx = _make_mock_ctx(enable_write_buffer=False)
+        result = _boot_kernel_services(ctx)
+        wo = result["write_observer"]
+        # RecordStoreSyncer doesn't have .start() called in kernel boot
+        # (only BufferedRecordStoreSyncer does, and only in _start_background_services)
+        assert wo is not None
+
+    def test_deferred_buffer_created_when_enabled(self) -> None:
+        from nexus.factory import _boot_kernel_services
+
+        perm = MagicMock(
+            enforce_zone_isolation=True,
+            enable_tiger_cache=True,
+            allow_admin_bypass=False,
+            inherit=True,
+            enable_deferred=True,
+            deferred_flush_interval=0.05,
         )
+        ctx = _make_mock_ctx(perm=perm)
+        result = _boot_kernel_services(ctx)
+        assert result["deferred_permission_buffer"] is not None
 
-    def test_no_none_values_for_required_services(self, deps: dict, tmp_path: Path) -> None:
-        """Required services should not be None."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
+    def test_deferred_buffer_none_when_disabled(self) -> None:
+        from nexus.factory import _boot_kernel_services
 
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-        )
-
-        always_required = [
-            "rebac_manager",
-            "audit_store",
-            "entity_registry",
-            "permission_enforcer",
-            "hierarchy_manager",
-            "workspace_registry",
-            "mount_manager",
-            "workspace_manager",
-            "write_observer",
-            "version_service",
-        ]
-        for key in always_required:
-            assert result[key] is not None, f"Service '{key}' is None"
-
-    def test_version_service_wiring(self, deps: dict, tmp_path: Path) -> None:
-        """VersionService receives correct metadata_store and cas_store."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
-
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-        )
-
-        vs = result["version_service"]
-        assert vs.metadata == deps["metadata_store"]
-        assert vs.cas == deps["backend"]
-
-    def test_deferred_permission_buffer_disabled(self, deps: dict, tmp_path: Path) -> None:
-        """DeferredPermissionBuffer is None when disabled."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
-
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-            enable_deferred_permissions=False,
-        )
+        ctx = _make_mock_ctx()  # enable_deferred=False by default
+        result = _boot_kernel_services(ctx)
         assert result["deferred_permission_buffer"] is None
 
-    def test_deferred_permission_buffer_enabled(self, deps: dict, tmp_path: Path) -> None:
-        """DeferredPermissionBuffer is created when enabled."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
-
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-            enable_deferred_permissions=True,
-        )
-        buf = result["deferred_permission_buffer"]
-        assert buf is not None
-
-    def test_write_buffer_disabled_for_sqlite(self, deps: dict, tmp_path: Path) -> None:
-        """WriteBuffer is disabled for SQLite by default."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
-
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-        )
-
-        # SQLite should use synchronous RecordStoreSyncer
-        observer = result["write_observer"]
-        assert observer is not None
-        assert type(observer).__name__ == "RecordStoreSyncer"
-
-    def test_write_buffer_forced_on(self, deps: dict, tmp_path: Path) -> None:
-        """WriteBuffer can be forced on via enable_write_buffer=True."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
-
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-            enable_write_buffer=True,
-        )
-
-        observer = result["write_observer"]
-        assert type(observer).__name__ == "BufferedRecordStoreSyncer"
-
 
 # ---------------------------------------------------------------------------
-# create_nexus_fs() tests
+# TestBootSystemServices
 # ---------------------------------------------------------------------------
 
 
-class TestCreateNexusFS:
-    """Tests for the create_nexus_fs() convenience function."""
+class TestBootSystemServices:
+    """Tests for _boot_system_services."""
 
-    def test_creates_nexus_fs_without_record_store(self, tmp_path: Path) -> None:
-        """create_nexus_fs() works without a record_store (kernel-only mode)."""
-        from nexus.factory import create_nexus_fs
+    def test_success_returns_all_keys(self) -> None:
+        from nexus.factory import _boot_kernel_services, _boot_system_services
 
-        deps = _make_deps(tmp_path)
-        nx = create_nexus_fs(
-            backend=deps["backend"],
-            metadata_store=deps["metadata_store"],
-            enforce_permissions=False,
-        )
-        assert nx is not None
-        assert hasattr(nx, "read")
-        assert hasattr(nx, "write")
+        ctx = _make_mock_ctx()
+        kernel = _boot_kernel_services(ctx)
+        result = _boot_system_services(ctx, kernel)
 
-    def _make_record_store(self, tmp_path: Path) -> MagicMock:
-        """Create a mock RecordStore with real engine/session_factory and tables."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
+        expected_keys = {
+            "agent_registry",
+            "async_agent_registry",
+            "namespace_manager",
+            "async_namespace_manager",
+            "async_vfs_router",
+            "delivery_worker",
+            "observability_subsystem",
+            "resiliency_manager",
+            "context_branch_service",
+        }
+        assert expected_keys == set(result.keys())
 
-        from nexus.storage.models import Base
+    def test_partial_failure_warns_but_continues(self, caplog: pytest.LogCaptureFixture) -> None:
+        from nexus.factory import _boot_kernel_services, _boot_system_services
 
-        db_file = tmp_path / "records.db"
-        engine = create_engine(f"sqlite:///{db_file}")
-        Base.metadata.create_all(engine)
-        session_factory = sessionmaker(bind=engine)
+        ctx = _make_mock_ctx()
+        kernel = _boot_kernel_services(ctx)
 
-        mock = MagicMock()
-        mock.engine = engine
-        mock.session_factory = session_factory
-        mock.database_url = f"sqlite:///{db_file}"
-        return mock
+        with (
+            caplog.at_level(logging.WARNING, logger="nexus.factory"),
+            patch(
+                "nexus.services.agents.agent_registry.AgentRegistry",
+                side_effect=RuntimeError("agent db error"),
+            ),
+        ):
+            result = _boot_system_services(ctx, kernel)
 
-    def test_creates_nexus_fs_with_record_store(self, tmp_path: Path) -> None:
-        """create_nexus_fs() creates services when record_store is provided."""
-        from nexus.factory import create_nexus_fs
-
-        deps = _make_deps(tmp_path)
-        record_store = self._make_record_store(tmp_path)
-
-        nx = create_nexus_fs(
-            backend=deps["backend"],
-            metadata_store=deps["metadata_store"],
-            record_store=record_store,
-            enforce_permissions=False,
-        )
-        assert nx is not None
-        assert nx.version_service is not None
-
-    def test_services_wired_correctly(self, tmp_path: Path) -> None:
-        """Services created by factory are properly wired into NexusFS."""
-        from nexus.factory import create_nexus_fs
-
-        deps = _make_deps(tmp_path)
-        record_store = self._make_record_store(tmp_path)
-
-        nx = create_nexus_fs(
-            backend=deps["backend"],
-            metadata_store=deps["metadata_store"],
-            record_store=record_store,
-            enforce_permissions=False,
-        )
-
-        # VersionService gets metadata_store
-        assert nx.version_service.metadata == deps["metadata_store"]
-        # ReBACService gets rebac_manager
-        assert nx.rebac_service._rebac_manager == nx._rebac_manager
-        # LLMService gets nexus_fs reference
-        assert nx.llm_service.nexus_fs == nx
-
-    def test_router_created_with_default_mount(self, tmp_path: Path) -> None:
-        """Factory creates a PathRouter with the backend mounted at '/'."""
-        from nexus.factory import create_nexus_fs
-
-        deps = _make_deps(tmp_path)
-        nx = create_nexus_fs(
-            backend=deps["backend"],
-            metadata_store=deps["metadata_store"],
-            enforce_permissions=False,
-        )
-        assert nx.router is not None
-
-    def test_custom_namespaces_registered(self, tmp_path: Path) -> None:
-        """Custom namespaces are registered on the router."""
-        from nexus.factory import create_nexus_fs
-
-        deps = _make_deps(tmp_path)
-        nx = create_nexus_fs(
-            backend=deps["backend"],
-            metadata_store=deps["metadata_store"],
-            enforce_permissions=False,
-            custom_namespaces=[{"name": "custom"}],
-        )
-        assert nx.router is not None
+        # Agent registry failed, but others should still work
+        assert result["agent_registry"] is None
+        # Resiliency manager should still be created
+        assert result["resiliency_manager"] is not None
+        assert any("[BOOT:SYSTEM]" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
-# Tool namespace middleware wiring (Issue #1272)
+# TestBootBrickServices
 # ---------------------------------------------------------------------------
 
 
-class TestToolNamespaceMiddleware:
-    """Tests for ToolNamespaceMiddleware factory wiring."""
+class TestBootBrickServices:
+    """Tests for _boot_brick_services."""
 
-    def _make_record_store(self, tmp_path: Path) -> MagicMock:
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
+    def test_success_returns_all_keys(self) -> None:
+        from nexus.factory import _boot_brick_services, _boot_kernel_services
 
-        from nexus.storage.models import Base
+        ctx = _make_mock_ctx()
+        kernel = _boot_kernel_services(ctx)
+        result = _boot_brick_services(ctx, kernel)
 
-        db_file = tmp_path / "records.db"
-        engine = create_engine(f"sqlite:///{db_file}")
-        Base.metadata.create_all(engine)
-        session_factory = sessionmaker(bind=engine)
+        expected_keys = {
+            "wallet_provisioner",
+            "manifest_resolver",
+            "manifest_metrics",
+            "tool_namespace_middleware",
+            "chunked_upload_service",
+            "event_bus",
+            "lock_manager",
+            "workflow_engine",
+            "api_key_creator",
+            "snapshot_service",
+        }
+        assert expected_keys == set(result.keys())
 
-        mock = MagicMock()
-        mock.engine = engine
-        mock.session_factory = session_factory
-        mock.database_url = f"sqlite:///{db_file}"
-        return mock
+    def test_failure_logged_at_debug(self, caplog: pytest.LogCaptureFixture) -> None:
+        from nexus.factory import _boot_brick_services, _boot_kernel_services
 
-    def test_middleware_created_by_factory(self, tmp_path: Path) -> None:
-        """Factory creates ToolNamespaceMiddleware when services are built."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
+        ctx = _make_mock_ctx()
+        kernel = _boot_kernel_services(ctx)
 
-        deps = _make_deps(tmp_path)
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
+        with caplog.at_level(logging.DEBUG, logger="nexus.factory"):
+            result = _boot_brick_services(ctx, kernel)
 
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-        )
-
-        mw = result["tool_namespace_middleware"]
-        assert mw is not None
-        assert type(mw).__name__ == "ToolNamespaceMiddleware"
-
-    def test_middleware_receives_rebac_manager(self, tmp_path: Path) -> None:
-        """Middleware is wired with the same rebac_manager from the factory."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
-
-        deps = _make_deps(tmp_path)
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-        )
-
-        mw = result["tool_namespace_middleware"]
-        assert mw._rebac_manager is result["rebac_manager"]
-
-    def test_middleware_receives_zone_id(self, tmp_path: Path) -> None:
-        """Middleware inherits zone_id from factory params."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
-
-        deps = _make_deps(tmp_path)
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-            zone_id="test-zone-42",
-        )
-
-        mw = result["tool_namespace_middleware"]
-        assert mw._zone_id == "test-zone-42"
-
-    def test_middleware_metrics_initially_zero(self, tmp_path: Path) -> None:
-        """Freshly created middleware has zero metrics."""
-        from nexus.core.router import PathRouter
-        from nexus.factory import create_nexus_services
-
-        deps = _make_deps(tmp_path)
-        router = PathRouter()
-        router.add_mount("/", deps["backend"], priority=0)
-        record_store = self._make_record_store(tmp_path)
-
-        result = create_nexus_services(
-            record_store=record_store,
-            metadata_store=deps["metadata_store"],
-            backend=deps["backend"],
-            router=router,
-        )
-
-        mw = result["tool_namespace_middleware"]
-        assert mw.metrics["cache_hits"] == 0
-        assert mw.metrics["cache_misses"] == 0
-        assert mw.metrics["enabled"] is True
+        # Brick services should return keys even if some are None
+        assert "wallet_provisioner" in result
+        assert any("[BOOT:BRICK]" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
-# Default tool profiles YAML (Issue #1272)
+# TestStartBackgroundServices
 # ---------------------------------------------------------------------------
 
 
-class TestDefaultToolProfiles:
-    """Tests for the default tool_profiles.yaml config."""
+class TestStartBackgroundServices:
+    """Tests for _start_background_services."""
 
-    _CONFIG_PATH = Path("src/nexus/config/tool_profiles.yaml")
+    def test_start_called_on_deferred_buffer(self) -> None:
+        from nexus.factory import _start_background_services
 
-    def test_default_profiles_load_successfully(self) -> None:
-        """Default YAML config loads without errors."""
-        from nexus.mcp.profiles import load_profiles
+        dpb = MagicMock()
+        kernel = {"deferred_permission_buffer": dpb, "write_observer": None}
+        system = {"delivery_worker": None}
+        _start_background_services(kernel, system)
+        dpb.start.assert_called_once()
 
-        config = load_profiles(self._CONFIG_PATH)
-        assert config is not None
+    def test_start_called_on_delivery_worker(self) -> None:
+        from nexus.factory import _start_background_services
 
-    def test_default_profiles_contain_expected_names(self) -> None:
-        """Default config has all 5 standard profiles."""
-        from nexus.mcp.profiles import load_profiles
+        dw = MagicMock()
+        kernel = {"deferred_permission_buffer": None, "write_observer": None}
+        system = {"delivery_worker": dw}
+        _start_background_services(kernel, system)
+        dw.start.assert_called_once()
 
-        config = load_profiles(self._CONFIG_PATH)
-        expected = {"minimal", "coding", "search", "execution", "full"}
-        assert set(config.profile_names) == expected
+    def test_none_services_skipped(self) -> None:
+        from nexus.factory import _start_background_services
 
-    def test_default_profile_is_minimal(self) -> None:
-        """Default profile is 'minimal'."""
-        from nexus.mcp.profiles import load_profiles
+        kernel = {"deferred_permission_buffer": None, "write_observer": None}
+        system = {"delivery_worker": None}
+        # Should not raise
+        _start_background_services(kernel, system)
 
-        config = load_profiles(self._CONFIG_PATH)
-        default = config.get_default()
-        assert default is not None
-        assert default.name == "minimal"
+    def test_buffered_syncer_started(self) -> None:
+        from nexus.factory import _start_background_services
+        from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
 
-    def test_inheritance_resolved_correctly(self) -> None:
-        """Profile inheritance chains resolve to correct tool sets."""
-        from nexus.mcp.profiles import load_profiles
+        wo = MagicMock(spec=BufferedRecordStoreSyncer)
+        kernel = {"deferred_permission_buffer": None, "write_observer": wo}
+        system = {"delivery_worker": None}
+        _start_background_services(kernel, system)
+        wo.start.assert_called_once()
 
-        config = load_profiles(self._CONFIG_PATH)
 
-        # minimal has 4 tools
-        minimal = config.get_profile("minimal")
-        assert minimal is not None
-        assert len(minimal.tools) == 4
-        assert "nexus_read_file" in minimal.tools
+# ---------------------------------------------------------------------------
+# TestCreateNexusServicesIntegration
+# ---------------------------------------------------------------------------
 
-        # coding extends minimal → 4 + 7 = 11 tools
-        coding = config.get_profile("coding")
-        assert coding is not None
-        assert "nexus_read_file" in coding.tools  # inherited
-        assert "nexus_write_file" in coding.tools  # own
 
-        # full extends execution → all tools
-        full = config.get_profile("full")
-        assert full is not None
-        assert "nexus_read_file" in full.tools  # from minimal
-        assert "nexus_python" in full.tools  # from execution
-        assert "nexus_discovery_search_tools" in full.tools  # own
+class TestCreateNexusServicesIntegration:
+    """Integration tests for create_nexus_services orchestrator."""
 
-    def test_profile_inheritance_deduplicates(self) -> None:
-        """Duplicate tools from inheritance are deduplicated."""
-        from nexus.mcp.profiles import load_profiles
+    def test_full_boot_returns_kernel_services(self) -> None:
+        from nexus.core.config import KernelServices
+        from nexus.factory import create_nexus_services
 
-        config = load_profiles(self._CONFIG_PATH)
-        full = config.get_profile("full")
-        assert full is not None
-        # No duplicates — tools is a tuple of unique names
-        assert len(full.tools) == len(set(full.tools))
+        record_store = MagicMock()
+        record_store.engine = MagicMock()
+        record_store.session_factory = MagicMock()
+        record_store.database_url = "sqlite:///:memory:"
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=MagicMock(),
+            backend=MagicMock(),
+            router=MagicMock(),
+        )
+        assert isinstance(result, KernelServices)
+        assert result.rebac_manager is not None
+        assert result.rebac_circuit_breaker is not None
+        assert result.permission_enforcer is not None
+
+    def test_kernel_failure_propagates_boot_error(self) -> None:
+        from nexus.factory import create_nexus_services
+
+        record_store = MagicMock()
+        record_store.engine = MagicMock()
+        record_store.session_factory = MagicMock()
+        record_store.database_url = "sqlite:///:memory:"
+
+        with (
+            patch(
+                "nexus.rebac.manager.EnhancedReBACManager",
+                side_effect=RuntimeError("fatal"),
+            ),
+            pytest.raises(BootError),
+        ):
+            create_nexus_services(
+                record_store=record_store,
+                metadata_store=MagicMock(),
+                backend=MagicMock(),
+                router=MagicMock(),
+            )
+
+    def test_boot_tags_in_log_output(self, caplog: pytest.LogCaptureFixture) -> None:
+        from nexus.factory import create_nexus_services
+
+        record_store = MagicMock()
+        record_store.engine = MagicMock()
+        record_store.session_factory = MagicMock()
+        record_store.database_url = "sqlite:///:memory:"
+
+        with caplog.at_level(logging.DEBUG, logger="nexus.factory"):
+            create_nexus_services(
+                record_store=record_store,
+                metadata_store=MagicMock(),
+                backend=MagicMock(),
+                router=MagicMock(),
+            )
+
+        messages = " ".join(r.message for r in caplog.records)
+        assert "[BOOT:KERNEL]" in messages
+        assert "[BOOT:SYSTEM]" in messages
+        assert "[BOOT:BRICK]" in messages

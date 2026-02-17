@@ -48,7 +48,7 @@ async def warmup_cache(
     depth = body.get("depth", 2)
     include_content = body.get("include_content", False)
     max_files = body.get("max_files", 1000)
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
 
     config = WarmupConfig(
         max_files=max_files,
@@ -100,14 +100,15 @@ async def get_cache_stats(
     cache_stats: dict[str, Any] = {}
 
     # Metadata cache stats
-    if hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "_cache"):
-        cache = nexus_fs.metadata._cache
-        if cache:
-            cache_stats["metadata_cache"] = {
-                "path_cache_size": len(getattr(cache, "_path_cache", {})),
-                "list_cache_size": len(getattr(cache, "_list_cache", {})),
-                "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
-            }
+    cache = getattr(nexus_fs, "metadata_cache", None)
+    if cache is None and hasattr(nexus_fs, "metadata"):
+        cache = getattr(nexus_fs.metadata, "_cache", None)
+    if cache:
+        cache_stats["metadata_cache"] = {
+            "path_cache_size": len(getattr(cache, "_path_cache", {})),
+            "list_cache_size": len(getattr(cache, "_list_cache", {})),
+            "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
+        }
 
     # Content cache stats
     if hasattr(nexus_fs, "backend") and hasattr(nexus_fs.backend, "content_cache"):
@@ -116,22 +117,29 @@ async def get_cache_stats(
             cache_stats["content_cache"] = cc.get_stats()
 
     # Permission cache stats
-    if hasattr(nexus_fs, "_rebac_manager"):
-        rm = nexus_fs._rebac_manager
-        if hasattr(rm, "_permission_cache") and rm._permission_cache:
-            pc = rm._permission_cache
-            if hasattr(pc, "get_stats"):
-                cache_stats["permission_cache"] = pc.get_stats()
-        if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
-            tc = rm._tiger_cache
-            if hasattr(tc, "get_stats"):
-                cache_stats["tiger_cache"] = tc.get_stats()
+    rm = getattr(nexus_fs, "_rebac_manager", None)
+    if rm is not None:
+        pc = getattr(rm, "_permission_cache", None)
+        if pc is not None and hasattr(pc, "get_stats"):
+            cache_stats["permission_cache"] = pc.get_stats()
+        tc = getattr(rm, "_tiger_cache", None)
+        if tc is not None and hasattr(tc, "get_stats"):
+            cache_stats["tiger_cache"] = tc.get_stats()
 
     # Directory visibility cache
-    if hasattr(nexus_fs, "_dir_visibility_cache") and nexus_fs._dir_visibility_cache:
-        dvc = nexus_fs._dir_visibility_cache
-        if hasattr(dvc, "get_metrics"):
-            cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+    dvc = getattr(nexus_fs, "_dir_visibility_cache", None)
+    if dvc is not None and hasattr(dvc, "get_metrics"):
+        cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+
+    # Issue #1169: Read-set-aware cache stats (precision metrics)
+    read_set_cache = getattr(nexus_fs, "read_set_cache", None)
+    if read_set_cache is not None:
+        cache_stats["read_set_cache"] = read_set_cache.get_stats()
+
+    # Issue #1169: ReadSetRegistry stats
+    read_set_registry = getattr(nexus_fs, "read_set_registry", None)
+    if read_set_registry is not None:
+        cache_stats["read_set_registry"] = read_set_registry.get_stats()
 
     # File access tracker stats
     tracker = get_file_access_tracker()
@@ -153,7 +161,7 @@ async def get_hot_files(
     Args:
         limit: Maximum number of hot files to return (1-100, default: 20).
     """
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
     tracker = get_file_access_tracker()
     hot_files = tracker.get_hot_files(zone_id=zone_id, limit=limit)
 

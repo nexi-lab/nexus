@@ -26,11 +26,10 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
     from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
@@ -53,7 +52,8 @@ class IPCVFSDriver(Backend):
     def __init__(
         self,
         storage: IPCStorageDriver,
-        zone_id: str = "default",
+        *,
+        zone_id: str,
         event_publisher: Any | None = None,
         max_inbox_size: int = 1000,
     ) -> None:
@@ -61,12 +61,17 @@ class IPCVFSDriver(Backend):
         self._zone_id = zone_id
         self._publisher = event_publisher
         self._max_inbox_size = max_inbox_size
-        # Long-lived event loop for sync-to-async bridging (HIGH-1 fix).
+        # Eagerly create sync-to-async bridge — immutable after init.
         # The Backend ABC is sync, but IPCStorageDriver is async.
         # A single background loop avoids per-call ThreadPoolExecutor overhead
         # and keeps event-loop-bound resources (e.g., asyncpg pools) working.
-        self._bg_loop: asyncio.AbstractEventLoop | None = None
-        self._bg_thread: threading.Thread | None = None
+        self._bg_loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self._bg_thread = threading.Thread(
+            target=self._bg_loop.run_forever,
+            daemon=True,
+            name="ipc-driver-loop",
+        )
+        self._bg_thread.start()
 
     # === Identity & Capability Flags ===
 
@@ -89,6 +94,7 @@ class IPCVFSDriver(Backend):
 
     # === Content Operations (path-oriented virtual FS) ===
 
+    @timed_response
     def write_content(
         self,
         content: bytes,
@@ -101,12 +107,10 @@ class IPCVFSDriver(Backend):
         use ``write_path()`` instead.
         """
         content_hash = hashlib.sha256(content).hexdigest()
-        try:
-            self._run_async(self._storage.write(f"/_cas/{content_hash}", content, self._zone_id))
-            return HandlerResponse.ok(data=content_hash, backend_name="ipc")
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc")
+        self._run_async(self._storage.write(f"/_cas/{content_hash}", content, self._zone_id))
+        return HandlerResponse.ok(data=content_hash, backend_name="ipc")
 
+    @timed_response
     def write_path(
         self,
         path: str,
@@ -124,8 +128,9 @@ class IPCVFSDriver(Backend):
             return HandlerResponse.ok(data=content_hash, backend_name="ipc", path=path)
         except Exception as exc:
             logger.error("IPC write failed at %s: %s", path, exc)
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
+            raise
 
+    @timed_response
     def read_content(
         self,
         content_hash: str,
@@ -147,9 +152,8 @@ class IPCVFSDriver(Backend):
                 backend_name="ipc",
                 path=path,
             )
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
+    @timed_response
     def delete_content(
         self,
         content_hash: str,
@@ -158,6 +162,7 @@ class IPCVFSDriver(Backend):
         """Delete content — IPC never hard-deletes (moves to dead_letter)."""
         return HandlerResponse.ok(data=None, backend_name="ipc")
 
+    @timed_response
     def content_exists(
         self,
         content_hash: str,
@@ -165,12 +170,10 @@ class IPCVFSDriver(Backend):
     ) -> HandlerResponse[bool]:
         """Check if a path exists (virtual FS mode)."""
         path = content_hash
-        try:
-            exists = self._run_async(self._storage.exists(path, self._zone_id))
-            return HandlerResponse.ok(data=exists, backend_name="ipc", path=path)
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
+        exists = self._run_async(self._storage.exists(path, self._zone_id))
+        return HandlerResponse.ok(data=exists, backend_name="ipc", path=path)
 
+    @timed_response
     def get_content_size(
         self,
         content_hash: str,
@@ -189,9 +192,8 @@ class IPCVFSDriver(Backend):
                 backend_name="ipc",
                 path=path,
             )
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
+    @timed_response
     def get_ref_count(
         self,
         content_hash: str,
@@ -202,25 +204,24 @@ class IPCVFSDriver(Backend):
 
     # === Directory Operations ===
 
+    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Create a directory in IPC storage."""
-        try:
-            self._run_async(self._storage.mkdir(path, self._zone_id))
-            return HandlerResponse.ok(data=None, backend_name="ipc", path=path)
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
+        self._run_async(self._storage.mkdir(path, self._zone_id))
+        return HandlerResponse.ok(data=None, backend_name="ipc", path=path)
 
+    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Remove directory — not supported for IPC (audit preservation)."""
         return HandlerResponse.error(
@@ -231,6 +232,7 @@ class IPCVFSDriver(Backend):
             path=path,
         )
 
+    @timed_response
     def is_directory(
         self,
         path: str,
@@ -272,31 +274,12 @@ class IPCVFSDriver(Backend):
 
     # === Internal Helpers ===
 
-    def _ensure_bg_loop(self) -> asyncio.AbstractEventLoop:
-        """Ensure the background event loop and thread are running."""
-        if self._bg_loop is None or not self._bg_loop.is_running():
-            self._bg_loop = asyncio.new_event_loop()
-            self._bg_thread = threading.Thread(
-                target=self._bg_loop.run_forever,
-                daemon=True,
-                name="ipc-driver-loop",
-            )
-            self._bg_thread.start()
-        return self._bg_loop
-
     def _run_async(self, coro: Any) -> Any:
         """Run an async coroutine from sync Backend methods.
 
         The Backend ABC uses sync methods, but IPCStorageDriver is async.
-        Uses a long-lived background event loop to avoid per-call overhead
-        and keep event-loop-bound resources (asyncpg pools) working.
+        Dispatches to the background event loop created at construction
+        time (immutable after init).
         """
-        try:
-            asyncio.get_running_loop()
-            # We're inside a running event loop — dispatch to background loop
-            loop = self._ensure_bg_loop()
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            return future.result(timeout=30)
-        except RuntimeError:
-            # No running loop — safe to use asyncio.run directly
-            return asyncio.run(coro)
+        future = asyncio.run_coroutine_threadsafe(coro, self._bg_loop)
+        return future.result(timeout=30)

@@ -6,7 +6,7 @@ Existing implementation: ``nexus.core.agent_registry.AgentRegistry`` (sync).
 Storage Affinity: **RecordStore** — relational agent identity and lifecycle state.
 
 References:
-    - docs/design/KERNEL-ARCHITECTURE.md §3
+    - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - docs/architecture/data-storage-matrix.md (Four Pillars)
     - Issue #1383: Define 6 kernel protocol interfaces
 """

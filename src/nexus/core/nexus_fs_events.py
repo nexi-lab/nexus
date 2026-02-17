@@ -9,11 +9,11 @@ Layer 1 (Same-box, Block 1):
 
 Layer 2 (Distributed, Block 2):
 - Uses Redis Pub/Sub for events via GlobalEventBus
-- Uses Redis SET NX EX for locks via DistributedLockManager
+- Uses Redis SET NX EX for locks via RaftLockManager
 - Works across multiple Nexus nodes
 
 Selection Logic:
-1. If GlobalEventBus/DistributedLockManager is available → use distributed (Layer 2)
+1. If GlobalEventBus/RaftLockManager is available → use distributed (Layer 2)
 2. Else if PassthroughBackend → use local (Layer 1)
 3. Else → raise NotImplementedError
 """
@@ -26,6 +26,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -73,6 +74,8 @@ class NexusFSEventsMixin:
             self, context: OperationContext | dict[Any, Any] | None
         ) -> tuple[str | None, str | None, bool]: ...
 
+        def _get_zone_revision(self) -> int: ...
+
     def _is_same_box(self) -> bool:
         """Check if we're in same-box mode (local file watching available).
 
@@ -85,7 +88,7 @@ class NexusFSEventsMixin:
         """Check if distributed event bus is available.
 
         Returns:
-            True if GlobalEventBus is initialized, False otherwise
+            True if RedisEventBus is initialized, False otherwise
         """
         return hasattr(self, "_event_bus") and self._event_bus is not None
 
@@ -93,7 +96,7 @@ class NexusFSEventsMixin:
         """Check if distributed lock manager is available.
 
         Returns:
-            True if DistributedLockManager is initialized, False otherwise
+            True if RaftLockManager is initialized, False otherwise
         """
         return hasattr(self, "_lock_manager") and self._lock_manager is not None
 
@@ -109,7 +112,7 @@ class NexusFSEventsMixin:
         if not self._is_same_box():
             raise NotImplementedError(
                 "File watching is only available with PassthroughBackend (same-box mode). "
-                "For distributed scenarios, configure Redis for GlobalEventBus."
+                "For distributed scenarios, configure Redis for RedisEventBus."
             )
 
         if not hasattr(self, "_file_watcher") or self._file_watcher is None:
@@ -126,13 +129,13 @@ class NexusFSEventsMixin:
             context: Operation context
 
         Returns:
-            Zone ID string (defaults to "default")
+            Zone ID string (defaults to "root")
         """
         if context and hasattr(context, "zone_id") and context.zone_id:
             return context.zone_id
         if hasattr(self, "zone_id") and self.zone_id:
             return self.zone_id
-        return "default"
+        return "root"
 
     def _should_auto__start_cache_invalidation(self) -> bool:
         """Check if cache invalidation should be auto-started.
@@ -195,7 +198,7 @@ class NexusFSEventsMixin:
         """Wait for file system changes on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses GlobalEventBus (Redis Pub/Sub) for distributed events
+        - Layer 2 (preferred): Uses RedisEventBus (Redis Pub/Sub) for distributed events
         - Layer 1 (fallback): Uses OS-native file watching (same-box only)
 
         Semantics:
@@ -248,10 +251,10 @@ class NexusFSEventsMixin:
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():
             logger.debug(f"Using same-box file watcher for {path}")
-            from nexus.backends.passthrough import PassthroughBackend
-
-            # Type narrowing for PassthroughBackend-specific attributes below
-            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
+            assert isinstance(self.backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self.backend
 
             # Import FileEvent for unified response format
             from nexus.core.event_bus import FileEvent
@@ -268,7 +271,7 @@ class NexusFSEventsMixin:
                 if not watch_path:
                     watch_path = "/"
 
-            physical_path = self.backend.get_physical_path(watch_path)
+            physical_path = pt_backend.get_physical_path(watch_path)
             watcher = self._get_file_watcher()
 
             # For glob patterns, we need to filter events
@@ -328,7 +331,7 @@ class NexusFSEventsMixin:
         """Acquire an advisory lock on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses DistributedLockManager (Redis) for distributed locks
+        - Layer 2 (preferred): Uses RaftLockManager (Redis) for distributed locks
         - Layer 1 (fallback): Uses in-memory locks (same-box only)
 
         Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
@@ -408,13 +411,13 @@ class NexusFSEventsMixin:
         if self._is_same_box():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
             logger.debug(f"Using same-box lock for {path} ({mode})")
-            from nexus.backends.passthrough import PassthroughBackend
-
-            # Type narrowing for PassthroughBackend-specific attributes below
-            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
+            assert isinstance(self.backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self.backend
 
             # Note: Same-box locks don't support TTL - they're in-memory only
-            lock_id = self.backend.lock(path, timeout=timeout, max_holders=max_holders)
+            lock_id = pt_backend.lock(path, timeout=timeout, max_holders=max_holders)
 
             if lock_id:
                 logger.debug(f"Same-box lock acquired on {path}: {lock_id}")
@@ -537,12 +540,12 @@ class NexusFSEventsMixin:
 
         # Layer 1: Same-box in-memory locking
         if self._is_same_box():
-            from nexus.backends.passthrough import PassthroughBackend
+            assert isinstance(self.backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self.backend
 
-            # Type narrowing for PassthroughBackend-specific attributes below
-            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
-
-            released = self.backend.unlock(lock_id)
+            released = pt_backend.unlock(lock_id)
             if released:
                 logger.debug(f"Same-box lock released: {lock_id}")
             else:
@@ -632,28 +635,42 @@ class NexusFSEventsMixin:
 
         Called by event callbacks when file changes are detected.
 
+        Issue #1169: Delegates to ReadSetAwareCache when available for
+        precise invalidation via read sets. Falls back to path-based.
+
         Args:
             path: Path that changed (physical or virtual)
         """
-        if hasattr(self, "metadata") and hasattr(self.metadata, "_cache"):
-            cache = self.metadata._cache
-            if cache is not None:
-                # Convert physical path to virtual if needed
-                virtual_path = path
-                if self._is_same_box():
-                    from nexus.backends.passthrough import PassthroughBackend
+        if not hasattr(self, "metadata") or not hasattr(self.metadata, "_cache"):
+            return
+        cache = self.metadata._cache
+        if cache is None:
+            return
 
-                    # Type narrowing: is_passthrough guarantees PassthroughBackend
-                    assert isinstance(self.backend, PassthroughBackend)
-                    # Strip base path to get virtual path
-                    base_path = str(self.backend.base_path)
-                    if path.startswith(base_path):
-                        virtual_path = path[len(base_path) :]
-                        if not virtual_path.startswith("/"):
-                            virtual_path = "/" + virtual_path
+        # Convert physical path to virtual if needed
+        virtual_path = path
+        if self._is_same_box():
+            assert isinstance(self.backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self.backend
+            # Strip base path to get virtual path
+            base_path = str(pt_backend.base_path)
+            if path.startswith(base_path):
+                virtual_path = path[len(base_path) :]
+                if not virtual_path.startswith("/"):
+                    virtual_path = "/" + virtual_path
 
-                cache.invalidate_path(virtual_path)
-                logger.debug(f"Cache invalidated: {virtual_path}")
+        # Issue #1169: Use cache observer for precise invalidation when available
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            revision = self._get_zone_revision()
+            zone_id = getattr(self, "zone_id", None) or "root"
+            cache_observer.on_write(virtual_path, revision, zone_id)
+            logger.debug(f"Cache invalidated (observer): {virtual_path}")
+        else:
+            cache.invalidate_path(virtual_path)
+            logger.debug(f"Cache invalidated: {virtual_path}")
 
     def _handle_cache_invalidation_event(
         self, event_type: Any, path: str, old_path: str | None
@@ -790,10 +807,10 @@ class NexusFSEventsMixin:
 
         # Layer 1: Same-box file watching (OS-native callbacks)
         if self._is_same_box():
-            from nexus.backends.passthrough import PassthroughBackend
-
-            # Type narrowing: is_passthrough guarantees PassthroughBackend
-            assert isinstance(self.backend, PassthroughBackend)
+            assert isinstance(self.backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self.backend
             try:
                 watcher = self._get_file_watcher()
 
@@ -806,7 +823,7 @@ class NexusFSEventsMixin:
                         watcher.start()
 
                 # Watch the root directory
-                root_path = self.backend.base_path
+                root_path = pt_backend.base_path
                 watcher.add_watch(root_path, self._on_file_change, recursive=True)
 
                 logger.info(f"Started same-box cache invalidation: {root_path}")

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.workspace_registry import WorkspaceConfig
+from nexus.services.workspace.workspace_registry import WorkspaceConfig
 
 
 def _make_workspace(path: str, created_by: str | None = None) -> WorkspaceConfig:
@@ -48,7 +48,7 @@ class TestListWorkspacesAuthGuard:
 
     def test_raises_when_user_id_missing(self, nexus_fs) -> None:
         """Context without user_id should raise ValueError."""
-        ctx = _make_context(user_id=None, zone_id="default")
+        ctx = _make_context(user_id=None, zone_id="root")
         with pytest.raises(ValueError, match="requires authenticated context"):
             nexus_fs.list_workspaces(context=ctx)
 
@@ -66,7 +66,7 @@ class TestListWorkspacesAuthGuard:
 
     def test_raises_when_user_id_empty_string(self, nexus_fs) -> None:
         """Context with empty string user_id should raise ValueError."""
-        ctx = _make_context(user_id="", zone_id="default")
+        ctx = _make_context(user_id="", zone_id="root")
         with pytest.raises(ValueError, match="requires authenticated context"):
             nexus_fs.list_workspaces(context=ctx)
 
@@ -83,15 +83,15 @@ class TestListWorkspacesFiltering:
     def test_filters_by_path_prefix(self, nexus_fs) -> None:
         """Workspaces in user's zone-scoped path should be returned."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
-            _make_workspace("/zone/default/user/alice/workspace/project1", created_by="bob"),
-            _make_workspace("/zone/default/user/bob/workspace/project2", created_by="bob"),
+            _make_workspace("/zone/root/user/alice/workspace/project1", created_by="bob"),
+            _make_workspace("/zone/root/user/bob/workspace/project2", created_by="bob"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="default")
+        ctx = _make_context(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 1
-        assert result[0]["path"] == "/zone/default/user/alice/workspace/project1"
+        assert result[0]["path"] == "/zone/root/user/alice/workspace/project1"
 
     def test_filters_by_created_by(self, nexus_fs) -> None:
         """Workspaces created by the user at any path should be returned."""
@@ -100,7 +100,7 @@ class TestListWorkspacesFiltering:
             _make_workspace("/shared/other-project", created_by="bob"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="default")
+        ctx = _make_context(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 1
@@ -110,28 +110,28 @@ class TestListWorkspacesFiltering:
         """Should return workspaces matching EITHER created_by OR path prefix."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
             # Matches path prefix (but created_by is different)
-            _make_workspace("/zone/default/user/alice/workspace/scoped", created_by="system"),
+            _make_workspace("/zone/root/user/alice/workspace/scoped", created_by="system"),
             # Matches created_by (but path is non-standard)
             _make_workspace("/custom/path", created_by="alice"),
             # Matches neither
-            _make_workspace("/zone/default/user/bob/workspace/bobs", created_by="bob"),
+            _make_workspace("/zone/root/user/bob/workspace/bobs", created_by="bob"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="default")
+        ctx = _make_context(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 2
         paths = [r["path"] for r in result]
-        assert "/zone/default/user/alice/workspace/scoped" in paths
+        assert "/zone/root/user/alice/workspace/scoped" in paths
         assert "/custom/path" in paths
 
     def test_returns_empty_when_no_matches(self, nexus_fs) -> None:
         """Should return empty list when no workspaces match."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
-            _make_workspace("/zone/default/user/bob/workspace/project", created_by="bob"),
+            _make_workspace("/zone/root/user/bob/workspace/project", created_by="bob"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="default")
+        ctx = _make_context(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert result == []
@@ -140,7 +140,7 @@ class TestListWorkspacesFiltering:
         """Should return empty list when registry is empty."""
         nexus_fs._workspace_registry.list_workspaces.return_value = []
 
-        ctx = _make_context(user_id="alice", zone_id="default")
+        ctx = _make_context(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert result == []
@@ -148,15 +148,15 @@ class TestListWorkspacesFiltering:
     def test_workspace_with_none_created_by_only_matches_prefix(self, nexus_fs) -> None:
         """Workspaces with None created_by should only match by path prefix."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
-            _make_workspace("/zone/default/user/alice/workspace/legacy", created_by=None),
+            _make_workspace("/zone/root/user/alice/workspace/legacy", created_by=None),
             _make_workspace("/other/path", created_by=None),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="default")
+        ctx = _make_context(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 1
-        assert result[0]["path"] == "/zone/default/user/alice/workspace/legacy"
+        assert result[0]["path"] == "/zone/root/user/alice/workspace/legacy"
 
     def test_context_with_user_attr_fallback(self, nexus_fs) -> None:
         """Context with 'user' attribute (instead of 'user_id') should work."""
@@ -165,7 +165,7 @@ class TestListWorkspacesFiltering:
         ]
 
         # Some contexts use 'user' instead of 'user_id'
-        ctx = SimpleNamespace(user="alice", zone_id="default")
+        ctx = SimpleNamespace(user="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 1
@@ -174,10 +174,10 @@ class TestListWorkspacesFiltering:
     def test_workspace_matching_both_conditions_not_duplicated(self, nexus_fs) -> None:
         """Workspace matching both created_by AND path should appear once."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
-            _make_workspace("/zone/default/user/alice/workspace/project", created_by="alice"),
+            _make_workspace("/zone/root/user/alice/workspace/project", created_by="alice"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="default")
+        ctx = _make_context(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 1

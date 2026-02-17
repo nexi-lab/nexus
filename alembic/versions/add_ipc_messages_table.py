@@ -1,7 +1,7 @@
 """Add ipc_messages table (Issue #1469).
 
 Replaces the raw DDL previously inlined in
-``PostgreSQLStorageDriver.initialize()``.  The table is now managed
+``RecordStoreStorageDriver.initialize()``.  The table is now managed
 by Alembic and accessed through SQLAlchemy ORM via RecordStoreABC.
 
 Revision ID: add_ipc_messages_table

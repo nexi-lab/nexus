@@ -344,7 +344,7 @@ class ZoneExportService:
         perm_count = 0
 
         # Get ReBAC manager if available
-        rebac_manager = getattr(self.nexus_fs, "_rebac_manager", None)
+        rebac_manager = getattr(self.nexus_fs, "rebac_manager", None)
         if rebac_manager is None:
             logger.info("No ReBAC manager available, skipping permission export")
             return 0
@@ -392,7 +392,7 @@ class ZoneExportService:
             output_path = output_path.with_suffix(".nexus")
 
         # Create tar.gz bundle
-        # Note: tarfile "w:gz" uses default compression; custom level support TODO
+        # Note: tarfile "w:gz" uses default gzip compression level
         with tarfile.open(output_path, mode="w:gz") as tar:
             # Add all files from source directory
             for item in source_dir.rglob("*"):

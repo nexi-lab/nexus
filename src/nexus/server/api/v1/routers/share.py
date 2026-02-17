@@ -143,7 +143,7 @@ async def download_via_share_link(
 
     data = access_result.data or {}
     file_path = data.get("path")
-    zone_id = data.get("zone_id", "default")
+    zone_id = data.get("zone_id", "root")
 
     if not file_path:
         raise HTTPException(status_code=500, detail="Share link missing file path")

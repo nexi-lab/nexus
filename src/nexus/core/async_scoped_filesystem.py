@@ -17,10 +17,7 @@ from __future__ import annotations
 
 import builtins
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from nexus.remote.async_client import AsyncRemoteNexusFS
+from typing import Any
 
 
 class AsyncScopedFilesystem:
@@ -34,11 +31,11 @@ class AsyncScopedFilesystem:
     after path translation.
 
     Attributes:
-        _fs: The underlying AsyncRemoteNexusFS instance
+        _fs: The underlying async filesystem instance
         _root: The root path prefix to prepend to all paths
     """
 
-    def __init__(self, fs: AsyncRemoteNexusFS, root: str) -> None:
+    def __init__(self, fs: Any, root: str) -> None:
         """Initialize AsyncScopedFilesystem.
 
         Args:
@@ -116,7 +113,7 @@ class AsyncScopedFilesystem:
         return self._root
 
     @property
-    def wrapped_fs(self) -> AsyncRemoteNexusFS:
+    def wrapped_fs(self) -> Any:
         """The underlying wrapped filesystem."""
         return self._fs
 
@@ -252,18 +249,16 @@ class AsyncScopedFilesystem:
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: Any = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """List files in a directory (async)."""
-        scoped_prefix = self._scope_path(prefix) if prefix else None
         result = await self._fs.list(
-            self._scope_path(path), recursive, details, scoped_prefix, show_parsed, context
+            self._scope_path(path), recursive, details, show_parsed, context
         )
         if details:
-            return [self._unscope_dict(r, ["path", "virtual_path"]) for r in result]  # type: ignore
-        return self._unscope_paths(result)  # type: ignore
+            return [self._unscope_dict(r, ["path", "virtual_path"]) for r in result]
+        return self._unscope_paths(result)
 
     async def glob(
         self,

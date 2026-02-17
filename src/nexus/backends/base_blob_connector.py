@@ -17,6 +17,7 @@ Backend-specific implementations:
 - Cloud provider-specific API calls
 """
 
+import logging
 import mimetypes
 import time
 from abc import abstractmethod
@@ -30,7 +31,9 @@ from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
+    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
+
+logger = logging.getLogger(__name__)
 
 
 class BaseBlobStorageConnector(Backend):
@@ -218,7 +221,7 @@ class BaseBlobStorageConnector(Backend):
         """
         pass
 
-    def _batch_get_versions(
+    def batch_get_versions(
         self,
         backend_paths: list[str],
         contexts: dict[str, "OperationContext"] | None = None,
@@ -799,6 +802,51 @@ class BaseBlobStorageConnector(Backend):
                 path=blob_path,
             )
 
+    # === Batch Operations (Parallel) ===
+
+    def batch_read_content(
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
+    ) -> dict[str, bytes | None]:
+        """Read multiple content items in parallel for cloud backends.
+
+        Cloud backends are network-bound, so parallel reads via ThreadPoolExecutor
+        give 3-8x throughput improvement over the sequential default in Backend.
+
+        Args:
+            content_hashes: List of content hashes (or backend paths via context)
+            context: Operation context for user-scoped backends
+
+        Returns:
+            Dict mapping hash → content bytes (None for missing items)
+        """
+        if not content_hashes:
+            return {}
+
+        if len(content_hashes) == 1:
+            # Single item — no thread pool overhead needed
+            response = self.read_content(content_hashes[0], context=context)
+            return {content_hashes[0]: response.data if response.success else None}
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _read_one(content_hash: str) -> tuple[str, bytes | None]:
+            response = self.read_content(content_hash, context=context)
+            return (content_hash, response.data if response.success else None)
+
+        max_workers = min(8, len(content_hashes))
+        result: dict[str, bytes | None] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_read_one, h): h for h in content_hashes}
+            for future in as_completed(futures):
+                hash_key, content = future.result()
+                result[hash_key] = content
+
+        return result
+
     # === Directory Operations (Shared Implementation) ===
 
     def mkdir(
@@ -950,14 +998,14 @@ class BaseBlobStorageConnector(Backend):
 
             if recursive:
                 # Delete all objects with this prefix
-                import contextlib
-
                 blobs, _ = self._list_blobs(prefix=blob_path, delimiter="")
                 for blob_key in blobs:
                     if blob_key != blob_path:  # Don't delete marker twice
-                        with contextlib.suppress(Exception):
+                        try:
                             # Continue deleting other blobs even if one fails
                             self._delete_blob(blob_key)
+                        except Exception as e:
+                            logger.debug("Failed to delete blob during recursive rmdir: %s", e)
 
             return HandlerResponse.ok(
                 data=None,

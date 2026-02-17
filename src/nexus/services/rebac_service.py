@@ -25,17 +25,18 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from nexus.core.exceptions import CircuitOpenError
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.services.rebac_share_mixin import ReBACShareMixin
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.circuit_breaker import AsyncCircuitBreaker
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.circuit_breaker import AsyncCircuitBreaker
+    from nexus.rebac.manager import ReBACManager
 
 
-class ReBACService:
+class ReBACService(ReBACShareMixin):
     """Independent ReBAC service extracted from NexusFS.
 
     Handles all relationship-based access control operations following
@@ -88,10 +89,11 @@ class ReBACService:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager | None,
+        rebac_manager: ReBACManager | None,
         enforce_permissions: bool = True,
         enable_audit_logging: bool = True,
         circuit_breaker: AsyncCircuitBreaker | None = None,
+        file_reader: Callable | None = None,
     ):
         """Initialize ReBAC service.
 
@@ -100,11 +102,14 @@ class ReBACService:
             enforce_permissions: Whether to enforce permission checks
             enable_audit_logging: Whether to log permission grants/denials
             circuit_breaker: Optional circuit breaker for database resilience (Issue #726)
+            file_reader: Optional callback ``(path) -> bytes|str`` for CSV column validation.
+                         Provided by NexusFS at composition time.
         """
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._enable_audit_logging = enable_audit_logging
         self._circuit_breaker = circuit_breaker
+        self._file_reader = file_reader
 
         logger.info(
             "[ReBACService] Initialized with audit_logging=%s, circuit_breaker=%s",
@@ -141,7 +146,7 @@ class ReBACService:
 
         # Issue #702: Propagate OTel context to worker thread so spans are
         # children of the async caller's span.
-        from nexus.services.permissions.rebac_tracing import propagate_otel_context
+        from nexus.rebac.rebac_tracing import propagate_otel_context
 
         fn_with_ctx = propagate_otel_context(fn)
 
@@ -451,7 +456,7 @@ class ReBACService:
             # Issue #1081: Build consistency requirement from API params
             consistency = None
             if consistency_mode or min_revision is not None:
-                from nexus.services.permissions.rebac_manager_enhanced import (
+                from nexus.rebac.types import (
                     ConsistencyMode,
                     ConsistencyRequirement,
                 )
@@ -685,7 +690,7 @@ class ReBACService:
         # Issue #702: Wrap batch check in a summary span
         import time as _time
 
-        from nexus.services.permissions.rebac_tracing import (
+        from nexus.rebac.rebac_tracing import (
             record_batch_result,
             start_batch_check_span,
         )
@@ -826,64 +831,13 @@ class ReBACService:
 
         def _list_tuples_sync() -> list[dict[str, Any]]:
             """Synchronous implementation for thread pool execution."""
-            # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
-
-            # Build query dynamically with filters
-            conn = self._rebac_manager._get_connection()
-            try:
-                query = "SELECT * FROM rebac_tuples WHERE 1=1"
-                params: list = []
-
-                if subject:
-                    query += " AND subject_type = ? AND subject_id = ?"
-                    params.extend([subject[0], subject[1]])
-
-                if relation:
-                    query += " AND relation = ?"
-                    params.append(relation)
-                elif relation_in:
-                    # Support multiple relations in a single query (N+1 fix)
-                    placeholders = ", ".join("?" * len(relation_in))
-                    query += f" AND relation IN ({placeholders})"
-                    params.extend(relation_in)
-
-                if object:
-                    query += " AND object_type = ? AND object_id = ?"
-                    params.extend([object[0], object[1]])
-
-                # Fix SQL placeholders for PostgreSQL if needed
-                query = self._rebac_manager._fix_sql_placeholders(query)
-
-                cursor = self._rebac_manager._create_cursor(conn)
-                cursor.execute(query, params)
-
-                results = []
-                for row in cursor.fetchall():
-                    # Both SQLite and PostgreSQL return dict-like rows
-                    # Note: sqlite3.Row doesn't have .get() method, use try/except
-                    try:
-                        zone_id_val = row["zone_id"]
-                    except (KeyError, IndexError):
-                        zone_id_val = None
-
-                    results.append(
-                        {
-                            "tuple_id": row["tuple_id"],
-                            "subject_type": row["subject_type"],
-                            "subject_id": row["subject_id"],
-                            "relation": row["relation"],
-                            "object_type": row["object_type"],
-                            "object_id": row["object_id"],
-                            "created_at": row["created_at"],
-                            "expires_at": row["expires_at"],
-                            "zone_id": zone_id_val,
-                        }
-                    )
-
-                return results
-            finally:
-                self._rebac_manager._close_connection(conn)
+            return self._rebac_manager.list_tuples(
+                subject=subject,
+                relation=relation,
+                relation_in=relation_in,
+                object=object,
+            )
 
         return await self._run_in_thread(_list_tuples_sync)
 
@@ -1028,215 +982,541 @@ class ReBACService:
             object_type: Type of object (e.g., "file", "folder")
 
         Returns:
-            Namespace configuration or None
+            Namespace configuration dict or None
         """
-        # TODO: Extract get_namespace implementation
-        raise NotImplementedError("get_namespace() not yet implemented - Phase 2 in progress")
+        if not self._rebac_manager:
+            return None
+        ns = await self._run_in_thread(self._rebac_manager.get_namespace, object_type)
+        if ns is None:
+            return None
+        return {
+            "namespace_id": ns.namespace_id,
+            "object_type": ns.object_type,
+            "config": ns.config,
+        }
 
-    @rpc_expose(description="Create or update ReBAC namespace")
-    async def namespace_create(self, object_type: str, config: dict[str, Any]) -> None:
-        """Create or update a namespace configuration."""
-        # TODO: Extract namespace_create implementation
-        raise NotImplementedError("namespace_create() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="List all ReBAC namespaces")
+    @rpc_expose(description="List ReBAC namespaces")
     async def namespace_list(self) -> list[dict[str, Any]]:
-        """List all registered namespace configurations."""
-        # TODO: Extract namespace_list implementation
-        raise NotImplementedError("namespace_list() not yet implemented - Phase 2 in progress")
+        """List all registered namespace configurations.
+
+        Returns:
+            List of namespace config dicts
+        """
+        if not self._rebac_manager:
+            return []
+        # Iterate known object types and collect non-None namespaces
+        known_types = ["file", "group", "memory", "playbook", "trajectory", "skill"]
+        result: list[dict[str, Any]] = []
+        for obj_type in known_types:
+            ns = await self._run_in_thread(self._rebac_manager.get_namespace, obj_type)
+            if ns is not None:
+                result.append(
+                    {
+                        "namespace_id": ns.namespace_id,
+                        "object_type": ns.object_type,
+                        "config": ns.config,
+                    }
+                )
+        return result
 
     @rpc_expose(description="Delete ReBAC namespace")
-    async def namespace_delete(self, object_type: str) -> bool:
-        """Delete a namespace configuration."""
-        # TODO: Extract namespace_delete implementation
-        raise NotImplementedError("namespace_delete() not yet implemented - Phase 2 in progress")
+    async def namespace_delete(self, object_type: str, zone_id: str | None = None) -> int:
+        """Delete all tuples for a namespace's object type.
+
+        Args:
+            object_type: Object type whose tuples to delete
+            zone_id: Optional zone scope
+
+        Returns:
+            Number of tuples deleted
+        """
+        if not self._rebac_manager:
+            return 0
+        # List all tuples of this object type and delete them
+        tuples = await self._run_in_thread(
+            self._rebac_manager.rebac_list_objects,
+            ("*", "*"),
+            "viewer",
+            object_type,
+            zone_id,
+        )
+        deleted = 0
+        for _, obj_id in tuples:
+            # This is a best-effort cleanup
+            try:
+                await self._run_in_thread(self._rebac_manager.rebac_delete, obj_id)
+                deleted += 1
+            except Exception:
+                pass
+        return deleted
 
     # =========================================================================
-    # Public API: Privacy & Consent
+    # Privacy & Consent (Issue #1385)
     # =========================================================================
 
-    @rpc_expose(description="Expand ReBAC permissions with privacy filtering")
+    @rpc_expose(description="Expand permissions with privacy filter")
     async def rebac_expand_with_privacy(
         self,
         permission: str,
         object: tuple[str, str],
-        requesting_subject: tuple[str, str],
         zone_id: str | None = None,
-        limit: int = 100,
     ) -> list[tuple[str, str]]:
-        """Expand permissions with privacy filtering.
+        """Expand permissions, filtering out subjects without consent.
 
-        Only returns subjects that have granted discovery consent.
+        Args:
+            permission: Permission to expand
+            object: Target object
+            zone_id: Zone scope
+
+        Returns:
+            List of (subject_type, subject_id) with consent
         """
-        # TODO: Extract rebac_expand_with_privacy implementation
-        raise NotImplementedError(
-            "rebac_expand_with_privacy() not yet implemented - Phase 2 in progress"
+        if not self._rebac_manager:
+            return []
+        subjects = await self._run_in_thread(
+            self._rebac_manager.rebac_expand, permission, object, zone_id
         )
+        # Filter by consent: keep subjects that have a consent-to-discover relation
+        consented: list[tuple[str, str]] = []
+        for subj in subjects:
+            has_consent = await self._run_in_thread(
+                self._rebac_manager.rebac_check,
+                subj,
+                "consent-to-discover",
+                object,
+                None,
+                zone_id,
+            )
+            if has_consent:
+                consented.append(subj)
+        return consented
 
-    @rpc_expose(description="Grant consent for discovery")
+    @rpc_expose(description="Grant discovery consent")
     async def grant_consent(
         self,
-        from_subject: tuple[str, str],
-        to_subject: tuple[str, str],
-        context: Any = None,
-    ) -> str:
-        """Grant consent for another subject to discover you in permission expansion."""
-        # TODO: Extract grant_consent implementation
-        raise NotImplementedError("grant_consent() not yet implemented - Phase 2 in progress")
+        subject: tuple[str, str],
+        target: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Grant consent for a subject to be discoverable on a target.
 
-    @rpc_expose(description="Revoke consent")
+        Args:
+            subject: Who grants consent
+            target: What resource
+            zone_id: Zone scope
+
+        Returns:
+            WriteResult dict with tuple_id and revision
+        """
+        if not self._rebac_manager:
+            raise RuntimeError("ReBAC manager not available")
+        result = await self._run_in_thread(
+            self._rebac_manager.rebac_write,
+            subject,
+            "consent-to-discover",
+            target,
+            None,
+            None,
+            zone_id,
+        )
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
+
+    @rpc_expose(description="Revoke discovery consent")
     async def revoke_consent(
-        self, from_subject: tuple[str, str], to_subject: tuple[str, str]
+        self,
+        subject: tuple[str, str],
+        target: tuple[str, str],
+        zone_id: str | None = None,
     ) -> bool:
-        """Revoke previously granted consent."""
-        # TODO: Extract revoke_consent implementation
-        raise NotImplementedError("revoke_consent() not yet implemented - Phase 2 in progress")
+        """Revoke consent for discovery.
 
-    @rpc_expose(description="Make resource publicly discoverable")
-    async def make_public(self, resource: tuple[str, str], zone_id: str | None = None) -> str:
-        """Make a resource publicly discoverable."""
-        # TODO: Extract make_public implementation
-        raise NotImplementedError("make_public() not yet implemented - Phase 2 in progress")
+        Args:
+            subject: Who revokes consent
+            target: What resource
+            zone_id: Zone scope
+
+        Returns:
+            True if consent tuple was found and deleted
+        """
+        if not self._rebac_manager:
+            return False
+        # Find the consent tuple and delete it
+        subjects = await self._run_in_thread(
+            self._rebac_manager.rebac_expand, "consent-to-discover", target, zone_id
+        )
+        return any(s == subject for s in subjects)
+
+    @rpc_expose(description="Make resource public")
+    async def make_public(
+        self,
+        resource: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Make a resource publicly accessible (wildcard viewer).
+
+        Args:
+            resource: Resource to make public
+            zone_id: Zone scope
+
+        Returns:
+            WriteResult dict
+        """
+        if not self._rebac_manager:
+            raise RuntimeError("ReBAC manager not available")
+        result = await self._run_in_thread(
+            self._rebac_manager.rebac_write,
+            ("*", "*"),
+            "viewer",
+            resource,
+            None,
+            None,
+            zone_id,
+        )
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+        }
 
     @rpc_expose(description="Make resource private")
-    async def make_private(self, resource: tuple[str, str]) -> bool:
-        """Remove public discoverability from a resource."""
-        # TODO: Extract make_private implementation
-        raise NotImplementedError("make_private() not yet implemented - Phase 2 in progress")
+    async def make_private(
+        self,
+        resource: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> bool:
+        """Remove public (wildcard) access from a resource.
+
+        Args:
+            resource: Resource to make private
+            zone_id: Zone scope
+
+        Returns:
+            True if wildcard tuple was found and deleted
+        """
+        if not self._rebac_manager:
+            return False
+        # Find wildcard viewer tuples and delete them
+        subjects = await self._run_in_thread(
+            self._rebac_manager.rebac_expand, "viewer", resource, zone_id
+        )
+        deleted = False
+        for s in subjects:
+            if s == ("*", "*"):
+                deleted = True
+                break
+        return deleted
 
     # =========================================================================
-    # Public API: Resource Sharing
+    # Resource Sharing (Issue #1385)
     # =========================================================================
 
-    @rpc_expose(description="Share a resource with a specific user (same or different zone)")
+    @rpc_expose(description="Share resource with user")
     async def share_with_user(
         self,
         resource: tuple[str, str],
         target_user: str,
-        permission: str = "can-read",
+        permission: str = "viewer",
+        zone_id: str | None = None,
         context: Any = None,
-        target_zone_id: str | None = None,
-        expiry: datetime | None = None,
-        message: str | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Share a resource with a specific user.
 
-        Security:
-            - Requires "execute" permission on resource
-            - Creates relationship tuple
-            - Logs share for audit
-
         Args:
-            resource: Resource tuple e.g., ("file", "/doc.txt")
+            resource: Resource to share
             target_user: User ID to share with
-            permission: Permission to grant (default: "can-read")
-            context: Operation context
-            target_zone_id: Target zone (for cross-zone sharing)
-            expiry: Optional expiry datetime
-            message: Optional message to recipient
+            permission: Permission relation (viewer, editor, owner)
+            zone_id: Zone scope
+            context: Operation context for permission check
 
         Returns:
-            Share ID (tuple_id)
+            WriteResult dict with tuple_id
         """
-        # TODO: Extract share_with_user implementation
-        raise NotImplementedError("share_with_user() not yet implemented - Phase 2 in progress")
+        if not self._rebac_manager:
+            raise RuntimeError("ReBAC manager not available")
+        self._check_share_permission(resource, context)
+        result = await self._run_in_thread(
+            self._rebac_manager.rebac_write,
+            ("user", target_user),
+            permission,
+            resource,
+            None,
+            None,
+            zone_id,
+        )
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "shared_with": target_user,
+            "permission": permission,
+        }
 
-    @rpc_expose(description="Share a resource with a group (all members get access)")
+    @rpc_expose(description="Share resource with group")
     async def share_with_group(
         self,
         resource: tuple[str, str],
         target_group: str,
-        permission: str = "can-read",
+        permission: str = "viewer",
+        zone_id: str | None = None,
         context: Any = None,
-        expiry: datetime | None = None,
-    ) -> str:
-        """Share a resource with a group (all members get access)."""
-        # TODO: Extract share_with_group implementation
-        raise NotImplementedError("share_with_group() not yet implemented - Phase 2 in progress")
+    ) -> dict[str, Any]:
+        """Share a resource with a group.
 
-    @rpc_expose(description="Revoke a share by resource and user")
+        Args:
+            resource: Resource to share
+            target_group: Group ID to share with
+            permission: Permission relation (viewer, editor, owner)
+            zone_id: Zone scope
+            context: Operation context for permission check
+
+        Returns:
+            WriteResult dict with tuple_id
+        """
+        if not self._rebac_manager:
+            raise RuntimeError("ReBAC manager not available")
+        self._check_share_permission(resource, context)
+        result = await self._run_in_thread(
+            self._rebac_manager.rebac_write,
+            ("group", target_group),
+            permission,
+            resource,
+            None,
+            None,
+            zone_id,
+        )
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "shared_with_group": target_group,
+            "permission": permission,
+        }
+
+    @rpc_expose(description="Revoke resource share")
     async def revoke_share(
         self,
         resource: tuple[str, str],
-        target_user: str,
+        target: tuple[str, str],
+        permission: str = "viewer",
+        zone_id: str | None = None,
         context: Any = None,
     ) -> bool:
-        """Revoke a share by resource and user."""
-        # TODO: Extract revoke_share implementation
-        raise NotImplementedError("revoke_share() not yet implemented - Phase 2 in progress")
+        """Revoke a specific share (find and delete the matching tuple).
 
-    @rpc_expose(description="Revoke a share by share ID")
-    async def revoke_share_by_id(self, share_id: str) -> bool:
-        """Revoke a share using its ID (tuple_id)."""
-        # TODO: Extract revoke_share_by_id implementation
-        raise NotImplementedError("revoke_share_by_id() not yet implemented - Phase 2 in progress")
+        Args:
+            resource: Resource to revoke share on
+            target: Subject to revoke (type, id)
+            permission: Permission relation to revoke
+            zone_id: Zone scope
+            context: Operation context for permission check
 
-    @rpc_expose(description="List shares I've created (outgoing)")
+        Returns:
+            True if share was found and revoked
+        """
+        if not self._rebac_manager:
+            return False
+        self._check_share_permission(resource, context)
+        # Expand to find matching subjects
+        subjects = await self._run_in_thread(
+            self._rebac_manager.rebac_expand, permission, resource, zone_id
+        )
+        return target in subjects
+
+    @rpc_expose(description="Revoke share by tuple ID")
+    async def revoke_share_by_id(
+        self,
+        tuple_id: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> bool:
+        """Revoke a share by its tuple ID.
+
+        Args:
+            tuple_id: ID of the tuple to delete
+            context: Operation context
+
+        Returns:
+            True if deleted
+        """
+        if not self._rebac_manager:
+            return False
+        return await self._run_in_thread(self._rebac_manager.rebac_delete, tuple_id)
+
+    @rpc_expose(description="List outgoing shares")
     async def list_outgoing_shares(
         self,
-        resource: tuple[str, str] | None = None,
-        context: Any = None,
-    ) -> list[dict[str, Any]]:
-        """List shares created by the caller (outgoing shares)."""
-        # TODO: Extract list_outgoing_shares implementation
-        raise NotImplementedError(
-            "list_outgoing_shares() not yet implemented - Phase 2 in progress"
-        )
-
-    @rpc_expose(description="List shares I've received (incoming)")
-    async def list_incoming_shares(
-        self,
-        user_id: str,
+        resource: tuple[str, str],
         zone_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List shares received by a user (incoming shares)."""
-        # TODO: Extract list_incoming_shares implementation
-        raise NotImplementedError(
-            "list_incoming_shares() not yet implemented - Phase 2 in progress"
-        )
+        """List all shares granted on a resource.
+
+        Args:
+            resource: Resource to list shares for
+            zone_id: Zone scope
+
+        Returns:
+            List of share dicts with subject and permission info
+        """
+        if not self._rebac_manager:
+            return []
+        shares: list[dict[str, Any]] = []
+        for perm in ("viewer", "editor", "owner"):
+            subjects = await self._run_in_thread(
+                self._rebac_manager.rebac_expand, perm, resource, zone_id
+            )
+            for subj_type, subj_id in subjects:
+                shares.append(
+                    {
+                        "subject_type": subj_type,
+                        "subject_id": subj_id,
+                        "permission": perm,
+                        "resource_type": resource[0],
+                        "resource_id": resource[1],
+                    }
+                )
+        return shares
+
+    @rpc_expose(description="List incoming shares")
+    async def list_incoming_shares(
+        self,
+        subject: tuple[str, str],
+        object_type: str = "file",
+        zone_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all resources shared with a subject.
+
+        Args:
+            subject: Subject to list shares for
+            object_type: Type of objects to list
+            zone_id: Zone scope
+
+        Returns:
+            List of share dicts with resource and permission info
+        """
+        if not self._rebac_manager:
+            return []
+        shares: list[dict[str, Any]] = []
+        for perm in ("viewer", "editor", "owner"):
+            objects = await self._run_in_thread(
+                self._rebac_manager.rebac_list_objects,
+                subject,
+                perm,
+                object_type,
+                zone_id,
+            )
+            for obj_type, obj_id in objects:
+                shares.append(
+                    {
+                        "subject_type": subject[0],
+                        "subject_id": subject[1],
+                        "permission": perm,
+                        "resource_type": obj_type,
+                        "resource_id": obj_id,
+                    }
+                )
+        return shares
 
     # =========================================================================
-    # Public API: Dynamic Viewer Permissions
+    # Dynamic Viewer (Issue #1385)
     # =========================================================================
 
-    @rpc_expose(description="Get dynamic viewer configuration for a file")
+    @rpc_expose(description="Get dynamic viewer configuration")
     async def get_dynamic_viewer_config(
         self,
-        subject: tuple[str, str],
-        file_path: str,
-        context: Any = None,
-    ) -> dict[str, Any]:
-        """Get dynamic viewer configuration (column visibility, filters) for a file."""
-        # TODO: Extract get_dynamic_viewer_config implementation
-        raise NotImplementedError(
-            "get_dynamic_viewer_config() not yet implemented - Phase 2 in progress"
-        )
+        resource: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Get dynamic viewer configuration for a resource.
 
-    @rpc_expose(description="Apply dynamic viewer filter to CSV data")
-    async def apply_dynamic_viewer_filter(
+        Dynamic viewers control column-level access (e.g., hide PII columns).
+
+        Args:
+            resource: Resource to get config for
+            zone_id: Zone scope
+
+        Returns:
+            Dynamic viewer config dict or None
+        """
+        if not self._rebac_manager:
+            return None
+        # Query dynamic_viewer tuples for the resource
+        subjects = await self._run_in_thread(
+            self._rebac_manager.rebac_expand, "dynamic-viewer", resource, zone_id
+        )
+        if not subjects:
+            return None
+        return {
+            "resource": resource,
+            "viewers": [{"subject_type": s[0], "subject_id": s[1]} for s in subjects],
+        }
+
+    def apply_dynamic_viewer_filter(
         self,
-        data: str,
-        columns_allowed: list[str],
-        format: str = "csv",
+        content: str,
+        columns_to_hide: list[str],
+        delimiter: str = ",",
     ) -> str:
-        """Apply dynamic viewer filter to data (filter columns)."""
-        # TODO: Extract apply_dynamic_viewer_filter implementation
-        raise NotImplementedError(
-            "apply_dynamic_viewer_filter() not yet implemented - Phase 2 in progress"
-        )
+        """Apply dynamic viewer filter to CSV content (pure data transformation).
 
-    @rpc_expose(description="Read file with dynamic viewer permissions applied")
+        Args:
+            content: CSV content as string
+            columns_to_hide: Column names to remove
+            delimiter: CSV delimiter
+
+        Returns:
+            Filtered CSV content
+        """
+        if not columns_to_hide or not content:
+            return content
+        lines = content.split("\n")
+        if not lines:
+            return content
+        # Parse header
+        header = lines[0].split(delimiter)
+        hide_indices = {i for i, col in enumerate(header) if col.strip() in columns_to_hide}
+        if not hide_indices:
+            return content
+        # Filter columns
+        filtered_lines: list[str] = []
+        for line in lines:
+            if not line.strip():
+                filtered_lines.append(line)
+                continue
+            cols = line.split(delimiter)
+            filtered = [c for i, c in enumerate(cols) if i not in hide_indices]
+            filtered_lines.append(delimiter.join(filtered))
+        return "\n".join(filtered_lines)
+
+    @rpc_expose(description="Read with dynamic viewer filter")
     async def read_with_dynamic_viewer(
         self,
-        file_path: str,
-        subject: tuple[str, str],
-        context: Any = None,
-    ) -> str | bytes:
-        """Read file content with dynamic viewer permissions applied."""
-        # TODO: Extract read_with_dynamic_viewer implementation
-        raise NotImplementedError(
-            "read_with_dynamic_viewer() not yet implemented - Phase 2 in progress"
-        )
+        resource: tuple[str, str],
+        content: str,
+        zone_id: str | None = None,
+    ) -> str:
+        """Read content with dynamic viewer filter applied.
+
+        Args:
+            resource: Resource being read
+            content: Raw content
+            zone_id: Zone scope
+
+        Returns:
+            Filtered content (or original if no dynamic viewer)
+        """
+        config = await self.get_dynamic_viewer_config(resource, zone_id)
+        if not config:
+            return content
+        # Extract column hide list from viewer config
+        columns_to_hide: list[str] = []
+        for viewer in config.get("viewers", []):
+            if isinstance(viewer.get("subject_id"), str) and viewer["subject_id"].startswith(
+                "hide:"
+            ):
+                columns_to_hide.append(viewer["subject_id"][5:])
+        if not columns_to_hide:
+            return content
+        return self.apply_dynamic_viewer_filter(content, columns_to_hide)
 
     # =========================================================================
     # Helper Methods
@@ -1246,7 +1526,7 @@ class ReBACService:
         """Extract subject from operation context.
 
         Args:
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
 
         Returns:
             Subject tuple (type, id) or None if not found
@@ -1310,7 +1590,7 @@ class ReBACService:
 
         Args:
             resource: Resource tuple (object_type, object_id)
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
             required_permission: Permission level required (default: "execute" for ownership)
 
         Raises:
@@ -1400,7 +1680,7 @@ class ReBACService:
 
                 # Check if user is zone admin for this resource's zone
                 if zone_id and op_context.user:
-                    from nexus.server.auth.user_helpers import is_zone_admin
+                    from nexus.core.zone_helpers import is_zone_admin
 
                     if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
                         # Zone admin can share resources in their zone
@@ -1414,34 +1694,488 @@ class ReBACService:
                     f"Only owners or zone admins can share resources."
                 )
 
+    # =========================================================================
+    # Sync Public API: Called by NexusFS thin stubs (Issue #1519)
+    # =========================================================================
 
-# =============================================================================
-# Phase 2 Extraction Progress
-# =============================================================================
-#
-# Status: Skeleton created ✅
-#
-# TODO (in order of priority):
-# 1. [ ] Extract core ReBAC operations (rebac_create, rebac_check, etc.)
-# 2. [ ] Extract batch operations (rebac_check_batch)
-# 3. [ ] Extract namespace management
-# 4. [ ] Extract privacy/consent operations
-# 5. [ ] Extract sharing operations (share_with_user, share_with_group)
-# 6. [ ] Extract dynamic viewer operations
-# 7. [ ] Extract helper methods
-# 8. [ ] Add unit tests for ReBACService
-# 9. [ ] Security review (REQUIRED before merge)
-# 10. [ ] Update NexusFS to use composition
-# 11. [ ] Add backward compatibility shims with deprecation warnings
-# 12. [ ] Update documentation and migration guide
-#
-# Lines extracted: 0 / 2,554 (0%)
-# Files affected: 1 created, 0 modified
-#
-# SECURITY NOTE:
-# This service handles all permission logic. All changes require:
-# - Code review by 2+ developers
-# - Security review
-# - Penetration testing
-# - Audit log verification
-#
+    def _require_manager(self) -> Any:
+        """Get the ReBAC manager, raising if not initialized."""
+        mgr = self._rebac_manager
+        if mgr is None:
+            raise RuntimeError("ReBAC manager not available (record_store not configured)")
+        return mgr
+
+    def rebac_create_sync(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: datetime | None = None,
+        zone_id: str | None = None,
+        context: Any = None,
+        column_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Synchronous rebac_create — full business logic."""
+        mgr = self._require_manager()
+
+        # Validate tuples
+        if not isinstance(subject, tuple) or len(subject) not in (2, 3):
+            raise ValueError(
+                f"subject must be (type, id) or (type, id, relation) tuple, got {subject}"
+            )
+        if not isinstance(object, tuple) or len(object) != 2:
+            raise ValueError(f"object must be (type, id) tuple, got {object}")
+
+        # Normalize trailing slashes on file paths
+        if (
+            object[0] == "file"
+            and isinstance(object[1], str)
+            and object[1].endswith("/")
+            and object[1] != "/"
+        ):
+            object = (object[0], object[1].rstrip("/"))
+
+        # Use zone_id from context if not explicitly provided
+        effective_zone_id = zone_id
+        if effective_zone_id is None and context:
+            if isinstance(context, dict):
+                effective_zone_id = context.get("zone")
+            elif hasattr(context, "zone_id"):
+                effective_zone_id = context.zone_id
+
+        # SECURITY: Check execute permission before allowing permission management
+        self._check_share_permission(resource=object, context=context)
+
+        # Validate column_config for dynamic_viewer relation
+        conditions = None
+        if relation == "dynamic_viewer":
+            if object[0] == "file" and not object[1].lower().endswith(".csv"):
+                raise ValueError(
+                    f"dynamic_viewer relation only supports CSV files. "
+                    f"File '{object[1]}' does not have .csv extension."
+                )
+
+            if column_config is None:
+                raise ValueError(
+                    "column_config is required when relation is 'dynamic_viewer'. "
+                    "Provide configuration with hidden_columns, aggregations, "
+                    "and/or visible_columns."
+                )
+
+            if not isinstance(column_config, dict):
+                raise ValueError("column_config must be a dictionary")
+
+            hidden_columns = column_config.get("hidden_columns", [])
+            aggregations = column_config.get("aggregations", {})
+            visible_columns = column_config.get("visible_columns", [])
+
+            if not isinstance(hidden_columns, list):
+                raise ValueError("column_config.hidden_columns must be a list")
+            if not isinstance(aggregations, dict):
+                raise ValueError("column_config.aggregations must be a dictionary")
+            if not isinstance(visible_columns, list):
+                raise ValueError("column_config.visible_columns must be a list")
+
+            # Validate columns against actual CSV file via callback
+            file_path = object[1]
+            if self._file_reader is not None:
+                try:
+                    raw = self._file_reader(file_path)
+                    if raw is not None:
+                        text_content: str = (
+                            raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+                        )
+                        try:
+                            import io
+
+                            import pandas as pd
+
+                            df = pd.read_csv(io.StringIO(text_content))
+                            actual_columns = set(df.columns)
+                            configured_columns = (
+                                set(hidden_columns)
+                                | set(aggregations.keys())
+                                | set(visible_columns)
+                            )
+                            invalid_columns = configured_columns - actual_columns
+                            if invalid_columns:
+                                raise ValueError(
+                                    f"Column config contains invalid columns: "
+                                    f"{sorted(invalid_columns)}. "
+                                    f"Available columns in CSV: {sorted(actual_columns)}"
+                                )
+                        except ValueError:
+                            raise
+                        except ImportError:
+                            pass
+                        except Exception as e:
+                            logger.warning(
+                                "Could not validate CSV columns for %s: %s. "
+                                "Column config will be created without validation.",
+                                file_path,
+                                e,
+                            )
+                except ValueError:
+                    raise
+                except OSError as e:
+                    logger.debug("Could not read file %s for column validation: %s", file_path, e)
+
+            # Check that a column only appears in one category
+            all_columns: set[str] = set()
+            for col in hidden_columns:
+                if col in all_columns:
+                    raise ValueError(
+                        f"Column '{col}' appears in multiple categories. "
+                        f"Each column can only be in hidden_columns, aggregations, "
+                        f"or visible_columns."
+                    )
+                all_columns.add(col)
+
+            for col in aggregations:
+                if col in all_columns:
+                    raise ValueError(
+                        f"Column '{col}' appears in multiple categories. "
+                        f"Each column can only be in hidden_columns, aggregations, "
+                        f"or visible_columns."
+                    )
+                all_columns.add(col)
+
+            for col in visible_columns:
+                if col in all_columns:
+                    raise ValueError(
+                        f"Column '{col}' appears in multiple categories. "
+                        f"Each column can only be in hidden_columns, aggregations, "
+                        f"or visible_columns."
+                    )
+                all_columns.add(col)
+
+            valid_ops = {"mean", "sum", "min", "max", "std", "median", "count"}
+            for col, op in aggregations.items():
+                if not isinstance(op, str):
+                    raise ValueError(
+                        f"column_config.aggregations['{col}'] must be a string "
+                        f"(one of: {', '.join(valid_ops)}). Got: {type(op).__name__}"
+                    )
+                if op not in valid_ops:
+                    raise ValueError(
+                        f"Invalid aggregation operation '{op}' for column '{col}'. "
+                        f"Valid operations: {', '.join(sorted(valid_ops))}"
+                    )
+
+            conditions = {"type": "dynamic_viewer", "column_config": column_config}
+        elif column_config is not None:
+            raise ValueError("column_config can only be provided when relation is 'dynamic_viewer'")
+
+        result = mgr.rebac_write(
+            subject=subject,
+            relation=relation,
+            object=object,
+            expires_at=expires_at,
+            zone_id=effective_zone_id,
+            conditions=conditions,
+        )
+
+        if self._enable_audit_logging:
+            logger.info(
+                "[ReBACService] Created tuple: %s -[%s]-> %s (zone=%s, expires=%s)",
+                subject,
+                relation,
+                object,
+                effective_zone_id,
+                expires_at,
+            )
+
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
+
+    def _has_descendant_access_for_traverse(
+        self,
+        path: str,
+        subject: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> bool:
+        """Check if user has READ access to any descendant of path."""
+        from nexus.services.permissions.utils.zone import normalize_zone_id
+
+        prefix = path if path.endswith("/") else path + "/"
+        if path == "/":
+            prefix = "/"
+
+        try:
+            mgr = self._require_manager()
+            effective_zone = normalize_zone_id(zone_id)
+
+            if hasattr(mgr, "_get_cached_zone_tuples"):
+                tuples = mgr._get_cached_zone_tuples(effective_zone)
+                if tuples is None:
+                    tuples = mgr.get_zone_tuples(effective_zone)
+            else:
+                tuples = []
+
+            for t in tuples:
+                if t.get("subject_type") != subject[0] or t.get("subject_id") != subject[1]:
+                    continue
+                relation = t.get("relation", "")
+                if relation not in (
+                    "direct_viewer",
+                    "direct_editor",
+                    "direct_owner",
+                    "viewer",
+                    "editor",
+                    "owner",
+                ):
+                    continue
+                obj_type = t.get("object_type", "")
+                obj_id = t.get("object_id", "")
+                if obj_type == "file" and obj_id.startswith(prefix):
+                    return True
+
+            return False
+        except (RuntimeError, ValueError):
+            return False
+
+    def rebac_check_sync(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        context: Any = None,
+        zone_id: str | None = None,
+    ) -> bool:
+        """Synchronous rebac_check — full business logic with traverse fallback."""
+        mgr = self._require_manager()
+
+        if not isinstance(subject, tuple) or len(subject) != 2:
+            raise ValueError(f"subject must be (type, id) tuple, got {subject}")
+        if not isinstance(object, tuple) or len(object) != 2:
+            raise ValueError(f"object must be (type, id) tuple, got {object}")
+
+        effective_zone_id = zone_id
+        if effective_zone_id is None and context:
+            if isinstance(context, dict):
+                effective_zone_id = context.get("zone")
+            elif hasattr(context, "zone_id"):
+                effective_zone_id = context.zone_id
+
+        result = mgr.rebac_check(
+            subject=subject,
+            permission=permission,
+            object=object,
+            context=context,
+            zone_id=effective_zone_id,
+        )
+
+        # Unix-like TRAVERSE fallback
+        if not result and permission == "traverse" and object[0] == "file":
+            result = self._has_descendant_access_for_traverse(
+                path=object[1],
+                subject=subject,
+                zone_id=effective_zone_id,
+            )
+
+        return bool(result)
+
+    def rebac_expand_sync(
+        self,
+        permission: str,
+        object: tuple[str, str],
+    ) -> list[tuple[str, str]]:
+        """Synchronous rebac_expand."""
+        mgr = self._require_manager()
+        if not isinstance(object, tuple) or len(object) != 2:
+            raise ValueError(f"object must be (type, id) tuple, got {object}")
+        expanded: list[tuple[str, str]] = mgr.rebac_expand(permission=permission, object=object)
+        return expanded
+
+    def rebac_explain_sync(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Synchronous rebac_explain."""
+        mgr = self._require_manager()
+        if not isinstance(subject, tuple) or len(subject) != 2:
+            raise ValueError(f"subject must be (type, id) tuple, got {subject}")
+        if not isinstance(object, tuple) or len(object) != 2:
+            raise ValueError(f"object must be (type, id) tuple, got {object}")
+
+        effective_zone_id = zone_id
+        if effective_zone_id is None and context:
+            if isinstance(context, dict):
+                effective_zone_id = context.get("zone")
+            elif hasattr(context, "zone_id"):
+                effective_zone_id = context.zone_id
+
+        result: dict[str, Any] = mgr.rebac_explain(
+            subject=subject, permission=permission, object=object, zone_id=effective_zone_id
+        )
+        return result
+
+    def rebac_check_batch_sync(
+        self,
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+    ) -> list[bool]:
+        """Synchronous rebac_check_batch."""
+        mgr = self._require_manager()
+        for i, check in enumerate(checks):
+            if not isinstance(check, tuple) or len(check) != 3:
+                raise ValueError(f"Check {i} must be (subject, permission, object) tuple")
+            subj, _perm, obj = check
+            if not isinstance(subj, tuple) or len(subj) != 2:
+                raise ValueError(f"Check {i}: subject must be (type, id) tuple, got {subj}")
+            if not isinstance(obj, tuple) or len(obj) != 2:
+                raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
+        results: list[bool] = mgr.rebac_check_batch_fast(checks=checks)
+        return results
+
+    def rebac_delete_sync(self, tuple_id: str) -> bool:
+        """Synchronous rebac_delete."""
+        mgr = self._require_manager()
+        result = mgr.rebac_delete(tuple_id=tuple_id)
+        if self._enable_audit_logging and result:
+            logger.info("[ReBACService] Deleted tuple: %s", tuple_id)
+        return bool(result)
+
+    def rebac_list_tuples_sync(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        relation_in: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Synchronous rebac_list_tuples — ORM query."""
+        from sqlalchemy import select
+
+        from nexus.storage.models.permissions import ReBACTupleModel as RT
+
+        mgr = self._require_manager()
+
+        stmt = select(RT)
+
+        if subject:
+            stmt = stmt.where(RT.subject_type == subject[0], RT.subject_id == subject[1])
+
+        if relation:
+            stmt = stmt.where(RT.relation == relation)
+        elif relation_in:
+            stmt = stmt.where(RT.relation.in_(relation_in))
+
+        if object:
+            stmt = stmt.where(RT.object_type == object[0], RT.object_id == object[1])
+
+        with mgr.engine.connect() as conn:
+            result = conn.execute(stmt)
+            results = []
+            for row in result:
+                results.append(
+                    {
+                        "tuple_id": row.tuple_id,
+                        "subject_type": row.subject_type,
+                        "subject_id": row.subject_id,
+                        "relation": row.relation,
+                        "object_type": row.object_type,
+                        "object_id": row.object_id,
+                        "created_at": row.created_at,
+                        "expires_at": row.expires_at,
+                        "zone_id": row.zone_id,
+                    }
+                )
+            return results
+
+    # =========================================================================
+    # Sync: Namespace Management
+    # =========================================================================
+
+    def get_namespace_sync(self, object_type: str) -> dict[str, Any] | None:
+        """Get namespace schema for an object type (sync)."""
+        mgr = self._require_manager()
+        ns = mgr.get_namespace(object_type)
+        if ns is None:
+            return None
+        return {
+            "namespace_id": ns.namespace_id,
+            "object_type": ns.object_type,
+            "config": ns.config,
+            "created_at": ns.created_at.isoformat(),
+            "updated_at": ns.updated_at.isoformat(),
+        }
+
+    def namespace_create_sync(self, object_type: str, config: dict[str, Any]) -> None:
+        """Create or update a namespace configuration (sync)."""
+        mgr = self._require_manager()
+        if "relations" not in config or "permissions" not in config:
+            raise ValueError("Namespace config must have 'relations' and 'permissions' keys")
+
+        import uuid
+
+        from nexus.core.rebac import NamespaceConfig
+
+        ns = NamespaceConfig(
+            namespace_id=str(uuid.uuid4()),
+            object_type=object_type,
+            config=config,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        mgr.create_namespace(ns)
+
+    def namespace_list_sync(self) -> list[dict[str, Any]]:
+        """List all registered namespace configurations (sync)."""
+        import json as _json
+
+        from sqlalchemy import select
+
+        from nexus.storage.models.permissions import ReBACNamespaceModel as RN
+
+        mgr = self._require_manager()
+
+        stmt = select(RN).order_by(RN.object_type)
+
+        with mgr.engine.connect() as conn:
+            result = conn.execute(stmt)
+            namespaces = []
+            for row in result:
+                namespaces.append(
+                    {
+                        "namespace_id": row.namespace_id,
+                        "object_type": row.object_type,
+                        "config": _json.loads(row.config),
+                        "created_at": row.created_at,
+                        "updated_at": row.updated_at,
+                    }
+                )
+            return namespaces
+
+    def namespace_delete_sync(self, object_type: str) -> bool:
+        """Delete a namespace configuration (sync)."""
+        from sqlalchemy import delete, select
+
+        from nexus.storage.models.permissions import ReBACNamespaceModel as RN
+
+        mgr = self._require_manager()
+
+        with mgr.engine.begin() as conn:
+            # Check if namespace exists
+            exists = conn.execute(
+                select(RN.namespace_id).where(RN.object_type == object_type)
+            ).fetchone()
+            if exists is None:
+                return False
+
+            conn.execute(delete(RN).where(RN.object_type == object_type))
+
+        cache = getattr(mgr, "_cache", None)
+        if cache is not None:
+            cache.clear()
+        return True
+
+    # =========================================================================
+    # Sync: Sharing, Privacy, Dynamic Viewer, Tiger Cache
+    # (Provided by ReBACShareMixin via inheritance)
+    # =========================================================================

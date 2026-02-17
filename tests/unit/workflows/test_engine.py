@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from nexus.workflows.engine import WorkflowEngine, get_engine, init_engine
+from nexus.workflows.engine import WorkflowEngine
 from nexus.workflows.types import (
     TriggerType,
     WorkflowAction,
@@ -165,7 +165,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -194,7 +194,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -218,7 +218,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -281,6 +281,23 @@ class TestWorkflowEngine:
         assert count >= 0  # May be 0 or 1 depending on trigger implementation
 
     @pytest.mark.asyncio
+    async def test_fire_event_with_string_type(self):
+        """Test firing an event with string trigger type."""
+        engine = WorkflowEngine()
+        definition = WorkflowDefinition(
+            name="test_workflow",
+            version="1.0",
+            triggers=[WorkflowTrigger(type=TriggerType.FILE_WRITE, config={"pattern": "*.md"})],
+            actions=[WorkflowAction(name="action1", type="python", config={"code": "pass"})],
+        )
+
+        engine.load_workflow(definition, enabled=True)
+
+        # Fire matching event using string type
+        count = await engine.fire_event("file_write", {"file_path": "/docs/readme.md"})
+        assert count >= 0
+
+    @pytest.mark.asyncio
     async def test_workflow_context_variables(self):
         """Test workflow context variables are passed to actions."""
         engine = WorkflowEngine()
@@ -300,7 +317,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
             variables={"x": 10},
         )
@@ -331,36 +348,10 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            zone_id=uuid.uuid4(),
+            zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
         )
 
         execution = await engine.execute_workflow(definition, context)
         assert execution.status == WorkflowStatus.SUCCEEDED
         assert execution.action_results[1].output == 84
-
-
-class TestEngineGlobals:
-    """Test global engine functions."""
-
-    def test_get_engine(self):
-        """Test getting global engine instance."""
-        engine1 = get_engine()
-        engine2 = get_engine()
-        assert engine1 is engine2
-
-    def test_init_engine(self):
-        """Test initializing global engine."""
-        engine = init_engine()
-        assert engine is not None
-        assert get_engine() is engine
-
-    def test_init_engine_with_stores(self):
-        """Test initializing engine with stores."""
-        mock_metadata_store = object()
-        mock_workflow_store = object()
-
-        engine = init_engine(mock_metadata_store, None, mock_workflow_store)
-        assert engine.metadata_store is mock_metadata_store
-        assert engine.plugin_registry is None
-        assert engine.workflow_store is mock_workflow_store

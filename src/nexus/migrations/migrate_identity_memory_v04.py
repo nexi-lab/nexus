@@ -6,7 +6,6 @@ Migrates existing Nexus installations to support:
 - Backward compatibility for existing data
 """
 
-import contextlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -143,7 +142,7 @@ class IdentityMemoryMigration:
             user_id: User ID to register.
             agent_id: Agent ID to register.
         """
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         registry = EntityRegistry(self.session)
 
@@ -168,7 +167,7 @@ class IdentityMemoryMigration:
 
         Analyzes existing file_paths to discover entities and register them.
         """
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         registry = EntityRegistry(self.session)
 
@@ -198,8 +197,12 @@ class IdentityMemoryMigration:
 
                     if potential_agent:
                         # Register as agent (we don't have user info, so no parent)
-                        with contextlib.suppress(Exception):
+                        try:
                             registry.register_entity("agent", potential_agent)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to register agent entity %s: %s", potential_agent, e
+                            )
 
             logger.info("Extracted and registered entities from file paths")
 

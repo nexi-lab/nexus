@@ -4,7 +4,7 @@ Wraps an inner Backend and adds two-layer caching:
 - L1: In-memory ContentCache (sync, fast, process-local, LZ4 compressed)
 - L2: CacheStoreABC/Dragonfly (async background population, distributed)
 
-Follows LEGO Architecture Pattern E (Decorator/Wrapper Composition).
+Follows LEGO Architecture PART 16 (Recursive Wrapping, Mechanism 2).
 All Backend operations pass through transparently. Only CAS read operations
 are cached (read_content, batch_read_content). Writes invalidate or populate
 cache based on the configured CacheStrategy.
@@ -33,13 +33,13 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
-from nexus.core.response import HandlerResponse
+from nexus.backends.delegating import DelegatingBackend
+from nexus.core.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
     from nexus.core.permissions import OperationContext
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +91,11 @@ class CacheWrapperConfig:
 # ---------------------------------------------------------------------------
 
 
-class CachingBackendWrapper(Backend):
+class CachingBackendWrapper(DelegatingBackend):
     """Transparent caching decorator for any Backend implementation.
 
-    Delegates all operations to the inner backend. CAS content reads are
-    cached in L1 (in-memory) and optionally L2 (distributed). Writes
+    Inherits property delegation and ``__getattr__`` from ``DelegatingBackend``.
+    Overrides CAS content operations to add two-layer caching. Writes
     invalidate or populate cache based on the configured strategy.
 
     Cache failures are silently swallowed — inner backend is always the
@@ -108,7 +108,7 @@ class CachingBackendWrapper(Backend):
         config: CacheWrapperConfig | None = None,
         cache_store: CacheStoreABC | None = None,
     ) -> None:
-        self._inner = inner
+        super().__init__(inner)
         self._config = config or CacheWrapperConfig()
         self._cache_store = cache_store
 
@@ -131,54 +131,19 @@ class CachingBackendWrapper(Backend):
         self._metrics: dict[str, Any] | None = None
         self._metrics_initialized = False
 
-    # === Name & Properties (explicit delegation) ===
+    # === Name & Chain Introspection ===
 
     @property
     def name(self) -> str:
         return f"cached({self._inner.name})"
 
-    @property
-    def user_scoped(self) -> bool:
-        return self._inner.user_scoped
-
-    @property
-    def is_connected(self) -> bool:
-        return self._inner.is_connected
-
-    @property
-    def thread_safe(self) -> bool:
-        return self._inner.thread_safe
-
-    @property
-    def supports_rename(self) -> bool:
-        return self._inner.supports_rename
-
-    @property
-    def has_virtual_filesystem(self) -> bool:
-        return self._inner.has_virtual_filesystem
-
-    @property
-    def has_root_path(self) -> bool:
-        return self._inner.has_root_path
-
-    @property
-    def has_token_manager(self) -> bool:
-        return self._inner.has_token_manager
-
-    @property
-    def has_data_dir(self) -> bool:
-        return self._inner.has_data_dir
-
-    @property
-    def is_passthrough(self) -> bool:
-        return self._inner.is_passthrough
-
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        return self._inner.supports_parallel_mmap_read
+    def describe(self) -> str:
+        """Return chain description: ``"cache → {inner.describe()}"``."""
+        return f"cache → {self._inner.describe()}"
 
     # === Cached Content Operations ===
 
+    @timed_response
     def read_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
@@ -219,6 +184,7 @@ class CachingBackendWrapper(Backend):
 
         return response
 
+    @timed_response
     def write_content(
         self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
@@ -243,6 +209,7 @@ class CachingBackendWrapper(Backend):
 
         return response
 
+    @timed_response
     def delete_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]:
@@ -251,6 +218,7 @@ class CachingBackendWrapper(Backend):
         self._invalidate(content_hash)
         return response
 
+    @timed_response
     def content_exists(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
@@ -263,7 +231,11 @@ class CachingBackendWrapper(Backend):
         return self._inner.content_exists(content_hash, context=context)
 
     def batch_read_content(
-        self, content_hashes: list[str], context: OperationContext | None = None
+        self,
+        content_hashes: list[str],
+        context: OperationContext | None = None,
+        *,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """Batch read with L1 cache for already-cached items."""
         result: dict[str, bytes | None] = {}
@@ -303,7 +275,9 @@ class CachingBackendWrapper(Backend):
 
         # Third pass: read remaining uncached from inner backend
         if uncached_hashes:
-            inner_results = self._inner.batch_read_content(uncached_hashes, context=context)
+            inner_results = self._inner.batch_read_content(
+                uncached_hashes, context=context, contexts=contexts
+            )
             for content_hash, data in inner_results.items():
                 result[content_hash] = data
                 # Populate L1 for successful reads
@@ -319,11 +293,13 @@ class CachingBackendWrapper(Backend):
 
     # === Non-cached content operations (explicit delegation) ===
 
+    @timed_response
     def get_content_size(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         return self._inner.get_content_size(content_hash, context=context)
 
+    @timed_response
     def get_ref_count(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
@@ -331,38 +307,30 @@ class CachingBackendWrapper(Backend):
 
     # === Directory operations (explicit delegation) ===
 
+    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         return self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
+    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         return self._inner.rmdir(path, recursive=recursive, context=context)
 
+    @timed_response
     def is_directory(
         self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         return self._inner.is_directory(path, context=context)
-
-    # === Fallback delegation for remaining methods ===
-
-    def __getattr__(self, name: str) -> Any:
-        """Delegate any non-overridden attribute to inner backend.
-
-        Covers: list_dir, connect, disconnect, check_connection,
-        stream_content, write_stream, get_file_info, get_object_type,
-        get_object_id, and any future Backend methods.
-        """
-        return getattr(self._inner, name)
 
     # === Cache management ===
 

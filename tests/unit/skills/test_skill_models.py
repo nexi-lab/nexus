@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from nexus.core.exceptions import ValidationError
+from nexus.skills.exceptions import SkillValidationError
 from nexus.skills.models import Skill, SkillMetadata
 
 
@@ -57,7 +57,7 @@ def test_skill_metadata_validation_missing_name() -> None:
     """Test that validation fails when name is missing."""
     metadata = SkillMetadata(name="", description="Test")
 
-    with pytest.raises(ValidationError, match="skill name is required"):
+    with pytest.raises(SkillValidationError, match="skill name is required"):
         metadata.validate()
 
 
@@ -65,7 +65,7 @@ def test_skill_metadata_validation_missing_description() -> None:
     """Test that validation fails when description is missing."""
     metadata = SkillMetadata(name="test-skill", description="")
 
-    with pytest.raises(ValidationError, match="skill description is required"):
+    with pytest.raises(SkillValidationError, match="skill description is required"):
         metadata.validate()
 
 
@@ -76,7 +76,7 @@ def test_skill_metadata_validation_invalid_name() -> None:
         description="Test",
     )
 
-    with pytest.raises(ValidationError, match="skill name must be alphanumeric"):
+    with pytest.raises(SkillValidationError, match="skill name must be alphanumeric"):
         metadata.validate()
 
 
@@ -97,7 +97,7 @@ def test_skill_metadata_validation_invalid_tier() -> None:
         tier="invalid-tier",
     )
 
-    with pytest.raises(ValidationError, match="skill tier must be one of"):
+    with pytest.raises(SkillValidationError, match="skill tier must be one of"):
         metadata.validate()
 
 
@@ -134,7 +134,7 @@ def test_skill_validation_missing_content() -> None:
     metadata = SkillMetadata(name="test-skill", description="Test")
     skill = Skill(metadata=metadata, content="")
 
-    with pytest.raises(ValidationError, match="skill content is required"):
+    with pytest.raises(SkillValidationError, match="skill content is required"):
         skill.validate()
 
 
@@ -143,5 +143,5 @@ def test_skill_validation_invalid_metadata() -> None:
     metadata = SkillMetadata(name="", description="Test")
     skill = Skill(metadata=metadata, content="# Content")
 
-    with pytest.raises(ValidationError, match="skill name is required"):
+    with pytest.raises(SkillValidationError, match="skill name is required"):
         skill.validate()

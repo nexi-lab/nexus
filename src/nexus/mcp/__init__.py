@@ -24,7 +24,7 @@ Usage:
     server.run()
 
     # Infrastructure API key management
-    from nexus.mcp import set_request_api_key
+    from nexus.mcp import set_request_api_key, reset_request_api_key
 
     # In middleware/proxy code:
     token = set_request_api_key("sk-user-api-key")
@@ -32,7 +32,7 @@ Usage:
         # Tool calls here will use this API key
         pass
     finally:
-        token.reset()
+        reset_request_api_key(token)
 
     # Unified MCP connection (Klavis or local)
     from nexus.mcp import KlavisClient, MCPProviderRegistry
@@ -42,7 +42,10 @@ Usage:
 """
 
 from nexus.mcp.connection_manager import MCPConnection, MCPConnectionError, MCPConnectionManager
+from nexus.mcp.exporter import MCPToolExporter
 from nexus.mcp.klavis_client import KlavisClient, KlavisError, KlavisMCPInstance, KlavisOAuthResult
+from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
+from nexus.mcp.mount import MCPMountError, MCPMountManager
 from nexus.mcp.provider_registry import (
     BackendConfig,
     MCPConfig,
@@ -52,9 +55,9 @@ from nexus.mcp.provider_registry import (
     ProviderType,
 )
 from nexus.mcp.server import (
-    _request_api_key,
     create_mcp_server,
     get_request_api_key,
+    reset_request_api_key,
     set_request_api_key,
 )
 
@@ -63,7 +66,7 @@ __all__ = [
     "create_mcp_server",
     "set_request_api_key",
     "get_request_api_key",
-    "_request_api_key",
+    "reset_request_api_key",
     # Connection manager
     "MCPConnectionManager",
     "MCPConnection",
@@ -80,4 +83,14 @@ __all__ = [
     "OAuthConfig",
     "MCPConfig",
     "BackendConfig",
+    # Models (moved from nexus.skills)
+    "MCPMount",
+    "MCPToolConfig",
+    "MCPToolDefinition",
+    "MCPToolExample",
+    # Mount manager (moved from nexus.skills)
+    "MCPMountManager",
+    "MCPMountError",
+    # Exporter (moved from nexus.skills)
+    "MCPToolExporter",
 ]

@@ -1,9 +1,10 @@
-"""Events API router (Issue #1116, #1117, #1288).
+"""Events API router (Issue #1116, #1117, #1241, #1288).
 
-Provides real-time event streaming and long-polling watch endpoints:
+Provides real-time event streaming, long-polling watch, and event log queries:
 - WS  /ws/events/{subscription_id}  -- real-time events via WebSocket
 - WS  /ws/events                    -- all zone events (no subscription filter)
 - GET /api/watch                    -- long-polling watch for file changes
+- GET /api/v1/events               -- query event log (transactional outbox, #1241)
 
 WebSocket endpoints access services via ``websocket.app.state`` directly
 because FastAPI ``Depends()`` is not supported on WebSocket routes.
@@ -15,9 +16,18 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi import status as http_status
 
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
@@ -65,18 +75,16 @@ async def websocket_events(
         )
         return
 
-    zone_id = (auth_result or {}).get("zone_id") or "default"
+    zone_id = (auth_result or {}).get("zone_id") or "root"
     user_id = (auth_result or {}).get("subject_id")
 
-    # Resolve subscription filters (patterns / event_types)
-    patterns: list[str] = []
+    # Resolve subscription filters
     event_types: list[str] = []
 
     subscription_manager = getattr(app_state, "subscription_manager", None)
     if subscription_manager and subscription_id != "all":
         subscription = subscription_manager.get(subscription_id, zone_id)
         if subscription:
-            patterns = subscription.patterns or []
             event_types = subscription.event_types or []
         else:
             logger.debug(
@@ -92,7 +100,6 @@ async def websocket_events(
         connection_id=connection_id,
         user_id=user_id,
         subscription_id=subscription_id if subscription_id != "all" else None,
-        patterns=patterns,
         event_types=event_types,
     )
 
@@ -101,7 +108,6 @@ async def websocket_events(
             "type": "connected",
             "connection_id": connection_id,
             "zone_id": zone_id,
-            "patterns": patterns,
             "event_types": event_types,
         }
     )
@@ -163,3 +169,84 @@ async def watch_for_changes(
     except Exception as e:
         logger.error("Watch error for %s: %s", path, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Watch error: {e}") from e
+
+
+# =============================================================================
+# Event log query endpoint (Issue #1241 — Transactional Outbox)
+# =============================================================================
+
+
+@router.get("/api/v1/events", tags=["events"])
+async def list_events(
+    request: Request,
+    zone_id: str | None = Query(None, description="Filter by zone ID"),
+    since: datetime | None = Query(None, description="Events after this time (ISO-8601)"),
+    until: datetime | None = Query(None, description="Events before this time (ISO-8601)"),
+    path_prefix: str | None = Query(None, description="Filter by path prefix (wildcard *)"),
+    agent_id: str | None = Query(None, description="Filter by agent ID"),
+    operation_type: str | None = Query(None, description="Filter by operation type"),
+    limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
+    cursor: str | None = Query(None, description="Cursor from previous response"),
+    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+) -> dict[str, Any]:
+    """Query the operation log / event history (Issue #1241).
+
+    Delegates to ``EventReplayService.list_v1()`` for cursor-based
+    pagination, zone/agent/path/time filters.  Uses DESC ordering
+    with operation_id cursors (same contract as the original endpoint).
+
+    Events are written transactionally alongside VFS operations and
+    delivered asynchronously by the ``EventDeliveryWorker``.
+
+    For sequence_number-based replay, use the v2 API:
+    ``GET /api/v2/events/replay``.
+    """
+    from nexus.services.event_log.replay_service import EventReplayService
+
+    session_factory = getattr(request.app.state, "session_factory", None)
+    if session_factory is None or not callable(session_factory):
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    # Default zone from auth
+    effective_zone = zone_id
+    if effective_zone is None and _auth_result:
+        effective_zone = _auth_result.get("zone_id")
+
+    try:
+        service = EventReplayService(session_factory)
+        result = service.list_v1(
+            zone_id=effective_zone,
+            agent_id=agent_id,
+            operation_type=operation_type,
+            path_prefix=path_prefix,
+            since=since,
+            until=until,
+            limit=limit,
+            cursor=cursor,
+        )
+
+        # V1 response includes new_path always (not conditionally like v2)
+        events = [
+            {
+                "event_id": ev.event_id,
+                "type": ev.type,
+                "path": ev.path,
+                "new_path": ev.new_path,
+                "zone_id": ev.zone_id,
+                "agent_id": ev.agent_id,
+                "status": ev.status,
+                "delivered": ev.delivered,
+                "timestamp": ev.timestamp or None,
+            }
+            for ev in result.events
+        ]
+
+        return {
+            "events": events,
+            "next_cursor": result.next_cursor,
+            "has_more": result.has_more,
+        }
+
+    except Exception as e:
+        logger.error("Event log query error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to query events") from e

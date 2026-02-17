@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import OperationContext
+from nexus.skills.exceptions import SkillPermissionDeniedError
 from nexus.skills.importer import SkillImporter, SkillImportError
 
 # Mock SKILL.md content with valid YAML frontmatter
@@ -225,7 +225,9 @@ class TestSkillImporter:
         """Test that importing to system tier as regular user fails."""
         zip_data = create_mock_skill_zip("test-skill", VALID_SKILL_MD)
 
-        with pytest.raises(PermissionDeniedError, match="Only admins can import to system tier"):
+        with pytest.raises(
+            SkillPermissionDeniedError, match="Only admins can import to system tier"
+        ):
             await importer.import_from_zip(
                 zip_data=zip_data,
                 tier="system",

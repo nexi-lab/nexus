@@ -317,7 +317,6 @@ class NexusFilesystem(ABC):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: Any = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
@@ -328,7 +327,6 @@ class NexusFilesystem(ABC):
             path: Directory path to list (default: "/")
             recursive: If True, list all files recursively; if False, list only direct children
             details: If True, return detailed metadata; if False, return paths only
-            prefix: (Deprecated) Path prefix to filter by - for backward compatibility
             show_parsed: If True, include virtual _parsed.{ext}.md views; if False, exclude them (default: True)
 
         Returns:
@@ -600,7 +598,6 @@ class NexusFilesystem(ABC):
     def workspace_snapshot(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
         description: str | None = None,
         tags: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
@@ -608,7 +605,6 @@ class NexusFilesystem(ABC):
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             description: Human-readable description of snapshot
             tags: List of tags for categorization
 
@@ -626,14 +622,12 @@ class NexusFilesystem(ABC):
         self,
         snapshot_number: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
         Args:
             snapshot_number: Snapshot version number to restore
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
 
         Returns:
             Restore operation result
@@ -648,14 +642,12 @@ class NexusFilesystem(ABC):
     def workspace_log(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
         limit: int = 100,
     ) -> builtins.list[dict[str, Any]]:
         """List snapshot history for workspace.
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
 
         Returns:
@@ -672,7 +664,6 @@ class NexusFilesystem(ABC):
         snapshot_1: int,
         snapshot_2: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
 
@@ -680,7 +671,6 @@ class NexusFilesystem(ABC):
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
 
         Returns:
             Diff dict with added, removed, modified files
@@ -822,6 +812,15 @@ class NexusFilesystem(ABC):
 
     # === Sandbox Operations ===
 
+    @property
+    def sandbox_available(self) -> bool:
+        """Whether sandbox execution is available.
+
+        Returns True if at least one sandbox provider is configured.
+        Subclasses should override this to check their sandbox manager.
+        """
+        return False
+
     @abstractmethod
     def sandbox_create(
         self,
@@ -900,24 +899,9 @@ class NexusFilesystem(ABC):
         """
         ...
 
-    def sandbox_validate(
-        self,
-        sandbox_id: str,  # noqa: ARG002
-        workspace_path: str = "/workspace",  # noqa: ARG002
-        context: dict | None = None,  # noqa: ARG002
-    ) -> dict[Any, Any]:
-        """Run validation pipeline in a sandbox.
-
-        Args:
-            sandbox_id: Sandbox identifier
-            workspace_path: Workspace root path in sandbox
-            context: Operation context
-
-        Returns:
-            Dict with validations list
-        """
-        return {"validations": []}
-        ...
+    # NOTE: sandbox_validate() removed from kernel ABC — it's a service-level
+    # linting/validation pipeline, not a kernel primitive. The implementation
+    # remains on NexusFS via @rpc_expose for RPC dispatch.
 
     @abstractmethod
     def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:

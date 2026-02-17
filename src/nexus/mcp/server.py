@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Any, cast
 
+from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 
 from nexus.core.filesystem import NexusFilesystem
@@ -39,8 +40,7 @@ def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
         A token that can be used to reset the context variable
 
     Example:
-        >>> from nexus.mcp import set_request_api_key
-        >>> from nexus.mcp.server import _request_api_key
+        >>> from nexus.mcp import set_request_api_key, reset_request_api_key
         >>>
         >>> # In middleware or proxy code:
         >>> token = set_request_api_key("sk-user-api-key-xyz")
@@ -49,7 +49,7 @@ def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
         ...     result = mcp_server.call_tool("nexus_read_file", path="/data.txt")
         ... finally:
         ...     # Clean up context
-        ...     _request_api_key.reset(token)
+        ...     reset_request_api_key(token)
     """
     return _request_api_key.set(api_key)
 
@@ -64,6 +64,15 @@ def get_request_api_key() -> str | None:
         The current request API key, or None if not set
     """
     return _request_api_key.get()
+
+
+def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
+    """Reset the request API key context variable using a previously saved token.
+
+    Args:
+        token: The token returned by set_request_api_key()
+    """
+    _request_api_key.reset(token)
 
 
 def create_mcp_server(
@@ -92,13 +101,13 @@ def create_mcp_server(
         (e.g., HTTP middleware, proxy, gateway) without exposing them to AI agents.
 
         Infrastructure should set the API key using:
-            from nexus.mcp.server import set_request_api_key
+            from nexus.mcp import set_request_api_key, reset_request_api_key
             token = set_request_api_key("sk-user-api-key-xyz")
             try:
                 # Make MCP tool calls here
                 pass
             finally:
-                token.reset()
+                reset_request_api_key(token)
 
         The api_key parameter serves as the default when no per-request key is set.
 
@@ -135,8 +144,8 @@ def create_mcp_server(
     _default_nx: NexusFilesystem = nx
     _remote_url = remote_url
 
-    # Connection pool for per-request API keys (cached by API key)
-    _connection_cache: dict[str, NexusFilesystem] = {}
+    # Connection pool for per-request API keys (bounded LRU, cached by API key)
+    _connection_cache: LRUCache[str, NexusFilesystem] = LRUCache(maxsize=256)
 
     def _get_nexus_instance(ctx: Context | None = None) -> NexusFilesystem:
         """Get Nexus instance for current request using context API key.
@@ -158,8 +167,10 @@ def create_mcp_server(
         # Try to get API key from FastMCP context state first (if Context is available)
         request_api_key = None
         if ctx and hasattr(ctx, "get_state"):
-            with contextlib.suppress(Exception):
+            try:
                 request_api_key = ctx.get_state("api_key")
+            except Exception as e:
+                logger.debug("Failed to get API key from context state: %s", e)
 
         # Fallback to context variable (set by Starlette middleware)
         if not request_api_key:
@@ -226,8 +237,8 @@ def create_mcp_server(
                             ) or http_request.headers.get("Authorization", "").replace(
                                 "Bearer ", ""
                             )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to extract API key from request: %s", e)
 
             # Store in FastMCP's context state so tools can access it via Context.get_state()
             if api_key and context.fastmcp_context:
@@ -508,8 +519,8 @@ def create_mcp_server(
                 content = nx_instance.read(path)
                 if isinstance(content, bytes):
                     info_dict["size"] = len(content)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to read file size for %s: %s", path, e)
 
         return json.dumps(info_dict, indent=2)
 
@@ -852,8 +863,10 @@ def create_mcp_server(
             return f"Successfully stored memory: {content[:80]}..."
         except Exception as e:
             if hasattr(nx_instance.memory, "session"):
-                with contextlib.suppress(Exception):
+                try:
                     nx_instance.memory.session.rollback()
+                except Exception as rb_err:
+                    logger.debug("Failed to rollback memory session: %s", rb_err)
             return tool_error("internal", f"Error storing memory: {e}", str(e))
 
     @mcp.tool(
@@ -985,16 +998,20 @@ def create_mcp_server(
             "\n\n".join(output_parts) if output_parts else "Code executed successfully (no output)"
         )
 
-    # Check if sandbox support is available (use default connection for check)
+    # Check if sandbox support is available
+    # First check the explicit sandbox_available property, then probe internals
     sandbox_available = False
     try:
-        if hasattr(_default_nx, "_ensure_sandbox_manager"):
+        sa = getattr(_default_nx, "sandbox_available", None)
+        if sa is False:
+            sandbox_available = False
+        elif sa is True:
+            sandbox_available = True
+        elif hasattr(_default_nx, "_ensure_sandbox_manager"):
             _default_nx._ensure_sandbox_manager()
-            if (
-                hasattr(_default_nx, "_sandbox_manager")
-                and _default_nx._sandbox_manager is not None
-            ):
-                sandbox_available = len(_default_nx._sandbox_manager.providers) > 0
+            mgr = getattr(_default_nx, "_sandbox_manager", None)
+            if mgr is not None and getattr(mgr, "providers", None):
+                sandbox_available = True
     except Exception:
         sandbox_available = False
 
@@ -1316,6 +1333,295 @@ def create_mcp_server(
         return json.dumps(result, indent=2)
 
     # =========================================================================
+    # CONTEXT BRANCHING TOOLS (Issue #1315)
+    # =========================================================================
+
+    def _get_branch_service(ctx: Context | None = None):  # type: ignore[no-untyped-def]
+        """Get ContextBranchService from NexusFS services."""
+        nx_instance = _get_nexus_instance(ctx)
+        svc = getattr(getattr(nx_instance, "_services", None), "context_branch_service", None)
+        if not svc:
+            return None
+        return svc
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("committing context snapshot")
+    def nexus_context_commit(
+        workspace: str,
+        message: str | None = None,
+        branch: str | None = None,
+        ctx: Context | None = None,
+    ) -> str:
+        """Create a snapshot and advance branch HEAD.
+
+        Args:
+            workspace: Workspace path (e.g., "/workspace")
+            message: Commit message
+            branch: Branch to commit to (default: current branch)
+            ctx: FastMCP Context
+
+        Returns:
+            JSON with snapshot and branch info
+        """
+        svc = _get_branch_service(ctx)
+        if not svc:
+            return tool_error("unavailable", "Context branching not available.")
+        result = svc.commit(workspace, message=message, branch_name=branch)
+        return json.dumps(result, indent=2, default=str)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("creating context branch")
+    def nexus_context_branch(
+        workspace: str,
+        name: str,
+        from_branch: str | None = None,
+        ctx: Context | None = None,
+    ) -> str:
+        """Create a new named branch (zero-copy, instant).
+
+        Args:
+            workspace: Workspace path
+            name: Branch name
+            from_branch: Fork from this branch (default: current)
+            ctx: FastMCP Context
+
+        Returns:
+            JSON with branch info
+        """
+        svc = _get_branch_service(ctx)
+        if not svc:
+            return tool_error("unavailable", "Context branching not available.")
+        result = svc.create_branch(workspace, name, from_branch=from_branch)
+        return json.dumps(
+            {
+                "branch_name": result.branch_name,
+                "parent_branch": result.parent_branch,
+                "fork_point_id": result.fork_point_id,
+                "id": result.id,
+            },
+            indent=2,
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("checking out context branch")
+    def nexus_context_checkout(workspace: str, target: str, ctx: Context | None = None) -> str:
+        """Switch to a different branch and restore its workspace state.
+
+        Args:
+            workspace: Workspace path
+            target: Branch name to switch to
+            ctx: FastMCP Context
+
+        Returns:
+            JSON with checkout result
+        """
+        svc = _get_branch_service(ctx)
+        if not svc:
+            return tool_error("unavailable", "Context branching not available.")
+        result = svc.checkout(workspace, target)
+        return json.dumps(result, indent=2, default=str)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("merging context branches")
+    def nexus_context_merge(
+        workspace: str,
+        source: str,
+        target: str | None = None,
+        strategy: str = "fail",
+        ctx: Context | None = None,
+    ) -> str:
+        """Merge a branch into another (three-way merge).
+
+        Args:
+            workspace: Workspace path
+            source: Branch to merge FROM
+            target: Branch to merge INTO (default: current)
+            strategy: 'fail' (default) or 'source-wins'
+            ctx: FastMCP Context
+
+        Returns:
+            JSON with merge result
+        """
+        svc = _get_branch_service(ctx)
+        if not svc:
+            return tool_error("unavailable", "Context branching not available.")
+        result = svc.merge(workspace, source, target_branch=target, strategy=strategy)
+        return json.dumps(
+            {
+                "merged": result.merged,
+                "fast_forward": result.fast_forward,
+                "files_added": result.files_added,
+                "files_removed": result.files_removed,
+                "files_modified": result.files_modified,
+                "strategy": result.strategy,
+            },
+            indent=2,
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("listing context branches")
+    def nexus_context_branches(
+        workspace: str, include_inactive: bool = False, ctx: Context | None = None
+    ) -> str:
+        """List all branches for a workspace.
+
+        Args:
+            workspace: Workspace path
+            include_inactive: Include merged/discarded branches
+            ctx: FastMCP Context
+
+        Returns:
+            JSON array of branch info
+        """
+        svc = _get_branch_service(ctx)
+        if not svc:
+            return tool_error("unavailable", "Context branching not available.")
+        branches = svc.list_branches(workspace, include_inactive=include_inactive)
+        return json.dumps(
+            [
+                {
+                    "branch_name": b.branch_name,
+                    "status": b.status,
+                    "is_current": b.is_current,
+                    "head_snapshot_id": b.head_snapshot_id,
+                    "parent_branch": b.parent_branch,
+                }
+                for b in branches
+            ],
+            indent=2,
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("viewing context log")
+    def nexus_context_log(workspace: str, limit: int = 20, ctx: Context | None = None) -> str:
+        """Show snapshot history for a workspace.
+
+        Args:
+            workspace: Workspace path
+            limit: Max entries to show
+            ctx: FastMCP Context
+
+        Returns:
+            JSON array of snapshots
+        """
+        svc = _get_branch_service(ctx)
+        if not svc:
+            return tool_error("unavailable", "Context branching not available.")
+        snapshots = svc.log(workspace, limit=limit)
+        return json.dumps(snapshots, indent=2, default=str)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("starting context exploration")
+    def nexus_context_explore(workspace: str, description: str, ctx: Context | None = None) -> str:
+        """Start an exploration: auto-commit + create branch + checkout.
+
+        Args:
+            workspace: Workspace path
+            description: Description of exploration (used for branch name)
+            ctx: FastMCP Context
+
+        Returns:
+            JSON with exploration branch info
+        """
+        svc = _get_branch_service(ctx)
+        if not svc:
+            return tool_error("unavailable", "Context branching not available.")
+        result = svc.explore(workspace, description)
+        return json.dumps(
+            {
+                "branch_name": result.branch_name,
+                "branch_id": result.branch_id,
+                "fork_point_snapshot_id": result.fork_point_snapshot_id,
+                "skipped_commit": result.skipped_commit,
+                "message": result.message,
+            },
+            indent=2,
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("finishing context exploration")
+    def nexus_context_finish(
+        workspace: str,
+        branch: str,
+        outcome: str = "merge",
+        strategy: str = "source-wins",
+        ctx: Context | None = None,
+    ) -> str:
+        """Finish an exploration: merge or discard the branch.
+
+        Args:
+            workspace: Workspace path
+            branch: Exploration branch to finish
+            outcome: 'merge' (default) or 'discard'
+            strategy: Merge strategy if outcome='merge' ('source-wins' default)
+            ctx: FastMCP Context
+
+        Returns:
+            JSON with outcome details
+        """
+        svc = _get_branch_service(ctx)
+        if not svc:
+            return tool_error("unavailable", "Context branching not available.")
+        result = svc.finish_explore(workspace, branch, outcome=outcome, strategy=strategy)
+        return json.dumps(result, indent=2, default=str)
+
+    # =========================================================================
     # PROMPTS
     # =========================================================================
 
@@ -1405,7 +1711,7 @@ def main() -> None:
                         return response
                     finally:
                         if token:
-                            _request_api_key.reset(token)
+                            reset_request_api_key(token)
 
             # Add middleware to the underlying Starlette app
             # FastMCP's http_app is a method that returns the Starlette application

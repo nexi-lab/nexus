@@ -1,8 +1,15 @@
 """Storage backends for Nexus."""
 
+import importlib
+import logging
+import threading
+
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
+from nexus.backends.cache_models import IMMUTABLE_VERSION, CachedReadResult
+from nexus.backends.cache_service import CacheService
+from nexus.backends.factory import BackendFactory
 
 # Core backends (always available)
 from nexus.backends.local import LocalBackend
@@ -16,6 +23,7 @@ from nexus.backends.registry import (
     create_connector_from_config,
     register_connector,
 )
+from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
 
 # Optional backends - LAZY IMPORTS for faster CLI startup
 # These are imported on-demand when actually used, not at module load time
@@ -28,84 +36,70 @@ XConnectorBackend = None
 HNConnectorBackend = None
 SlackConnectorBackend = None
 LocalConnectorBackend = None
+GmailConnectorBackend = None
+GoogleCalendarConnectorBackend = None
+
+# Registry: maps module-level name → (module_path, class_name)
+# Adding a new optional backend requires only one entry here.
+_OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
+    "GCSBackend": ("nexus.backends.gcs", "GCSBackend"),
+    "GoogleDriveConnectorBackend": (
+        "nexus.backends.gdrive_connector",
+        "GoogleDriveConnectorBackend",
+    ),
+    "GCSConnectorBackend": ("nexus.backends.gcs_connector", "GCSConnectorBackend"),
+    "S3ConnectorBackend": ("nexus.backends.s3_connector", "S3ConnectorBackend"),
+    "XConnectorBackend": ("nexus.backends.x_connector", "XConnectorBackend"),
+    "HNConnectorBackend": ("nexus.backends.hn_connector", "HNConnectorBackend"),
+    "SlackConnectorBackend": ("nexus.backends.slack_connector", "SlackConnectorBackend"),
+    "LocalConnectorBackend": ("nexus.backends.local_connector", "LocalConnectorBackend"),
+    "GmailConnectorBackend": ("nexus.backends.gmail_connector", "GmailConnectorBackend"),
+    "GoogleCalendarConnectorBackend": (
+        "nexus.backends.gcalendar_connector",
+        "GoogleCalendarConnectorBackend",
+    ),
+}
+
+_optional_backends_registered = False
+_registration_lock = threading.Lock()
+_logger = logging.getLogger(__name__)
 
 
 def _register_optional_backends() -> None:
     """Register optional backends on first use (lazy loading)."""
-    global GCSBackend, GoogleDriveConnectorBackend, GCSConnectorBackend
-    global S3ConnectorBackend, XConnectorBackend, HNConnectorBackend, SlackConnectorBackend
-    global LocalConnectorBackend
+    global _optional_backends_registered
 
-    # Only register once
-    if GCSBackend is not None:
+    # Only register once (fast path without lock)
+    if _optional_backends_registered:
         return
+    with _registration_lock:
+        if _optional_backends_registered:
+            return
+        _optional_backends_registered = True
 
-    try:
-        from nexus.backends.gcs import GCSBackend as _GCSBackend
-
-        GCSBackend = _GCSBackend
-    except ImportError:
-        pass
-
-    try:
-        from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend as _GDrive
-
-        GoogleDriveConnectorBackend = _GDrive
-    except ImportError:
-        pass
-
-    try:
-        from nexus.backends.gcs_connector import GCSConnectorBackend as _GCSConn
-
-        GCSConnectorBackend = _GCSConn
-    except ImportError:
-        pass
-
-    try:
-        from nexus.backends.s3_connector import S3ConnectorBackend as _S3Conn
-
-        S3ConnectorBackend = _S3Conn
-    except ImportError:
-        pass
-
-    try:
-        from nexus.backends.x_connector import XConnectorBackend as _XConn
-
-        XConnectorBackend = _XConn
-    except ImportError:
-        pass
-
-    try:
-        from nexus.backends.hn_connector import HNConnectorBackend as _HNConn
-
-        HNConnectorBackend = _HNConn
-    except ImportError:
-        pass
-
-    try:
-        from nexus.backends.slack_connector import SlackConnectorBackend as _SlackConn
-
-        SlackConnectorBackend = _SlackConn
-    except ImportError:
-        pass
-
-    # LocalConnectorBackend - no external deps, but kept here for consistency with other connectors
-    try:
-        from nexus.backends.local_connector import LocalConnectorBackend as _LocalConn
-
-        LocalConnectorBackend = _LocalConn
-    except ImportError:
-        pass
+        for global_name, (module_path, class_name) in _OPTIONAL_BACKENDS.items():
+            try:
+                module = importlib.import_module(module_path)
+                globals()[global_name] = getattr(module, class_name)
+            except ImportError as e:
+                _logger.debug("Optional backend %s not available: %s", global_name, e)
 
 
 __all__ = [
     # Base classes
     "Backend",
+    "BackendObjectStore",
     "HandlerStatusResponse",
+    "ObjectStoreABC",
     "BaseBlobStorageConnector",
     "CacheConnectorMixin",
     "CacheEntry",
+    "CacheService",
+    "CachedReadResult",
+    "IMMUTABLE_VERSION",
     "SyncResult",
+    # Factory
+    "BackendFactory",
     # Registry
     "ConnectorRegistry",
     "ConnectorInfo",
@@ -125,4 +119,6 @@ __all__ = [
     "HNConnectorBackend",
     "SlackConnectorBackend",
     "LocalConnectorBackend",
+    "GmailConnectorBackend",
+    "GoogleCalendarConnectorBackend",
 ]

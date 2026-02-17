@@ -520,7 +520,7 @@ class ZoneImportService:
             progress_callback: Optional progress callback
         """
         # Check if ReBAC is available
-        rebac_manager = getattr(self.nexus_fs, "_rebac_manager", None)
+        rebac_manager = getattr(self.nexus_fs, "rebac_manager", None)
         if rebac_manager is None:
             logger.info("No ReBAC manager available, skipping permission import")
             return
@@ -555,7 +555,7 @@ class ZoneImportService:
                     object_id = options.remap_path(object_id)
 
                 # Determine target zone
-                target_zone = options.target_zone_id or "default"
+                target_zone = options.target_zone_id or "root"
 
                 # Write tuple to ReBAC
                 rebac_manager.rebac_write(

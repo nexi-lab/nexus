@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from nexus.workflows.api import WorkflowAPI, get_workflow_api
+from nexus.workflows.api import WorkflowAPI
 from nexus.workflows.engine import WorkflowEngine
 from nexus.workflows.types import (
     TriggerType,
@@ -58,15 +58,10 @@ class TestWorkflowAPIInit:
         api = WorkflowAPI(engine=mock_engine)
         assert api.engine == mock_engine
 
-    @patch("nexus.workflows.api.get_engine")
-    def test_init_without_engine(self, mock_get_engine):
-        """Test initializing without engine uses global engine."""
-        mock_global_engine = Mock()
-        mock_get_engine.return_value = mock_global_engine
-
-        api = WorkflowAPI()
-        assert api.engine == mock_global_engine
-        mock_get_engine.assert_called_once()
+    def test_init_requires_engine(self):
+        """Test initializing without engine raises TypeError."""
+        with pytest.raises(TypeError):
+            WorkflowAPI()
 
 
 class TestLoad:
@@ -352,6 +347,17 @@ class TestFireEvent:
         assert count == 2
         mock_engine.fire_event.assert_called_once_with(TriggerType.FILE_WRITE, event_context)
 
+    @pytest.mark.asyncio
+    async def test_fire_event_with_string_type(self, workflow_api, mock_engine):
+        """Test firing an event with string trigger type."""
+        mock_engine.fire_event = AsyncMock(return_value=1)
+        event_context = {"file_path": "/test/file.txt"}
+
+        count = await workflow_api.fire_event("file_write", event_context)
+
+        assert count == 1
+        mock_engine.fire_event.assert_called_once_with("file_write", event_context)
+
 
 class TestIsEnabled:
     """Test checking if workflow is enabled."""
@@ -409,18 +415,3 @@ class TestGetStatus:
         status = workflow_api.get_status("nonexistent")
 
         assert status is None
-
-
-class TestGetWorkflowAPI:
-    """Test convenience function."""
-
-    @patch("nexus.workflows.api.WorkflowAPI")
-    def test_get_workflow_api(self, mock_api_class):
-        """Test getting workflow API instance."""
-        mock_instance = Mock()
-        mock_api_class.return_value = mock_instance
-
-        api = get_workflow_api()
-
-        assert api == mock_instance
-        mock_api_class.assert_called_once()

@@ -276,19 +276,18 @@ def _register_builtin_migrations(registry: MigrationRegistry) -> None:
     This function registers the standard migration steps between
     Nexus versions. Custom migrations can be registered separately.
 
+    To add a migration, import the step module and call::
+
+        registry.register(MigrationStep(
+            from_version="X.Y.0",
+            to_version="X.Z.0",
+            name="short_name",
+            description="What the migration does",
+            migrate_fn=step_module.upgrade,
+            rollback_fn=step_module.downgrade,
+        ))
+
     Args:
         registry: The registry to populate
     """
-    # Migrations will be added as they are implemented
-    # Example structure:
-    #
-    # from nexus.migrations.steps import migrate_0_5_to_0_6
-    # registry.register(MigrationStep(
-    #     from_version="0.5.0",
-    #     to_version="0.6.0",
-    #     name="add_rebac_v2",
-    #     description="Upgrade ReBAC schema to v2",
-    #     migrate_fn=migrate_0_5_to_0_6.upgrade,
-    #     rollback_fn=migrate_0_5_to_0_6.downgrade,
-    # ))
     pass

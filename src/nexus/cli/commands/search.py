@@ -14,7 +14,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.nexus_fs import NexusFS
 
 
 def register_commands(cli: click.Group) -> None:
@@ -144,10 +143,10 @@ def grep(
     line_number: bool,
     files_with_matches: bool,
     count: bool,
-    invert_match: bool,  # noqa: ARG001 - TODO: implement invert match
-    after_context: int,  # noqa: ARG001 - TODO: implement context lines
-    before_context: int,  # noqa: ARG001 - TODO: implement context lines
-    context: int,  # noqa: ARG001 - TODO: implement context lines
+    invert_match: bool,  # noqa: ARG001 - not yet wired to core grep
+    after_context: int,  # noqa: ARG001 - not yet wired to core grep
+    before_context: int,  # noqa: ARG001 - not yet wired to core grep
+    context: int,  # noqa: ARG001 - not yet wired to core grep
     max_results: int,
     search_mode: str,
     backend_config: BackendConfig,
@@ -178,8 +177,8 @@ def grep(
     try:
         nx = get_filesystem(backend_config)
 
-        # TODO: Handle context lines when implemented in core grep()
-        # Currently after_context, before_context, and context are not used
+        # Context lines (after_context, before_context, context) are accepted
+        # by the CLI but not yet wired to core grep() — see arg suppression above
 
         matches = nx.grep(
             pattern,
@@ -253,6 +252,8 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
         nexus find-duplicates --json
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         # Only standalone mode supports batch_get_content_ids
@@ -416,6 +417,8 @@ def search_init(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
@@ -478,6 +481,8 @@ def search_index(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
@@ -567,6 +572,8 @@ def search_query(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
@@ -630,6 +637,8 @@ def search_stats(backend_config: BackendConfig) -> None:
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         async def get_stats() -> dict[str, Any]:

@@ -43,7 +43,7 @@ first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 
 from __future__ import annotations
 
-__version__ = "0.7.1.dev0"
+__version__ = "0.7.2.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 
@@ -289,7 +289,8 @@ def connect(
     metadata_store: FileMetadataProtocol
     if cfg.mode == "federation":
         try:
-            from nexus.raft import ZoneAwareMetadataStore
+            from nexus.constants import DEFAULT_GRPC_BIND_ADDR
+            from nexus.raft import FederatedMetadataProxy
             from nexus.raft.zone_manager import ZoneManager
         except ImportError as err:
             raise ImportError(
@@ -298,7 +299,7 @@ def connect(
             ) from err
 
         node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
-        bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
+        bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
         zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
 
@@ -321,7 +322,7 @@ def connect(
                     mounts[path.strip()] = zone_id.strip()
             zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
 
-        metadata_store = ZoneAwareMetadataStore.from_zone_manager(zone_mgr)
+        metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
     else:
         # standalone: single-node embedded Raft (no peers)
         metadata_store = RaftMetadataStore.embedded(metadata_path)
@@ -343,6 +344,39 @@ def connect(
     # RecordStore (Four Pillars)
     record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
 
+    # Build config objects from NexusConfig fields (Issue #1391)
+    from nexus.core.config import (
+        CacheConfig,
+        DistributedConfig,
+        ParseConfig,
+        PermissionConfig,
+    )
+
+    cache_cfg = CacheConfig(
+        enable_metadata_cache=cfg.enable_metadata_cache,
+        path_size=cfg.cache_path_size,
+        list_size=cfg.cache_list_size,
+        kv_size=cfg.cache_kv_size,
+        exists_size=cfg.cache_exists_size,
+        ttl_seconds=cfg.cache_ttl_seconds,
+    )
+
+    perm_cfg = PermissionConfig(
+        enforce=enforce_permissions,
+        allow_admin_bypass=cfg.allow_admin_bypass,
+        enforce_zone_isolation=enforce_zone_isolation,
+        enable_tiger_cache=enable_tiger_cache,
+    )
+
+    dist_cfg = DistributedConfig(
+        enable_workflows=cfg.enable_workflows,
+    )
+
+    parse_cfg = ParseConfig(
+        auto_parse=cfg.auto_parse,
+        providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
+    )
+
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
@@ -352,20 +386,10 @@ def connect(
         record_store=record_store,
         is_admin=cfg.is_admin,
         custom_namespaces=custom_namespaces,
-        enable_metadata_cache=cfg.enable_metadata_cache,
-        cache_path_size=cfg.cache_path_size,
-        cache_list_size=cfg.cache_list_size,
-        cache_kv_size=cfg.cache_kv_size,
-        cache_exists_size=cfg.cache_exists_size,
-        cache_ttl_seconds=cfg.cache_ttl_seconds,
-        auto_parse=cfg.auto_parse,
-        custom_parsers=cfg.parsers,
-        parse_providers=cfg.parse_providers,
-        enforce_permissions=enforce_permissions,
-        allow_admin_bypass=cfg.allow_admin_bypass,
-        enforce_zone_isolation=enforce_zone_isolation,
-        enable_workflows=cfg.enable_workflows,
-        enable_tiger_cache=enable_tiger_cache,
+        cache=cache_cfg,
+        permissions=perm_cfg,
+        distributed=dist_cfg,
+        parsing=parse_cfg,
     )
 
     # Set memory config for Memory API

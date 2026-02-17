@@ -1,4 +1,4 @@
-"""Unit tests for CacheConnectorMixin.sync() refactored steps.
+"""Unit tests for SyncPipelineService (extracted from CacheConnectorMixin).
 
 Tests each of the 7 sync steps independently to ensure they work correctly
 in isolation and handle edge cases properly.
@@ -27,8 +27,10 @@ from nexus.backends.cache_mixin import (
     CacheEntry,
     SyncResult,
 )
+from nexus.backends.sync_pipeline import SyncPipelineService
 from nexus.core.permissions import OperationContext
-from nexus.storage.models import Base, ContentCacheModel, FilePathModel
+from nexus.storage.file_cache import FileContentCache
+from nexus.storage.models import Base, FilePathModel
 
 
 class MockConnector(CacheConnectorMixin):
@@ -44,15 +46,19 @@ class MockConnector(CacheConnectorMixin):
         return self.files.get(path)
 
     def list_dir(self, path, context=None):
-        # Return files in this directory
+        # Return files and directories in this directory
         prefix = path.rstrip("/") + "/" if path else ""
-        files_in_dir = []
+        entries = set()
         for f in self.files:
             if f.startswith(prefix):
-                relative = f.replace(prefix, "", 1)
-                if "/" not in relative:  # Only immediate children
-                    files_in_dir.append(relative)
-        return files_in_dir
+                relative = f[len(prefix) :]
+                if "/" not in relative:
+                    entries.add(relative)
+                else:
+                    # Return subdirectory with trailing "/"
+                    dir_name = relative.split("/")[0]
+                    entries.add(dir_name + "/")
+        return sorted(entries)
 
     def get_version(self, path, context=None):
         return self.versions.get(path)
@@ -60,7 +66,7 @@ class MockConnector(CacheConnectorMixin):
     def _list_files_recursive(self, path, context=None):
         return list(self.files.keys())
 
-    def _batch_get_versions(self, paths, contexts):
+    def batch_get_versions(self, paths, contexts):
         """Batch version fetch (10-25x faster than sequential)."""
         return {path: self.versions.get(path) for path in paths}
 
@@ -82,6 +88,12 @@ def connector(db_session):
 
 
 @pytest.fixture
+def pipeline(connector):
+    """Create sync pipeline for testing."""
+    return SyncPipelineService(connector)
+
+
+@pytest.fixture
 def test_context():
     """Create test operation context."""
     return OperationContext(
@@ -95,7 +107,7 @@ def test_context():
 class TestStep1DiscoverFiles:
     """Test Step 1: File discovery and filtering."""
 
-    def test_discover_all_files(self, connector, test_context):
+    def test_discover_all_files(self, connector, pipeline, test_context):
         """Test discovering all files from backend."""
         connector.files = {
             "file1.txt": b"content1",
@@ -104,7 +116,7 @@ class TestStep1DiscoverFiles:
         }
 
         result = SyncResult()
-        files, mapping = connector._sync_step1_discover_files(
+        files, mapping = pipeline._step1_discover_files(
             path=None,
             mount_point="/test",
             include_patterns=None,
@@ -121,7 +133,7 @@ class TestStep1DiscoverFiles:
         assert mapping["file2.py"] == "/test/file2.py"
         assert mapping["dir/file3.md"] == "/test/dir/file3.md"
 
-    def test_discover_with_include_patterns(self, connector, test_context):
+    def test_discover_with_include_patterns(self, connector, pipeline, test_context):
         """Test file discovery with include patterns."""
         connector.files = {
             "file1.txt": b"content1",
@@ -130,7 +142,7 @@ class TestStep1DiscoverFiles:
         }
 
         result = SyncResult()
-        files, mapping = connector._sync_step1_discover_files(
+        files, mapping = pipeline._step1_discover_files(
             path=None,
             mount_point="/test",
             include_patterns=["*.py", "*.md"],
@@ -145,7 +157,7 @@ class TestStep1DiscoverFiles:
         assert "file1.txt" not in files
         assert result.files_skipped == 1
 
-    def test_discover_with_exclude_patterns(self, connector, test_context):
+    def test_discover_with_exclude_patterns(self, connector, pipeline, test_context):
         """Test file discovery with exclude patterns."""
         connector.files = {
             "file1.txt": b"content1",
@@ -154,7 +166,7 @@ class TestStep1DiscoverFiles:
         }
 
         result = SyncResult()
-        files, mapping = connector._sync_step1_discover_files(
+        files, mapping = pipeline._step1_discover_files(
             path=None,
             mount_point="/test",
             include_patterns=None,
@@ -169,7 +181,7 @@ class TestStep1DiscoverFiles:
         assert ".git/config" not in files
         assert result.files_skipped == 2
 
-    def test_discover_specific_path(self, connector, test_context):
+    def test_discover_specific_path(self, connector, pipeline, test_context):
         """Test discovering files from specific path."""
         connector.files = {
             "reports/2024/q1.pdf": b"content1",
@@ -177,17 +189,17 @@ class TestStep1DiscoverFiles:
             "data/file.txt": b"content3",
         }
 
-        # Mock list_dir to return files in reports/2024
+        # Mock list_dir on connector and _list_files_recursive on pipeline
         with (
             patch.object(connector, "list_dir", return_value=["q1.pdf", "q2.pdf"]),
             patch.object(
-                connector,
+                pipeline,
                 "_list_files_recursive",
                 return_value=["reports/2024/q1.pdf", "reports/2024/q2.pdf"],
             ),
         ):
             result = SyncResult()
-            files, mapping = connector._sync_step1_discover_files(
+            files, mapping = pipeline._step1_discover_files(
                 path="reports/2024",
                 mount_point="/test",
                 include_patterns=None,
@@ -201,14 +213,14 @@ class TestStep1DiscoverFiles:
             assert "reports/2024/q2.pdf" in files
             assert "data/file.txt" not in files
 
-    def test_discover_error_handling(self, connector, test_context):
+    def test_discover_error_handling(self, connector, pipeline, test_context):
         """Test error handling during file discovery."""
         # Make _list_files_recursive raise an error
         with patch.object(
-            connector, "_list_files_recursive", side_effect=Exception("Backend error")
+            pipeline, "_list_files_recursive", side_effect=Exception("Backend error")
         ):
             result = SyncResult()
-            files, mapping = connector._sync_step1_discover_files(
+            files, mapping = pipeline._step1_discover_files(
                 path=None,
                 mount_point="/test",
                 include_patterns=None,
@@ -226,15 +238,18 @@ class TestStep1DiscoverFiles:
 class TestStep2LoadCache:
     """Test Step 2: Bulk cache loading."""
 
-    def test_load_empty_cache(self, connector):
+    def test_load_empty_cache(self, connector, pipeline, tmp_path):
         """Test loading cache when nothing is cached."""
         virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
 
-        cached = connector._sync_step2_load_cache(virtual_paths)
+        # Patch get_file_cache to use a fresh empty disk cache (no stale data)
+        file_cache = FileContentCache(tmp_path / "empty_cache")
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
+            cached = pipeline._step2_load_cache(virtual_paths)
 
         assert len(cached) == 0
 
-    def test_load_partial_cache(self, connector, db_session):
+    def test_load_partial_cache(self, connector, pipeline, db_session, tmp_path):
         """Test loading cache with some files cached."""
         session = db_session()
 
@@ -254,49 +269,57 @@ class TestStep2LoadCache:
             zone_id="test_zone",
         )
         session.add_all([path1, path2])
-
-        # Create cache entry for file1 only
-        cache1 = ContentCacheModel(
-            cache_id="cache1",
-            path_id="path1",
-            zone_id="test_zone",
-            content_text="content1",
-            content_hash="hash1",
-            content_type="full",
-            original_size_bytes=8,
-            cached_size_bytes=8,
-            backend_version="v1",
-            synced_at=datetime.now(UTC),
-            stale=False,
-        )
-        session.add(cache1)
         session.commit()
         session.close()
 
-        # Load cache
-        virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
-        cached = connector._sync_step2_load_cache(virtual_paths)
+        # Write disk cache metadata for file1 only (replaces ContentCacheModel)
+        # Use "root" zone because MockConnector has no zone_id attribute
+        # and the fallback in read_bulk_from_cache is "root"
+        file_cache = FileContentCache(tmp_path / "cache")
+        file_cache.write(
+            "root",
+            "/test/file1.txt",
+            b"content1",
+            text_content="content1",
+            meta={
+                "content_hash": "hash1",
+                "content_type": "full",
+                "original_size_bytes": 8,
+                "cached_size_bytes": 8,
+                "backend_version": "v1",
+                "stale": False,
+                "zone_id": "root",
+            },
+        )
 
-        assert len(cached) == 1
-        assert "/test/file1.txt" in cached
-        assert "/test/file2.txt" not in cached
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
+            # Load cache
+            virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
+            cached = pipeline._step2_load_cache(virtual_paths)
 
-    def test_load_cache_performance(self, connector):
-        """Test that bulk cache loading uses single query."""
+            assert len(cached) == 1
+            assert "/test/file1.txt" in cached
+            assert "/test/file2.txt" not in cached
+
+    def test_load_cache_performance(self, connector, pipeline, tmp_path):
+        """Test that bulk cache loading uses read_meta_bulk (single call)."""
         virtual_paths = [f"/test/file{i}.txt" for i in range(100)]
 
-        with patch.object(connector, "_get_path_ids_bulk") as mock_bulk:
-            mock_bulk.return_value = {}
-            connector._sync_step2_load_cache(virtual_paths)
+        file_cache = FileContentCache(tmp_path / "cache")
+        with (
+            patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache),
+            patch.object(file_cache, "read_meta_bulk", return_value={}) as mock_bulk,
+        ):
+            pipeline._step2_load_cache(virtual_paths)
 
-            # Should use single bulk query, not 100 individual queries
+            # Should use single bulk disk read, not 100 individual reads
             assert mock_bulk.call_count == 1
 
 
 class TestStep3CheckVersions:
     """Test Step 3: Version checking and filtering."""
 
-    def test_skip_immutable_files(self, connector, test_context):
+    def test_skip_immutable_files(self, connector, pipeline, test_context):
         """Test that immutable files are skipped."""
         files = ["email1.eml", "email2.eml"]
         backend_to_virtual = {
@@ -320,7 +343,7 @@ class TestStep3CheckVersions:
         }
 
         result = SyncResult()
-        files_needing, contexts, metadata = connector._sync_step3_check_versions(
+        files_needing, contexts, metadata = pipeline._step3_check_versions(
             files, backend_to_virtual, cached_entries, test_context, result
         )
 
@@ -329,7 +352,7 @@ class TestStep3CheckVersions:
         assert "email2.eml" in files_needing
         assert result.files_skipped == 1
 
-    def test_skip_fresh_cached_files(self, connector, test_context):
+    def test_skip_fresh_cached_files(self, connector, pipeline, test_context):
         """Test that fresh cached files with matching versions are skipped."""
         connector.versions = {"file1.txt": "v1", "file2.txt": "v2"}
 
@@ -355,7 +378,7 @@ class TestStep3CheckVersions:
         }
 
         result = SyncResult()
-        files_needing, contexts, metadata = connector._sync_step3_check_versions(
+        files_needing, contexts, metadata = pipeline._step3_check_versions(
             files, backend_to_virtual, cached_entries, test_context, result
         )
 
@@ -364,7 +387,7 @@ class TestStep3CheckVersions:
         assert "file2.txt" in files_needing
         assert result.files_skipped == 1
 
-    def test_sync_stale_files(self, connector, test_context):
+    def test_sync_stale_files(self, connector, pipeline, test_context):
         """Test that stale cached files are re-synced."""
         connector.versions = {"file1.txt": "v2"}
 
@@ -387,7 +410,7 @@ class TestStep3CheckVersions:
         }
 
         result = SyncResult()
-        files_needing, contexts, metadata = connector._sync_step3_check_versions(
+        files_needing, contexts, metadata = pipeline._step3_check_versions(
             files, backend_to_virtual, cached_entries, test_context, result
         )
 
@@ -396,7 +419,7 @@ class TestStep3CheckVersions:
         assert "file1.txt" in files_needing
         assert result.files_skipped == 0
 
-    def test_batch_version_fetch(self, connector, test_context):
+    def test_batch_version_fetch(self, connector, pipeline, test_context):
         """Test that version fetching uses batch API when available."""
         connector.versions = {f"file{i}.txt": f"v{i}" for i in range(10)}
 
@@ -404,11 +427,11 @@ class TestStep3CheckVersions:
         backend_to_virtual = {f: f"/test/{f}" for f in files}
         cached_entries = {}
 
-        with patch.object(connector, "_batch_get_versions") as mock_batch:
+        with patch.object(connector, "batch_get_versions") as mock_batch:
             mock_batch.return_value = connector.versions
 
             result = SyncResult()
-            connector._sync_step3_check_versions(
+            pipeline._step3_check_versions(
                 files, backend_to_virtual, cached_entries, test_context, result
             )
 
@@ -419,7 +442,7 @@ class TestStep3CheckVersions:
 class TestStep4ReadBackend:
     """Test Step 4: Batch backend reads."""
 
-    def test_read_from_backend(self, connector):
+    def test_read_from_backend(self, connector, pipeline):
         """Test reading files from backend."""
         connector.files = {
             "file1.txt": b"content1",
@@ -427,13 +450,13 @@ class TestStep4ReadBackend:
         }
 
         contexts = {}
-        backend_contents = connector._sync_step4_read_backend(["file1.txt", "file2.txt"], contexts)
+        backend_contents = pipeline._step4_read_backend(["file1.txt", "file2.txt"], contexts)
 
         assert len(backend_contents) == 2
         assert backend_contents["file1.txt"] == b"content1"
         assert backend_contents["file2.txt"] == b"content2"
 
-    def test_read_partial_failure(self, connector):
+    def test_read_partial_failure(self, connector, pipeline):
         """Test handling partial backend read failures."""
         connector.files = {
             "file1.txt": b"content1",
@@ -441,7 +464,7 @@ class TestStep4ReadBackend:
         }
 
         contexts = {}
-        backend_contents = connector._sync_step4_read_backend(["file1.txt", "file2.txt"], contexts)
+        backend_contents = pipeline._step4_read_backend(["file1.txt", "file2.txt"], contexts)
 
         # Should return only successful reads
         assert len(backend_contents) == 1
@@ -452,7 +475,7 @@ class TestStep4ReadBackend:
 class TestStep5ProcessContent:
     """Test Step 5: Content processing and parsing."""
 
-    def test_process_simple_files(self, connector, test_context):
+    def test_process_simple_files(self, connector, pipeline, test_context):
         """Test processing simple text files."""
         backend_contents = {
             "file1.txt": b"content1",
@@ -464,7 +487,7 @@ class TestStep5ProcessContent:
         }
 
         result = SyncResult()
-        cache_entries, files_to_embed = connector._sync_step5_process_content(
+        cache_entries, files_to_embed = pipeline._step5_process_content(
             backend_contents,
             file_metadata,
             max_size=1024 * 1024,
@@ -481,7 +504,7 @@ class TestStep5ProcessContent:
         assert result.files_synced == 2
         assert result.bytes_synced == 16
 
-    def test_skip_large_files(self, connector, test_context):
+    def test_skip_large_files(self, connector, pipeline, test_context):
         """Test that files exceeding max_size are skipped."""
         large_content = b"x" * (10 * 1024 * 1024)  # 10MB
         backend_contents = {
@@ -494,7 +517,7 @@ class TestStep5ProcessContent:
         }
 
         result = SyncResult()
-        cache_entries, files_to_embed = connector._sync_step5_process_content(
+        cache_entries, files_to_embed = pipeline._step5_process_content(
             backend_contents,
             file_metadata,
             max_size=1 * 1024 * 1024,  # 1MB limit
@@ -509,7 +532,7 @@ class TestStep5ProcessContent:
         assert result.files_synced == 1
         assert result.files_skipped == 1
 
-    def test_skip_unchanged_content(self, connector, test_context):
+    def test_skip_unchanged_content(self, connector, pipeline, test_context):
         """Test that unchanged content (matching hash) is skipped."""
         from nexus.core.hash_fast import hash_content
 
@@ -538,7 +561,7 @@ class TestStep5ProcessContent:
         }
 
         result = SyncResult()
-        cache_entries, files_to_embed = connector._sync_step5_process_content(
+        cache_entries, files_to_embed = pipeline._step5_process_content(
             backend_contents,
             file_metadata,
             max_size=1024 * 1024,
@@ -556,8 +579,8 @@ class TestStep5ProcessContent:
 class TestStep6WriteCache:
     """Test Step 6: Batch cache writing."""
 
-    def test_write_cache_entries(self, connector, db_session):
-        """Test writing cache entries to database."""
+    def test_write_cache_entries(self, connector, pipeline, db_session, tmp_path):
+        """Test writing cache entries to disk cache."""
         session = db_session()
 
         # Create file_paths entries
@@ -585,19 +608,21 @@ class TestStep6WriteCache:
             }
         ]
 
-        result = SyncResult()
-        connector._sync_step6_write_cache(cache_entries, result)
+        file_cache = FileContentCache(tmp_path / "cache")
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
+            result = SyncResult()
+            pipeline._step6_write_cache(cache_entries, result)
 
-        # Verify cache was written
-        session = db_session()
-        stmt = session.query(ContentCacheModel).filter_by(path_id="path1")
-        cache_model = stmt.first()
-        assert cache_model is not None
-        assert cache_model.content_text == "content1"
-        assert cache_model.backend_version == "v1"
-        session.close()
+            # Verify cache was written to disk
+            meta = file_cache.read_meta("test_zone", "/test/file1.txt")
+            assert meta is not None
+            assert meta["content_type"] == "full"
+            assert meta["backend_version"] == "v1"
+            # Verify content was written
+            text_content = file_cache.read_text("test_zone", "/test/file1.txt")
+            assert text_content == "content1"
 
-    def test_write_cache_error_handling(self, connector):
+    def test_write_cache_error_handling(self, connector, pipeline):
         """Test error handling during cache write."""
         cache_entries = [
             {
@@ -613,7 +638,7 @@ class TestStep6WriteCache:
         ]
 
         result = SyncResult()
-        connector._sync_step6_write_cache(cache_entries, result)
+        pipeline._step6_write_cache(cache_entries, result)
 
         # Should gracefully skip missing paths (logged as warning, not error)
         # The batch write skips paths not found in file_paths and logs warning
@@ -623,27 +648,27 @@ class TestStep6WriteCache:
 class TestStep7GenerateEmbeddings:
     """Test Step 7: Embedding generation."""
 
-    def test_generate_embeddings(self, connector):
+    def test_generate_embeddings(self, connector, pipeline):
         """Test embedding generation for files."""
         files = ["/test/file1.txt", "/test/file2.txt"]
 
-        with patch.object(connector, "_generate_embeddings") as mock_gen:
+        with patch.object(connector, "generate_embeddings_for_path") as mock_gen:
             result = SyncResult()
-            connector._sync_step7_generate_embeddings(files, result)
+            pipeline._step7_generate_embeddings(files, result)
 
             # Should generate embeddings for all files
             assert mock_gen.call_count == 2
             assert result.embeddings_generated == 2
 
-    def test_generate_embeddings_error_handling(self, connector):
+    def test_generate_embeddings_error_handling(self, connector, pipeline):
         """Test error handling during embedding generation."""
         files = ["/test/file1.txt"]
 
         with patch.object(
-            connector, "_generate_embeddings", side_effect=Exception("Embedding error")
+            connector, "generate_embeddings_for_path", side_effect=Exception("Embedding error")
         ):
             result = SyncResult()
-            connector._sync_step7_generate_embeddings(files, result)
+            pipeline._step7_generate_embeddings(files, result)
 
             # Should capture error and continue
             assert result.embeddings_generated == 0
@@ -654,7 +679,7 @@ class TestStep7GenerateEmbeddings:
 class TestSyncIntegration:
     """Integration test for full sync flow."""
 
-    def test_full_sync_flow(self, connector, db_session, test_context):
+    def test_full_sync_flow(self, connector, db_session, test_context, tmp_path):
         """Test complete sync operation with all steps."""
         session = db_session()
 
@@ -687,24 +712,26 @@ class TestSyncIntegration:
             "file2.txt": "v2",
         }
 
-        # Run full sync
-        result = connector.sync_content_to_cache(
-            mount_point="/test",
-            generate_embeddings=False,
-            context=test_context,
-        )
+        file_cache = FileContentCache(tmp_path / "cache")
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
+            # Run full sync
+            result = connector.sync_content_to_cache(
+                mount_point="/test",
+                generate_embeddings=False,
+                context=test_context,
+            )
 
-        # Verify results
-        assert result.files_scanned == 2
-        assert result.files_synced >= 1  # At least one file synced successfully
-        assert result.bytes_synced > 0
-        assert len(result.errors) == 0
+            # Verify results
+            assert result.files_scanned == 2
+            assert result.files_synced >= 1  # At least one file synced successfully
+            assert result.bytes_synced > 0
+            assert len(result.errors) == 0
 
-        # Verify cache was populated
-        session = db_session()
-        cache_entries = session.query(ContentCacheModel).all()
-        assert len(cache_entries) >= 1  # At least one entry in cache
-        session.close()
+            # Verify disk cache was populated (replaces DB ContentCacheModel check)
+            meta1 = file_cache.read_meta("test_zone", "/test/file1.txt")
+            meta2 = file_cache.read_meta("test_zone", "/test/file2.txt")
+            cached_count = sum(1 for m in [meta1, meta2] if m is not None)
+            assert cached_count >= 1  # At least one entry in cache
 
     def test_sync_with_patterns(self, connector, db_session, test_context):
         """Test sync with include/exclude patterns."""

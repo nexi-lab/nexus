@@ -20,7 +20,6 @@ Safety features:
 - Binary files always return binary (no auto-parsing)
 """
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any, overload
@@ -99,65 +98,44 @@ def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str
     return (path, None)
 
 
-def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # noqa: ARG001
+def get_parsed_content(
+    content: bytes,
+    path: str,
+    view_type: str,  # noqa: ARG001
+    parse_fn: Callable[[bytes, str], bytes | None] | None = None,
+) -> bytes:
     """Get parsed content for a file.
 
     Args:
         content: Raw file content as bytes
         path: Original file path (for parser detection)
         view_type: View type ("txt" or "md") - reserved for future use
+        parse_fn: Optional callback ``(content, path) -> parsed_bytes | None``.
+            Provided by the caller so that core/ does not import from parsers/.
+            When *None* and the file is parseable, raw content is returned.
 
     Returns:
         Parsed content as bytes (UTF-8 encoded text)
-
-    Raises:
-        Exception: If parsing fails (falls back to raw content)
     """
     # Check if this is a parseable binary file (Excel, PDF, etc.)
-    # For these files, we should use the parser directly, not try to decode as UTF-8
     is_parseable = any(path.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
 
     if is_parseable:
-        # Use parser for parseable binary files (Excel, PDF, Word, etc.)
-        from nexus.parsers import MarkItDownParser, ParserRegistry, prepare_content_for_parsing
-
-        try:
-            # Prepare content
-            processed_content, effective_path, metadata = prepare_content_for_parsing(content, path)
-
-            # Get parser - need to register MarkItDownParser
-            registry = ParserRegistry()
-            registry.register(MarkItDownParser())
-            parser = registry.get_parser(effective_path)
-
-            if parser:
-                # Parse synchronously (works in both sync and async contexts)
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                result = loop.run_until_complete(parser.parse(processed_content, metadata))
-
-                if result and result.text:
-                    return result.text.encode("utf-8")
-
-        except Exception as e:
-            # Log parser errors but don't fail - fall back to raw content
-            from nexus.core.exceptions import ParserError
-
-            if isinstance(e, ParserError):
-                logger.debug(f"No parser available for {path}, using raw content")
-            else:
+        if parse_fn is not None:
+            try:
+                result = parse_fn(content, path)
+                if result is not None:
+                    return result
+            except Exception as e:
                 logger.warning(f"Error parsing file {path}: {e}")
+        else:
+            logger.debug(f"No parse_fn provided for {path}, returning raw content")
     else:
         # For non-parseable files, try to decode as text first
         try:
             decoded_content = content.decode("utf-8")
             return decoded_content.encode("utf-8")
         except UnicodeDecodeError:
-            # If decode fails, this is likely a binary file we don't know how to parse
             pass
 
     # Fallback to raw content if parsing fails
@@ -261,8 +239,8 @@ def add_virtual_views_to_listing(
             elif is_dir:
                 # Already know it's a directory from the dict
                 continue
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Error checking directory status for %s: %s", file_path, e)
 
         # Check if we should add virtual views
         if should_add_virtual_views(file_path):

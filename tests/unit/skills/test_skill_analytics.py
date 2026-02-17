@@ -160,7 +160,7 @@ async def test_get_dashboard_metrics_zone_filter() -> None:
 @pytest.mark.asyncio
 async def test_usage_record_validation() -> None:
     """Test usage record validation."""
-    from nexus.core.exceptions import ValidationError
+    from nexus.skills.exceptions import SkillValidationError
 
     # Valid record
     record = SkillUsageRecord(
@@ -177,7 +177,7 @@ async def test_usage_record_validation() -> None:
 
     # Invalid: negative execution time
     record.execution_time = -1.0
-    with pytest.raises(ValidationError, match="execution_time cannot be negative"):
+    with pytest.raises(SkillValidationError, match="execution_time cannot be negative"):
         record.validate()
 
 

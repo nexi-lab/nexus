@@ -34,9 +34,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.pay.credits import TransferRequest
 from nexus.pay.protocol import (
     CreditsPaymentProtocol,
-    ProtocolDetectionError,
-    ProtocolError,
-    ProtocolNotFoundError,
     ProtocolRegistry,
     ProtocolTransferRequest,
     X402PaymentProtocol,
@@ -64,12 +61,7 @@ class NexusPayError(Exception):
 
 
 class BudgetExceededError(NexusPayError):
-    """Raised when an operation exceeds budget limits.
-
-    Note: This inherits from NexusPayError for backwards compatibility.
-    For new code, use PolicyDeniedError from nexus.pay.spending_policy instead,
-    which provides richer context (policy_id, remaining budget).
-    """
+    """Raised when an operation exceeds budget limits."""
 
 
 # =============================================================================
@@ -209,7 +201,7 @@ class NexusPay:
         x402_client: X402Client | None = None,
         x402_enabled: bool = True,
         scheduler_service: Any | None = None,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> None:
         match = _API_KEY_PATTERN.match(api_key)
         if not match:
@@ -296,13 +288,7 @@ class NexusPay:
         dec_amount = self._to_decimal(amount)
         self._validate_positive(dec_amount)
 
-        try:
-            protocol = self._registry.resolve(method=method, to=to)
-        except (ProtocolNotFoundError, ProtocolDetectionError):
-            # Backwards compat: map registry errors to NexusPayError
-            if self._is_external(to) and self._x402 is None:
-                raise NexusPayError("x402 not enabled") from None
-            raise NexusPayError(f"No payment protocol available for destination '{to}'") from None
+        protocol = self._registry.resolve(method=method, to=to)
 
         request = ProtocolTransferRequest(
             from_agent=self.agent_id,
@@ -312,15 +298,7 @@ class NexusPay:
             idempotency_key=idempotency_key,
         )
 
-        try:
-            result = await protocol.transfer(request)
-        except ProtocolError as e:
-            # Backwards compat: re-raise original exception (X402Error, etc.)
-            if e.__cause__ is not None:
-                raise e.__cause__ from None
-            raise
-
-        # Map protocol enum to user-facing method name for backwards compat
+        result = await protocol.transfer(request)
         method_name = get_protocol_method_name(result.protocol)
 
         return Receipt(

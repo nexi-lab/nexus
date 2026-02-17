@@ -18,7 +18,8 @@ from datetime import datetime
 
 import pytest
 
-from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.core.permissions import OperationContext, Permission
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 
 class MockReBACManager:
@@ -194,7 +195,7 @@ class TestSystemBypassAuditLogging:
             groups=[],
             is_system=True,
             request_id="sys-req-456",
-            zone_id="default",
+            zone_id="root",
         )
 
         enforcer.check("/workspace/file.txt", Permission.READ, ctx)

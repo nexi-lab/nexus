@@ -21,9 +21,9 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.llm.citation import DocumentReadResult
-    from nexus.llm.document_reader import LLMDocumentReader
     from nexus.llm.provider import LLMProvider
+    from nexus.services.llm_citation import DocumentReadResult
+    from nexus.services.llm_document_reader import LLMDocumentReader
 
 
 class LLMService:
@@ -89,6 +89,7 @@ class LLMService:
             nexus_fs: NexusFS instance for filesystem operations and search
         """
         self.nexus_fs = nexus_fs
+        self._provider_cache: dict[str, Any] = {}
 
         logger.info("[LLMService] Initialized")
 
@@ -439,42 +440,47 @@ class LLMService:
         from pydantic import SecretStr
 
         from nexus.llm.config import LLMConfig
-        from nexus.llm.document_reader import LLMDocumentReader
         from nexus.llm.provider import LiteLLMProvider
+        from nexus.services.llm_document_reader import LLMDocumentReader
 
-        # Create provider if not provided
+        # Create provider if not provided (Issue #1521: cache by config hash)
         if provider is None:
             import os
 
             model = model or "claude-sonnet-4"
+            cache_key = f"{model}:{hash(api_key)}"
 
-            # Handle OpenRouter specifically
-            if model and model.startswith("anthropic/"):
-                # OpenRouter model - need to configure for OpenRouter
-                if not api_key and os.getenv("OPENROUTER_API_KEY"):
-                    api_key = os.getenv("OPENROUTER_API_KEY")
-
-                # Set custom_llm_provider for OpenRouter
-                if api_key:
-                    config = LLMConfig(
-                        model=model,
-                        api_key=SecretStr(api_key),
-                        custom_llm_provider="openrouter",
-                    )
-                else:
-                    config = LLMConfig(model=model, custom_llm_provider="openrouter")
+            if cache_key in self._provider_cache:
+                provider = self._provider_cache[cache_key]
             else:
-                if api_key:
-                    config = LLMConfig(model=model, api_key=SecretStr(api_key))
-                else:
-                    config = LLMConfig(model=model)
+                # Handle OpenRouter specifically
+                if model and model.startswith("anthropic/"):
+                    # OpenRouter model - need to configure for OpenRouter
+                    if not api_key and os.getenv("OPENROUTER_API_KEY"):
+                        api_key = os.getenv("OPENROUTER_API_KEY")
 
-            provider = LiteLLMProvider(config)
+                    # Set custom_llm_provider for OpenRouter
+                    if api_key:
+                        config = LLMConfig(
+                            model=model,
+                            api_key=SecretStr(api_key),
+                            custom_llm_provider="openrouter",
+                        )
+                    else:
+                        config = LLMConfig(model=model, custom_llm_provider="openrouter")
+                else:
+                    if api_key:
+                        config = LLMConfig(model=model, api_key=SecretStr(api_key))
+                    else:
+                        config = LLMConfig(model=model)
+
+                provider = LiteLLMProvider(config)
+                self._provider_cache[cache_key] = provider
 
         # Get semantic search if available
         search = None
-        if self.nexus_fs and hasattr(self.nexus_fs, "_semantic_search"):
-            search = self.nexus_fs._semantic_search
+        if self.nexus_fs and hasattr(self.nexus_fs, "semantic_search_engine"):
+            search = self.nexus_fs.semantic_search_engine
 
         # Create document reader
         if self.nexus_fs is None:

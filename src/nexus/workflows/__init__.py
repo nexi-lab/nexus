@@ -6,11 +6,19 @@ data transformation, and multi-step operations.
 """
 
 from nexus.workflows.actions import BUILTIN_ACTIONS, BaseAction
-from nexus.workflows.api import WorkflowAPI, get_workflow_api
-from nexus.workflows.engine import WorkflowEngine, get_engine, init_engine
+from nexus.workflows.api import WorkflowAPI
+from nexus.workflows.engine import WorkflowEngine
 from nexus.workflows.loader import WorkflowLoader
+from nexus.workflows.protocol import (
+    GlobMatchFn,
+    LLMProviderProtocol,
+    MetadataStoreProtocol,
+    NexusOperationsProtocol,
+    WorkflowProtocol,
+    WorkflowServices,
+)
 from nexus.workflows.storage import WorkflowStore
-from nexus.workflows.triggers import BUILTIN_TRIGGERS, BaseTrigger, TriggerManager
+from nexus.workflows.triggers import BUILTIN_TRIGGERS, BaseTrigger, TriggerFactory, TriggerManager
 from nexus.workflows.types import (
     ActionResult,
     TriggerType,
@@ -25,15 +33,18 @@ from nexus.workflows.types import (
 __all__ = [
     # High-level API
     "WorkflowAPI",
-    "get_workflow_api",
     # Core classes
     "WorkflowEngine",
     "WorkflowLoader",
     "WorkflowStore",
     "TriggerManager",
-    # Engine functions
-    "get_engine",
-    "init_engine",
+    # Protocols
+    "WorkflowProtocol",
+    "WorkflowServices",
+    "GlobMatchFn",
+    "NexusOperationsProtocol",
+    "MetadataStoreProtocol",
+    "LLMProviderProtocol",
     # Types
     "WorkflowDefinition",
     "WorkflowAction",
@@ -49,4 +60,5 @@ __all__ = [
     # Built-in registries
     "BUILTIN_ACTIONS",
     "BUILTIN_TRIGGERS",
+    "TriggerFactory",
 ]

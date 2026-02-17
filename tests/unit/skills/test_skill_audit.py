@@ -298,7 +298,7 @@ async def test_audit_log_entry_validation() -> None:
     """Test audit log entry validation."""
     from datetime import datetime
 
-    from nexus.core.exceptions import ValidationError
+    from nexus.skills.exceptions import SkillValidationError
 
     # Valid entry
     entry = AuditLogEntry(
@@ -314,5 +314,5 @@ async def test_audit_log_entry_validation() -> None:
 
     # Invalid: missing skill_name
     entry.skill_name = ""
-    with pytest.raises(ValidationError, match="skill_name is required"):
+    with pytest.raises(SkillValidationError, match="skill_name is required"):
         entry.validate()

@@ -44,10 +44,16 @@ class NexusFSCoreMixin:
 
     _revision_notifier: ClassVar[Any] = None
 
+    # Issue #1169: Defaults for per-instance zone revision state.
+    # Actual instances override these in _init_zone_revision().
+    _zone_revision: int = 0
+    _zone_revision_lock: threading.Lock | None = None
+    _read_tracking_enabled: bool = False
+
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core._metadata_generated import FileMetadataProtocol
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         metadata: FileMetadataProtocol
         backend: Backend
@@ -222,7 +228,7 @@ class NexusFSCoreMixin:
 
     def _fire_workflow_event(
         self,
-        trigger_type: Any,
+        trigger_type: str,
         event_context: dict[str, Any],
         label: str,
     ) -> None:
@@ -232,19 +238,31 @@ class NexusFSCoreMixin:
         Does nothing if workflows are not enabled.
 
         Args:
-            trigger_type: TriggerType enum value (FILE_WRITE, FILE_DELETE, FILE_RENAME).
+            trigger_type: String trigger type (e.g. "file_write", "file_delete").
             event_context: Event payload dict.
             label: Human-readable label for task/thread naming (e.g. "file_write:/foo.txt").
         """
         if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
             return
 
-        from nexus.core.sync_bridge import fire_and_forget
+        # Bounded queue: try to enqueue, drop on overflow
+        queue = getattr(self, "_workflow_queue", None)
+        if queue is not None:
+            try:
+                queue.put_nowait((trigger_type, event_context))
+            except Exception:
+                logger.warning("Workflow event queue full, dropping event: %s", label)
+        else:
+            # Fallback: fire-and-forget (no queue — CLI or pre-startup)
+            from nexus.core.sync_bridge import fire_and_forget
 
-        fire_and_forget(
-            self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
-        )
+            fire_and_forget(
+                self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
+            )
+
         if self.subscription_manager:  # type: ignore[attr-defined]
+            from nexus.core.sync_bridge import fire_and_forget
+
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(
                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
@@ -253,6 +271,34 @@ class NexusFSCoreMixin:
                     event_context.get("zone_id", "default"),
                 )
             )
+
+    async def _start_workflow_consumer(self) -> None:
+        """Background consumer for bounded workflow event queue (#1522)."""
+        queue = self._workflow_queue  # type: ignore[attr-defined]
+        engine = self.workflow_engine  # type: ignore[attr-defined]
+        while True:
+            trigger_type, event_context = await queue.get()
+            try:
+                await engine.fire_event(trigger_type, event_context)
+            except Exception as e:
+                logger.error("Workflow event processing failed: %s", e)
+            finally:
+                queue.task_done()
+
+    def ensure_workflow_consumer(self) -> None:
+        """Start the workflow consumer task if not already running."""
+        if (
+            getattr(self, "_workflow_queue", None) is None
+            or getattr(self, "_workflow_consumer_task", None) is not None
+        ):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            self._workflow_consumer_task = loop.create_task(  # type: ignore[attr-defined]
+                self._start_workflow_consumer()
+            )
+        except RuntimeError:
+            pass  # No event loop — consumer starts when server starts
 
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
@@ -416,7 +462,50 @@ class NexusFSCoreMixin:
         return notifier.wait_for_revision(zone_id, min_revision, timeout_ms)
 
     # =========================================================================
-    # Read Set Tracking - Issue #1166
+    # Zone Revision Counter - Issue #1169
+    # =========================================================================
+
+    def _init_zone_revision(self) -> None:
+        """Initialize per-instance zone revision state.
+
+        Must be called during NexusFS.__init__ to ensure each instance
+        has its own lock and counter (not shared via class-level defaults).
+        """
+        self._zone_revision = 0
+        self._zone_revision_lock = threading.Lock()
+
+    def _increment_zone_revision(self) -> int:
+        """Atomically increment and return the new zone revision.
+
+        Called after every write/delete to advance the monotonic counter.
+        Thread-safe via per-instance lock.
+
+        Returns:
+            The new revision number (always > previous).
+        """
+        lock = self._zone_revision_lock
+        if lock is None:
+            # Fallback: not yet initialized (shouldn't happen in production)
+            self._zone_revision += 1
+            return self._zone_revision
+        with lock:
+            self._zone_revision += 1
+            return self._zone_revision
+
+    def _get_zone_revision(self) -> int:
+        """Return the current zone revision (read-only, thread-safe).
+
+        Returns:
+            Current monotonic revision counter value.
+        """
+        lock = self._zone_revision_lock
+        if lock is None:
+            return self._zone_revision
+        with lock:
+            return self._zone_revision
+
+    # =========================================================================
+    # Read Set Tracking - Issue #1166 / #1169
     # =========================================================================
 
     def _record_read_if_tracking(
@@ -431,21 +520,26 @@ class NexusFSCoreMixin:
         This is called automatically by read(), stat(), and list() operations
         when the context has read tracking enabled.
 
+        Issue #1169: Uses per-zone monotonic counter instead of hardcoded 0.
+                     Gated by instance-level _read_tracking_enabled flag.
+
         Args:
             context: Operation context (may have track_reads=True)
             resource_type: Type of resource (file, directory, metadata)
             resource_id: Path or identifier of the resource
             access_type: Type of access (content, metadata, list, exists)
         """
+        if not self._read_tracking_enabled:
+            return
+
         if context is None or not getattr(context, "track_reads", False):
             return
 
         if context.read_set is None:
             return
 
-        # Get current revision for this zone
-        _zone_id = context.zone_id or "default"  # noqa: F841 — will be used with Raft read-index
-        revision = 0  # TODO: Replace with proper Raft read-index
+        # Issue #1169: Use per-zone monotonic counter for meaningful revisions
+        revision = self._get_zone_revision()
 
         # Record the read
         context.record_read(
@@ -457,6 +551,33 @@ class NexusFSCoreMixin:
         logger.debug(
             f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
         )
+
+    def _register_cache_read_set(
+        self,
+        path: str,
+        metadata: FileMetadata | None,
+        resource_type: str = "file",
+    ) -> None:
+        """Register a read set for a cached metadata entry (Issue #1169).
+
+        Creates a minimal ReadSet tracking that this cache entry depends on
+        the given path, enabling precise invalidation when the path is written.
+
+        Called after metadata reads (get/stat) to associate read sets with
+        cache entries. This is a no-op when cache observer is not configured.
+
+        Args:
+            path: Virtual path of the cached entry
+            metadata: File metadata (None means not found — skip)
+            resource_type: Type of resource (file, directory)
+        """
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is None or metadata is None:
+            return
+
+        zone_id = getattr(self, "zone_id", None) or "default"
+        revision = self._get_zone_revision()
+        cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
     # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
@@ -809,7 +930,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
@@ -841,7 +962,6 @@ class NexusFSCoreMixin:
             route = self.router.route(
                 original_path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
             )
@@ -862,8 +982,13 @@ class NexusFSCoreMixin:
                 original_path, original_content, context
             )
 
-            # Parse the content
-            content = get_parsed_content(original_content, original_path, view_type)
+            # Parse the content (parse_fn injected by subclass; avoids parsers import in core/)
+            content = get_parsed_content(
+                original_content,
+                original_path,
+                view_type,
+                parse_fn=getattr(self, "_virtual_view_parse_fn", None),
+            )
 
             # Issue #1166: Record read for dependency tracking (virtual view reads original file)
             self._record_read_if_tracking(context, "file", original_path, "content")
@@ -884,7 +1009,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -959,6 +1083,9 @@ class NexusFSCoreMixin:
         # Issue #1166: Record read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "content")
 
+        # Issue #1169: Register read set for precise cache invalidation
+        self._register_cache_read_set(path, meta, "file")
+
         # Return content with metadata if requested
         if return_metadata:
             result = {
@@ -1029,7 +1156,8 @@ class NexusFSCoreMixin:
             try:
                 validated_path = self._validate_path(path)
                 validated_paths.append(validated_path)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in read_bulk for %s: %s", path, exc)
                 if skip_errors:
                     results[path] = None
                     continue
@@ -1102,7 +1230,6 @@ class NexusFSCoreMixin:
                 route = self.router.route(
                     path,
                     zone_id=zone_id,
-                    agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
                 )
@@ -1125,13 +1252,13 @@ class NexusFSCoreMixin:
 
         # Try bulk read for backends that support it (CacheConnectorMixin)
         for backend, paths_for_backend in backend_paths.items():
-            if hasattr(backend, "_read_bulk_from_cache") and len(paths_for_backend) > 1:
+            if hasattr(backend, "read_bulk_from_cache") and len(paths_for_backend) > 1:
                 # Use bulk cache lookup
                 logger.info(
                     f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
                 )
                 try:
-                    cache_entries = backend._read_bulk_from_cache(paths_for_backend, original=True)
+                    cache_entries = backend.read_bulk_from_cache(paths_for_backend, original=True)
 
                     # Process cache hits
                     paths_needing_backend: list[str] = []
@@ -1305,7 +1432,10 @@ class NexusFSCoreMixin:
                                         "size": len(content),
                                     }
                                 )
-                            except Exception:
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to read content for %s during batch read: %s", path, exc
+                                )
                                 if skip_errors:
                                     results[path] = None
                                 else:
@@ -1417,7 +1547,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1443,7 +1572,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Stream file content in chunks")
     def stream(
-        self, path: str, chunk_size: int = 8192, context: OperationContext | None = None
+        self, path: str, chunk_size: int = 65536, context: OperationContext | None = None
     ) -> Any:
         """
         Stream file content in chunks without loading entire file into memory.
@@ -1486,7 +1615,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1505,7 +1633,7 @@ class NexusFSCoreMixin:
         path: str,
         start: int,
         end: int,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: OperationContext | None = None,
     ) -> Any:
         """Stream a byte range [start, end] of file content.
@@ -1531,7 +1659,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1590,7 +1717,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -1607,15 +1733,17 @@ class NexusFSCoreMixin:
         meta = self.metadata.get(path)
 
         # Write content via streaming
-        content_hash = route.backend.write_stream(chunks, context=context).unwrap()
+        write_response = route.backend.write_stream(chunks, context=context)
+        content_hash = write_response.unwrap()
 
-        # Get size from backend metadata (written during streaming)
-        # For now, we can't easily get size without reading - set to 0 and update on next read
-        # A better approach would be for write_stream to return (hash, size) tuple
-        size = 0
-        # get_content_size is an abstract method on Backend, always available
-        with contextlib.suppress(Exception):
-            size = route.backend.get_content_size(content_hash, context=context).unwrap()
+        # WriteResult-aware backends (LocalBackend, GCS) store the byte count
+        # in affected_rows to avoid a redundant get_content_size() round-trip.
+        size = write_response.affected_rows
+        if size <= 0:
+            try:
+                size = route.backend.get_content_size(content_hash, context=context).unwrap()
+            except Exception as e:
+                logger.debug("Failed to get content size for %s: %s", content_hash, e)
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -1732,7 +1860,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._write_memory_path(path, content)
@@ -1776,7 +1904,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -1883,6 +2010,14 @@ class NexusFSCoreMixin:
 
         self.metadata.put(metadata)
 
+        # Issue #1169: Advance zone revision counter after mutation
+        new_revision = self._increment_zone_revision()
+
+        # Issue #1169: Precise cache invalidation via cache observer
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_write(path, new_revision, zone_id or "default")
+
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
         # the file should inherit those permissions (if include_future_files=True)
@@ -1916,8 +2051,8 @@ class NexusFSCoreMixin:
                 self.metadata.set_file_metadata(path, "parsed_text", None)
                 self.metadata.set_file_metadata(path, "parsed_at", None)
                 self.metadata.set_file_metadata(path, "parser_name", None)
-            except Exception:
-                pass  # Ignore errors - cache invalidation is best-effort
+            except Exception as e:
+                logger.debug("Failed to invalidate parsed_text cache for %s: %s", path, e)
 
         # P0-3: Create parent relationship tuples for file inheritance
         # This enables permission inheritance from parent directories
@@ -1982,6 +2117,15 @@ class NexusFSCoreMixin:
         if self.auto_parse:
             self._auto_parse_file(path)
 
+        # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
+        _snapshot_svc = getattr(self, "_snapshot_service", None)
+        if _snapshot_svc is not None:
+            _txn_id = _snapshot_svc.is_tracked(path)
+            if _txn_id is not None:
+                _snapshot_svc.track_write(
+                    _txn_id, path, snapshot_hash, metadata_snapshot, content_hash
+                )
+
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
         # Observer is optional — injected by factory.py, not created by kernel.
         # Issue #1246: Unified error handling via _notify_observer.
@@ -1998,11 +2142,9 @@ class NexusFSCoreMixin:
         )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
-
         is_new_file = meta is None or meta.etag is None
         self._fire_workflow_event(
-            TriggerType.FILE_WRITE,
+            "file_write",
             {
                 "file_path": path,
                 "size": len(content),
@@ -2500,7 +2642,6 @@ class NexusFSCoreMixin:
             route = self.router.route(
                 path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=True,
             )
@@ -2843,7 +2984,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
@@ -2855,7 +2996,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -2892,6 +3032,13 @@ class NexusFSCoreMixin:
         # Check write permission for delete        # This comes AFTER zone isolation check so AccessDeniedError takes precedence
         self._check_permission(path, Permission.WRITE, context)
 
+        # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
+        _snapshot_svc = getattr(self, "_snapshot_service", None)
+        if _snapshot_svc is not None:
+            _txn_id = _snapshot_svc.is_tracked(path)
+            if _txn_id is not None:
+                _snapshot_svc.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
+
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
         # Issue #1246: Unified error handling via _notify_observer.
         self._notify_observer(
@@ -2915,11 +3062,17 @@ class NexusFSCoreMixin:
         # Remove from metadata
         self.metadata.delete(path)
 
-        # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
+        # Issue #1169: Advance zone revision counter after delete
+        new_revision = self._increment_zone_revision()
 
+        # Issue #1169: Precise cache invalidation via cache observer
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_delete(path, new_revision, zone_id or "default")
+
+        # v0.7.0: Fire workflow event for automatic trigger execution
         self._fire_workflow_event(
-            TriggerType.FILE_DELETE,
+            "file_delete",
             {
                 "file_path": path,
                 "size": meta.size,
@@ -2984,14 +3137,12 @@ class NexusFSCoreMixin:
         old_route = self.router.route(
             old_path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,  # Need write access to source
         )
         new_route = self.router.route(
             new_path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,  # Need write access to destination
         )
@@ -3088,6 +3239,12 @@ class NexusFSCoreMixin:
         # For connector backends: metadata follows the file we just moved
         self.metadata.rename_path(old_path, new_path)
 
+        # Issue #1169: Advance zone revision + invalidate both old and new paths
+        new_revision = self._increment_zone_revision()
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "default")
+
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
         import logging
@@ -3159,10 +3316,8 @@ class NexusFSCoreMixin:
         )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
-
         self._fire_workflow_event(
-            TriggerType.FILE_RENAME,
+            "file_rename",
             {
                 "old_path": old_path,
                 "new_path": new_path,
@@ -3433,7 +3588,6 @@ class NexusFSCoreMixin:
             route = self.router.route(
                 path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
             )
@@ -3445,7 +3599,8 @@ class NexusFSCoreMixin:
 
                     size_context = replace(context, backend_path=route.backend_path)
                 size = route.backend.get_content_size(meta.etag, context=size_context).unwrap()
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to get content size for %s: %s", path, exc)
                 size = None
 
         # Convert datetime to ISO string for wire compatibility with Rust FUSE client
@@ -3454,6 +3609,9 @@ class NexusFSCoreMixin:
 
         # Issue #1166: Record metadata read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "metadata")
+
+        # Issue #1169: Register read set for precise cache invalidation
+        self._register_cache_read_set(path, meta, "file")
 
         return {
             "size": size,
@@ -3503,7 +3661,8 @@ class NexusFSCoreMixin:
             try:
                 validated_path = self._validate_path(path)
                 validated_paths.append(validated_path)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_bulk for %s: %s", path, exc)
                 if skip_errors:
                     results[path] = None
                     continue
@@ -3684,8 +3843,9 @@ class NexusFSCoreMixin:
         for path in paths:
             try:
                 results[path] = self.exists(path, context=context)
-            except Exception:
+            except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
+                logger.debug("Exists check failed for %s: %s", path, exc)
                 results[path] = False
         return results
 
@@ -3728,7 +3888,8 @@ class NexusFSCoreMixin:
             try:
                 validated = self._validate_path(path)
                 valid_paths.append(validated)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_batch for %s: %s", path, exc)
                 results[path] = None
 
         # Batch fetch metadata from database
@@ -3770,7 +3931,8 @@ class NexusFSCoreMixin:
                     "zone_id": meta.zone_id,
                     "is_directory": is_dir,
                 }
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to build metadata result for %s: %s", path, exc)
                 results[path] = None
 
         return results
@@ -3802,8 +3964,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.core.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.SessionLocal()
@@ -3887,8 +4049,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.core.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.SessionLocal()
@@ -4057,7 +4219,6 @@ class NexusFSCoreMixin:
             is_implicit: If True, directory is implicit (no metadata, exists due to child files).
                         If None, will be auto-detected.
         """
-        import contextlib
         import errno
 
         path = self._validate_path(path)
@@ -4066,7 +4227,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -4098,10 +4258,20 @@ class NexusFSCoreMixin:
 
         if recursive and files_in_dir:
             # Delete content from backend for each file
+            _errors: list[str] = []
             for file_meta in files_in_dir:
                 if file_meta.etag and file_meta.mime_type != "inode/directory":
-                    with contextlib.suppress(Exception):
+                    try:
                         route.backend.delete_content(file_meta.etag).unwrap()
+                    except Exception as e:
+                        if len(_errors) < 100:
+                            _errors.append(f"{file_meta.path}: {e}")
+            if _errors:
+                logger.debug(
+                    "Bulk content delete: %d error(s) (showing up to 100): %s",
+                    len(_errors),
+                    "; ".join(_errors),
+                )
 
             # Batch delete from metadata store
             file_paths = [file_meta.path for file_meta in files_in_dir]

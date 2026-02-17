@@ -122,7 +122,7 @@ class SyncService:
         """
         self._gw = gateway
         # Issue #1127: Initialize change log store for delta sync
-        self._change_log = ChangeLogStore(gateway)
+        self._change_log = ChangeLogStore(gateway.session_factory)
         # Issue #1127: Per-mount sync locks to prevent concurrent races
         self._mount_locks: dict[str, threading.Lock] = {}
         self._lock_guard = threading.Lock()
@@ -387,7 +387,7 @@ class SyncService:
         if not ctx.full_sync and hasattr(backend, "get_file_info"):
             cached_entries = self._change_log.get_change_logs_batch(
                 backend_name=backend.name,
-                zone_id=zone_id or "default",
+                zone_id=zone_id or "root",
                 path_prefix=ctx.mount_point or "",
             )
             if cached_entries:
@@ -581,7 +581,7 @@ class SyncService:
                         cached = cached_entries.get(virtual_path)
                     else:
                         cached = self._change_log.get_change_log(
-                            virtual_path, backend.name, zone_id or "default"
+                            virtual_path, backend.name, zone_id or "root"
                         )
                     if cached and self._file_unchanged(file_info, cached):
                         result.files_skipped += 1
@@ -620,7 +620,7 @@ class SyncService:
                     file_size = self._get_file_size(backend, backend_path, ctx)
 
                 # Issue #1126: etag=None during metadata sync
-                # Content hash is computed later by cache_mixin.sync() when content is read
+                # Content hash is computed later by cache_mixin.sync_content_to_cache() when content is read
                 # This avoids the bug of storing path hash instead of content hash
                 meta = FileMetadata(
                     path=virtual_path,
@@ -648,7 +648,7 @@ class SyncService:
                         pending_upserts,
                         virtual_path,
                         backend.name,
-                        zone_id or "default",
+                        zone_id or "root",
                         file_info,
                     )
 
@@ -662,7 +662,7 @@ class SyncService:
                     pending_upserts,
                     virtual_path,
                     backend.name,
-                    zone_id or "default",
+                    zone_id or "root",
                     file_info,
                 )
 
@@ -677,7 +677,7 @@ class SyncService:
         """Enqueue a change log upsert for batch flush, or upsert immediately.
 
         When pending_upserts is provided, appends to the list for batch processing.
-        Otherwise falls back to immediate single upsert for backward compatibility.
+        Otherwise falls back to immediate single upsert.
 
         Args:
             pending_upserts: Batch accumulator list, or None for immediate upsert
@@ -898,7 +898,7 @@ class SyncService:
             # Issue #1127: Batch-delete stale change log entries (single DB session)
             if paths_to_delete:
                 self._change_log.delete_change_logs_batch(
-                    paths_to_delete, backend.name, zone_id or "default"
+                    paths_to_delete, backend.name, zone_id or "root"
                 )
 
         except Exception as e:
@@ -913,7 +913,7 @@ class SyncService:
     ) -> None:
         """Sync content to cache if requested.
 
-        Delegates to backend.sync() method (from CacheConnectorMixin).
+        Delegates to backend.sync_content_to_cache() method (from CacheConnectorMixin).
 
         Args:
             ctx: SyncContext
@@ -923,14 +923,16 @@ class SyncService:
         if not ctx.sync_content or ctx.dry_run:
             return
 
-        if not hasattr(backend, "sync"):
+        if not hasattr(backend, "sync_content_to_cache"):
             logger.info(
-                f"[SYNC_MOUNT] Backend {type(backend).__name__} does not support sync(), "
+                f"[SYNC_MOUNT] Backend {type(backend).__name__} does not support sync_content_to_cache(), "
                 "skipping content cache population"
             )
             return
 
-        logger.info("[SYNC_MOUNT] Delegating to backend.sync() for cache population")
+        logger.info(
+            "[SYNC_MOUNT] Delegating to backend.sync_content_to_cache() for cache population"
+        )
 
         try:
             from nexus.backends.cache_mixin import SyncResult as CacheSyncResult
@@ -943,7 +945,7 @@ class SyncService:
                 else:
                     cache_sync_path = ctx.path.lstrip("/")
 
-            cache_result: CacheSyncResult = backend.sync(
+            cache_result: CacheSyncResult = backend.sync_content_to_cache(
                 path=cache_sync_path,
                 mount_point=ctx.mount_point,
                 include_patterns=ctx.include_patterns,

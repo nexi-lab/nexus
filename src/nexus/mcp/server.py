@@ -998,8 +998,22 @@ def create_mcp_server(
             "\n\n".join(output_parts) if output_parts else "Code executed successfully (no output)"
         )
 
-    # Check if sandbox support is available via public API
-    sandbox_available = getattr(_default_nx, "sandbox_available", False)
+    # Check if sandbox support is available
+    # First check the explicit sandbox_available property, then probe internals
+    sandbox_available = False
+    try:
+        sa = getattr(_default_nx, "sandbox_available", None)
+        if sa is False:
+            sandbox_available = False
+        elif sa is True:
+            sandbox_available = True
+        elif hasattr(_default_nx, "_ensure_sandbox_manager"):
+            _default_nx._ensure_sandbox_manager()
+            mgr = getattr(_default_nx, "_sandbox_manager", None)
+            if mgr is not None and getattr(mgr, "providers", None):
+                sandbox_available = True
+    except Exception:
+        sandbox_available = False
 
     # Only register sandbox tools if available
     if sandbox_available:

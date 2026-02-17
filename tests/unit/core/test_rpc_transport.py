@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from nexus.core.rpc_transport import NexusRPCTransport, RPCError, TransportError
+from nexus.remote.rpc_transport import NexusRPCTransport, RPCError, TransportError
 
 
 class TestNexusRPCTransport:

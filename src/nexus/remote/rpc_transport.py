@@ -1,5 +1,8 @@
 """RPC transport layer for Nexus inter-process communication.
 
+Moved from ``nexus.core.rpc_transport`` per KERNEL-ARCHITECTURE.md §3:
+core/ should only contain ABCs/Protocols, not concrete driver implementations.
+
 This is a low-level utility, not a user-facing API. Used internally by:
 - RemoteNexusFS (client-server connections)
 - NexusFilesystem (P2P federation forwarding)

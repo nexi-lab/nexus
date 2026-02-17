@@ -655,6 +655,32 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     return result
 
 
+def _resolve_tasks_db_path(backend: Any) -> str:
+    """Resolve the fjall database path for TaskQueueService.
+
+    Priority:
+    1. NEXUS_TASKS_DB_PATH environment variable
+    2. NEXUS_DATA_DIR/tasks-db
+    3. backend.root_path/../tasks-db (alongside backend storage)
+    4. .nexus-data/tasks-db (fallback)
+    """
+    import os
+
+    env_path = os.environ.get("NEXUS_TASKS_DB_PATH")
+    if env_path:
+        return env_path
+
+    data_dir = os.environ.get("NEXUS_DATA_DIR")
+    if data_dir:
+        return os.path.join(data_dir, "tasks-db")
+
+    root_path = getattr(backend, "root_path", None)
+    if root_path is not None:
+        return os.path.join(str(root_path), "tasks-db")
+
+    return os.path.join(".nexus-data", "tasks-db")
+
+
 def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str, Any]:
     """Boot Tier 2 (BRICK) — optional, silent on failure.
 
@@ -842,6 +868,17 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except ImportError as _snap_exc:
         logger.debug("[BOOT:BRICK] TransactionalSnapshotService unavailable: %s", _snap_exc)
 
+    # --- TaskQueueService (Issue #655) ---
+    task_queue_service: Any = None
+    try:
+        from nexus.services.task_queue_service import TaskQueueService
+
+        task_queue_service = TaskQueueService(
+            db_path=_resolve_tasks_db_path(ctx.backend),
+        )
+    except Exception as _tq_exc:
+        logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -853,6 +890,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
+        "task_queue_service": task_queue_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1011,6 +1049,7 @@ def create_nexus_services(
         delivery_worker=system["delivery_worker"],
         api_key_creator=brick["api_key_creator"],
         snapshot_service=brick["snapshot_service"],
+        task_queue_service=brick["task_queue_service"],
     )
 
 

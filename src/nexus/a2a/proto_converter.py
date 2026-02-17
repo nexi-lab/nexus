@@ -12,8 +12,7 @@ from typing import Any
 
 from google.protobuf import struct_pb2, timestamp_pb2
 
-from nexus.a2a import a2a_pb2
-from nexus.a2a import models
+from nexus.a2a import a2a_pb2, models
 
 # ============================================================================
 # TaskState mapping
@@ -126,10 +125,7 @@ def part_from_proto(pb: a2a_pb2.Part) -> models.TextPart | models.FilePart | mod
     elif content_type == "data":
         # Data is a google.protobuf.Value wrapping a Struct
         data_value = pb.data
-        if data_value.HasField("struct_value"):
-            data_dict = dict(data_value.struct_value)
-        else:
-            data_dict = {}
+        data_dict = dict(data_value.struct_value) if data_value.HasField("struct_value") else {}
         return models.DataPart(data=data_dict, metadata=metadata)
     elif content_type == "raw":
         fc = models.FileContent(

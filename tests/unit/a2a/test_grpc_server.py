@@ -7,8 +7,6 @@ InMemoryTaskStore, exercising the full gRPC transport path.
 
 from __future__ import annotations
 
-import asyncio
-
 import grpc
 import grpc.aio
 import pytest

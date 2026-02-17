@@ -16,12 +16,11 @@ import grpc.aio
 
 from nexus.a2a import a2a_pb2, a2a_pb2_grpc
 from nexus.a2a.exceptions import A2AError
+from nexus.a2a.models import TERMINAL_STATES
 from nexus.a2a.proto_converter import (
     send_request_from_proto,
     task_to_proto,
 )
-
-from nexus.a2a.models import TERMINAL_STATES
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +154,7 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
 
     async def _stream_events(
         self,
-        task_id: str,
+        _task_id: str,
         queue: Any,
         context: grpc.aio.ServicerContext,
     ) -> AsyncIterator[a2a_pb2.StreamResponse]:
@@ -234,9 +233,8 @@ async def create_grpc_server(
     servicer = A2AServicer(task_manager, zone_id=zone_id)
     a2a_pb2_grpc.add_A2AServiceServicer_to_server(servicer, server)
 
-    if tls_cert_path or tls_key_path:
-        if not (tls_cert_path and tls_key_path):
-            raise ValueError("Both tls_cert_path and tls_key_path are required for TLS")
+    if (tls_cert_path or tls_key_path) and not (tls_cert_path and tls_key_path):
+        raise ValueError("Both tls_cert_path and tls_key_path are required for TLS")
 
     if tls_cert_path and tls_key_path:
         with open(tls_cert_path, "rb") as f:

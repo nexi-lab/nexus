@@ -215,6 +215,76 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # lock/extend_lock/unlock methods match
     ),
+    # ── Async adapter protocols (Issue #1440) ─────────────────────────
+    (
+        "AgentRegistryProtocol",
+        "nexus.services.protocols.agent_registry",
+        "nexus.services.agents.async_agent_registry.AsyncAgentRegistry",
+        True,
+    ),
+    (
+        "NamespaceManagerProtocol",
+        "nexus.services.protocols.namespace_manager",
+        "nexus.rebac.async_namespace_manager.AsyncNamespaceManager",
+        True,
+    ),
+    (
+        "HookEngineProtocol",
+        "nexus.services.protocols.hook_engine",
+        "nexus.plugins.async_hooks.AsyncHookEngine",
+        True,
+    ),
+    # ── Service-layer protocols ───────────────────────────────────────
+    (
+        "MCPProtocol",
+        "nexus.services.protocols.mcp",
+        "nexus.services.mcp_service.MCPService",
+        True,
+    ),
+    (
+        "DelegationProtocol",
+        "nexus.services.protocols.delegation",
+        "nexus.services.delegation.service.DelegationService",
+        True,
+    ),
+    (
+        "OperationLogProtocol",
+        "nexus.services.protocols.operation_log",
+        "nexus.storage.operation_logger.OperationLogger",
+        True,
+    ),
+    (
+        "ContextManifestProtocol",
+        "nexus.services.protocols.context_manifest",
+        "nexus.services.context_manifest.resolver.ManifestResolver",
+        True,
+    ),
+    # ── Scheduler (using InMemoryScheduler test stub) ─────────────────
+    (
+        "SchedulerProtocol",
+        "nexus.services.protocols.scheduler",
+        "nexus.services.protocols.scheduler.InMemoryScheduler",
+        True,
+    ),
+    # ── Brick-level protocols ─────────────────────────────────────────
+    (
+        "LLMProviderProtocol",
+        "nexus.services.protocols.llm_provider",
+        "nexus.llm.provider.LiteLLMProvider",
+        True,
+    ),
+    (
+        "ParseProtocol",
+        "nexus.services.protocols.parse",
+        "nexus.parsers.registry.ParserRegistry",
+        True,
+    ),
+    (
+        "PaymentProtocol",
+        "nexus.services.protocols.payment",
+        "nexus.pay.protocol.X402PaymentProtocol",
+        True,
+    ),
 ]
 
 

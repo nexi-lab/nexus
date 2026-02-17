@@ -62,9 +62,14 @@ __all__ = [
     # Configuration
     "Config",
     "load_config",
-    # Core interfaces (ABCs / protocols — no concrete implementations)
+    # Core interfaces
     "Filesystem",
+    "NexusFS",
+    "RemoteNexusFS",
+    # Backends
     "Backend",
+    "LocalBackend",
+    "GCSBackend",
     # Exceptions
     "NexusError",
     "FileNotFoundError",
@@ -87,21 +92,26 @@ __all__ = [
     "SkillExportError",
     # Permissions
     "OperationContext",
-    # ReBAC types (data classes only — no service internals)
+    "PermissionEnforcer",
+    # ReBAC
+    "ReBACManager",
     "ReBACTuple",
     "Entity",
     "WILDCARD_SUBJECT",
+    "ConsistencyLevel",
+    "CheckResult",
+    "GraphLimitExceeded",
     # Router
     "NamespaceConfig",
 ]
 
-# Re-export ABCs, interfaces, and data types only — no concrete implementations.
-# Per KERNEL-ARCHITECTURE: "Drivers are config-time DI" — SDK consumers must not
-# depend on specific driver classes (LocalBackend, GCSBackend) or service internals
-# (PermissionEnforcer, EnhancedReBACManager).  Use connect() to get a Filesystem.
+# Re-export from core modules with cleaner names
 from pathlib import Path
+from typing import Union
 
 from nexus.backends.backend import Backend
+from nexus.backends.gcs import GCSBackend
+from nexus.backends.local import LocalBackend
 from nexus.config import NexusConfig as Config
 from nexus.config import load_config
 from nexus.core.exceptions import (
@@ -118,9 +128,19 @@ from nexus.core.exceptions import (
     NexusPermissionError as PermissionError,
 )
 from nexus.core.filesystem import NexusFilesystem as Filesystem
-from nexus.core.permissions import OperationContext
+from nexus.core.nexus_fs import NexusFS
+from nexus.core.permissions import OperationContext, PermissionEnforcer
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity, ReBACTuple
 from nexus.core.router import NamespaceConfig
+from nexus.rebac.manager import (
+    CheckResult,
+    ConsistencyLevel,
+    GraphLimitExceeded,
+)
+from nexus.rebac.manager import (
+    EnhancedReBACManager as ReBACManager,
+)
+from nexus.remote import RemoteNexusFS
 from nexus.skills import (
     Skill,
     SkillDependencyError,

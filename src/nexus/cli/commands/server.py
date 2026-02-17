@@ -956,7 +956,7 @@ def serve(
             sys.exit(1)
 
         # Create authentication provider
-        from nexus.server.auth.base import AuthProvider
+        from nexus.auth.providers.base import AuthProvider
 
         auth_provider: AuthProvider | None = None
         if auth_type == "database":
@@ -966,9 +966,9 @@ def serve(
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.server.auth.database_local import DatabaseLocalAuth
-            from nexus.server.auth.factory import DiscriminatingAuthProvider
+            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1017,7 +1017,7 @@ def serve(
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1055,7 +1055,7 @@ def serve(
             # Single OIDC provider authentication
             import os
 
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             oidc_issuer = os.getenv("NEXUS_OIDC_ISSUER")
             oidc_audience = os.getenv("NEXUS_OIDC_AUDIENCE")
@@ -1076,7 +1076,7 @@ def serve(
             import json
             import os
 
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             oidc_providers_json = os.getenv("NEXUS_OIDC_PROVIDERS")
             if not oidc_providers_json:
@@ -1099,7 +1099,7 @@ def serve(
 
         elif auth_type == "static":
             # Static API key authentication (deprecated, use database instead)
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             if not api_key:
                 console.print("[red]Error:[/red] Static authentication requires --api-key")
@@ -1114,7 +1114,7 @@ def serve(
 
         elif api_key:
             # Backward compatibility: --api-key without --auth-type defaults to static
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             auth_provider = create_auth_provider("static", api_key=api_key)
             console.print("[yellow]⚠️  Using static API key authentication (deprecated)[/yellow]")
@@ -1244,8 +1244,8 @@ def serve(
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
+            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.rebac.entity_registry import EntityRegistry
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 
             engine = create_engine(db_url)
             Session = sessionmaker(bind=engine)

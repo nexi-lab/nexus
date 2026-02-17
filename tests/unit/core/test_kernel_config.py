@@ -284,6 +284,7 @@ class TestKernelServices:
             "rebac_service",
             "search_service",
             "events_service",
+            "snapshot_service",
         }
         assert expected_fields.issubset(field_names), f"Missing: {expected_fields - field_names}"
 

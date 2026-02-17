@@ -24,6 +24,7 @@ Domain modules:
     models.identity        -- AgentKeyModel (Issue #1355)
     models.a2a             -- A2ATaskModel
     models.ipc_message     -- IPCMessageModel (Issue #1469)
+    models.transaction_snapshot -- TransactionSnapshotModel, SnapshotEntryModel (Issue #1752)
 """
 
 # Base and mixins
@@ -151,6 +152,12 @@ from nexus.storage.models.sync import ConflictLogModel as ConflictLogModel
 from nexus.storage.models.sync import PendingOperationModel as PendingOperationModel
 from nexus.storage.models.sync import SyncBacklogModel as SyncBacklogModel
 from nexus.storage.models.sync import SyncJobModel as SyncJobModel
+
+# Domain: Transaction Snapshots (Issue #1752)
+from nexus.storage.models.transaction_snapshot import SnapshotEntryModel as SnapshotEntryModel
+from nexus.storage.models.transaction_snapshot import (
+    TransactionSnapshotModel as TransactionSnapshotModel,
+)
 
 # Domain: Uploads (Issue #788)
 from nexus.storage.models.upload_session import UploadSessionModel as UploadSessionModel

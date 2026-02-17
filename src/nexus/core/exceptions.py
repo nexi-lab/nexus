@@ -245,7 +245,8 @@ class RemoteFilesystemError(NexusError):
         method: str | None = None,
     ):
         self.message = message
-        self.status_code = status_code
+        if status_code is not None:
+            self.status_code = status_code
         self.details = details or {}
         self.method = method
 

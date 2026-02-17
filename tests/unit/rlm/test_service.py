@@ -141,9 +141,13 @@ class TestInferenceFlow:
         # First run_code call = tool injection (returns empty)
         inject_result = MagicMock(stdout="Tools loaded", stderr="", exit_code=0, execution_time=0.1)
         # Second run_code call = context loading
-        context_result = MagicMock(stdout="Context loaded", stderr="", exit_code=0, execution_time=0.1)
+        context_result = MagicMock(
+            stdout="Context loaded", stderr="", exit_code=0, execution_time=0.1
+        )
         # Third+ run_code calls = code execution with FINAL
-        exec_result = MagicMock(stdout="FINAL ANSWER: 42", stderr="", exit_code=0, execution_time=0.2)
+        exec_result = MagicMock(
+            stdout="FINAL ANSWER: 42", stderr="", exit_code=0, execution_time=0.2
+        )
         sandbox_mgr.run_code = AsyncMock(side_effect=[inject_result, context_result, exec_result])
         sandbox_mgr.stop_sandbox = AsyncMock()
 
@@ -190,7 +194,7 @@ class TestInferenceFlow:
         llm_provider = MagicMock()
         mock_resp = MagicMock()
         mock_choice = MagicMock()
-        mock_choice.message.content = '```python\nprint(42)\n```'
+        mock_choice.message.content = "```python\nprint(42)\n```"
         mock_resp.choices = [mock_choice]
         llm_provider.complete_async = AsyncMock(return_value=mock_resp)
         llm_provider.count_tokens = MagicMock(return_value=30)
@@ -216,9 +220,7 @@ class TestInferenceFlow:
     async def test_infrastructure_error_on_sandbox_failure(self) -> None:
         """Sandbox creation fails → should return FAILED status."""
         sandbox_mgr = MagicMock()
-        sandbox_mgr.create_sandbox = AsyncMock(
-            side_effect=ValueError("No providers available")
-        )
+        sandbox_mgr.create_sandbox = AsyncMock(side_effect=ValueError("No providers available"))
 
         service = RLMInferenceService(
             sandbox_manager=sandbox_mgr,
@@ -244,7 +246,9 @@ class TestSSEStreaming:
         sandbox_mgr.create_sandbox = AsyncMock(
             return_value={"sandbox_id": "sb-3", "status": "active", "provider": "docker"}
         )
-        exec_result = MagicMock(stdout="FINAL ANSWER: done", stderr="", exit_code=0, execution_time=0.1)
+        exec_result = MagicMock(
+            stdout="FINAL ANSWER: done", stderr="", exit_code=0, execution_time=0.1
+        )
         sandbox_mgr.run_code = AsyncMock(return_value=exec_result)
         sandbox_mgr.stop_sandbox = AsyncMock()
 
@@ -284,7 +288,9 @@ class TestCleanup:
         sandbox_mgr.create_sandbox = AsyncMock(
             return_value={"sandbox_id": "sb-cleanup", "status": "active", "provider": "docker"}
         )
-        exec_result = MagicMock(stdout="FINAL ANSWER: x", stderr="", exit_code=0, execution_time=0.1)
+        exec_result = MagicMock(
+            stdout="FINAL ANSWER: x", stderr="", exit_code=0, execution_time=0.1
+        )
         sandbox_mgr.run_code = AsyncMock(return_value=exec_result)
         sandbox_mgr.stop_sandbox = AsyncMock()
 
@@ -320,7 +326,7 @@ class TestCleanup:
         llm_provider = MagicMock()
         mock_resp = MagicMock()
         mock_choice = MagicMock()
-        mock_choice.message.content = '```python\nprint(1)\n```'
+        mock_choice.message.content = "```python\nprint(1)\n```"
         mock_resp.choices = [mock_choice]
         llm_provider.complete_async = AsyncMock(return_value=mock_resp)
         llm_provider.count_tokens = MagicMock(return_value=10)

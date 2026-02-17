@@ -48,9 +48,7 @@ class RLMInferenceRequestModel(BaseModel):
         default=None,
         description="Model for sub-LM calls (cheaper, optional)",
     )
-    max_iterations: int = Field(
-        default=15, ge=1, le=50, description="Maximum REPL iterations"
-    )
+    max_iterations: int = Field(default=15, ge=1, le=50, description="Maximum REPL iterations")
     max_duration_seconds: int = Field(
         default=120, ge=10, le=600, description="Maximum total duration"
     )
@@ -151,9 +149,7 @@ async def infer(
         )
     else:
         # Non-streaming: block until completion
-        result = await rlm_service.infer(
-            rlm_request, user_id=user_id, api_key=api_key
-        )
+        result = await rlm_service.infer(rlm_request, user_id=user_id, api_key=api_key)
         return RLMInferenceResponseModel(
             status=result.status,
             answer=result.answer,

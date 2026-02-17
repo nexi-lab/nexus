@@ -73,7 +73,10 @@ class TestSetup:
         # After sandbox creation, setup should run tool injection code
         mgr.run_code.assert_called()
         injected_code = mgr.run_code.call_args_list[0].kwargs.get(
-            "code", mgr.run_code.call_args_list[0].args[2] if len(mgr.run_code.call_args_list[0].args) > 2 else ""
+            "code",
+            mgr.run_code.call_args_list[0].args[2]
+            if len(mgr.run_code.call_args_list[0].args) > 2
+            else "",
         )
         assert "nexus_read" in injected_code or "NEXUS_API_URL" in injected_code
 

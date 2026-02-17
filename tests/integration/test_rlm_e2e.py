@@ -63,7 +63,12 @@ def app_with_rlm() -> FastAPI:
         )
         yield SSEEvent(
             event=SSEEventType.FINAL_ANSWER,
-            data={"answer": "42", "total_tokens": 500, "total_duration_seconds": 2.5, "iterations": 1},
+            data={
+                "answer": "42",
+                "total_tokens": 500,
+                "total_duration_seconds": 2.5,
+                "iterations": 1,
+            },
         )
 
     mock_service.infer_stream = mock_stream

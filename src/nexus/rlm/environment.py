@@ -83,11 +83,11 @@ class NexusREPL:
                 )
             )
             self._sandbox_id = result["sandbox_id"]
-            logger.info("RLM sandbox created: %s (provider: %s)", self._sandbox_id, result.get("provider"))
+            logger.info(
+                "RLM sandbox created: %s (provider: %s)", self._sandbox_id, result.get("provider")
+            )
         except Exception as exc:
-            raise RLMInfrastructureError(
-                f"Failed to create sandbox: {exc}"
-            ) from exc
+            raise RLMInfrastructureError(f"Failed to create sandbox: {exc}") from exc
 
         # Inject Nexus tools into the REPL
         tools_code = build_tools_injection_code(
@@ -126,9 +126,12 @@ class NexusREPL:
 
         # Serialize context to a variable in the sandbox
         if isinstance(context_payload, str):
-            code = f"context = {context_payload!r}\nprint(f'Context loaded: {{len(context)}} chars')"
+            code = (
+                f"context = {context_payload!r}\nprint(f'Context loaded: {{len(context)}} chars')"
+            )
         else:
             import json
+
             serialized = json.dumps(context_payload, default=str)
             code = f"import json\ncontext = json.loads({serialized!r})\nprint(f'Context loaded: {{type(context).__name__}}')"
 
@@ -186,7 +189,10 @@ class NexusREPL:
 
         # Truncate long output (RLM paper: 8192 default, we use 20K)
         if len(stdout) > _MAX_OUTPUT_CHARS:
-            stdout = stdout[:_MAX_OUTPUT_CHARS] + f"\n... [output truncated, {len(result.stdout)} total chars]"
+            stdout = (
+                stdout[:_MAX_OUTPUT_CHARS]
+                + f"\n... [output truncated, {len(result.stdout)} total chars]"
+            )
 
         return REPLResult(
             stdout=stdout,
@@ -204,9 +210,7 @@ class NexusREPL:
             return
 
         try:
-            asyncio.run(
-                self._sandbox_manager.stop_sandbox(self._sandbox_id)
-            )
+            asyncio.run(self._sandbox_manager.stop_sandbox(self._sandbox_id))
             logger.info("RLM sandbox stopped: %s", self._sandbox_id)
         except Exception as exc:
             logger.warning("Failed to stop sandbox %s: %s", self._sandbox_id, exc)

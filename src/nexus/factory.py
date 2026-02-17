@@ -837,8 +837,10 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
                 nexus_api_url=os.environ.get("NEXUS_API_URL", "http://localhost:2026"),
                 max_concurrent=int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8")),
             )
-            logger.debug("[BOOT:BRICK] RLM inference service created (max_concurrent=%d)",
-                         int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8")))
+            logger.debug(
+                "[BOOT:BRICK] RLM inference service created (max_concurrent=%d)",
+                int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8")),
+            )
         else:
             logger.debug("[BOOT:BRICK] RLM skipped: sandbox_manager not available")
     except ImportError as _e:

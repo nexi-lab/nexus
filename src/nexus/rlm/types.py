@@ -123,9 +123,7 @@ class RLMInferenceRequest:
                 f"max_duration_seconds must be 10-600, got {self.max_duration_seconds}"
             )
         if self.max_total_tokens < 1_000 or self.max_total_tokens > 1_000_000:
-            raise ValueError(
-                f"max_total_tokens must be 1K-1M, got {self.max_total_tokens}"
-            )
+            raise ValueError(f"max_total_tokens must be 1K-1M, got {self.max_total_tokens}")
 
 
 @dataclass(frozen=True)

@@ -67,9 +67,7 @@ class TestNexusRead:
         mock_resp = MagicMock()
         mock_resp.status_code = 404
         mock_resp.text = "Not Found"
-        mock_resp.raise_for_status = MagicMock(
-            side_effect=Exception("404 Not Found")
-        )
+        mock_resp.raise_for_status = MagicMock(side_effect=Exception("404 Not Found"))
         mock_get.return_value = mock_resp
 
         result = nexus_read(
@@ -138,7 +136,9 @@ class TestNexusSearch:
         )
 
         call_kwargs = mock_get.call_args.kwargs
-        assert call_kwargs.get("params", {}).get("limit") == 5 or "limit=5" in str(mock_get.call_args)
+        assert call_kwargs.get("params", {}).get("limit") == 5 or "limit=5" in str(
+            mock_get.call_args
+        )
 
     @patch("nexus.rlm.tools.requests.get")
     def test_search_error_returns_message(self, mock_get: MagicMock) -> None:

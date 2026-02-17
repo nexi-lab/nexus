@@ -69,9 +69,7 @@ class NexusLMClient:
             # Run async provider in this thread's event loop
             # Safe because we're in a ThreadPoolExecutor (no pre-existing loop)
             response = asyncio.run(
-                self._provider.complete_async(
-                    formatted_messages, model=effective_model, **kwargs
-                )
+                self._provider.complete_async(formatted_messages, model=effective_model, **kwargs)
             )
 
             # Extract response text
@@ -86,9 +84,7 @@ class NexusLMClient:
         except RLMInfrastructureError:
             raise
         except Exception as exc:
-            raise RLMInfrastructureError(
-                f"LLM provider error: {exc}"
-            ) from exc
+            raise RLMInfrastructureError(f"LLM provider error: {exc}") from exc
 
     def count_tokens(self, messages: list[dict[str, str]]) -> int:
         """Count tokens for a set of messages.
@@ -102,17 +98,14 @@ class NexusLMClient:
         formatted = self._format_messages(messages)
         return self._provider.count_tokens(formatted)
 
-    def _format_messages(
-        self, messages: list[dict[str, str]]
-    ) -> list[dict[str, Any]]:
+    def _format_messages(self, messages: list[dict[str, str]]) -> list[dict[str, Any]]:
         """Convert rlm-style message dicts to LiteLLMProvider format.
 
         The rlm library uses simple {"role": "...", "content": "..."} dicts.
         LiteLLMProvider accepts the same format (litellm standard).
         """
         return [
-            {"role": msg.get("role", "user"), "content": msg.get("content", "")}
-            for msg in messages
+            {"role": msg.get("role", "user"), "content": msg.get("content", "")} for msg in messages
         ]
 
     def _extract_response_text(self, response: Any) -> str:

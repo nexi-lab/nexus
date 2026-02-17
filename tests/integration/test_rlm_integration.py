@@ -84,7 +84,9 @@ class TestRLMImportPaths:
             nexus_search,
         )
 
-        assert all(callable(f) for f in (nexus_read, nexus_search, nexus_list, build_tools_injection_code))
+        assert all(
+            callable(f) for f in (nexus_read, nexus_search, nexus_list, build_tools_injection_code)
+        )
 
     def test_router_import(self) -> None:
         """v2 router is importable."""

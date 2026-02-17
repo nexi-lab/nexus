@@ -375,18 +375,22 @@ class RLMInferenceService:
                     # No code — model is thinking/explaining
                     # Add response to history and continue
                     messages.append({"role": "assistant", "content": response_text})
-                    messages.append({
-                        "role": "user",
-                        "content": "Please write Python code to continue your analysis. "
-                        "Use nexus_read(), nexus_search(), and FINAL() when done.",
-                    })
-                    iterations.append(RLMIteration(
-                        step=step,
-                        code_executed="(no code generated)",
-                        repl_result=REPLResult(),
-                        tokens_used=total_tokens,
-                        duration_seconds=time.monotonic() - iter_start,
-                    ))
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": "Please write Python code to continue your analysis. "
+                            "Use nexus_read(), nexus_search(), and FINAL() when done.",
+                        }
+                    )
+                    iterations.append(
+                        RLMIteration(
+                            step=step,
+                            code_executed="(no code generated)",
+                            repl_result=REPLResult(),
+                            tokens_used=total_tokens,
+                            duration_seconds=time.monotonic() - iter_start,
+                        )
+                    )
                     continue
 
                 # Execute each code block
@@ -424,12 +428,14 @@ class RLMInferenceService:
                 error_msg = f"\nErrors:\n{combined_stderr[:2000]}" if combined_stderr else ""
 
                 messages.append({"role": "assistant", "content": response_text})
-                messages.append({
-                    "role": "user",
-                    "content": f"REPL Output:\n{output_summary}{error_msg}\n\n"
-                    f"Continue your analysis. Step {step}/{request.max_iterations}. "
-                    f"Call FINAL(answer) when you have your answer.",
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": f"REPL Output:\n{output_summary}{error_msg}\n\n"
+                        f"Continue your analysis. Step {step}/{request.max_iterations}. "
+                        f"Call FINAL(answer) when you have your answer.",
+                    }
+                )
 
             # Exhausted iterations without FINAL
             return RLMInferenceResult(

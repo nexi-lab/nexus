@@ -2,64 +2,96 @@
 
 Polls ``operation_log`` rows where ``delivered = FALSE``, builds
 ``FileEvent`` objects from the existing columns, dispatches them to
-downstream systems (EventBus, webhooks, hooks), and marks them
-``delivered = TRUE`` in a single transaction.
+downstream systems (EventBus, webhooks, hooks, exporters), and marks
+them ``delivered = TRUE`` in a single transaction.
 
 Key guarantees:
 - **At-least-once delivery**: events are only marked delivered after
   successful dispatch.  On crash, undelivered rows are retried.
-- **Concurrent safety**: ``SELECT … FOR UPDATE SKIP LOCKED`` prevents
+- **Concurrent safety**: ``SELECT ... FOR UPDATE SKIP LOCKED`` prevents
   two workers from processing the same batch.
 - **Backpressure**: exponential backoff on consecutive empty polls
-  (200ms → 400ms → 800ms → cap) to reduce idle DB pressure.
+  (200ms -> 400ms -> 800ms -> cap) to reduce idle DB pressure.
+- **DLQ routing**: events failing after max_retries are sent to the
+  dead letter queue (Issue #1138).
 
-Tracked by: Issue #1241
+Tracked by: Issue #1241, #1138
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.core.operation_types import OperationType
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy.orm import Session
 
+    from nexus.services.event_log.exporter_registry import ExporterRegistry
+
 logger = logging.getLogger(__name__)
 
-# ---- Mapping: operation_type → FileEventType --------------------------------
+# ---- Mapping: operation_type -> FileEventType --------------------------------
 
 _OP_TO_EVENT_TYPE: dict[str, FileEventType] = {
-    "write": FileEventType.FILE_WRITE,
-    "delete": FileEventType.FILE_DELETE,
-    "rename": FileEventType.FILE_RENAME,
-    "mkdir": FileEventType.DIR_CREATE,
-    "rmdir": FileEventType.DIR_DELETE,
-    "chmod": FileEventType.METADATA_CHANGE,
-    "chown": FileEventType.METADATA_CHANGE,
-    "chgrp": FileEventType.METADATA_CHANGE,
-    "setfacl": FileEventType.METADATA_CHANGE,
+    OperationType.WRITE: FileEventType.FILE_WRITE,
+    OperationType.DELETE: FileEventType.FILE_DELETE,
+    OperationType.RENAME: FileEventType.FILE_RENAME,
+    OperationType.MKDIR: FileEventType.DIR_CREATE,
+    OperationType.RMDIR: FileEventType.DIR_DELETE,
+    OperationType.CHMOD: FileEventType.METADATA_CHANGE,
+    OperationType.CHOWN: FileEventType.METADATA_CHANGE,
+    OperationType.CHGRP: FileEventType.METADATA_CHANGE,
+    OperationType.SETFACL: FileEventType.METADATA_CHANGE,
 }
+
+# ---- Sync -> async bridge helper -------------------------------------------
+
+
+def _run_async(coro: Any, loop: asyncio.AbstractEventLoop | None = None) -> Any:
+    """Run an async coroutine from a sync context, properly awaiting the result.
+
+    If an event loop is provided and running, schedules via
+    run_coroutine_threadsafe and *awaits* the Future (fixes fire-and-forget bug).
+    Otherwise creates a temporary loop with asyncio.run().
+    """
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+    if loop is not None and loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        # Block until coroutine completes (fixes fire-and-forget bug)
+        return future.result(timeout=30.0)
+    else:
+        return asyncio.run(coro)
 
 
 class EventDeliveryWorker:
     """Background worker polling undelivered events from operation_log.
 
     Uses ``SELECT FOR UPDATE SKIP LOCKED`` for concurrent worker safety.
-    Dispatches to EventBus (Redis Pub/Sub), webhooks, and hooks.
+    Dispatches to EventBus (Redis Pub/Sub), webhooks, hooks, and external
+    exporters (Kafka, NATS, Pub/Sub via ExporterRegistry).
     Marks events ``delivered = TRUE`` after successful dispatch.
-    Retries with exponential backoff on failure.
+    Routes failures to DLQ after max_retries.
     """
 
     def __init__(
         self,
         session_factory: Callable[..., Any],
         event_bus: Any | None = None,
+        exporter_registry: ExporterRegistry | None = None,
         *,
+        event_loop: asyncio.AbstractEventLoop | None = None,
         poll_interval_ms: int = 200,
         batch_size: int = 50,
         max_retries: int = 3,
@@ -67,6 +99,8 @@ class EventDeliveryWorker:
     ) -> None:
         self._session_factory = session_factory
         self._event_bus = event_bus
+        self._exporter_registry = exporter_registry
+        self._event_loop = event_loop
         self._poll_interval_s = poll_interval_ms / 1000.0
         self._batch_size = batch_size
         self._max_retries = max_retries
@@ -76,9 +110,13 @@ class EventDeliveryWorker:
         self._stop_event = threading.Event()
         self._consecutive_empty = 0
 
+        # In-memory retry tracking: operation_id -> retry count
+        self._retry_counts: dict[str, int] = {}
+
         # Metrics
         self._total_dispatched = 0
         self._total_failed = 0
+        self._total_dlq = 0
 
     # ---- Lifecycle -----------------------------------------------------------
 
@@ -96,9 +134,10 @@ class EventDeliveryWorker:
         )
         self._thread.start()
         logger.info(
-            "EventDeliveryWorker started (poll=%.0fms, batch=%d)",
+            "EventDeliveryWorker started (poll=%.0fms, batch=%d, exporters=%s)",
             self._poll_interval_s * 1000,
             self._batch_size,
+            self._exporter_registry.exporter_names if self._exporter_registry else "none",
         )
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -110,9 +149,10 @@ class EventDeliveryWorker:
                 logger.warning("EventDeliveryWorker did not stop within %.1fs", timeout)
             self._thread = None
         logger.info(
-            "EventDeliveryWorker stopped (dispatched=%d, failed=%d)",
+            "EventDeliveryWorker stopped (dispatched=%d, failed=%d, dlq=%d)",
             self._total_dispatched,
             self._total_failed,
+            self._total_dlq,
         )
 
     @property
@@ -120,6 +160,7 @@ class EventDeliveryWorker:
         return {
             "total_dispatched": self._total_dispatched,
             "total_failed": self._total_failed,
+            "total_dlq": self._total_dlq,
             "consecutive_empty": self._consecutive_empty,
         }
 
@@ -145,7 +186,7 @@ class EventDeliveryWorker:
             )
             self._stop_event.wait(backoff)
 
-    # ---- Core: poll → dispatch → mark ----------------------------------------
+    # ---- Core: poll -> dispatch -> mark --------------------------------------
 
     def _poll_and_dispatch(self) -> int:
         """Poll undelivered rows, dispatch events, mark delivered.
@@ -179,49 +220,42 @@ class EventDeliveryWorker:
             if not rows:
                 return 0
 
-            # Dispatch each event; track successes
+            # Build FileEvents for the batch
+            events_with_records: list[tuple[FileEvent, Any]] = []
             for record in rows:
+                events_with_records.append((self._build_file_event(record), record))
+
+            # 1. Dispatch each event to EventBus + webhooks
+            for event, record in events_with_records:
                 try:
-                    self._dispatch_event(record)
+                    self._dispatch_event_internal(event, record)
                     dispatched_ids.append(record.operation_id)
                     self._total_dispatched += 1
-                except Exception:
-                    logger.warning(
-                        "Failed to dispatch event %s (%s %s)",
-                        record.operation_id,
-                        record.operation_type,
-                        record.path,
-                        exc_info=True,
-                    )
-                    self._total_failed += 1
+                    # Clear retry count on success
+                    self._retry_counts.pop(record.operation_id, None)
+                except Exception as exc:
+                    self._handle_dispatch_failure(session, record, event, exc)
+
+            # 2. Dispatch batch to external exporters (parallel)
+            if self._exporter_registry and self._exporter_registry.exporter_names:
+                events = [ev for ev, _ in events_with_records]
+                self._dispatch_to_exporters(session, events, events_with_records)
 
             # Mark successfully dispatched rows as delivered
             if dispatched_ids:
                 self._mark_delivered(session, dispatched_ids)
-                session.commit()
+
+            # Commit: delivered marks + any DLQ entries added during this batch
+            session.commit()
 
         return len(dispatched_ids)
 
-    def _dispatch_event(self, record: Any) -> None:
-        """Build FileEvent from record and dispatch to downstream systems."""
-        event = self._build_file_event(record)
-
+    def _dispatch_event_internal(self, event: FileEvent, record: Any) -> None:
+        """Dispatch event to EventBus and webhook subscriptions."""
         # 1. Publish to EventBus (Redis Pub/Sub)
         bus = self._event_bus
-
         if bus is not None:
-            import asyncio
-
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop is not None and loop.is_running():
-                asyncio.run_coroutine_threadsafe(bus.publish(event), loop)
-            else:
-                # No running loop — create a temporary one
-                asyncio.run(bus.publish(event))
+            _run_async(bus.publish(event), self._event_loop)
 
         # 2. Broadcast to webhook subscriptions
         try:
@@ -229,8 +263,6 @@ class EventDeliveryWorker:
 
             sub_manager = get_subscription_manager()
             if sub_manager is not None:
-                import asyncio as _asyncio
-
                 event_type_str = str(event.type)
 
                 async def _broadcast() -> None:
@@ -245,15 +277,7 @@ class EventDeliveryWorker:
                         zone_id=event.zone_id or "root",
                     )
 
-                try:
-                    loop = _asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-
-                if loop is not None and loop.is_running():
-                    _asyncio.run_coroutine_threadsafe(_broadcast(), loop)
-                else:
-                    _asyncio.run(_broadcast())
+                _run_async(_broadcast(), self._event_loop)
         except ImportError:
             pass  # Subscription manager not available
 
@@ -263,6 +287,81 @@ class EventDeliveryWorker:
             event.path,
             record.operation_id,
         )
+
+    def _handle_dispatch_failure(
+        self, session: Session, record: Any, event: FileEvent, exc: Exception
+    ) -> None:
+        """Handle a failed dispatch: track retries or route to DLQ."""
+        op_id = record.operation_id
+        self._retry_counts[op_id] = self._retry_counts.get(op_id, 0) + 1
+        retries = self._retry_counts[op_id]
+
+        if retries >= self._max_retries:
+            # Route to DLQ
+            try:
+                from nexus.services.event_log.dead_letter import DeadLetterHandler
+
+                handler = DeadLetterHandler()
+                handler.route_to_dlq(
+                    session,
+                    operation_id=op_id,
+                    exporter_name="internal",
+                    error=exc,
+                    event=event,
+                    retry_count=retries,
+                )
+                self._total_dlq += 1
+                self._retry_counts.pop(op_id, None)
+            except Exception:
+                logger.exception("Failed to route event %s to DLQ", op_id)
+        else:
+            logger.warning(
+                "Dispatch failed for %s (retry %d/%d): %s",
+                op_id,
+                retries,
+                self._max_retries,
+                exc,
+            )
+        self._total_failed += 1
+
+    def _dispatch_to_exporters(
+        self,
+        session: Session,
+        events: list[FileEvent],
+        events_with_records: list[tuple[FileEvent, Any]],
+    ) -> None:
+        """Dispatch event batch to external exporters via ExporterRegistry."""
+        registry = self._exporter_registry
+        if not registry:
+            return
+
+        try:
+            failures = _run_async(registry.dispatch_batch(events), self._event_loop)
+        except Exception:
+            logger.exception("ExporterRegistry batch dispatch failed")
+            return
+
+        # Route per-exporter failures to DLQ
+        if failures:
+            from nexus.services.event_log.dead_letter import DeadLetterHandler
+
+            handler = DeadLetterHandler()
+            # Build event_id -> (event, record) map
+            id_map = {ev.event_id: (ev, rec) for ev, rec in events_with_records}
+
+            for exporter_name, failed_ids in failures.items():
+                for event_id in failed_ids:
+                    pair = id_map.get(event_id)
+                    if pair:
+                        event, record = pair
+                        handler.route_to_dlq(
+                            session,
+                            operation_id=record.operation_id,
+                            exporter_name=exporter_name,
+                            error=ConnectionError(f"Export to {exporter_name} failed"),
+                            event=event,
+                        )
+                        self._total_dlq += 1
 
     def _build_file_event(self, record: Any) -> FileEvent:
         """Build a FileEvent from an OperationLogModel record."""

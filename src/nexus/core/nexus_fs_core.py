@@ -147,9 +147,9 @@ class NexusFSCoreMixin:
             try:
                 return await asyncio.wait_for(coro, timeout=timeout)
             except TimeoutError:
-                logger.warning("Event task timed out after %ss: %s", timeout, name or "unnamed")
+                logger.warning(f"Event task timed out after {timeout}s: {name or 'unnamed'}")
             except Exception as e:
-                logger.error("Event task failed: %s: %s", name or "unnamed", e, exc_info=True)
+                logger.error(f"Event task failed: {name or 'unnamed'}: {e}")
 
         task = asyncio.create_task(wrapped_coro(), name=name)
         self._event_tasks.add(task)
@@ -175,7 +175,7 @@ class NexusFSCoreMixin:
         Args:
             event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
             path: Path of the affected file
-            zone_id: Zone ID (defaults to "root" if None)
+            zone_id: Zone ID (defaults to "default" if None)
             size: File size in bytes (optional)
             etag: Content hash (optional)
             agent_id: Agent that performed the operation (optional)
@@ -201,7 +201,7 @@ class NexusFSCoreMixin:
             event = FileEvent(
                 type=file_event_type,
                 path=path,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or "default",
                 size=size,
                 etag=etag,
                 agent_id=agent_id,
@@ -224,7 +224,7 @@ class NexusFSCoreMixin:
 
             fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
-            logger.warning("Failed to create %s event: %s", event_type, e, exc_info=True)
+            logger.warning(f"Failed to create {event_type} event: {e}")
 
     def _fire_workflow_event(
         self,
@@ -245,21 +245,60 @@ class NexusFSCoreMixin:
         if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
             return
 
-        from nexus.core.sync_bridge import fire_and_forget
+        # Bounded queue: try to enqueue, drop on overflow
+        queue = getattr(self, "_workflow_queue", None)
+        if queue is not None:
+            try:
+                queue.put_nowait((trigger_type, event_context))
+            except Exception:
+                logger.warning("Workflow event queue full, dropping event: %s", label)
+        else:
+            # Fallback: fire-and-forget (no queue — CLI or pre-startup)
+            from nexus.core.sync_bridge import fire_and_forget
 
-        fire_and_forget(
-            self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
-        )
+            fire_and_forget(
+                self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
+            )
 
         if self.subscription_manager:  # type: ignore[attr-defined]
+            from nexus.core.sync_bridge import fire_and_forget
+
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(
                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                     event_type,
                     event_context,
-                    event_context.get("zone_id", "root"),
+                    event_context.get("zone_id", "default"),
                 )
             )
+
+    async def _start_workflow_consumer(self) -> None:
+        """Background consumer for bounded workflow event queue (#1522)."""
+        queue = self._workflow_queue  # type: ignore[attr-defined]
+        engine = self.workflow_engine  # type: ignore[attr-defined]
+        while True:
+            trigger_type, event_context = await queue.get()
+            try:
+                await engine.fire_event(trigger_type, event_context)
+            except Exception as e:
+                logger.error("Workflow event processing failed: %s", e)
+            finally:
+                queue.task_done()
+
+    def ensure_workflow_consumer(self) -> None:
+        """Start the workflow consumer task if not already running."""
+        if (
+            getattr(self, "_workflow_queue", None) is None
+            or getattr(self, "_workflow_consumer_task", None) is not None
+        ):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            self._workflow_consumer_task = loop.create_task(  # type: ignore[attr-defined]
+                self._start_workflow_consumer()
+            )
+        except RuntimeError:
+            pass  # No event loop — consumer starts when server starts
 
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
@@ -283,22 +322,6 @@ class NexusFSCoreMixin:
                 logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
         return self._revision_notifier
-
-    @staticmethod
-    def _revision_fallback(zone_id: str, operation: str, default: int, exc: Exception) -> int:
-        """Log a revision operation failure and return *default*.
-
-        Consolidates the duplicated fallback logic for ``_increment_and_get_revision``
-        and ``_get_current_revision`` (Issue #1519, 5B).
-        """
-        logger.warning(
-            "Failed to %s revision for zone %s: %s",
-            operation,
-            zone_id,
-            exc,
-            exc_info=True,
-        )
-        return default
 
     def _get_revision_lock(self, zone_id: str) -> threading.Lock:
         """Get or create a per-zone lock for revision increments (Issue #1180).
@@ -342,7 +365,8 @@ class NexusFSCoreMixin:
             try:
                 return self.metadata.increment_revision(zone_id)
             except Exception as e:
-                return self._revision_fallback(zone_id, "increment", int(time.time() * 1000), e)
+                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                return int(time.time() * 1000)
 
         # Legacy fallback: FileMetadata-based counter (requires lock)
         from nexus.core._metadata_generated import FileMetadata
@@ -368,7 +392,9 @@ class NexusFSCoreMixin:
                 self._get_revision_notifier().notify_revision(zone_id, new_rev)
                 return new_rev
             except Exception as e:
-                return self._revision_fallback(zone_id, "increment", int(time.time() * 1000), e)
+                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                # Fallback: return timestamp-based pseudo-revision
+                return int(time.time() * 1000)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
@@ -387,7 +413,8 @@ class NexusFSCoreMixin:
             try:
                 return self.metadata.get_revision(zone_id)
             except Exception as e:
-                return self._revision_fallback(zone_id, "get", 0, e)
+                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
+                return 0
 
         # Legacy fallback: FileMetadata-based lookup
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
@@ -395,7 +422,8 @@ class NexusFSCoreMixin:
             meta = self.metadata.get(rev_path)
             return meta.version if meta else 0
         except Exception as e:
-            return self._revision_fallback(zone_id, "get", 0, e)
+            logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
+            return 0
 
     def _wait_for_revision(
         self,
@@ -547,7 +575,7 @@ class NexusFSCoreMixin:
         if cache_observer is None or metadata is None:
             return
 
-        zone_id = getattr(self, "zone_id", None) or "root"
+        zone_id = getattr(self, "zone_id", None) or "default"
         revision = self._get_zone_revision()
         cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
@@ -1712,8 +1740,10 @@ class NexusFSCoreMixin:
         # in affected_rows to avoid a redundant get_content_size() round-trip.
         size = write_response.affected_rows
         if size <= 0:
-            with contextlib.suppress(Exception):
+            try:
                 size = route.backend.get_content_size(content_hash, context=context).unwrap()
+            except Exception as e:
+                logger.debug("Failed to get content size for %s: %s", content_hash, e)
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -1727,7 +1757,7 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             created_by=self._get_created_by(context),
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
         self.metadata.put(new_meta)
@@ -1974,7 +2004,7 @@ class NexusFSCoreMixin:
             modified_at=now,
             version=new_version,
             created_by=self._get_created_by(context),  # Track who created/modified this version
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
@@ -1986,7 +2016,7 @@ class NexusFSCoreMixin:
         # Issue #1169: Precise cache invalidation via cache observer
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_write(path, new_revision, zone_id or "root")
+            cache_observer.on_write(path, new_revision, zone_id or "default")
 
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
@@ -1998,7 +2028,7 @@ class NexusFSCoreMixin:
                 if tiger_cache:
                     added_count = tiger_cache.add_file_to_ancestor_grants(
                         file_path=path,
-                        zone_id=zone_id or "root",
+                        zone_id=zone_id or "default",
                     )
                     if added_count > 0:
                         import logging
@@ -2041,9 +2071,9 @@ class NexusFSCoreMixin:
             # DEFERRED PATH: Queue permission operations for background batch processing
             # Owner can still access file immediately via owner_id fast-path
             try:
-                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "root")
+                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "default")
                 if meta is None and ctx.user and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.zone_id or "root")
+                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.zone_id or "default")
             except Exception as e:
                 logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
         else:
@@ -2054,7 +2084,7 @@ class NexusFSCoreMixin:
                         f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, zone_id=ctx.zone_id or "root"
+                        path, zone_id=ctx.zone_id or "default"
                     )
                     logger.info(f"write: Created {created_count} parent tuples for {path}")
                 except Exception as e:
@@ -2073,7 +2103,7 @@ class NexusFSCoreMixin:
                             subject=("user", ctx.user),
                             relation="direct_owner",
                             object=("file", path),
-                            zone_id=ctx.zone_id or "root",
+                            zone_id=ctx.zone_id or "default",
                         )
                         logger.debug(
                             f"write: Granted direct_owner permission to {ctx.user} for {path}"
@@ -2087,7 +2117,7 @@ class NexusFSCoreMixin:
         if self.auto_parse:
             self._auto_parse_file(path)
 
-        # Issue #1752: Auto-track writes in active transactions
+        # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
         _snapshot_svc = getattr(self, "_snapshot_service", None)
         if _snapshot_svc is not None:
             _txn_id = _snapshot_svc.is_tracked(path)
@@ -2120,7 +2150,7 @@ class NexusFSCoreMixin:
                 "size": len(content),
                 "etag": content_hash,
                 "version": new_version,
-                "zone_id": zone_id or "root",
+                "zone_id": zone_id or "default",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "created": is_new_file,
@@ -2662,7 +2692,8 @@ class NexusFSCoreMixin:
                 version=new_version,
                 created_by=getattr(self, "agent_id", None)
                 or getattr(self, "user_id", None),  # Track who created/modified this version
-                zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+                zone_id=zone_id
+                or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             )
             metadata_list.append(metadata)
 
@@ -2700,7 +2731,7 @@ class NexusFSCoreMixin:
 
         logger = logging.getLogger(__name__)
         ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "root"
+        zone_id_for_perms = ctx.zone_id or "default"
 
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = _time.perf_counter()
@@ -3001,7 +3032,7 @@ class NexusFSCoreMixin:
         # Check write permission for delete        # This comes AFTER zone isolation check so AccessDeniedError takes precedence
         self._check_permission(path, Permission.WRITE, context)
 
-        # Issue #1752: Auto-track deletes in active transactions
+        # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
         _snapshot_svc = getattr(self, "_snapshot_service", None)
         if _snapshot_svc is not None:
             _txn_id = _snapshot_svc.is_tracked(path)
@@ -3037,7 +3068,7 @@ class NexusFSCoreMixin:
         # Issue #1169: Precise cache invalidation via cache observer
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_delete(path, new_revision, zone_id or "root")
+            cache_observer.on_delete(path, new_revision, zone_id or "default")
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         self._fire_workflow_event(
@@ -3046,7 +3077,7 @@ class NexusFSCoreMixin:
                 "file_path": path,
                 "size": meta.size,
                 "etag": meta.etag,
-                "zone_id": zone_id or "root",
+                "zone_id": zone_id or "default",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -3212,7 +3243,7 @@ class NexusFSCoreMixin:
         new_revision = self._increment_zone_revision()
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "root")
+            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "default")
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
@@ -3265,7 +3296,7 @@ class NexusFSCoreMixin:
                         old_path=old_path,
                         new_path=new_path,
                         is_directory=bool(is_directory),
-                        zone_id=zone_id or "root",
+                        zone_id=zone_id or "default",
                     )
             except Exception as e:
                 # Log but don't fail the rename operation
@@ -3292,7 +3323,7 @@ class NexusFSCoreMixin:
                 "new_path": new_path,
                 "size": meta.size if meta else 0,
                 "etag": meta.etag if meta else None,
-                "zone_id": zone_id or "root",
+                "zone_id": zone_id or "default",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -4188,7 +4219,6 @@ class NexusFSCoreMixin:
             is_implicit: If True, directory is implicit (no metadata, exists due to child files).
                         If None, will be auto-detected.
         """
-        import contextlib
         import errno
 
         path = self._validate_path(path)
@@ -4228,10 +4258,20 @@ class NexusFSCoreMixin:
 
         if recursive and files_in_dir:
             # Delete content from backend for each file
+            _errors: list[str] = []
             for file_meta in files_in_dir:
                 if file_meta.etag and file_meta.mime_type != "inode/directory":
-                    with contextlib.suppress(Exception):
+                    try:
                         route.backend.delete_content(file_meta.etag).unwrap()
+                    except Exception as e:
+                        if len(_errors) < 100:
+                            _errors.append(f"{file_meta.path}: {e}")
+            if _errors:
+                logger.debug(
+                    "Bulk content delete: %d error(s) (showing up to 100): %s",
+                    len(_errors),
+                    "; ".join(_errors),
+                )
 
             # Batch delete from metadata store
             file_paths = [file_meta.path for file_meta in files_in_dir]

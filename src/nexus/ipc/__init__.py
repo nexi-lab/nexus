@@ -23,7 +23,7 @@ from nexus.ipc.conventions import (
     outbox_path,
     processed_path,
 )
-from nexus.ipc.delivery import MessageProcessor, MessageSender
+from nexus.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
 from nexus.ipc.discovery import AgentDiscovery
 from nexus.ipc.driver import IPCVFSDriver
 from nexus.ipc.envelope import MessageEnvelope, MessageType
@@ -50,6 +50,7 @@ __all__ = [
     "dead_letter_path",
     "message_filename",
     # Delivery
+    "DeliveryMode",
     "MessageSender",
     "MessageProcessor",
     # Discovery

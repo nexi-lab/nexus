@@ -98,6 +98,10 @@ class MessageEnvelope(BaseModel):
         """Serialize to JSON bytes for VFS write."""
         return self.model_dump_json(by_alias=True, indent=2).encode("utf-8")
 
+    def to_hot_bytes(self) -> bytes:
+        """Compact JSON (no indentation) for hot-path delivery."""
+        return self.model_dump_json(by_alias=True).encode("utf-8")
+
     @classmethod
     def from_bytes(cls, data: bytes) -> MessageEnvelope:
         """Deserialize from JSON bytes read from VFS.

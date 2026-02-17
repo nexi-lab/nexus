@@ -274,6 +274,8 @@ def create_app(
     app.state.key_service = None
     app.state.rebac_circuit_breaker = None
     app.state.chunked_upload_service = None
+    app.state.delegation_service = None
+    app.state.reputation_service = None
 
     # Initialize subscription manager if we have a metadata store
     try:
@@ -580,8 +582,8 @@ def _register_routes(app: FastAPI) -> None:
     )
 
     v2_registry = build_v2_registry(
-        async_nexus_fs_getter=lambda: _fastapi_app.state.async_nexus_fs,
-        chunked_upload_service_getter=lambda: _fastapi_app.state.chunked_upload_service,
+        async_nexus_fs_getter=lambda: app.state.async_nexus_fs,
+        chunked_upload_service_getter=lambda: app.state.chunked_upload_service,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
@@ -610,8 +612,7 @@ def _register_routes(app: FastAPI) -> None:
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
-            getattr(_fastapi_app.state, "api_key", None)
-            or getattr(_fastapi_app.state, "auth_provider", None)
+            getattr(app.state, "api_key", None) or getattr(app.state, "auth_provider", None)
         )
 
         async def _a2a_auth_adapter(request: Request) -> dict[str, Any] | None:
@@ -628,12 +629,12 @@ def _register_routes(app: FastAPI) -> None:
                 return None
 
         a2a_router = create_a2a_router(
-            nexus_fs=_fastapi_app.state.nexus_fs,
+            nexus_fs=app.state.nexus_fs,
             config=None,
             base_url=a2a_base_url,
             auth_required=a2a_auth_required,
             auth_fn=_a2a_auth_adapter,
-            data_dir=getattr(_fastapi_app.state, "data_dir", None),
+            data_dir=getattr(app.state, "data_dir", None),
         )
         app.include_router(a2a_router)
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
@@ -662,7 +663,7 @@ def _register_routes(app: FastAPI) -> None:
                     detail="Secrets audit log access requires admin privileges",
                 )
             if _secrets_audit_logger_instance is None:
-                session_factory = getattr(_fastapi_app.state.nexus_fs, "SessionLocal", None)
+                session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
                 if session_factory is None:
                     raise HTTPException(status_code=500, detail="Secrets audit not configured")
                 _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)

@@ -2,6 +2,9 @@
 
 Provides bidirectional conversion so that A2A protocol messages can
 flow through the IPC subsystem and vice versa (Decision 2 / #1587).
+
+Moved from ``core/`` to ``a2a/`` because this module depends on
+``nexus.a2a.models`` — the kernel must not import from services.
 """
 
 from __future__ import annotations

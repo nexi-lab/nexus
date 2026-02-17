@@ -13,7 +13,7 @@ import contextlib
 import json
 import logging
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -239,8 +239,8 @@ class ProxyBrick:
 class ProxyVFSBrick(ProxyBrick):
     """Proxy for ``VFSOperations`` — forwards file ops to a cloud kernel.
 
-    ``zone_id`` is forwarded to the remote server for zone-scoped
-    operation dispatch.
+    Per KERNEL-ARCHITECTURE.md §4, ``zone_id`` is forwarded to the remote
+    server for zone-scoped isolation.
     """
 
     async def read(self, path: str, zone_id: str) -> bytes:
@@ -259,8 +259,7 @@ class ProxyVFSBrick(ProxyBrick):
         await self._forward("write", path=path, content=encoded, zone_id=zone_id)
 
     async def list_dir(self, path: str, zone_id: str) -> list[str]:
-        result: list[str] = await self._forward("list_dir", path=path, zone_id=zone_id)
-        return result
+        return cast(list[str], await self._forward("list_dir", path=path, zone_id=zone_id))
 
     async def rename(self, src: str, dst: str, zone_id: str) -> None:
         await self._forward("rename", src=src, dst=dst, zone_id=zone_id)
@@ -269,12 +268,10 @@ class ProxyVFSBrick(ProxyBrick):
         await self._forward("mkdir", path=path, zone_id=zone_id)
 
     async def count_dir(self, path: str, zone_id: str) -> int:
-        result: int = await self._forward("count_dir", path=path, zone_id=zone_id)
-        return result
+        return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
 
     async def exists(self, path: str, zone_id: str) -> bool:
-        result: bool = await self._forward("exists", path=path, zone_id=zone_id)
-        return result
+        return cast(bool, await self._forward("exists", path=path, zone_id=zone_id))
 
 
 class ProxyEventLogBrick(ProxyBrick):

@@ -116,7 +116,7 @@ class SemanticSearch:
         # Issue #1520: Prefer FileReaderProtocol, fall back to legacy nx
         self.file_reader: FileReaderProtocol | None = file_reader
         self.nx = nx  # Backward compat — used if file_reader is None
-        self._session_factory = (
+        self._session_factory: Any = (
             session_factory
             if session_factory is not None
             else (nx.SessionLocal if nx is not None else None)

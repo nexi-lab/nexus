@@ -699,18 +699,26 @@ class TigerCache:
                     results.update(batch_results)
                 return results
 
-            values = ", ".join(
-                f"('{k.subject_type}', '{k.subject_id}', '{k.permission}', '{k.resource_type}')"
-                for k in to_fetch
-            )
+            # Build parameterized OR conditions for SQLite
+            conditions: list[str] = []
+            params = {}
+            for i, k in enumerate(to_fetch):
+                conditions.append(
+                    f"(subject_type = :st_{i} AND subject_id = :si_{i}"
+                    f" AND permission = :pm_{i} AND resource_type = :rt_{i})"
+                )
+                params[f"st_{i}"] = k.subject_type
+                params[f"si_{i}"] = k.subject_id
+                params[f"pm_{i}"] = k.permission
+                params[f"rt_{i}"] = k.resource_type
+            where_clause = " OR ".join(conditions)
             query = text(f"""
                 SELECT subject_type, subject_id, permission, resource_type,
                        bitmap_data, revision
                 FROM tiger_cache
-                WHERE (subject_type, subject_id, permission, resource_type)
-                    IN (VALUES {values})
+                WHERE {where_clause}
             """)
-            db_result = conn.execute(query)
+            db_result = conn.execute(query, params)
 
         # Process results and update cache
         with self._lock:

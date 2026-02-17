@@ -24,13 +24,17 @@ def _make_parser(
     p.priority = priority
     p.can_parse = MagicMock(return_value=can)
     # Make isinstance check pass
-    p.__class__ = type(name, (Parser,), {
-        "can_parse": lambda self, *a, **k: can,
-        "parse": lambda self, *a, **k: None,
-        "supported_formats": property(lambda self: formats or [".txt"]),
-        "name": property(lambda self: name),
-        "priority": property(lambda self: priority),
-    })
+    p.__class__ = type(
+        name,
+        (Parser,),
+        {
+            "can_parse": lambda self, *a, **k: can,
+            "parse": lambda self, *a, **k: None,
+            "supported_formats": property(lambda self: formats or [".txt"]),
+            "name": property(lambda self: name),
+            "priority": property(lambda self: priority),
+        },
+    )
     return p
 
 

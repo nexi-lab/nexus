@@ -102,9 +102,7 @@ class ParsersBrick:
         registry = self._parser_registry
 
         def _parse(content: bytes, path: str) -> bytes | None:
-            processed_content, effective_path, metadata = prepare_content_for_parsing(
-                content, path
-            )
+            processed_content, effective_path, metadata = prepare_content_for_parsing(content, path)
             parser = registry.get_parser(effective_path)
             if not parser:
                 return None

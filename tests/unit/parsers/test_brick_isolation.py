@@ -40,7 +40,11 @@ def _get_runtime_nexus_core_imports(module_path: Path) -> list[str]:
             for alias in node.names:
                 if alias.name.startswith("nexus.core"):
                     core_imports.append(alias.name)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("nexus.core"):
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("nexus.core")
+        ):
             core_imports.append(node.module)
 
     return core_imports
@@ -63,7 +67,6 @@ class TestParsersZeroCoreImports:
             if imports:
                 violations.append(f"{f.name}: {imports}")
 
-        assert violations == [], (
-            "parsers/ files with runtime nexus.core imports:\n"
-            + "\n".join(f"  - {v}" for v in violations)
+        assert violations == [], "parsers/ files with runtime nexus.core imports:\n" + "\n".join(
+            f"  - {v}" for v in violations
         )

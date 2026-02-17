@@ -28,14 +28,18 @@ def _make_provider(
     p.can_parse = MagicMock(return_value=can_parse)
     p.parse = AsyncMock(return_value=ParseResult(text="parsed", metadata={}))
     # Make isinstance check pass
-    p.__class__ = type(name, (ParseProvider,), {
-        "name": property(lambda self: name),
-        "priority": property(lambda self: priority),
-        "supported_formats": property(lambda self: formats or [".pdf"]),
-        "is_available": lambda self: available,
-        "can_parse": lambda self, path: can_parse,
-        "parse": AsyncMock(return_value=ParseResult(text="parsed", metadata={})),
-    })
+    p.__class__ = type(
+        name,
+        (ParseProvider,),
+        {
+            "name": property(lambda self: name),
+            "priority": property(lambda self: priority),
+            "supported_formats": property(lambda self: formats or [".pdf"]),
+            "is_available": lambda self: available,
+            "can_parse": lambda self, path: can_parse,
+            "parse": AsyncMock(return_value=ParseResult(text="parsed", metadata={})),
+        },
+    )
     return p
 
 

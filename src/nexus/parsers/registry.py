@@ -63,9 +63,7 @@ class ParserRegistry(BaseRegistry[Parser]):
             )
         self._parsers_by_extension = new_ext_index
 
-        logger.info(
-            "Registered parser %r for formats: %s", parser.name, parser.supported_formats
-        )
+        logger.info("Registered parser %r for formats: %s", parser.name, parser.supported_formats)
 
     def get_parser(self, file_path: str, mime_type: str | None = None) -> Parser:
         """Get the appropriate parser for a file.

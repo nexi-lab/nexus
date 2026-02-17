@@ -699,7 +699,8 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | P6 | **SearchProtocol** | `services/protocols/search.py` | Service | Mixed | 6 (Small) | Standalone | `readdir` + custom | Unified find interface (glob/grep/semantic) |
 | P7 | **SearchBrickProtocol** | `services/protocols/search.py` | Service | Mixed | 5 (Small) | Standalone | search daemon | Per-brick search with indexing lifecycle |
 | P8 | **PermissionProtocol** | `services/protocols/permission.py` | Service | Sync | 6 (Small) | Standalone | SELinux / Zanzibar | ReBAC check/write/delete/expand |
-| P9 | **EventsProtocol** | `services/protocols/events.py` | Service | Async | 4 (Small) | Standalone | `inotify` + `flock` | File watching + advisory locking (BUNDLED) |
+| P9a | **WatchProtocol** | `services/protocols/watch.py` | Service | Async | 2 (Micro) | Standalone | `inotify` | File change long-poll (split from EventsProtocol) |
+| P9b | **LockProtocol** | `services/protocols/lock.py` | Service | Async | 3 (Micro) | Standalone | `flock` | Advisory lock lifecycle (split from EventsProtocol) |
 | P10 | **MountProtocol** | `services/protocols/mount.py` | Service | Async | 15 (Large) | Standalone | `mount(2)` | Mount lifecycle: add/remove/sync/save/load |
 | P11 | **ShareLinkProtocol** | `services/protocols/share_link.py` | Service | Async | 6 (Small) | Standalone | capability URLs | Create/revoke/access capability URLs |
 | P12 | **OAuthProtocol** | `services/protocols/oauth.py` | Service | Async | 7 (Medium) | Standalone | PAM / keyring | OAuth flow + credential management |

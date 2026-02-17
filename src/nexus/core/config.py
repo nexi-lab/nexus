@@ -176,6 +176,14 @@ class KernelServices:
     search_service: Any = None
     events_service: Any = None
 
+    # Mount/sync/task-queue services (Issue #655)
+    # When set, NexusFS uses these instead of creating via @cached_property.
+    mount_core_service: Any = None
+    sync_service: Any = None
+    sync_job_service: Any = None
+    mount_persist_service: Any = None
+    task_queue_service: Any = None
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

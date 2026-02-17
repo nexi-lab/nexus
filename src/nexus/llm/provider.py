@@ -320,7 +320,12 @@ class LLMProvider(ABC):
 
     def is_caching_prompt_active(self) -> bool:
         """Check if prompt caching is supported and enabled."""
-        return self.config.caching_prompt and (
+        if not self.config.caching_prompt:
+            return False
+        # Prefer litellm model_info; fall back to override list
+        if self.model_info and self.model_info.get("supports_prompt_caching"):
+            return True
+        return (
             self.config.model in CACHE_PROMPT_SUPPORTED_MODELS
             or self.config.model.split("/")[-1] in CACHE_PROMPT_SUPPORTED_MODELS
         )
@@ -479,46 +484,13 @@ class LiteLLMProvider(LLMProvider):
         # Set litellm modify_params
         litellm.modify_params = self.config.modify_params
 
-        # Record start time
         start_time = time.time()
 
-        # Make request
         response: ModelResponse = self._completion_partial(
             messages=formatted_messages, **call_kwargs
         )
 
-        # Calculate latency
-        latency = time.time() - start_time
-        response_id = response.get("id", "unknown")
-        self.metrics.add_response_latency(latency, response_id)
-
-        # Calculate cost and update metrics
-        cost = self._calculate_cost(response)
-
-        # Update token usage
-        usage: Usage | None = response.get("usage")
-        if usage:
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("completion_tokens", 0)
-
-            # Handle cache tokens (Anthropic)
-            prompt_tokens_details: PromptTokensDetails | None = usage.get("prompt_tokens_details")
-            cache_hit_tokens = (
-                prompt_tokens_details.cached_tokens
-                if prompt_tokens_details and prompt_tokens_details.cached_tokens
-                else 0
-            )
-            model_extra = usage.get("model_extra", {})
-            cache_write_tokens = model_extra.get("cache_creation_input_tokens", 0)
-
-            self.metrics.add_token_usage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                cache_read_tokens=cache_hit_tokens,
-                cache_write_tokens=cache_write_tokens,
-                response_id=response_id,
-            )
-
+        cost, _response_id = self._record_response_metrics(response, start_time)
         return LiteLLMResponse(response, cost)
 
     async def complete_async(
@@ -607,44 +579,9 @@ class LiteLLMProvider(LLMProvider):
 
             # Handle results
             if completion_task in done:
-                # Normal completion
                 cancel_event.set()
                 response: ModelResponse = await completion_task
-
-                # Calculate latency
-                latency = time.time() - start_time
-                response_id = response.get("id", "unknown")
-                self.metrics.add_response_latency(latency, response_id)
-
-                # Calculate cost and update metrics
-                cost = self._calculate_cost(response)
-
-                # Update token usage
-                usage: Usage | None = response.get("usage")
-                if usage:
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-
-                    # Handle cache tokens (Anthropic)
-                    prompt_tokens_details: PromptTokensDetails | None = usage.get(
-                        "prompt_tokens_details"
-                    )
-                    cache_hit_tokens = (
-                        prompt_tokens_details.cached_tokens
-                        if prompt_tokens_details and prompt_tokens_details.cached_tokens
-                        else 0
-                    )
-                    model_extra = usage.get("model_extra", {})
-                    cache_write_tokens = model_extra.get("cache_creation_input_tokens", 0)
-
-                    self.metrics.add_token_usage(
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        cache_read_tokens=cache_hit_tokens,
-                        cache_write_tokens=cache_write_tokens,
-                        response_id=response_id,
-                    )
-
+                cost, _response_id = self._record_response_metrics(response, start_time)
                 return LiteLLMResponse(response, cost)
             else:
                 # Cancellation occurred
@@ -763,7 +700,6 @@ class LiteLLMProvider(LLMProvider):
 
     def count_tokens(self, messages: list[Message]) -> int:
         """Count tokens in messages."""
-        # Format messages for token counting
         formatted_messages = self._format_messages(messages)
 
         # Create cache key
@@ -774,7 +710,6 @@ class LiteLLMProvider(LLMProvider):
             if cache_key in self._token_count_cache:
                 return self._token_count_cache[cache_key]
         except (TypeError, AttributeError, ValueError):
-            # Cache key creation failed (invalid input types)
             cache_key = None
 
         # Count tokens
@@ -793,21 +728,63 @@ class LiteLLMProvider(LLMProvider):
 
             return token_count
         except (ValueError, TypeError, AttributeError) as e:
-            # Token counting failed - return 0 as fallback
-            import logging
-
-            logging.warning(f"Token counting failed for model {self.config.model}: {e}")
+            logger.warning("Token counting failed for model %s: %s", self.config.model, e)
             return 0
 
-    def _format_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
-        """Format messages for the provider."""
-        # Set serialization flags
-        for msg in messages:
-            msg.cache_enabled = self.is_caching_prompt_active()
-            msg.vision_enabled = self.vision_is_active()
-            msg.function_calling_enabled = self.is_function_calling_active()
+    def _record_response_metrics(
+        self, response: ModelResponse, start_time: float
+    ) -> tuple[float, str]:
+        """Record latency, cost, and token usage metrics for a response.
 
-        return [msg.model_dump() for msg in messages]
+        Args:
+            response: The model response
+            start_time: Time when the request started (from time.time())
+
+        Returns:
+            Tuple of (cost, response_id)
+        """
+        latency = time.time() - start_time
+        response_id: str = response.get("id", "unknown")
+        self.metrics.add_response_latency(latency, response_id)
+
+        cost = self._calculate_cost(response)
+
+        usage: Usage | None = response.get("usage")
+        if usage:
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+
+            prompt_tokens_details: PromptTokensDetails | None = usage.get("prompt_tokens_details")
+            cache_hit_tokens = (
+                prompt_tokens_details.cached_tokens
+                if prompt_tokens_details and prompt_tokens_details.cached_tokens
+                else 0
+            )
+            model_extra = usage.get("model_extra", {})
+            cache_write_tokens = model_extra.get("cache_creation_input_tokens", 0)
+
+            self.metrics.add_token_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cache_read_tokens=cache_hit_tokens,
+                cache_write_tokens=cache_write_tokens,
+                response_id=response_id,
+            )
+
+        return cost, response_id
+
+    def _format_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
+        """Format messages for the provider.
+
+        Creates copies of messages with serialization flags set,
+        avoiding mutation of the caller's message objects.
+        """
+        flags = {
+            "cache_enabled": self.is_caching_prompt_active(),
+            "vision_enabled": self.vision_is_active(),
+            "function_calling_enabled": self.is_function_calling_active(),
+        }
+        return [msg.model_copy(update=flags).model_dump() for msg in messages]
 
     def _calculate_cost(self, response: ModelResponse) -> float:
         """Calculate cost of response."""

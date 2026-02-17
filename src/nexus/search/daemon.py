@@ -401,17 +401,13 @@ class SearchDaemon:
             self.stats.zoekt_available = False
 
     async def _check_embedding_cache(self) -> None:
-        """Check if embedding cache (Dragonfly) is connected."""
-        try:
-            from nexus.cache.dragonfly import DragonflyEmbeddingCache
+        """Check if embedding cache (Dragonfly) is connected.
 
-            cache = DragonflyEmbeddingCache()  # type: ignore[call-arg]
-            self.stats.embedding_cache_connected = await cache.is_connected()  # type: ignore[attr-defined]
-
-            if self.stats.embedding_cache_connected:
-                logger.info("Embedding cache (Dragonfly) connected")
-        except Exception:
-            self.stats.embedding_cache_connected = False
+        NOTE: Embedding cache health is now checked via CacheBrick.health_check().
+        This method is kept for backward compat but always reports False until
+        a CacheBrick reference is wired in (follow-up).
+        """
+        self.stats.embedding_cache_connected = False
 
     # =========================================================================
     # Search Methods

@@ -16,14 +16,13 @@ from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
     from nexus_fast import BloomFilter
 
     from nexus.core.permissions import OperationContext
-    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +246,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
         self._cas.write_meta(content_hash, CASMeta.from_dict(metadata))
 
+    @timed_response
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
     ) -> HandlerResponse[str]:
@@ -266,59 +266,39 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with content hash in data field
         """
-        start_time = time.perf_counter()
-
         # Route large files to chunked storage (Issue #1074)
         if self._should_chunk(content):
-            try:
-                content_hash = self._write_chunked(content, context)
-                return HandlerResponse.ok(
-                    data=content_hash,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path="chunked",
-                )
+            content_hash = self._write_chunked(content, context)
+            return HandlerResponse.ok(
+                data=content_hash,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
         # Small files: lock-free CAS via CASBlobStore
         content_hash = self._compute_hash(content)
 
-        try:
-            is_new = self._cas.store(content_hash, content)
+        is_new = self._cas.store(content_hash, content)
 
-            # Add to cache since we have the content in memory
-            if self.content_cache is not None:
-                self.content_cache.put(content_hash, content)
+        # Add to cache since we have the content in memory
+        if self.content_cache is not None:
+            self.content_cache.put(content_hash, content)
 
-            # Add to Bloom filter for fast future lookups
-            self._cas_bloom_add(content_hash)
+        # Add to Bloom filter for fast future lookups
+        self._cas_bloom_add(content_hash)
 
-            # Notify search brick of write (e.g., Zoekt reindex) via callback (Issue #1520)
-            if is_new and self.on_write_callback is not None:
-                content_path = self._hash_to_path(content_hash)
-                self.on_write_callback(str(content_path))
+        # Notify search brick of write (e.g., Zoekt reindex) via callback (Issue #1520)
+        if is_new and self.on_write_callback is not None:
+            content_path = self._hash_to_path(content_hash)
+            self.on_write_callback(str(content_path))
 
-            return HandlerResponse.ok(
-                data=content_hash,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+        return HandlerResponse.ok(
+            data=content_hash,
+            backend_name=self.name,
+            path=content_hash,
+        )
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
-
+    @timed_response
     def read_content(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bytes]:
@@ -336,15 +316,12 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with file content in data field
         """
-        start_time = time.perf_counter()
-
         # Check cache first for fast path
         if self.content_cache is not None:
             cached_content = self.content_cache.get(content_hash)
             if cached_content is not None:
                 return HandlerResponse.ok(
                     data=cached_content,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=content_hash,
                 )
@@ -358,7 +335,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                     self.content_cache.put(content_hash, content)
                 return HandlerResponse.ok(
                     data=content,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=content_hash,
                 )
@@ -366,15 +342,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 return HandlerResponse.not_found(
                     path=content_hash,
                     message=f"Chunked content not found: {content_hash}",
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
-                )
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
                 )
 
         # Note: We intentionally do NOT use Bloom filter for early rejection here
@@ -401,7 +369,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 return HandlerResponse.not_found(
                     path=content_hash,
                     message=f"CAS content not found: {content_hash}",
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                 )
 
@@ -418,7 +385,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                         return HandlerResponse.not_found(
                             path=content_hash,
                             message=f"CAS content not found: {content_hash}",
-                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
                             backend_name=self.name,
                         )
                 except ImportError:
@@ -432,7 +398,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                     return HandlerResponse.error(
                         message=msg,
                         code=500,
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
                         backend_name=self.name,
                         path=content_hash,
                     )
@@ -443,7 +408,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
                 return HandlerResponse.ok(
                     data=content,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=content_hash,
                 )
@@ -455,7 +419,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                     continue
                 return HandlerResponse.from_exception(
                     e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=content_hash,
                 )
@@ -464,7 +427,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         return HandlerResponse.error(
             message=f"Failed to read content after {max_retries} retries",
             code=500,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name=self.name,
             path=content_hash,
         )
@@ -538,7 +500,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         return result
 
     def stream_content(
-        self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
+        self, content_hash: str, chunk_size: int = 65536, context: "OperationContext | None" = None
     ) -> Any:
         """
         Stream content from disk in chunks without loading entire file into memory.
@@ -578,7 +540,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         content_hash: str,
         start: int,
         end: int,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> "Iterator[bytes]":
         """Efficient seek-based range streaming for local CAS.
@@ -619,15 +581,20 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 f"Failed to stream range: {e}", backend="local", path=content_hash
             ) from e
 
+    @timed_response
     def write_stream(
         self,
         chunks: "Iterator[bytes]",
         context: "OperationContext | None" = None,
     ) -> HandlerResponse[str]:
         """
-        Write content from an iterator of chunks.
+        Write content from an iterator of chunks with true streaming.
 
-        Collects chunks, computes hash, then delegates to CASBlobStore.
+        Streams chunks directly to disk via CASBlobStore.store_streaming()
+        with incremental hashing — no full-content buffer in memory.
+
+        For files above the CDC threshold (16 MB), a two-phase approach
+        is used: store as single blob first, then re-chunk via CDC.
 
         Args:
             chunks: Iterator yielding byte chunks
@@ -636,13 +603,35 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with content hash in data field
         """
-        # Collect all chunks, then delegate to write_content
-        collected_chunks: list[bytes] = []
-        for chunk in chunks:
-            collected_chunks.append(chunk)
-        content = b"".join(collected_chunks)
-        return self.write_content(content, context=context)
+        result = self._cas.store_streaming(chunks)
 
+        # CDC routing: if the file is large enough, re-chunk it
+        if result.size >= self.cdc_threshold and result.is_new:
+            # Read the blob back and write through CDC chunking
+            content = self._cas.read_blob(result.content_hash)
+            cdc_hash = self._write_chunked(content, context)
+            # Release the single-blob version (CDC manifest now owns the data)
+            self._cas.release(result.content_hash)
+            content_hash = cdc_hash
+        else:
+            content_hash = result.content_hash
+
+        # Update Bloom filter
+        self._cas_bloom_add(content_hash)
+
+        # Notify search brick of write (e.g., Zoekt reindex) via callback
+        if result.is_new and self.on_write_callback is not None:
+            content_path = self._hash_to_path(content_hash)
+            self.on_write_callback(str(content_path))
+
+        return HandlerResponse.ok(
+            data=content_hash,
+            backend_name=self.name,
+            path=content_hash,
+            affected_rows=result.size,
+        )
+
+    @timed_response
     def delete_content(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[None]:
@@ -658,54 +647,34 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse indicating success or failure
         """
-        start_time = time.perf_counter()
         content_path = self._hash_to_path(content_hash)
 
         if not content_path.exists():
             return HandlerResponse.not_found(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
         # Handle chunked content (Issue #1074)
         if self._is_chunked_content(content_hash):
-            try:
-                self._delete_chunked(content_hash, context)
-                return HandlerResponse.ok(
-                    data=None,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-            except Exception as e:
-                return HandlerResponse.from_exception(
-                    e,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-
-        # Single-blob: delegate to CASBlobStore (no FileLock)
-        try:
-            self._cas.release(content_hash)
-
+            self._delete_chunked(content_hash, context)
             return HandlerResponse.ok(
                 data=None,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=content_hash,
             )
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+        # Single-blob: delegate to CASBlobStore (no FileLock)
+        self._cas.release(content_hash)
 
+        return HandlerResponse.ok(
+            data=None,
+            backend_name=self.name,
+            path=content_hash,
+        )
+
+    @timed_response
     def content_exists(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
@@ -721,13 +690,10 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with True if content exists, False otherwise
         """
-        start_time = time.perf_counter()
-
         # Fast path: Bloom filter says content definitely doesn't exist
         if not self._cas_bloom_check(content_hash):
             return HandlerResponse.ok(
                 data=False,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=content_hash,
             )
@@ -737,11 +703,11 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
         return HandlerResponse.ok(
             data=exists,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name=self.name,
             path=content_hash,
         )
 
+    @timed_response
     def get_content_size(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
@@ -756,37 +722,27 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with content size in bytes
         """
-        start_time = time.perf_counter()
         content_path = self._hash_to_path(content_hash)
 
         if not content_path.exists():
             return HandlerResponse.not_found(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
-        try:
-            # For chunked content, size is stored in metadata (original file size)
-            if self._is_chunked_content(content_hash):
-                size = self._get_content_size_chunked(content_hash)
-            else:
-                size = content_path.stat().st_size
-            return HandlerResponse.ok(
-                data=size,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+        # For chunked content, size is stored in metadata (original file size)
+        if self._is_chunked_content(content_hash):
+            size = self._get_content_size_chunked(content_hash)
+        else:
+            size = content_path.stat().st_size
+        return HandlerResponse.ok(
+            data=size,
+            backend_name=self.name,
+            path=content_hash,
+        )
 
+    @timed_response
     def get_ref_count(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
@@ -799,42 +755,31 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with reference count
         """
-        start_time = time.perf_counter()
-
         exists_response = self.content_exists(content_hash, context=context)
         if not exists_response.success or not exists_response.data:
             return HandlerResponse.not_found(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
-        try:
-            metadata = self._read_metadata(content_hash)
-            ref_count = int(metadata.get("ref_count", 0))
-            return HandlerResponse.ok(
-                data=ref_count,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+        metadata = self._read_metadata(content_hash)
+        ref_count = int(metadata.get("ref_count", 0))
+        return HandlerResponse.ok(
+            data=ref_count,
+            backend_name=self.name,
+            path=content_hash,
+        )
 
     # === Directory Operations ===
 
+    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Create directory in virtual directory structure.
 
@@ -847,7 +792,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse indicating success or failure
         """
-        start_time = time.perf_counter()
         full_path = self.dir_root / path.lstrip("/")
 
         try:
@@ -857,7 +801,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 full_path.mkdir(exist_ok=exist_ok)
             return HandlerResponse.ok(
                 data=None,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=path,
             )
@@ -865,7 +808,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             if exist_ok:
                 return HandlerResponse.ok(
                     data=None,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=path,
                 )
@@ -873,7 +815,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 message=f"Directory already exists: {path}",
                 code=409,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=path,
             )
@@ -882,37 +823,28 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 message=f"Parent directory not found: {path}",
                 code=404,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=path,
-            )
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=path,
             )
 
+    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Remove directory from virtual directory structure.
 
         Returns:
             HandlerResponse indicating success or failure
         """
-        start_time = time.perf_counter()
         full_path = self.dir_root / path.lstrip("/")
 
         if not full_path.exists():
             return HandlerResponse.not_found(
                 path=path,
                 message=f"Directory not found: {path}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
@@ -921,7 +853,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 message=f"Path is not a directory: {path}",
                 code=400,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=path,
             )
@@ -933,7 +864,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 full_path.rmdir()
             return HandlerResponse.ok(
                 data=None,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=path,
             )
@@ -944,17 +874,12 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                     message=f"Directory not empty: {path}",
                     code=400,
                     is_expected=True,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                     path=path,
                 )
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=path,
-            )
+            raise
 
+    @timed_response
     def is_directory(
         self, path: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
@@ -963,23 +888,13 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with True if path is a directory, False otherwise
         """
-        start_time = time.perf_counter()
-        try:
-            full_path = self.dir_root / path.lstrip("/")
-            is_dir = full_path.exists() and full_path.is_dir()
-            return HandlerResponse.ok(
-                data=is_dir,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=path,
-            )
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=path,
-            )
+        full_path = self.dir_root / path.lstrip("/")
+        is_dir = full_path.exists() and full_path.is_dir()
+        return HandlerResponse.ok(
+            data=is_dir,
+            backend_name=self.name,
+            path=path,
+        )
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """List directory contents using local filesystem."""

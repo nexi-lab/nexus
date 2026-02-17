@@ -1439,8 +1439,10 @@ def create_app(
         obs_sub = nexus_fs._service_extras.get("observability_subsystem")
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
-    except Exception:
+    except ImportError:
         pass
+    except Exception:
+        logger.warning("Failed to register QueryObserverCollector", exc_info=True)
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
@@ -2406,7 +2408,16 @@ def _build_dispatch_table() -> dict[str, _DispatchEntry]:
     }
 
 
-async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
+async def _dispatch_method(
+    method: str,
+    params: Any,
+    context: Any,
+    *,
+    nexus_fs: Any = None,
+    exposed_methods: dict[str, Any] | None = None,
+    auth_provider: Any = None,
+    subscription_manager: Any = None,
+) -> Any:
     """Dispatch RPC method call.
 
     Looks up the method in ``_DISPATCH_TABLE`` first, then falls back to
@@ -2414,23 +2425,27 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     """
     global _DISPATCH_TABLE  # noqa: PLW0603
 
-    nexus_fs = _fastapi_app.state.nexus_fs
+    if nexus_fs is None:
+        nexus_fs = _fastapi_app.state.nexus_fs  # type: ignore[union-attr]
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
+
+    if exposed_methods is None:
+        exposed_methods = _fastapi_app.state.exposed_methods  # type: ignore[union-attr]
 
     # Lazy-init on first call (handler functions defined later in module)
     if not _DISPATCH_TABLE:
         _DISPATCH_TABLE = _build_dispatch_table()
 
     # Issue #1457: Enforce admin_only for ALL dispatch paths (auto + manual)
-    func = _fastapi_app.state.exposed_methods.get(method)
+    func = exposed_methods.get(method) if exposed_methods else None  # type: ignore[union-attr]
     if func and getattr(func, "_rpc_admin_only", False):
         _require_admin(context)
 
     # Auto-dispatch takes priority for dynamically exposed methods
     # that are NOT in the static dispatch table
-    if method in _fastapi_app.state.exposed_methods and method not in _DISPATCH_TABLE:
-        return await _auto_dispatch(method, params, context)
+    if exposed_methods and method in exposed_methods and method not in _DISPATCH_TABLE:
+        return await _auto_dispatch(method, params, context, exposed_methods=exposed_methods)
 
     entry = _DISPATCH_TABLE.get(method)
     if entry is not None:
@@ -2460,17 +2475,25 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return result
 
     # Fallback: try auto-dispatch for exposed methods
-    if method in _fastapi_app.state.exposed_methods:
-        return await _auto_dispatch(method, params, context)
+    _exposed = exposed_methods or {}
+    if method in _exposed:
+        return await _auto_dispatch(method, params, context, exposed_methods=exposed_methods)
 
     raise ValueError(f"Unknown method: {method}")
 
 
-async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
+async def _auto_dispatch(
+    method: str,
+    params: Any,
+    context: Any,
+    *,
+    exposed_methods: dict[str, Any] | None = None,
+) -> Any:
     """Auto-dispatch to exposed method."""
     import inspect
 
-    func = _fastapi_app.state.exposed_methods[method]
+    _methods = exposed_methods or _fastapi_app.state.exposed_methods  # type: ignore[union-attr]
+    func = _methods[method]
 
     # Build kwargs
     kwargs: dict[str, Any] = {}
@@ -2579,9 +2602,10 @@ def _handle_query_memories(params: Any, context: Any) -> dict[str, Any]:
                 embedding_provider_obj = create_embedding_provider(
                     provider=params.embedding_provider
                 )
-            except Exception:
-                # Failed to create provider, will use default or fallback
+            except ImportError:
                 pass
+            except Exception as e:
+                logger.warning("Failed to create embedding provider %s: %s", params.embedding_provider, e)
 
         # Use search method with semantic search
         search_mode = params.search_mode or "hybrid"

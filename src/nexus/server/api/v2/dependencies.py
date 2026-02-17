@@ -350,15 +350,12 @@ async def get_reputation_context(
         _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
     )
 
-    # Prefer singleton from lifespan DI (#1619)
-    # TODO(#1619): wire app_state via FastAPI dependency injection
-    reputation_service: Any = None
-    if reputation_service is None:
-        reputation_service = ReputationService(
-            session_factory=session_factory,
-            cache_maxsize=10_000,
-            cache_ttl=60,
-        )
+    # Per-request instantiation (singleton DI via app.state planned in #1619)
+    reputation_service = ReputationService(
+        session_factory=session_factory,
+        cache_maxsize=10_000,
+        cache_ttl=60,
+    )
     dispute_service = DisputeService(session_factory=session_factory)
 
     context = _get_operation_context(auth_result)

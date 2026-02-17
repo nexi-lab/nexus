@@ -76,7 +76,7 @@ def filter_os_metadata(files: list[str]) -> list[str]:
     if RUST_AVAILABLE and len(files) >= 10:
         try:
             return nexus_fast.filter_paths(files, OS_METADATA_PATTERNS)  # type: ignore[no-any-return]
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             # Fall back to Python on error
             pass
 

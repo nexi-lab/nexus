@@ -109,6 +109,8 @@ EXPECTED_MODELS = [
     "AdminBypassAuditModel",
     # A2A
     "A2ATaskModel",
+    # Dead Letter Queue (Issue #1138)
+    "DeadLetterModel",
 ]
 
 

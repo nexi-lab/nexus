@@ -1,8 +1,12 @@
 """Version service protocol (ops-scenario-matrix S3: History & Snapshots).
 
-Defines the contract for file version management and workspace snapshots —
-retrieving specific versions, listing history, rolling back, diffing, and
-creating / restoring workspace-level snapshots.
+Defines the contract for file version management — retrieving specific
+versions, listing history, rolling back, and diffing.
+
+Workspace-level snapshot operations are defined separately in
+``WorkspaceSnapshotProtocol`` (protocols/workspace_snapshot.py) per
+Interface Segregation Principle — file versioning and workspace snapshots
+have distinct consumers and different extraction timelines.
 
 Storage Affinity: **RecordStore** (version history records) +
                   **ObjectStore** (CAS content blobs per version) +
@@ -21,15 +25,10 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class VersionProtocol(Protocol):
-    """Service contract for file version management and workspace snapshots.
+    """Service contract for file version management.
 
-    File-level operations mirror ``services/version_service.VersionService``.
-    Workspace-level operations mirror the snapshot helpers currently inlined
-    on the NexusFS god object (``workspace_snapshot``, ``workspace_restore``,
-    ``workspace_log``, ``workspace_diff``).
+    Mirrors ``services/version_service.VersionService``.
     """
-
-    # ── File versioning ───────────────────────────────────────────────
 
     async def get_version(
         self,
@@ -59,31 +58,3 @@ class VersionProtocol(Protocol):
         mode: str = "metadata",
         context: Any | None = None,
     ) -> dict[str, Any] | str: ...
-
-    # ── Workspace snapshots ───────────────────────────────────────────
-
-    def workspace_snapshot(
-        self,
-        workspace_path: str | None = None,
-        description: str | None = None,
-        tags: list[str] | None = None,
-    ) -> dict[str, Any]: ...
-
-    def workspace_restore(
-        self,
-        snapshot_number: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]: ...
-
-    def workspace_log(
-        self,
-        workspace_path: str | None = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]: ...
-
-    def workspace_diff(
-        self,
-        snapshot_1: int,
-        snapshot_2: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]: ...

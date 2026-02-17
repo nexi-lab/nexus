@@ -215,6 +215,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # lock/extend_lock/unlock methods match
     ),
+    # ── Version ISP split (Issue #547) ────────────────────────────────
+    (
+        "VersionProtocol",
+        "nexus.services.protocols.version",
+        "nexus.services.version_service.VersionService",
+        True,  # 4/4 method match: get_version, list_versions, rollback, diff_versions
+    ),
 ]
 
 
@@ -282,6 +289,8 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("content_service", "nexus/core/protocols/content_service.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
+    ("version", "nexus/services/protocols/version.py"),
+    ("workspace_snapshot", "nexus/services/protocols/workspace_snapshot.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

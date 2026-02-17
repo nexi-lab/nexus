@@ -171,7 +171,10 @@ class PlaybookManager:
 
         logger = logging.getLogger(__name__)
 
-        playbook = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id).first()
+        query = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id)
+        if self.zone_id is not None:
+            query = query.filter(PlaybookModel.zone_id == self.zone_id)
+        playbook = query.first()
         if not playbook:
             return None
 
@@ -247,7 +250,10 @@ class PlaybookManager:
             ...     ]
             ... )
         """
-        playbook = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id).first()
+        query = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id)
+        if self.zone_id is not None:
+            query = query.filter(PlaybookModel.zone_id == self.zone_id)
+        playbook = query.first()
         if not playbook:
             raise ValueError(f"Playbook {playbook_id} not found")
 
@@ -321,7 +327,10 @@ class PlaybookManager:
         Example:
             >>> playbook_mgr.record_usage(playbook_id, success=True, improvement_score=0.8)
         """
-        playbook = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id).first()
+        query = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id)
+        if self.zone_id is not None:
+            query = query.filter(PlaybookModel.zone_id == self.zone_id)
+        playbook = query.first()
         if not playbook:
             raise ValueError(f"Playbook {playbook_id} not found")
 
@@ -374,6 +383,8 @@ class PlaybookManager:
             List of playbook summaries (without full content), filtered by permissions
         """
         query = self.session.query(PlaybookModel)
+        if self.zone_id is not None:
+            query = query.filter(PlaybookModel.zone_id == self.zone_id)
 
         if agent_id:
             query = query.filter_by(agent_id=agent_id)
@@ -420,7 +431,10 @@ class PlaybookManager:
         Returns:
             True if deleted, False if not found
         """
-        playbook = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id).first()
+        query = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id)
+        if self.zone_id is not None:
+            query = query.filter(PlaybookModel.zone_id == self.zone_id)
+        playbook = query.first()
         if not playbook:
             return False
 

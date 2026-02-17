@@ -2415,8 +2415,8 @@ async def _dispatch_method(
     *,
     nexus_fs: Any = None,
     exposed_methods: dict[str, Any] | None = None,
-    auth_provider: Any = None,
-    subscription_manager: Any = None,
+    auth_provider: Any = None,  # noqa: ARG001
+    subscription_manager: Any = None,  # noqa: ARG001
 ) -> Any:
     """Dispatch RPC method call.
 

@@ -74,6 +74,26 @@ class MountEntry:
     virtual_path: str
 
 
+@dataclass(frozen=True, slots=True)
+class NamespaceMount:
+    """A namespace mount visible to a subject.
+
+    Distinct from ``MountEntry`` (which only has ``virtual_path``).
+    Includes subject identity so mount tables can be compared across subjects.
+
+    Attributes:
+        virtual_path: Virtual path visible to the subject.
+        subject_type: Subject type (e.g. "user", "agent").
+        subject_id: Subject identifier.
+        zone_id: Zone/organization ID for multi-zone isolation.
+    """
+
+    virtual_path: str
+    subject_type: str
+    subject_id: str
+    zone_id: str | None
+
+
 def build_mount_entries(object_paths: list[tuple[str, str]]) -> list[MountEntry]:
     """Build mount entries from ReBAC-granted object paths.
 

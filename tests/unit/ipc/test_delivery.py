@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.ipc.conventions import (
     dead_letter_path,
     inbox_path,
@@ -282,7 +283,10 @@ class TestMessageProcessor:
             nonlocal call_count
             call_count += 1
 
-        processor = MessageProcessor(vfs, "agent:bob", handler, zone_id=ZONE)
+        cache_store = InMemoryCacheStore()
+        processor = MessageProcessor(
+            vfs, "agent:bob", handler, zone_id=ZONE, cache_store=cache_store
+        )
         # Process once
         await processor.process_inbox()
         assert call_count == 1
@@ -497,8 +501,14 @@ class TestHotColdDelivery:
             nonlocal call_count
             call_count += 1
 
+        cache_store = InMemoryCacheStore()
         processor = MessageProcessor(
-            vfs, "agent:bob", handler, zone_id=ZONE, hot_subscriber=hot_sub
+            vfs,
+            "agent:bob",
+            handler,
+            zone_id=ZONE,
+            hot_subscriber=hot_sub,
+            cache_store=cache_store,
         )
         await processor.start()
 

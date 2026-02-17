@@ -1258,6 +1258,18 @@ def create_app(
     app.state.database_url = database_url
     app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
+    # Deployment profile (Issue #1389): resolve enabled bricks from NEXUS_PROFILE env
+    from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+
+    _profile_str = os.environ.get("NEXUS_PROFILE", "full")
+    try:
+        _profile = DeploymentProfile(_profile_str)
+    except ValueError:
+        logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
+        _profile = DeploymentProfile.FULL
+    app.state.deployment_profile = _profile.value
+    app.state.enabled_bricks = resolve_enabled_bricks(_profile)
+
     # Expose async_session_factory from RecordStoreABC (if available).
     # This is the canonical way for async endpoints to get database sessions
     # without bypassing the RecordStore abstraction with raw URLs.
@@ -1573,6 +1585,11 @@ def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
 
 def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
+
+    # Features endpoint (Issue #1389) — public, rate-limit exempt
+    from nexus.server.api.core.features import router as features_router
+
+    app.include_router(features_router)
 
     # Health check (exempt from rate limiting - must always be accessible)
     @app.get("/health", response_model=HealthResponse)

@@ -13,15 +13,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from nexus.services.governance.models import AnomalyAlert, TransactionSummary
-
 if TYPE_CHECKING:
     from nexus.services.governance.models import (
+        AnomalyAlert,
         ConstraintCheckResult,
         ConstraintType,
         FraudRing,
         FraudScore,
         GovernanceEdge,
+        TransactionSummary,
     )
 
 

@@ -108,6 +108,10 @@ class NexusFS(  # type: ignore[misc]
         parsing: ParseConfig | None = None,
         services: KernelServices | None = None,
         parse_fn: Any | None = None,
+        content_cache: Any | None = None,
+        parser_registry: Any | None = None,
+        provider_registry: Any | None = None,
+        vfs_lock_manager: Any | None = None,
     ):
         """Initialize NexusFS kernel.
 
@@ -157,10 +161,11 @@ class NexusFS(  # type: ignore[misc]
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
 
-        # Initialize content cache if enabled and backend supports it
-        if cache.enable_content_cache and backend.has_root_path is True:
-            content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
+        # Initialize content cache — accept pre-built or create (Issue #657)
+        if content_cache is not None:
             backend.content_cache = content_cache
+        elif cache.enable_content_cache and backend.has_root_path is True:
+            backend.content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
 
         # Store backend
         self.backend = backend
@@ -196,36 +201,42 @@ class NexusFS(  # type: ignore[misc]
         # Mount backend
         self.router.add_mount("/", self.backend, priority=0)
 
-        # Initialize parser registry with default MarkItDown parser (legacy, for auto_parse)
-        self.parser_registry = ParserRegistry()
-        self.parser_registry.register(MarkItDownParser())
+        # Initialize parser registry — accept pre-built or create (Issue #657)
+        if parser_registry is not None:
+            self.parser_registry = parser_registry
+        else:
+            self.parser_registry = ParserRegistry()
+            self.parser_registry.register(MarkItDownParser())
 
         # Parse callback for virtual views — injected by factory.py (Issue #668)
         self._virtual_view_parse_fn = parse_fn
 
-        # Initialize new provider registry for read(parsed=True) support
-        from nexus.parsers.providers import ProviderRegistry
-        from nexus.parsers.providers.base import ProviderConfig
-
-        self.provider_registry = ProviderRegistry()
-
-        parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
-        if parse_providers:
-            configs = []
-            for p in parse_providers:
-                configs.append(
-                    ProviderConfig(
-                        name=p.get("name", "unknown"),
-                        enabled=p.get("enabled", True),
-                        priority=p.get("priority", 50),
-                        api_key=p.get("api_key"),
-                        api_url=p.get("api_url"),
-                        supported_formats=p.get("supported_formats"),
-                    )
-                )
-            self.provider_registry.auto_discover(configs)
+        # Initialize provider registry — accept pre-built or create (Issue #657)
+        if provider_registry is not None:
+            self.provider_registry = provider_registry
         else:
-            self.provider_registry.auto_discover()
+            from nexus.parsers.providers import ProviderRegistry
+            from nexus.parsers.providers.base import ProviderConfig
+
+            self.provider_registry = ProviderRegistry()
+
+            parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
+            if parse_providers:
+                configs = []
+                for p in parse_providers:
+                    configs.append(
+                        ProviderConfig(
+                            name=p.get("name", "unknown"),
+                            enabled=p.get("enabled", True),
+                            priority=p.get("priority", 50),
+                            api_key=p.get("api_key"),
+                            api_url=p.get("api_url"),
+                            supported_formats=p.get("supported_formats"),
+                        )
+                    )
+                self.provider_registry.auto_discover(configs)
+            else:
+                self.provider_registry.auto_discover()
 
         # Track active parser threads for graceful shutdown
         self._parser_threads: list[threading.Thread] = []
@@ -313,10 +324,13 @@ class NexusFS(  # type: ignore[misc]
         # Issue #1106: Auto-start flag for cache invalidation
         self._cache_invalidation_started: bool = False
 
-        # VFS lock manager — local, in-process path-level locking (Issue #1398)
-        from nexus.core.lock_fast import create_vfs_lock_manager
+        # VFS lock manager — accept pre-built or create (Issue #657)
+        if vfs_lock_manager is not None:
+            self._vfs_lock_manager = vfs_lock_manager
+        else:
+            from nexus.core.lock_fast import create_vfs_lock_manager
 
-        self._vfs_lock_manager = create_vfs_lock_manager()
+            self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
         # Wire self-dependent services (require self reference)

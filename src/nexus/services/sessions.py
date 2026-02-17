@@ -78,19 +78,23 @@ def create_session(
 
     return user_session
 
-def get_session(session: "Session", session_id: str) -> UserSessionModel | None:
+def get_session(
+    session: "Session", session_id: str, zone_id: str | None = None
+) -> UserSessionModel | None:
     """Get session by ID.
 
     Args:
         session: Database session
         session_id: Session identifier
+        zone_id: Zone ID for federation isolation (recommended)
 
     Returns:
         UserSessionModel or None if not found/expired
     """
-    user_session = (
-        session.query(UserSessionModel).filter(UserSessionModel.session_id == session_id).first()
-    )
+    query = session.query(UserSessionModel).filter(UserSessionModel.session_id == session_id)
+    if zone_id is not None:
+        query = query.filter(UserSessionModel.zone_id == zone_id)
+    user_session = query.first()
 
     if not user_session:
         return None
@@ -160,12 +164,15 @@ def delete_session_resources(session: "Session", session_id: str) -> dict[str, i
     session.flush()
     return counts
 
-def delete_session(session: "Session", session_id: str) -> bool:
+def delete_session(
+    session: "Session", session_id: str, zone_id: str | None = None
+) -> bool:
     """Delete session and all session-scoped resources.
 
     Args:
         session: Database session
         session_id: Session to delete
+        zone_id: Zone ID for federation isolation (recommended)
 
     Returns:
         True if deleted, False if not found
@@ -174,9 +181,10 @@ def delete_session(session: "Session", session_id: str) -> bool:
     delete_session_resources(session, session_id)
 
     # 2. Delete session
-    result = (
-        session.query(UserSessionModel).filter(UserSessionModel.session_id == session_id).delete()
-    )
+    query = session.query(UserSessionModel).filter(UserSessionModel.session_id == session_id)
+    if zone_id is not None:
+        query = query.filter(UserSessionModel.zone_id == zone_id)
+    result = query.delete()
 
     session.flush()
     return result > 0
@@ -223,7 +231,10 @@ def cleanup_expired_sessions(session: "Session") -> dict[str, int | dict[str, in
     return {"sessions": len(expired), "resources": total_resources}
 
 def list_user_sessions(
-    session: "Session", user_id: str, include_expired: bool = False
+    session: "Session",
+    user_id: str,
+    include_expired: bool = False,
+    zone_id: str | None = None,
 ) -> list[UserSessionModel]:
     """List all sessions for a user.
 
@@ -231,11 +242,15 @@ def list_user_sessions(
         session: Database session
         user_id: User identifier
         include_expired: Include expired sessions
+        zone_id: Zone ID for federation isolation (recommended)
 
     Returns:
         List of UserSessionModel
     """
     query = session.query(UserSessionModel).filter(UserSessionModel.user_id == user_id)
+
+    if zone_id is not None:
+        query = query.filter(UserSessionModel.zone_id == zone_id)
 
     if not include_expired:
         # Filter out expired sessions

@@ -1,6 +1,8 @@
 """Tests for workflow actions."""
 
 import uuid
+from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,6 +17,28 @@ from nexus.workflows.actions import (
     WebhookAction,
 )
 from nexus.workflows.types import TriggerType, WorkflowContext
+
+
+@dataclass
+class _MockCodeResult:
+    """Mock sandbox code execution result."""
+
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int = 0
+    execution_time: float = 0.1
+
+
+def _make_sandbox_services(*, stdout: str = "", stderr: str = "", exit_code: int = 0):
+    """Create mock services with a sandbox_manager for PythonAction tests."""
+    mock_sandbox_mgr = AsyncMock()
+    mock_sandbox_mgr.get_or_create_sandbox.return_value = {"sandbox_id": "sb-test"}
+    mock_sandbox_mgr.run_code.return_value = _MockCodeResult(
+        stdout=stdout, stderr=stderr, exit_code=exit_code
+    )
+    mock_services = MagicMock()
+    mock_services.sandbox_manager = mock_sandbox_mgr
+    return mock_services
 
 
 class MockAction(BaseAction):
@@ -228,7 +252,7 @@ class TestPythonAction:
 
     @pytest.mark.asyncio
     async def test_execute_python_action(self):
-        """Test executing Python action."""
+        """Test executing Python action delegates to sandbox."""
         code = "result = variables['x'] + variables['y']"
         action = PythonAction(name="calc", config={"code": code})
         context = WorkflowContext(
@@ -237,15 +261,16 @@ class TestPythonAction:
             zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
             variables={"x": 10, "y": 20},
+            services=_make_sandbox_services(stdout="30"),
         )
 
         result = await action.execute(context)
         assert result.success is True
-        assert result.output == 30
+        assert result.output["stdout"] == "30"
 
     @pytest.mark.asyncio
     async def test_execute_python_action_error(self):
-        """Test executing Python action with error."""
+        """Test executing Python action with sandbox error."""
         code = "raise ValueError('test error')"
         action = PythonAction(name="calc", config={"code": code})
         context = WorkflowContext(
@@ -253,6 +278,7 @@ class TestPythonAction:
             execution_id=uuid.uuid4(),
             zone_id="test-zone",
             trigger_type=TriggerType.MANUAL,
+            services=_make_sandbox_services(stderr="test error", exit_code=1),
         )
 
         result = await action.execute(context)

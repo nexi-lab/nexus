@@ -87,6 +87,7 @@ class MountCoreService:
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
         context: OperationContext | None = None,
     ) -> str:
         """Add a dynamic backend mount.
@@ -97,6 +98,7 @@ class MountCoreService:
             backend_config: Backend-specific configuration
             priority: Mount priority (higher takes precedence)
             readonly: Whether mount is read-only
+            io_profile: I/O tuning profile (Issue #1413)
             context: Operation context for permissions
 
         Returns:
@@ -135,6 +137,7 @@ class MountCoreService:
             backend=backend,
             priority=priority,
             readonly=readonly,
+            io_profile=io_profile,
         )
 
         # Setup mount point (directory, permissions, skill)
@@ -263,6 +266,7 @@ class MountCoreService:
                         "priority": mount_info.priority,
                         "readonly": mount_info.readonly,
                         "backend_type": type(mount_info.backend).__name__,
+                        "io_profile": mount_info.io_profile,
                     }
                 )
 

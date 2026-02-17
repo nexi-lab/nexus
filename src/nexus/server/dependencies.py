@@ -249,6 +249,22 @@ async def require_auth(
     return auth_result
 
 
+async def require_admin(
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    """Require admin privileges for endpoint (Issue #1596).
+
+    Chains on ``require_auth`` so unauthenticated requests get 401 first,
+    then non-admin users get 403.
+
+    Raises:
+        HTTPException: 401 if not authenticated, 403 if not admin.
+    """
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return auth_result
+
+
 def get_operation_context(auth_result: dict[str, Any]) -> Any:
     """Create OperationContext from auth result.
 

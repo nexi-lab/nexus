@@ -11,6 +11,7 @@ clashing with the ``from`` keyword.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -26,6 +27,23 @@ class MessageType(StrEnum):
     RESPONSE = "response"
     EVENT = "event"
     CANCEL = "cancel"
+
+
+@dataclass(frozen=True)
+class RoutingMetadata:
+    """Cross-zone routing metadata attached to messages that traverse zones.
+
+    Attributes:
+        source_zone: Zone where the message originated.
+        target_zone: Zone where the recipient resides (None = local delivery).
+        hop_count: Number of zone boundaries crossed so far.
+        max_hops: Maximum allowed zone hops (prevents routing loops).
+    """
+
+    source_zone: str
+    target_zone: str | None = None
+    hop_count: int = 0
+    max_hops: int = 3
 
 
 class MessageEnvelope(BaseModel):
@@ -64,6 +82,7 @@ class MessageEnvelope(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     ttl_seconds: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+    routing: RoutingMetadata | None = Field(default=None, exclude=True)
 
     @field_validator("sender", "recipient")
     @classmethod

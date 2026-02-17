@@ -67,6 +67,7 @@ class NexusFUSE:
         subject_type: str | None = None,
         owner_id: str | None = None,
         zone_id: str | None = None,
+        use_rust: bool = False,
     ) -> None:
         """Initialize FUSE mount manager.
 
@@ -90,6 +91,7 @@ class NexusFUSE:
                          Pass explicit value to override (e.g., "service").
             owner_id: Human owner ID for the agent (defaults to agent_id).
             zone_id: Zone ID for multi-zone isolation.
+            use_rust: Use high-performance Rust FUSE daemon (Issue #1569).
 
         Note:
             Issue #1076: Cache warmup runs automatically after mount in background.
@@ -105,6 +107,7 @@ class NexusFUSE:
         self._subject_type = subject_type
         self._owner_id = owner_id
         self._zone_id = zone_id
+        self._use_rust = use_rust
         self.fuse: FUSE | None = None
         self._mount_thread: threading.Thread | None = None
         self._mounted = False
@@ -180,6 +183,7 @@ class NexusFUSE:
             self.cache_config,
             context=context,
             namespace_manager=namespace_manager,
+            use_rust=self._use_rust,
             event_bus=event_bus,
             subscription_manager=subscription_manager,
         )
@@ -423,6 +427,7 @@ def mount_nexus(
     subject_type: str | None = None,
     owner_id: str | None = None,
     zone_id: str | None = None,
+    use_rust: bool = False,
 ) -> NexusFUSE:
     """Convenience function to mount Nexus filesystem.
 
@@ -445,6 +450,7 @@ def mount_nexus(
         subject_type: Subject type for OperationContext (None → "agent" when agent_id set)
         owner_id: Human owner ID for the agent
         zone_id: Zone ID for multi-zone isolation
+        use_rust: Use high-performance Rust FUSE daemon (Issue #1569)
 
     Returns:
         NexusFUSE instance
@@ -483,6 +489,7 @@ def mount_nexus(
         subject_type=subject_type,
         owner_id=owner_id,
         zone_id=zone_id,
+        use_rust=use_rust,
     )
     fuse.mount(foreground=foreground, allow_other=allow_other, debug=debug)
 

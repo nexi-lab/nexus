@@ -71,6 +71,7 @@ class MountManager:
         backend_config: dict,
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -83,6 +84,7 @@ class MountManager:
             backend_config: Backend-specific configuration (dict) - will be JSON-encoded
             priority: Mount priority (higher = preferred)
             readonly: Whether mount is read-only
+            io_profile: I/O tuning profile (Issue #1413)
             owner_user_id: User ID who owns this mount
             zone_id: Zone ID this mount belongs to
             description: Optional description of the mount
@@ -127,6 +129,7 @@ class MountManager:
                 owner_user_id=owner_user_id,
                 zone_id=zone_id,
                 description=description,
+                io_profile=io_profile,
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
             )
@@ -223,6 +226,7 @@ class MountManager:
                 "backend_config": json.loads(mount_model.backend_config),
                 "priority": mount_model.priority,
                 "readonly": bool(mount_model.readonly),
+                "io_profile": mount_model.io_profile,
                 "owner_user_id": mount_model.owner_user_id,
                 "zone_id": mount_model.zone_id,
                 "description": mount_model.description,
@@ -274,6 +278,7 @@ class MountManager:
                     "backend_config": json.loads(m.backend_config),
                     "priority": m.priority,
                     "readonly": bool(m.readonly),
+                    "io_profile": m.io_profile,
                     "owner_user_id": m.owner_user_id,
                     "zone_id": m.zone_id,
                     "description": m.description,

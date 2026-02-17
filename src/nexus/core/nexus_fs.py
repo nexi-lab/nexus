@@ -41,8 +41,10 @@ from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
-from nexus.parsers import MarkItDownParser, ParserRegistry
-from nexus.parsers.types import ParseResult
+
+if TYPE_CHECKING:
+    from nexus.parsers.registry import ParserRegistry
+    from nexus.parsers.types import ParseResult
 
 # Phase 2: Service imports moved to _wire_services() as lazy imports (Issue #1519)
 # NexusFSReBACMixin import removed (Issue #1387)
@@ -87,7 +89,7 @@ class NexusFS(  # type: ignore[misc]
         services: KernelServices | None = None,
         parse_fn: Any | None = None,
         content_cache: Any | None = None,
-        parser_registry: Any | None = None,
+        parser_registry: ParserRegistry | None = None,
         provider_registry: Any | None = None,
         vfs_lock_manager: Any | None = None,
     ):
@@ -107,7 +109,9 @@ class NexusFS(  # type: ignore[misc]
             parsing: File parsing config. Defaults to ParseConfig().
             services: Injected service dependencies. Defaults to KernelServices().
             parse_fn: Pre-built parse callback ``(bytes, str) -> bytes | None``
-                for virtual views. Created by factory.py via create_default_parse_fn().
+                for virtual views. Created by factory.py via ParsersBrick.create_parse_fn().
+            parser_registry: Injected ParserRegistry from ParsersBrick (Issue #1523).
+            provider_registry: Injected ProviderRegistry from ParsersBrick (Issue #1523).
         """
         # Apply defaults — config dataclasses are SSOT for default values
         cache = cache or CacheConfig()
@@ -179,42 +183,27 @@ class NexusFS(  # type: ignore[misc]
         # Mount backend
         self.router.add_mount("/", self.backend, priority=0)
 
-        # Initialize parser registry — accept pre-built or create (Issue #657)
+        # Parser registries — injected by factory via ParsersBrick (Issue #1523)
         if parser_registry is not None:
             self.parser_registry = parser_registry
         else:
-            self.parser_registry = ParserRegistry()
-            self.parser_registry.register(MarkItDownParser())
+            # Fallback: create default registry for direct construction (tests, etc.)
+            from nexus.parsers.markitdown_parser import MarkItDownParser as _MkD
+            from nexus.parsers.registry import ParserRegistry as _PR
 
-        # Parse callback for virtual views — injected by factory.py (Issue #668)
-        self._virtual_view_parse_fn = parse_fn
+            self.parser_registry = _PR()
+            self.parser_registry.register(_MkD())
 
-        # Initialize provider registry — accept pre-built or create (Issue #657)
         if provider_registry is not None:
             self.provider_registry = provider_registry
         else:
-            from nexus.parsers.providers import ProviderRegistry
-            from nexus.parsers.providers.base import ProviderConfig
+            from nexus.parsers.providers.registry import ProviderRegistry as _PvR
 
-            self.provider_registry = ProviderRegistry()
+            self.provider_registry = _PvR()
+            self.provider_registry.auto_discover()
 
-            parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
-            if parse_providers:
-                configs = []
-                for p in parse_providers:
-                    configs.append(
-                        ProviderConfig(
-                            name=p.get("name", "unknown"),
-                            enabled=p.get("enabled", True),
-                            priority=p.get("priority", 50),
-                            api_key=p.get("api_key"),
-                            api_url=p.get("api_url"),
-                            supported_formats=p.get("supported_formats"),
-                        )
-                    )
-                self.provider_registry.auto_discover(configs)
-            else:
-                self.provider_registry.auto_discover()
+        # Parse callback for virtual views — injected by factory.py (Issue #668)
+        self._virtual_view_parse_fn = parse_fn
 
         # Track active parser threads for graceful shutdown
         self._parser_threads: list[threading.Thread] = []

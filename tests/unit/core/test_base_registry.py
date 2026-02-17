@@ -1,8 +1,12 @@
-"""Unit tests for BaseRegistry[T]."""
+"""Unit tests for BaseRegistry[T].
+
+Canonical home is ``nexus.contracts.registry``; the ``nexus.core.registry``
+shim re-exports for backward compatibility (Issue #1523).
+"""
 
 import pytest
 
-from nexus.core.registry import BaseRegistry
+from nexus.contracts.registry import BaseRegistry
 
 
 class TestRegisterAndGet:
@@ -158,3 +162,25 @@ class TestDiscoverFromPackage:
         reg: BaseRegistry[object] = BaseRegistry("empty")
         count = reg.discover_from_package("nonexistent.pkg", object)
         assert count == 0
+
+
+class TestReExportIdentity:
+    """Verify ``nexus.core.registry`` re-exports are the same objects."""
+
+    def test_base_registry_identity(self) -> None:
+        from nexus.contracts.registry import BaseRegistry as ContractsReg
+        from nexus.core.registry import BaseRegistry as CoreReg
+
+        assert ContractsReg is CoreReg
+
+    def test_brick_info_identity(self) -> None:
+        from nexus.contracts.registry import BrickInfo as ContractsBI
+        from nexus.core.registry import BrickInfo as CoreBI
+
+        assert ContractsBI is CoreBI
+
+    def test_brick_registry_identity(self) -> None:
+        from nexus.contracts.registry import BrickRegistry as ContractsBR
+        from nexus.core.registry import BrickRegistry as CoreBR
+
+        assert ContractsBR is CoreBR

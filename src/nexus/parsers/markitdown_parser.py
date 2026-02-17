@@ -25,6 +25,9 @@ class MarkItDownParser(Parser):
 
     The parser converts documents to Markdown format, preserving structure
     like headings, lists, and tables.
+
+    MarkItDown is lazily initialized on first ``parse()`` call to avoid
+    import overhead at construction time.
     """
 
     # Supported formats based on MarkItDown capabilities
@@ -69,23 +72,28 @@ class MarkItDownParser(Parser):
         self._enable_ocr = enable_ocr
         self._enable_transcription = enable_transcription
         self._markitdown: Any = None
-        self._available = self._initialize_markitdown()
+        self._available: bool | None = None  # Lazy: None means "not checked yet"
 
-    def _initialize_markitdown(self) -> bool:
-        """Lazily initialize the MarkItDown converter.
+    def _ensure_initialized(self) -> bool:
+        """Lazily initialize the MarkItDown converter on first use.
 
         Returns:
             True if MarkItDown is available, False otherwise.
         """
+        if self._available is not None:
+            return self._available
+
         try:
             from markitdown import MarkItDown
 
             self._markitdown = MarkItDown()
+            self._available = True
             logger.info("MarkItDown parser initialized successfully")
-            return True
         except ImportError:
+            self._available = False
             logger.debug("MarkItDown not installed. Install with: pip install markitdown")
-            return False
+
+        return self._available
 
     def can_parse(self, file_path: str, mime_type: str | None = None) -> bool:
         """Check if this parser can handle the file.
@@ -97,7 +105,7 @@ class MarkItDownParser(Parser):
         Returns:
             True if MarkItDown is available and the file extension is supported
         """
-        if not self._available:
+        if not self._ensure_initialized():
             return False
         _ = mime_type  # Currently unused, but part of Parser interface
         ext = self._get_file_extension(file_path)
@@ -116,6 +124,8 @@ class MarkItDownParser(Parser):
         Raises:
             ParserError: If parsing fails
         """
+        self._ensure_initialized()
+
         if self._markitdown is None:
             raise ParserError("MarkItDown not initialized", parser=self.name)
 
@@ -192,7 +202,7 @@ class MarkItDownParser(Parser):
             )
 
         except Exception as e:
-            logger.error(f"Failed to parse file '{file_path}': {e}")
+            logger.error("Failed to parse file %r: %s", file_path, e)
             raise ParserError(
                 f"Failed to parse file: {e}",
                 path=str(file_path),
@@ -274,20 +284,12 @@ class MarkItDownParser(Parser):
 
     @property
     def supported_formats(self) -> list[str]:
-        """Get list of supported file formats.
-
-        Returns:
-            List of supported file extensions
-        """
+        """Get list of supported file formats."""
         return self._SUPPORTED_FORMATS.copy()
 
     @property
     def name(self) -> str:
-        """Get parser name.
-
-        Returns:
-            Parser name
-        """
+        """Get parser name."""
         return "MarkItDownParser"
 
     @property
@@ -296,8 +298,5 @@ class MarkItDownParser(Parser):
 
         MarkItDown is a general-purpose parser, so it has medium priority.
         Specialized parsers can override with higher priority.
-
-        Returns:
-            Priority level (50)
         """
         return 50

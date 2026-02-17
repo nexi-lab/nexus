@@ -75,6 +75,10 @@ class FeaturesConfig(BaseModel):
         default=True,
         description="Enable Google A2A (Agent-to-Agent) protocol endpoint",
     )
+    a2a_grpc_port: int = Field(
+        default=0,
+        description="Port for A2A gRPC transport binding. 0 = disabled.",
+    )
 
     model_config = ConfigDict(extra="forbid")
 

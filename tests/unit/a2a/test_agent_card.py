@@ -322,3 +322,63 @@ class TestDetectAuthSchemes:
 
         assert len(schemes) == 1
         assert schemes[0].type == "httpBearer"
+
+
+# ------------------------------------------------------------------
+# supportedInterfaces (gRPC transport binding, #1726)
+# ------------------------------------------------------------------
+
+
+class TestSupportedInterfaces:
+    """Tests for the ``supportedInterfaces`` field on AgentCard."""
+
+    def test_default_includes_jsonrpc_interface(self) -> None:
+        card = build_agent_card()
+
+        assert len(card.supportedInterfaces) == 1
+        iface = card.supportedInterfaces[0]
+        assert iface.protocol_binding == "JSONRPC"
+        assert iface.protocol_version == "1.0"
+        assert iface.url == "http://localhost:2026/a2a"
+
+    def test_grpc_port_adds_grpc_interface(self) -> None:
+        card = build_agent_card(grpc_port=2027)
+
+        assert len(card.supportedInterfaces) == 2
+        bindings = {i.protocol_binding for i in card.supportedInterfaces}
+        assert bindings == {"JSONRPC", "GRPC"}
+
+    def test_grpc_interface_url_format(self) -> None:
+        card = build_agent_card(
+            base_url="https://nexus.example.com:2026",
+            grpc_port=2027,
+        )
+
+        grpc_iface = next(
+            i for i in card.supportedInterfaces if i.protocol_binding == "GRPC"
+        )
+        assert grpc_iface.url == "nexus.example.com:2027"
+        assert grpc_iface.protocol_version == "1.0"
+
+    def test_no_grpc_interface_when_port_zero(self) -> None:
+        card = build_agent_card(grpc_port=0)
+
+        assert len(card.supportedInterfaces) == 1
+        assert card.supportedInterfaces[0].protocol_binding == "JSONRPC"
+
+    def test_no_grpc_interface_when_port_none(self) -> None:
+        card = build_agent_card(grpc_port=None)
+
+        assert len(card.supportedInterfaces) == 1
+
+    def test_cache_passes_grpc_port(self) -> None:
+        import json
+
+        cache = AgentCardCache()
+        result = cache.get_card_bytes(grpc_port=2027)
+        parsed = json.loads(result)
+
+        interfaces = parsed.get("supportedInterfaces", [])
+        assert len(interfaces) == 2
+        bindings = {i["protocol_binding"] for i in interfaces}
+        assert "GRPC" in bindings

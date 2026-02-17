@@ -592,6 +592,8 @@ module = [
     "nexus.raft.commands_pb2_grpc",
     "nexus.raft.transport_pb2",
     "nexus.raft.transport_pb2_grpc",
+    "nexus.a2a.a2a_pb2",
+    "nexus.a2a.a2a_pb2_grpc",
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
@@ -600,6 +602,11 @@ follow_imports = "skip"
 module = "nexus.raft.client"
 # gRPC client interacts heavily with generated pb2 modules (metadata_pb2, commands_pb2)
 # that have no type stubs — attribute access on implicit Any modules
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["nexus.a2a.grpc_server", "nexus.a2a.proto_converter"]
+# gRPC server and proto converter interact with generated a2a_pb2 module
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
@@ -636,6 +643,8 @@ exclude = [
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
     "src/nexus/core/_compact_generated.py",    # Generated at install time
     "src/nexus/core/protocols/",               # Generated at install time
+    "src/nexus/a2a/a2a_pb2.py",               # Generated gRPC stub
+    "src/nexus/a2a/a2a_pb2_grpc.py",          # Generated gRPC stub
 ]
 
 [tool.ruff.lint]

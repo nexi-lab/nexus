@@ -16,10 +16,10 @@ from sqlalchemy.orm import sessionmaker
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.auth.oauth.crypto import OAuthCrypto
 from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 from nexus.auth.oauth.user_auth import OAuthUserAuth
+from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.server.auth.user_helpers import (
     check_email_available,
     check_username_available,

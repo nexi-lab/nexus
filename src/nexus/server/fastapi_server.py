@@ -760,10 +760,10 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1355: Initialize KeyService for agent identity
     if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
+            from nexus.auth.oauth.crypto import OAuthCrypto
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
             from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
-            from nexus.auth.oauth.crypto import OAuthCrypto
 
             # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
             # after SQLAlchemyRecordStore.create_all already ran)
@@ -1549,10 +1549,10 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
             return
 
         # Initialize OAuth provider (provider-agnostic via DI)
-        from nexus.server.auth.auth_routes import set_oauth_provider
         from nexus.auth.oauth.crypto import OAuthCrypto
         from nexus.auth.oauth.providers.google import GoogleOAuthProvider
         from nexus.auth.oauth.user_auth import OAuthUserAuth
+        from nexus.server.auth.auth_routes import set_oauth_provider
 
         _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
         oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, session_factory=session_factory)

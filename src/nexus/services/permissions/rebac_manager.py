@@ -23,6 +23,7 @@ from nexus.core.rebac import (
     Entity,
     NamespaceConfig,
 )
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.default_namespaces import (
     DEFAULT_FILE_NAMESPACE,
@@ -34,7 +35,6 @@ from nexus.services.permissions.default_namespaces import (
 )
 from nexus.services.permissions.graph.expand import ExpandEngine
 from nexus.services.permissions.graph.traversal import PermissionComputer
-from nexus.services.permissions.rebac_cache import ReBACPermissionCache
 from nexus.services.permissions.rebac_fast import (
     check_permissions_bulk_with_fallback,
     is_rust_available,

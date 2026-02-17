@@ -73,14 +73,24 @@ class DelegationProtocol(Protocol):
         """
         ...
 
-    def list_delegations(self, parent_agent_id: str) -> list[Any]:
-        """List all delegations created by a coordinator agent.
+    def list_delegations(
+        self,
+        parent_agent_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status_filter: Any = None,
+    ) -> tuple[list[Any], int]:
+        """List delegations created by a coordinator agent with pagination.
 
         Args:
             parent_agent_id: The coordinator agent ID.
+            limit: Maximum records to return (default 50).
+            offset: Number of records to skip (default 0).
+            status_filter: Optional filter by DelegationStatus.
 
         Returns:
-            List of DelegationRecord objects.
+            Tuple of (records, total_count).
         """
         ...
 

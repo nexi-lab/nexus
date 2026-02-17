@@ -32,32 +32,6 @@ class SkillOperationContext(Protocol):
     def is_admin(self) -> bool: ...
 
 
-@runtime_checkable
-class DatabaseConnection(Protocol):
-    """Protocol for database connections.
-
-    This allows analytics, audit, and governance to work with
-    different database backends. Single source of truth for all
-    skills module database interaction.
-    """
-
-    def execute(self, query: str, params: dict[str, Any] | None = None) -> Any:
-        """Execute a query."""
-        ...
-
-    def fetchall(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Fetch all results from a query."""
-        ...
-
-    def fetchone(self, query: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        """Fetch one result from a query."""
-        ...
-
-    def commit(self) -> None:
-        """Commit the transaction."""
-        ...
-
-
 @dataclass
 class SkillInfo:
     """Skill information returned by discovery operations.

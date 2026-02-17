@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.core.response import HandlerResponse
 from nexus.isolation._pool import IsolatedPool
 from nexus.isolation.config import IsolationConfig
 from nexus.isolation.errors import (
@@ -26,6 +26,7 @@ from nexus.isolation.errors import (
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -102,37 +103,31 @@ class IsolatedBackend(Backend):
 
     # ── Content operations (CAS) ────────────────────────────────────────
 
-    @timed_response
     def write_content(
         self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
         return self._call("write_content", content, context=context)
 
-    @timed_response
     def read_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
         return self._call("read_content", content_hash, context=context)
 
-    @timed_response
     def delete_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]:
         return self._call("delete_content", content_hash, context=context)
 
-    @timed_response
     def content_exists(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         return self._call("content_exists", content_hash, context=context)
 
-    @timed_response
     def get_content_size(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         return self._call("get_content_size", content_hash, context=context)
 
-    @timed_response
     def get_ref_count(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
@@ -140,26 +135,23 @@ class IsolatedBackend(Backend):
 
     # ── Directory operations ────────────────────────────────────────────
 
-    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: OperationContext | EnhancedOperationContext | None = None,
     ) -> HandlerResponse[None]:
         return self._call("mkdir", path, parents=parents, exist_ok=exist_ok, context=context)
 
-    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: OperationContext | EnhancedOperationContext | None = None,
     ) -> HandlerResponse[None]:
         return self._call("rmdir", path, recursive=recursive, context=context)
 
-    @timed_response
     def is_directory(
         self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
@@ -185,7 +177,7 @@ class IsolatedBackend(Backend):
     def stream_content(
         self,
         content_hash: str,
-        chunk_size: int = 65536,
+        chunk_size: int = 8192,
         context: OperationContext | None = None,
     ) -> Iterator[bytes]:
         """Read full content via pool, then re-chunk locally."""
@@ -194,7 +186,6 @@ class IsolatedBackend(Backend):
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
-    @timed_response
     def write_stream(
         self,
         chunks: Iterator[bytes],

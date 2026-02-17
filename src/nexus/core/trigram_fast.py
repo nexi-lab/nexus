@@ -29,50 +29,28 @@ _trigram_index_stats: Callable[..., dict[str, Any]] | None = None
 _invalidate_trigram_cache: Callable[..., None] | None = None
 
 try:
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         build_trigram_index as _build_trigram_index,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         build_trigram_index_from_entries as _build_trigram_index_from_entries,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         invalidate_trigram_cache as _invalidate_trigram_cache,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         trigram_grep as _trigram_grep,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         trigram_index_stats as _trigram_index_stats,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         trigram_search_candidates as _trigram_search_candidates,
     )
 
     TRIGRAM_AVAILABLE = True
 except ImportError:
-    try:
-        from nexus_fast import (  # type: ignore[no-redef]
-            build_trigram_index as _build_trigram_index,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            build_trigram_index_from_entries as _build_trigram_index_from_entries,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            invalidate_trigram_cache as _invalidate_trigram_cache,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            trigram_grep as _trigram_grep,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            trigram_index_stats as _trigram_index_stats,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            trigram_search_candidates as _trigram_search_candidates,
-        )
-
-        TRIGRAM_AVAILABLE = True
-    except ImportError:
-        pass
+    pass
 
 
 def is_available() -> bool:
@@ -134,7 +112,7 @@ def build_index(
     try:
         _build_trigram_index(file_paths, output_path)
         return True
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         logger.warning("Failed to build trigram index at %s", output_path, exc_info=True)
         return False
 
@@ -162,7 +140,7 @@ def build_index_from_entries(
     try:
         _build_trigram_index_from_entries(entries, output_path)
         return True
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         logger.warning(
             "Failed to build trigram index from entries at %s", output_path, exc_info=True
         )
@@ -196,7 +174,7 @@ def grep(
     try:
         result: list[dict[str, Any]] = _trigram_grep(index_path, pattern, ignore_case, max_results)
         return result
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         logger.warning(
             "Trigram grep failed for pattern %r on %s", pattern, index_path, exc_info=True
         )
@@ -228,7 +206,7 @@ def search_candidates(
 
     try:
         return _trigram_search_candidates(index_path, pattern, ignore_case)
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         logger.warning(
             "Trigram candidate search failed for pattern %r on %s",
             pattern,
@@ -254,7 +232,7 @@ def get_stats(index_path: str) -> dict[str, Any] | None:
     try:
         result: dict[str, Any] = _trigram_index_stats(index_path)
         return result
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         logger.warning("Failed to get trigram index stats for %s", index_path, exc_info=True)
         return None
 
@@ -264,5 +242,5 @@ def invalidate_cache(index_path: str) -> None:
     if TRIGRAM_AVAILABLE and _invalidate_trigram_cache is not None:
         try:
             _invalidate_trigram_cache(index_path)
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             logger.debug("Failed to invalidate trigram cache for %s", index_path, exc_info=True)

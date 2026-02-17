@@ -191,15 +191,14 @@ class VersionManager:
         Returns:
             List of migration history entries, newest first
         """
+        from sqlalchemy import select
+
         from nexus.storage.models import MigrationHistoryModel
 
         session = self._get_session()
         try:
-            records = (
-                session.query(MigrationHistoryModel)
-                .order_by(MigrationHistoryModel.started_at.desc())
-                .all()
-            )
+            stmt = select(MigrationHistoryModel).order_by(MigrationHistoryModel.started_at.desc())
+            records = session.execute(stmt).scalars().all()
 
             return [
                 MigrationHistoryEntry(
@@ -621,11 +620,14 @@ class VersionManager:
             status: Final status
             error_message: Error message if failed
         """
+        from sqlalchemy import select
+
         from nexus.storage.models import MigrationHistoryModel
 
         session = self._get_session()
         try:
-            record = session.query(MigrationHistoryModel).filter_by(id=history_id).first()
+            stmt = select(MigrationHistoryModel).filter_by(id=history_id)
+            record = session.execute(stmt).scalars().first()
             if record:
                 record.status = status
                 record.completed_at = datetime.now(UTC)

@@ -6,6 +6,21 @@ entire family with a single except clause.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
+
+class DLQReason(StrEnum):
+    """Structured reason codes for dead-lettered messages."""
+
+    TTL_EXPIRED = "ttl_expired"
+    HANDLER_ERROR = "handler_error"
+    ZONE_UNREACHABLE = "zone_unreachable"
+    PERMISSION_DENIED = "permission_denied"
+    MOUNT_NOT_FOUND = "mount_not_found"
+    MAX_HOPS_EXCEEDED = "max_hops_exceeded"
+    PARSE_ERROR = "parse_error"
+    BACKPRESSURE = "backpressure"
+
 
 class IPCError(Exception):
     """Base exception for all IPC brick errors."""
@@ -48,3 +63,27 @@ class MessageExpiredError(IPCError):
         self.message_id = message_id
         self.ttl_seconds = ttl_seconds
         super().__init__(f"Message '{message_id}' expired (TTL: {ttl_seconds}s)")
+
+
+class CrossZoneDeliveryError(IPCError):
+    """Raised when a cross-zone message delivery fails.
+
+    Carries a structured :class:`DLQReason` and human-readable detail
+    so dead-letter consumers can triage failures programmatically.
+    """
+
+    def __init__(
+        self,
+        reason: DLQReason,
+        detail: str,
+        *,
+        source_zone: str | None = None,
+        target_zone: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        self.reason = reason
+        self.detail = detail
+        self.source_zone = source_zone
+        self.target_zone = target_zone
+        self.agent_id = agent_id
+        super().__init__(f"Cross-zone delivery failed [{reason.value}]: {detail}")

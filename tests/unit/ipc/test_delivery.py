@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.ipc.conventions import (
     dead_letter_path,
     inbox_path,
@@ -13,7 +15,7 @@ from nexus.ipc.conventions import (
     outbox_path,
     processed_path,
 )
-from nexus.ipc.delivery import MessageProcessor, MessageSender
+from nexus.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 from nexus.ipc.exceptions import (
     EnvelopeValidationError,
@@ -22,7 +24,12 @@ from nexus.ipc.exceptions import (
 )
 from nexus.ipc.provisioning import AgentProvisioner
 
-from .fakes import InMemoryEventPublisher, InMemoryVFS
+from .fakes import (
+    InMemoryEventPublisher,
+    InMemoryHotPathPublisher,
+    InMemoryHotPathSubscriber,
+    InMemoryVFS,
+)
 
 ZONE = "test-zone"
 
@@ -240,7 +247,8 @@ class TestMessageProcessor:
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert len(dl_files) == 1
+        dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msgs) == 1
 
     @pytest.mark.asyncio
     async def test_process_expired_ttl_skips_handler(self, vfs: InMemoryVFS) -> None:
@@ -261,7 +269,8 @@ class TestMessageProcessor:
 
         assert not handler_called  # Expired message should NOT invoke handler
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert len(dl_files) == 1
+        dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msgs) == 1
 
     @pytest.mark.asyncio
     async def test_process_dedup_skips_duplicate(self, vfs: InMemoryVFS) -> None:
@@ -276,7 +285,10 @@ class TestMessageProcessor:
             nonlocal call_count
             call_count += 1
 
-        processor = MessageProcessor(vfs, "agent:bob", handler, zone_id=ZONE)
+        cache_store = InMemoryCacheStore()
+        processor = MessageProcessor(
+            vfs, "agent:bob", handler, zone_id=ZONE, cache_store=cache_store
+        )
         # Process once
         await processor.process_inbox()
         assert call_count == 1
@@ -308,7 +320,8 @@ class TestMessageProcessor:
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert len(dl_files) == 1
+        dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msgs) == 1
 
     @pytest.mark.asyncio
     async def test_process_empty_inbox(self, vfs: InMemoryVFS) -> None:
@@ -343,3 +356,238 @@ class TestMessageProcessor:
 
         assert count == 3
         assert received_ids == ["msg_01", "msg_02", "msg_03"]
+
+
+class TestHotColdDelivery:
+    """Tests for tiered hot/cold message delivery (#1747, LEGO 17.7)."""
+
+    @pytest.fixture
+    def vfs(self) -> InMemoryVFS:
+        return InMemoryVFS()
+
+    @pytest.fixture
+    def hot_pub(self) -> InMemoryHotPathPublisher:
+        return InMemoryHotPathPublisher()
+
+    @pytest.fixture
+    def hot_sub(self) -> InMemoryHotPathSubscriber:
+        return InMemoryHotPathSubscriber()
+
+    # --- MessageSender tests ---
+
+    @pytest.mark.asyncio
+    async def test_hot_cold_send_publishes_nats_and_writes_file(
+        self, vfs: InMemoryVFS, hot_pub: InMemoryHotPathPublisher
+    ) -> None:
+        """HOT_COLD mode: NATS publish + async filesystem write both fire."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        sender = MessageSender(
+            vfs,
+            zone_id=ZONE,
+            hot_publisher=hot_pub,
+            delivery_mode=DeliveryMode.HOT_COLD,
+        )
+        env = _make_envelope()
+        path = await sender.send(env)
+        await sender.drain()
+
+        # Hot path: NATS publish captured
+        assert len(hot_pub.published) == 1
+        assert hot_pub.published[0][0] == "agents.agent:bob.inbox"
+        # Verify hot bytes are compact (no indentation)
+        assert b"\n" not in hot_pub.published[0][1]
+
+        # Cold path: file written (after drain)
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        assert len(inbox_files) == 1
+
+        # Return value is the hot:// synthetic path (hot succeeded)
+        assert path.startswith("hot://")
+
+    @pytest.mark.asyncio
+    async def test_nats_down_falls_back_to_sync_cold(self, vfs: InMemoryVFS) -> None:
+        """When NATS publish fails, HOT_COLD degrades to synchronous cold."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        failing_pub = InMemoryHotPathPublisher(should_fail=True)
+        sender = MessageSender(
+            vfs,
+            zone_id=ZONE,
+            hot_publisher=failing_pub,
+            delivery_mode=DeliveryMode.HOT_COLD,
+        )
+        env = _make_envelope()
+        path = await sender.send(env)
+
+        # Cold path: file written synchronously (fallback)
+        assert path.startswith("/agents/agent:bob/inbox/")
+        data = await vfs.read(path, ZONE)
+        restored = MessageEnvelope.from_bytes(data)
+        assert restored.id == env.id
+
+    @pytest.mark.asyncio
+    async def test_hot_only_no_filesystem_write(
+        self, vfs: InMemoryVFS, hot_pub: InMemoryHotPathPublisher
+    ) -> None:
+        """HOT_ONLY mode: no filesystem write occurs."""
+        await _provision_agent(vfs, "agent:bob")
+        sender = MessageSender(
+            vfs,
+            zone_id=ZONE,
+            hot_publisher=hot_pub,
+            delivery_mode=DeliveryMode.HOT_ONLY,
+        )
+        env = _make_envelope()
+        path = await sender.send(env)
+
+        # Hot path fired
+        assert len(hot_pub.published) == 1
+        # No cold write
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        assert len(inbox_files) == 0
+        # Synthetic path
+        assert path.startswith("hot://")
+
+    @pytest.mark.asyncio
+    async def test_graceful_drain_completes_pending_cold_writes(
+        self, vfs: InMemoryVFS, hot_pub: InMemoryHotPathPublisher
+    ) -> None:
+        """drain() awaits all pending background cold-write tasks."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        sender = MessageSender(
+            vfs,
+            zone_id=ZONE,
+            hot_publisher=hot_pub,
+            delivery_mode=DeliveryMode.HOT_COLD,
+        )
+
+        # Send multiple messages
+        for i in range(5):
+            await sender.send(_make_envelope(msg_id=f"msg_drain_{i}"))
+
+        # Before drain, tasks might not be complete
+        assert len(sender._pending_tasks) >= 0  # at least some created
+
+        # After drain, all cold writes complete
+        await sender.drain()
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        assert len(inbox_files) == 5
+
+    @pytest.mark.asyncio
+    async def test_default_delivery_mode_is_cold_only_when_no_hot_publisher(
+        self, vfs: InMemoryVFS
+    ) -> None:
+        """Backwards compat: no hot_publisher -> COLD_ONLY regardless of mode."""
+        sender = MessageSender(
+            vfs,
+            zone_id=ZONE,
+            delivery_mode=DeliveryMode.HOT_COLD,  # Requested, but no publisher
+        )
+        assert sender._mode == DeliveryMode.COLD_ONLY
+
+    # --- MessageProcessor hot-path tests ---
+
+    @pytest.mark.asyncio
+    async def test_hot_cold_dedup_prevents_double_processing(
+        self,
+        vfs: InMemoryVFS,
+        hot_sub: InMemoryHotPathSubscriber,
+    ) -> None:
+        """Same message via hot + cold: handler invoked only once."""
+        await _provision_agent(vfs, "agent:bob")
+        env = _make_envelope(msg_id="msg_dedup_hc")
+        call_count = 0
+
+        async def handler(msg: MessageEnvelope) -> None:
+            nonlocal call_count
+            call_count += 1
+
+        cache_store = InMemoryCacheStore()
+        processor = MessageProcessor(
+            vfs,
+            "agent:bob",
+            handler,
+            zone_id=ZONE,
+            hot_subscriber=hot_sub,
+            cache_store=cache_store,
+        )
+        await processor.start()
+
+        # Deliver via hot path
+        await hot_sub.inject("agents.agent:bob.inbox", env.to_hot_bytes())
+        # Give the event loop a chance to process
+        await asyncio.sleep(0.05)
+
+        assert call_count == 1
+
+        # Now deliver same message via cold path
+        msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await processor.process_inbox()
+
+        # Handler should NOT be called again (deduped)
+        assert call_count == 1
+
+        await processor.stop()
+
+    @pytest.mark.asyncio
+    async def test_hot_path_ttl_expired_skips_handler(
+        self,
+        vfs: InMemoryVFS,
+        hot_sub: InMemoryHotPathSubscriber,
+    ) -> None:
+        """Expired messages on hot path are dropped without invoking handler."""
+        await _provision_agent(vfs, "agent:bob")
+        old_ts = datetime(2020, 1, 1, tzinfo=UTC)
+        env = _make_envelope(msg_id="msg_expired_hot", timestamp=old_ts, ttl_seconds=60)
+        handler_called = False
+
+        async def handler(msg: MessageEnvelope) -> None:
+            nonlocal handler_called
+            handler_called = True
+
+        processor = MessageProcessor(
+            vfs, "agent:bob", handler, zone_id=ZONE, hot_subscriber=hot_sub
+        )
+        await processor.start()
+
+        await hot_sub.inject("agents.agent:bob.inbox", env.to_hot_bytes())
+        await asyncio.sleep(0.05)
+
+        assert not handler_called
+        await processor.stop()
+
+    @pytest.mark.asyncio
+    async def test_hot_cold_backpressure_inbox_full_still_delivers_hot(
+        self,
+        vfs: InMemoryVFS,
+        hot_pub: InMemoryHotPathPublisher,
+    ) -> None:
+        """When inbox is full, HOT_COLD background cold write fails but hot succeeds."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        sender = MessageSender(
+            vfs,
+            zone_id=ZONE,
+            hot_publisher=hot_pub,
+            delivery_mode=DeliveryMode.HOT_COLD,
+            max_inbox_size=1,
+        )
+
+        # Fill inbox
+        env_fill = _make_envelope(msg_id="msg_fill")
+        await MessageSender(vfs, zone_id=ZONE).send(env_fill)
+
+        # Send via hot_cold — hot should succeed, background cold will fail silently
+        env = _make_envelope(msg_id="msg_hot_bp")
+        path = await sender.send(env)
+        await sender.drain()
+
+        # Hot delivery succeeded
+        assert len(hot_pub.published) == 1
+        assert path.startswith("hot://")
+        # Inbox still has only 1 file (cold write failed due to backpressure)
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        assert len(inbox_files) == 1

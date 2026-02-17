@@ -7,7 +7,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# Import OAuthConfig from package-level location (Issue #1389: no server/ dependency)
+# Import OAuthConfig - required for OAuth configuration
+# Moved to nexus.auth_config to fix config.py → server/ architecture violation (#1389)
 from nexus.auth_config import OAuthConfig
 
 
@@ -109,12 +110,6 @@ class NexusConfig(BaseModel):
     4. Defaults (standalone mode with ./nexus-data)
     """
 
-    # Deployment mode (topology)
-    mode: str = Field(
-        default="standalone",
-        description="Deployment mode: standalone (single-node redb), remote (thin HTTP client), or federation (ZoneManager + Raft)",
-    )
-
     # Deployment profile (capability tier) — Issue #1389
     profile: str = Field(
         default="full",
@@ -123,6 +118,12 @@ class NexusConfig(BaseModel):
             "embedded (storage+eventlog only), lite (core services), "
             "full (all bricks), cloud (all + federation)"
         ),
+    )
+
+    # Deployment mode
+    mode: str = Field(
+        default="standalone",
+        description="Deployment mode: standalone (single-node redb), remote (thin HTTP client), or federation (ZoneManager + Raft)",
     )
 
     # Backend selection
@@ -333,18 +334,6 @@ class NexusConfig(BaseModel):
         description="Docker sandbox template configuration",
     )
 
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        """Validate deployment mode.
-
-        Valid modes: standalone, remote, federation
-        """
-        allowed = ["standalone", "remote", "federation"]
-        if v not in allowed:
-            raise ValueError(f"mode must be one of {allowed}, got '{v}'")
-        return v
-
     @field_validator("profile")
     @classmethod
     def validate_profile(cls, v: str) -> str:
@@ -355,6 +344,18 @@ class NexusConfig(BaseModel):
         allowed = ["embedded", "lite", "full", "cloud"]
         if v not in allowed:
             raise ValueError(f"profile must be one of {allowed}, got '{v}'")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        """Validate deployment mode.
+
+        Valid modes: standalone, remote, federation
+        """
+        allowed = ["standalone", "remote", "federation"]
+        if v not in allowed:
+            raise ValueError(f"mode must be one of {allowed}, got '{v}'")
         return v
 
     @field_validator("backend")
@@ -467,8 +468,8 @@ def _load_from_environment() -> NexusConfig:
 
     # Map environment variables to config fields
     env_mapping = {
-        "NEXUS_MODE": "mode",
         "NEXUS_PROFILE": "profile",
+        "NEXUS_MODE": "mode",
         "NEXUS_BACKEND": "backend",
         "NEXUS_DATA_DIR": "data_dir",
         "NEXUS_GCS_BUCKET_NAME": "gcs_bucket_name",

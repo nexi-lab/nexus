@@ -45,6 +45,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.core.io_profile import IOProfile
     from nexus.storage.local_disk_cache import LocalDiskCache
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,25 @@ class ReadaheadConfig:
     warm_l2_cache: bool = True  # Also store prefetched data in L2 SSD cache
     max_blocks_per_trigger: int = DEFAULT_MAX_BLOCKS_PER_TRIGGER  # Parallel prefetch count
     prefetch_on_open: bool = DEFAULT_PREFETCH_ON_OPEN  # Start prefetching on file open
+
+    @classmethod
+    def from_io_profile(cls, profile: IOProfile) -> ReadaheadConfig:
+        """Create ReadaheadConfig from an IOProfile (Issue #1413).
+
+        Args:
+            profile: I/O profile to derive readahead settings from.
+
+        Returns:
+            ReadaheadConfig with profile-appropriate values.
+        """
+        cfg = profile.config()
+        return cls(
+            enabled=cfg.readahead_enabled,
+            initial_window=cfg.readahead_initial_window,
+            max_window=cfg.readahead_max_window,
+            prefetch_workers=cfg.readahead_workers,
+            prefetch_on_open=cfg.readahead_prefetch_on_open,
+        )
 
     @classmethod
     def from_dict(cls, config: dict[str, Any]) -> ReadaheadConfig:
@@ -610,7 +630,13 @@ class ReadaheadManager:
             f"max_blocks={config.max_blocks_per_trigger}, prefetch_on_open={config.prefetch_on_open}"
         )
 
-    def on_open(self, fh: int, path: str, file_size: int | None = None) -> None:
+    def on_open(
+        self,
+        fh: int,
+        path: str,
+        file_size: int | None = None,
+        io_profile: IOProfile | None = None,
+    ) -> None:
         """Called when a file is opened.
 
         If prefetch_on_open is enabled, immediately starts prefetching the
@@ -621,12 +647,28 @@ class ReadaheadManager:
             fh: File handle
             path: File path
             file_size: Optional file size (for smarter prefetch decisions)
+            io_profile: Per-mount I/O profile override (Issue #1413).
+                        If provided and disables readahead, skips session creation.
         """
+        # Issue #1413: If an io_profile is given and it disables readahead, skip entirely
+        if io_profile is not None:
+            profile_cfg = io_profile.config()
+            if not profile_cfg.readahead_enabled:
+                logger.debug(
+                    f"[READAHEAD] Skipping on_open for {path} "
+                    f"(io_profile={io_profile} disables readahead)"
+                )
+                return
+
         if not self._config.enabled or not self._config.prefetch_on_open or self._shutdown:
+            # Even when global prefetch_on_open is off, still create the session
+            # with profile overrides so later on_read() works correctly
+            if io_profile is not None:
+                self._get_or_create_session(fh, path, io_profile=io_profile)
             return
 
-        # Create session for this file handle
-        session = self._get_or_create_session(fh, path)
+        # Create session for this file handle (with optional profile overrides)
+        session = self._get_or_create_session(fh, path, io_profile=io_profile)
 
         # Immediately trigger prefetch from offset 0
         # This assumes most files will be read sequentially from start
@@ -792,14 +834,34 @@ class ReadaheadManager:
                 if future and not future.done():
                     future.cancel()
 
-    def _get_or_create_session(self, fh: int, path: str) -> ReadSession:
-        """Get or create a read session for a file handle."""
+    def _get_or_create_session(
+        self,
+        fh: int,
+        path: str,
+        io_profile: IOProfile | None = None,
+    ) -> ReadSession:
+        """Get or create a read session for a file handle.
+
+        Args:
+            fh: File handle
+            path: File path
+            io_profile: Optional I/O profile to derive window/tolerance overrides (Issue #1413)
+        """
         with self._sessions_lock:
             if fh not in self._sessions:
+                if io_profile is not None:
+                    ra_cfg = ReadaheadConfig.from_io_profile(io_profile)
+                    initial_window = ra_cfg.initial_window
+                    max_window = ra_cfg.max_window
+                else:
+                    initial_window = self._config.initial_window
+                    max_window = self._config.max_window
+
                 self._sessions[fh] = ReadSession(
                     path=path,
                     fh=fh,
-                    max_window=self._config.max_window,
+                    readahead_window=initial_window,
+                    max_window=max_window,
                     sequential_tolerance=self._config.sequential_tolerance,
                 )
                 logger.debug(f"[READAHEAD] New session: fh={fh}, path={path}")

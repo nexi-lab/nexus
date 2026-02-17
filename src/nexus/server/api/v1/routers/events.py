@@ -153,7 +153,9 @@ async def watch_for_changes(
         context = get_operation_context(_auth_result)
 
     try:
-        change = await nexus_fs.wait_for_changes(path=path, timeout=timeout, _context=context)
+        change = await nexus_fs.events_service.wait_for_changes(
+            path=path, timeout=timeout, _context=context
+        )
         if change is None:
             return {"changes": [], "timeout": True}
         return {"changes": [change], "timeout": False}
@@ -191,15 +193,18 @@ async def list_events(
 ) -> dict[str, Any]:
     """Query the operation log / event history (Issue #1241).
 
-    Thin adapter over ``OperationLogger.list_operations_cursor()`` with
-    cursor-based pagination, zone/agent/path/time filters.
+    Delegates to ``EventReplayService.list_v1()`` for cursor-based
+    pagination, zone/agent/path/time filters.  Uses DESC ordering
+    with operation_id cursors (same contract as the original endpoint).
 
     Events are written transactionally alongside VFS operations and
     delivered asynchronously by the ``EventDeliveryWorker``.
-    """
-    from nexus.storage.operation_logger import OperationLogger
 
-    # Get session factory from app.state (set by fastapi_server.py startup)
+    For sequence_number-based replay, use the v2 API:
+    ``GET /api/v2/events/replay``.
+    """
+    from nexus.services.event_log.replay_service import EventReplayService
+
     session_factory = getattr(request.app.state, "session_factory", None)
     if session_factory is None or not callable(session_factory):
         raise HTTPException(status_code=503, detail="Database not configured")
@@ -210,38 +215,38 @@ async def list_events(
         effective_zone = _auth_result.get("zone_id")
 
     try:
-        with session_factory() as session:
-            op_logger = OperationLogger(session=session)
-            operations, next_cursor = op_logger.list_operations_cursor(
-                zone_id=effective_zone,
-                agent_id=agent_id,
-                operation_type=operation_type,
-                path_pattern=path_prefix,
-                since=since,
-                until=until,
-                limit=limit,
-                cursor=cursor,
-            )
+        service = EventReplayService(session_factory)
+        result = service.list_v1(
+            zone_id=effective_zone,
+            agent_id=agent_id,
+            operation_type=operation_type,
+            path_prefix=path_prefix,
+            since=since,
+            until=until,
+            limit=limit,
+            cursor=cursor,
+        )
 
-            events = [
-                {
-                    "event_id": op.operation_id,
-                    "type": op.operation_type,
-                    "path": op.path,
-                    "new_path": op.new_path,
-                    "zone_id": op.zone_id,
-                    "agent_id": op.agent_id,
-                    "status": op.status,
-                    "delivered": op.delivered,
-                    "timestamp": op.created_at.isoformat() if op.created_at else None,
-                }
-                for op in operations
-            ]
+        # V1 response includes new_path always (not conditionally like v2)
+        events = [
+            {
+                "event_id": ev.event_id,
+                "type": ev.type,
+                "path": ev.path,
+                "new_path": ev.new_path,
+                "zone_id": ev.zone_id,
+                "agent_id": ev.agent_id,
+                "status": ev.status,
+                "delivered": ev.delivered,
+                "timestamp": ev.timestamp or None,
+            }
+            for ev in result.events
+        ]
 
         return {
             "events": events,
-            "next_cursor": next_cursor,
-            "has_more": next_cursor is not None,
+            "next_cursor": result.next_cursor,
+            "has_more": result.has_more,
         }
 
     except Exception as e:

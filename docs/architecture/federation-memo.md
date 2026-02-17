@@ -493,7 +493,7 @@ Single-node standalone (NexusFS kernel: Metastore + ObjectStore only)
                 NexusFS (kernel)           Federation (optional subsystem)
 User:           NexusFilesystem (ABC)      — (no ABC needed, inherently asymmetric)
 Kernel/Service: NexusFS                    NexusFederation (orchestration)
-HAL:            FileMetadataProtocol       ZoneManager (wraps PyO3)
+HAL:            MetastoreABC               ZoneManager (wraps PyO3)
 Driver:         RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
 Comms:          —                          RaftClient (gRPC to peers)
 ```

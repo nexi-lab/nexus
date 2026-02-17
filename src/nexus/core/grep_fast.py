@@ -19,21 +19,13 @@ _rust_grep_bulk: Callable[..., list[dict[str, Any]]] | None = None
 _rust_grep_files_mmap: Callable[..., list[dict[str, Any]]] | None = None
 
 try:
-    from nexus._nexus_fast import grep_bulk as _rust_grep_bulk  # type: ignore[no-redef]
-    from nexus._nexus_fast import grep_files_mmap as _rust_grep_files_mmap  # type: ignore[no-redef]
+    from nexus_fast import grep_bulk as _rust_grep_bulk  # type: ignore[no-redef]
+    from nexus_fast import grep_files_mmap as _rust_grep_files_mmap  # type: ignore[no-redef]
 
     RUST_AVAILABLE = True
     MMAP_AVAILABLE = True
 except ImportError:
-    try:
-        # Fallback to external nexus_fast package
-        from nexus_fast import grep_bulk as _rust_grep_bulk  # type: ignore[no-redef]
-        from nexus_fast import grep_files_mmap as _rust_grep_files_mmap  # type: ignore[no-redef]
-
-        RUST_AVAILABLE = True
-        MMAP_AVAILABLE = True
-    except ImportError:
-        pass
+    pass
 
 
 def grep_bulk(
@@ -69,7 +61,7 @@ def grep_bulk(
             pattern, file_contents, ignore_case, max_results
         )
         return result
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         # If Rust grep fails for any reason, return None to fallback to Python
         return None
 
@@ -127,6 +119,6 @@ def grep_files_mmap(
             pattern, file_paths, ignore_case, max_results
         )
         return result
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         # If Rust grep fails for any reason, return None to fallback
         return None

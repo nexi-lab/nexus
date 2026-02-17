@@ -1,62 +1,19 @@
-"""Events service protocol (Issue #1287: Extract domain services).
+"""Events protocols — re-exports from split modules.
 
-Defines the contract for file watching and advisory locking operations.
-Existing implementation: ``nexus.core.nexus_fs_events.NexusFSEventsMixin``.
+The former ``EventsProtocol`` bundled file watching (S8) and advisory
+locking (S9) into a single Protocol.  Per ops-scenario-matrix.md §2.2.2
+these are fundamentally different subsystems (inotify vs flock) and are
+now defined separately:
 
-Dual-track support:
-- Layer 1 (Same-box): OS-native file watching (inotify/FSEvents)
-- Layer 2 (Distributed): Redis Pub/Sub events + distributed locks
+- :class:`WatchProtocol` — file change long-poll (``watch.py``)
+- :class:`LockProtocol`  — advisory lock lifecycle (``lock.py``)
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md
+    - docs/architecture/ops-scenario-matrix.md §2.2.2
     - Issue #1287: Extract NexusFS domain services from god object
 """
 
-from __future__ import annotations
+from nexus.services.protocols.lock import LockProtocol
+from nexus.services.protocols.watch import WatchProtocol
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
-
-
-@runtime_checkable
-class EventsProtocol(Protocol):
-    """Service contract for file watching and advisory locking.
-
-    Provides:
-    - ``wait_for_changes``: Long-poll for file system changes
-    - ``lock`` / ``extend_lock`` / ``unlock``: Advisory lock lifecycle
-    """
-
-    async def wait_for_changes(
-        self,
-        path: str,
-        timeout: float = 30.0,
-        since_revision: int | None = None,
-        _context: OperationContext | None = None,
-    ) -> dict[str, Any] | None: ...
-
-    async def lock(
-        self,
-        path: str,
-        timeout: float = 30.0,
-        ttl: float = 30.0,
-        max_holders: int = 1,
-        _context: OperationContext | None = None,
-    ) -> str | None: ...
-
-    async def extend_lock(
-        self,
-        lock_id: str,
-        path: str,
-        ttl: float = 30.0,
-        _context: OperationContext | None = None,
-    ) -> bool: ...
-
-    async def unlock(
-        self,
-        lock_id: str,
-        path: str | None = None,
-        _context: OperationContext | None = None,
-    ) -> bool: ...
+__all__ = ["LockProtocol", "WatchProtocol"]

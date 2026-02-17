@@ -12,7 +12,7 @@ Uses ordered steps for safety without requiring cross-system transactions:
 On failure at step 2+: unregister agent (no key exists, safe to retry).
 
 #1618 additions:
-    - DelegationStatus lifecycle (ACTIVE → REVOKED/EXPIRED/COMPLETED)
+    - DelegationStatus lifecycle (ACTIVE -> REVOKED/EXPIRED/COMPLETED)
     - Soft-delete revocation (status=REVOKED first, then cleanup)
     - Fail-loud on grant deletion during revocation
     - Session context manager (DRY)
@@ -37,9 +37,11 @@ from nexus.services.delegation.errors import (
     DelegationError,
     DelegationNotFoundError,
     DepthExceededError,
+    InsufficientTrustError,
 )
 from nexus.services.delegation.models import (
     DelegationMode,
+    DelegationOutcome,
     DelegationRecord,
     DelegationResult,
     DelegationScope,
@@ -49,10 +51,11 @@ from nexus.services.delegation.models import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
+    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.rebac.namespace_manager import NamespaceManager
     from nexus.services.agents.agent_registry import AgentRegistry
-    from nexus.services.permissions.entity_registry import EntityRegistry
-    from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.reputation.reputation_service import ReputationService
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +80,14 @@ class DelegationService:
         namespace_manager: NamespaceManager | None = None,
         entity_registry: EntityRegistry | None = None,
         agent_registry: AgentRegistry | None = None,
+        reputation_service: ReputationService | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._rebac_manager = rebac_manager
         self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
         self._agent_registry: AgentRegistry | None = agent_registry
+        self._reputation_service = reputation_service
         logger.info("[DelegationService] Initialized")
 
     @contextmanager
@@ -119,6 +124,7 @@ class DelegationService:
         intent: str = "",
         can_sub_delegate: bool = False,
         scope: DelegationScope | None = None,
+        min_trust_score: float = 0.0,
     ) -> DelegationResult:
         """Create a delegated worker agent with narrowed permissions.
 
@@ -137,6 +143,7 @@ class DelegationService:
             intent: Immutable purpose description for audit trail.
             can_sub_delegate: Whether worker can create further delegations.
             scope: Fine-grained operation/resource/budget constraints.
+            min_trust_score: Minimum trust score for coordinator (0.0 = disabled).
 
         Returns:
             DelegationResult with worker agent ID, API key, and mount table.
@@ -146,10 +153,21 @@ class DelegationService:
             DepthExceededError: If chain depth exceeds max_depth.
             DelegationError: If coordinator is not registered.
             EscalationError: If grants would exceed parent's permissions.
+            InsufficientTrustError: If coordinator trust score < min_trust_score.
             TooManyGrantsError: If too many grants derived.
         """
         # 1. Validate coordinator is registered and can delegate
         parent_delegation = self._validate_coordinator(coordinator_agent_id)
+
+        # 1b. Trust gate: reject if coordinator trust score is below threshold (#1619)
+        if min_trust_score > 0.0 and self._reputation_service is not None:
+            score = self._reputation_service.get_reputation(coordinator_agent_id)
+            if score is None or score.composite_score < min_trust_score:
+                raise InsufficientTrustError(
+                    agent_id=coordinator_agent_id,
+                    score=score.composite_score if score else None,
+                    threshold=min_trust_score,
+                )
 
         # 2. Compute chain depth
         depth = 0
@@ -271,7 +289,7 @@ class DelegationService:
         """Revoke a delegation using soft-delete-first pattern (Issue 8A).
 
         Steps:
-            0. Set status=REVOKED (contract with callers — immediate)
+            0. Set status=REVOKED (contract with callers -- immediate)
             1. Delete ReBAC tuples (fail-loud, Issue 7A)
             2. Revoke API key
             3. Unregister agent
@@ -295,10 +313,10 @@ class DelegationService:
                 f"Delegation {delegation_id} is not active (status={record.status.value})"
             )
 
-        # Step 0: Soft-delete — mark as REVOKED immediately
+        # Step 0: Soft-delete -- mark as REVOKED immediately
         self._update_delegation_status(delegation_id, DelegationStatus.REVOKED)
 
-        # Step 1: Delete ReBAC tuples — fail-loud (Issue 7A)
+        # Step 1: Delete ReBAC tuples -- fail-loud (Issue 7A)
         self._delete_worker_tuples(record.agent_id, record.zone_id)
 
         # Step 2: Revoke API key
@@ -335,32 +353,44 @@ class DelegationService:
         Returns:
             Tuple of (records, total_count).
         """
+        from sqlalchemy import func, select
+
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
-            query = session.query(DelegationRecordModel).filter(
+            stmt = select(DelegationRecordModel).where(
                 DelegationRecordModel.parent_agent_id == parent_agent_id
             )
             if status_filter is not None:
-                query = query.filter(DelegationRecordModel.status == status_filter.value)
+                stmt = stmt.where(DelegationRecordModel.status == status_filter.value)
 
-            total = query.count()
+            count_stmt = select(func.count()).select_from(stmt.subquery())
+            total = session.execute(count_stmt).scalar() or 0
             rows = (
-                query.order_by(DelegationRecordModel.created_at.desc())
-                .offset(offset)
-                .limit(limit)
+                session.execute(
+                    stmt.order_by(DelegationRecordModel.created_at.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+                .scalars()
                 .all()
             )
             return [self._model_to_record(row) for row in rows], total
 
     def get_delegation_by_id(self, delegation_id: str) -> DelegationRecord | None:
         """Get delegation record by delegation_id."""
+        from sqlalchemy import select
+
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
             row = (
-                session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.delegation_id == delegation_id)
+                session.execute(
+                    select(DelegationRecordModel).where(
+                        DelegationRecordModel.delegation_id == delegation_id
+                    )
+                )
+                .scalars()
                 .first()
             )
             if row is None:
@@ -369,15 +399,19 @@ class DelegationService:
 
     def get_delegation(self, agent_id: str) -> DelegationRecord | None:
         """Get active delegation record for a worker agent."""
+        from sqlalchemy import select
+
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
             row = (
-                session.query(DelegationRecordModel)
-                .filter(
-                    DelegationRecordModel.agent_id == agent_id,
-                    DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
+                session.execute(
+                    select(DelegationRecordModel).where(
+                        DelegationRecordModel.agent_id == agent_id,
+                        DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
+                    )
                 )
+                .scalars()
                 .first()
             )
             if row is None:
@@ -406,6 +440,106 @@ class DelegationService:
             current_id = record.parent_delegation_id
 
         return chain
+
+    def complete_delegation(
+        self,
+        delegation_id: str,
+        outcome: DelegationOutcome,
+        quality_score: float | None = None,
+    ) -> DelegationRecord:
+        """Complete a delegation and submit feedback to the reputation system (#1619).
+
+        Args:
+            delegation_id: The delegation to complete.
+            outcome: How the delegation ended (COMPLETED/FAILED/TIMEOUT).
+            quality_score: Optional quality rating (0.0-1.0) for COMPLETED outcome.
+
+        Returns:
+            Updated DelegationRecord.
+
+        Raises:
+            DelegationNotFoundError: If delegation_id not found.
+            DelegationError: If delegation is not ACTIVE or quality_score out of range.
+        """
+        if quality_score is not None and not (0.0 <= quality_score <= 1.0):
+            raise DelegationError(f"quality_score must be between 0.0 and 1.0, got {quality_score}")
+
+        record = self._load_delegation_record(delegation_id)
+        if record is None:
+            raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
+
+        if record.status != DelegationStatus.ACTIVE:
+            raise DelegationError(
+                f"Delegation {delegation_id} is not active (status={record.status.value})"
+            )
+
+        # Update status to COMPLETED
+        self._update_delegation_status(delegation_id, DelegationStatus.COMPLETED)
+
+        # Submit feedback to reputation service if available
+        if self._reputation_service is not None:
+            self._submit_delegation_feedback(record, outcome, quality_score)
+
+        # Return updated record
+        updated = self._load_delegation_record(delegation_id)
+        if updated is None:
+            raise DelegationNotFoundError(f"Delegation {delegation_id} not found after update")
+        return updated
+
+    def _submit_delegation_feedback(
+        self,
+        record: DelegationRecord,
+        outcome: DelegationOutcome,
+        quality_score: float | None,
+    ) -> None:
+        """Submit delegation outcome as reputation feedback (#1619).
+
+        Coordinator (parent) rates the worker based on delegation outcome:
+        - COMPLETED → positive reliability (1.0) + quality (quality_score or 0.8)
+        - FAILED → negative reliability (0.0)
+        - TIMEOUT → negative timeliness (0.0)
+        """
+        if self._reputation_service is None:
+            return  # Caller should have checked; defensive no-op
+
+        zone_id = record.zone_id or "default"
+
+        try:
+            if outcome == DelegationOutcome.COMPLETED:
+                self._reputation_service.submit_feedback(
+                    rater_agent_id=record.parent_agent_id,
+                    rated_agent_id=record.agent_id,
+                    exchange_id=record.delegation_id,
+                    zone_id=zone_id,
+                    outcome="positive",
+                    reliability_score=1.0,
+                    quality_score=quality_score if quality_score is not None else 0.8,
+                )
+            elif outcome == DelegationOutcome.FAILED:
+                self._reputation_service.submit_feedback(
+                    rater_agent_id=record.parent_agent_id,
+                    rated_agent_id=record.agent_id,
+                    exchange_id=record.delegation_id,
+                    zone_id=zone_id,
+                    outcome="negative",
+                    reliability_score=0.0,
+                )
+            elif outcome == DelegationOutcome.TIMEOUT:
+                self._reputation_service.submit_feedback(
+                    rater_agent_id=record.parent_agent_id,
+                    rated_agent_id=record.agent_id,
+                    exchange_id=record.delegation_id,
+                    zone_id=zone_id,
+                    outcome="negative",
+                    timeliness_score=0.0,
+                )
+        except Exception as e:
+            # Feedback is best-effort; don't fail the completion
+            logger.warning(
+                "[Delegation] Failed to submit reputation feedback for delegation=%s: %s",
+                record.delegation_id,
+                e,
+            )
 
     # -------------------------------------------------------------------------
     # Private helpers
@@ -605,7 +739,7 @@ class DelegationService:
         worker_id: str,
         zone_id: str | None,
     ) -> list[str]:
-        """Get mount table for the worker agent (fail-soft — informational)."""
+        """Get mount table for the worker agent (fail-soft -- informational)."""
         if self._namespace_manager is None:
             return []
         try:
@@ -636,16 +770,20 @@ class DelegationService:
 
     def _revoke_worker_api_key(self, worker_id: str) -> None:
         """Revoke all API keys for the worker agent."""
+        from sqlalchemy import select
+
         from nexus.identity.api_key_ops import revoke_api_key
         from nexus.storage.models.auth import APIKeyModel
 
         with self._session() as session:
             keys = (
-                session.query(APIKeyModel)
-                .filter(
-                    APIKeyModel.subject_type == "agent",
-                    APIKeyModel.subject_id == worker_id,
+                session.execute(
+                    select(APIKeyModel).where(
+                        APIKeyModel.subject_type == "agent",
+                        APIKeyModel.subject_id == worker_id,
+                    )
                 )
+                .scalars()
                 .all()
             )
             for key in keys:
@@ -653,25 +791,34 @@ class DelegationService:
 
     def _update_delegation_status(self, delegation_id: str, status: DelegationStatus) -> None:
         """Update delegation record status (soft-delete pattern, Issue 8A)."""
+        from sqlalchemy import update
+
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session() as session:
-            rows_updated = (
-                session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.delegation_id == delegation_id)
-                .update({"status": status.value})
+            result = session.execute(
+                update(DelegationRecordModel)
+                .where(DelegationRecordModel.delegation_id == delegation_id)
+                .values(status=status.value)
             )
+            rows_updated = result.rowcount
             if rows_updated == 0:
                 raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
 
     def _load_delegation_record(self, delegation_id: str) -> DelegationRecord | None:
         """Load a delegation record by ID."""
+        from sqlalchemy import select
+
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
             row = (
-                session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.delegation_id == delegation_id)
+                session.execute(
+                    select(DelegationRecordModel).where(
+                        DelegationRecordModel.delegation_id == delegation_id
+                    )
+                )
+                .scalars()
                 .first()
             )
             if row is None:

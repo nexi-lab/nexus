@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from nexus.server.auth.database_local import DatabaseLocalAuth
+from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 from nexus.server.auth.user_helpers import (

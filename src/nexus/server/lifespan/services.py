@@ -31,8 +31,10 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
     _startup_agent_registry(app)
     _startup_key_service(app)
+    _startup_reputation_service(app)
     _startup_delegation_service(app)
     _startup_sandbox_auth(app)
+    _startup_rlm_service(app)
 
     # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app)
@@ -87,6 +89,15 @@ async def shutdown_services(app: FastAPI) -> None:
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
+    # Shutdown RLM thread pool (Issue #1306)
+    rlm_service = getattr(app.state, "rlm_service", None)
+    if rlm_service is not None:
+        try:
+            rlm_service.shutdown()
+            logger.info("[RLM] Thread pool shut down")
+        except Exception as e:
+            logger.warning("[RLM] Error shutting down thread pool: %s", e, exc_info=True)
+
     # SandboxManager cleanup
     if app.state.sandbox_auth_service:
         logger.info(
@@ -137,7 +148,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             app.state.agent_registry = AgentRegistry(
                 session_factory=app.state.nexus_fs.SessionLocal,
@@ -206,6 +217,26 @@ def _startup_key_service(app: FastAPI) -> None:
         app.state.key_service = None
 
 
+def _startup_reputation_service(app: FastAPI) -> None:
+    """Initialize ReputationService singleton for trust routing (#1619)."""
+    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
+        app.state.reputation_service = None
+        return
+
+    try:
+        from nexus.services.reputation.reputation_service import ReputationService
+
+        app.state.reputation_service = ReputationService(
+            session_factory=app.state.nexus_fs.SessionLocal,
+            cache_maxsize=10_000,
+            cache_ttl=60,
+        )
+        logger.info("[REPUTATION] ReputationService initialized (singleton)")
+    except Exception as e:
+        logger.warning("[REPUTATION] Failed to initialize: %s", e, exc_info=True)
+        app.state.reputation_service = None
+
+
 def _startup_delegation_service(app: FastAPI) -> None:
     """Initialize DelegationService for agent delegation (Issue #1618)."""
     if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
@@ -223,6 +254,7 @@ def _startup_delegation_service(app: FastAPI) -> None:
         namespace_manager = getattr(app.state.nexus_fs, "_namespace_manager", None)
         entity_registry = getattr(app.state.nexus_fs, "_entity_registry", None)
         agent_registry = getattr(app.state, "agent_registry", None)
+        reputation_service = getattr(app.state, "reputation_service", None)
 
         app.state.delegation_service = DelegationService(
             session_factory=app.state.nexus_fs.SessionLocal,
@@ -230,6 +262,7 @@ def _startup_delegation_service(app: FastAPI) -> None:
             namespace_manager=namespace_manager,
             entity_registry=entity_registry,
             agent_registry=agent_registry,
+            reputation_service=reputation_service,
         )
         logger.info("[DELEGATION] DelegationService initialized and wired")
     except Exception as e:
@@ -309,6 +342,42 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         logger.warning(
             "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
         )
+
+
+def _startup_rlm_service(app: FastAPI) -> None:
+    """Initialize RLM inference service (Issue #1306).
+
+    Requires SandboxAuthService (for SandboxManager) and an LLM provider.
+    Falls back gracefully if either is unavailable — the /api/v2/rlm/infer
+    endpoint will return 503.
+    """
+    sandbox_auth = getattr(app.state, "sandbox_auth_service", None)
+    if sandbox_auth is None:
+        logger.debug("[RLM] SandboxAuthService not available, RLM service skipped")
+        return
+
+    sandbox_mgr = getattr(sandbox_auth, "_sandbox_manager", None)
+    if sandbox_mgr is None:
+        logger.debug("[RLM] SandboxManager not available, RLM service skipped")
+        return
+
+    llm_provider = getattr(app.state.nexus_fs, "_llm_provider", None)
+
+    try:
+        from nexus.rlm.service import RLMInferenceService
+
+        nexus_api_url = os.environ.get("NEXUS_API_URL", "http://localhost:2026")
+        max_concurrent = int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8"))
+
+        app.state.rlm_service = RLMInferenceService(
+            sandbox_manager=sandbox_mgr,
+            llm_provider=llm_provider,
+            nexus_api_url=nexus_api_url,
+            max_concurrent=max_concurrent,
+        )
+        logger.info("[RLM] RLMInferenceService initialized (max_concurrent=%d)", max_concurrent)
+    except Exception as e:
+        logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
 
 
 def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:

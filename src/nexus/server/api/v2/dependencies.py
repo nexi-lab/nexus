@@ -336,6 +336,9 @@ async def get_reputation_context(
 ) -> tuple[Any, Any, dict[str, Any]]:
     """Get ReputationService + DisputeService + auth context.
 
+    Prefers the singleton ReputationService on app.state (#1619),
+    falling back to per-request instantiation for backward compat.
+
     Returns:
         Tuple of (ReputationService, DisputeService, auth_context dict).
     """
@@ -346,6 +349,8 @@ async def get_reputation_context(
     session_factory = (
         _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
     )
+
+    # Per-request instantiation (singleton DI via app.state planned in #1619)
     reputation_service = ReputationService(
         session_factory=session_factory,
         cache_maxsize=10_000,

@@ -81,6 +81,7 @@ class VFSRouterProtocol(Protocol):
         *,
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
     ) -> None: ...
 
     async def remove_mount(self, mount_point: str) -> bool: ...

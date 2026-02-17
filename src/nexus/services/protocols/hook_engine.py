@@ -32,6 +32,12 @@ POST_MKDIR: str = "post_mkdir"
 PRE_COPY: str = "pre_copy"
 POST_COPY: str = "post_copy"
 
+# Brick lifecycle phases (Issue #1704)
+PRE_MOUNT: str = "pre_mount"
+POST_MOUNT: str = "post_mount"
+PRE_UNMOUNT: str = "pre_unmount"
+POST_UNMOUNT: str = "post_unmount"
+
 
 # ---------------------------------------------------------------------------
 # Data models

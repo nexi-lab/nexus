@@ -11,8 +11,8 @@ import pytest
 
 from nexus import NexusFS
 from nexus.backends import LocalBackend
-from nexus.core._metadata_generated import PaginatedResult
 from nexus.core.config import PermissionConfig
+from nexus.core.metadata import PaginatedResult
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 

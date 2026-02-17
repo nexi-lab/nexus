@@ -42,11 +42,13 @@ class DatabaseTaskStore:
     def __init__(self, record_store: RecordStoreABC) -> None:
         warnings.warn(
             "DatabaseTaskStore is deprecated. Use VFSTaskStore for "
-            "filesystem-backed persistence (§17.6 convergence).",
+            "filesystem-backed persistence (§17.6 convergence). "
+            "This store will be removed in a future release.",
             DeprecationWarning,
             stacklevel=2,
         )
         self._session_factory = record_store.session_factory
+        self._executor = None  # Use default thread pool executor
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:
         """Run a sync function in the dedicated DB thread pool.

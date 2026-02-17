@@ -26,13 +26,10 @@ Usage:
     nx = NexusFS(backend=backend, metadata_store=store)
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
-
 
 class CacheStoreABC(ABC):
     """Abstract base class for ephemeral KV + PubSub storage (the "Ephemeral" pillar).
@@ -141,12 +138,11 @@ class CacheStoreABC(ABC):
         """Close connections and release resources."""
         ...
 
-    async def __aenter__(self) -> CacheStoreABC:
+    async def __aenter__(self) -> "CacheStoreABC":
         return self
 
     async def __aexit__(self, *args: Any) -> None:
         await self.close()
-
 
 class NullCacheStore(CacheStoreABC):
     """No-op CacheStore — the fscache CONFIG_FSCACHE=n equivalent.

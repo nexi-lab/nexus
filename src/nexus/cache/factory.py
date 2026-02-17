@@ -72,7 +72,7 @@ class CacheFactory:
         self,
         settings: CacheSettings,
         cache_store: CacheStoreABC | None = None,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
     ):
         """Initialize cache factory.
 
@@ -85,8 +85,8 @@ class CacheFactory:
         """
         self._settings = settings
         self._cache_store: CacheStoreABC = cache_store or NullCacheStore()
-        self._cache_client: DragonflyClient | None = None  # kept for embedding cache
-        self._record_store: RecordStoreABC | None = record_store
+        self._cache_client: "DragonflyClient | None" = None  # kept for embedding cache
+        self._record_store: "RecordStoreABC | None" = record_store
         self._initialized = False
         self._has_cache_store = False
         self._using_postgres = False
@@ -281,9 +281,9 @@ class CacheFactory:
 
     def create_caching_wrapper(
         self,
-        inner: Backend,
-        config: CacheWrapperConfig | None = None,
-    ) -> CachingBackendWrapper:
+        inner: "Backend",
+        config: "CacheWrapperConfig | None" = None,
+    ) -> "CachingBackendWrapper":
         """Create a CachingBackendWrapper for the given backend.
 
         Wires the wrapper with this factory's CacheStoreABC for L2 distributed
@@ -312,7 +312,7 @@ class CacheFactory:
             cache_store=cache_store,
         )
 
-    async def __aenter__(self) -> CacheFactory:
+    async def __aenter__(self) -> "CacheFactory":
         """Async context manager entry."""
         await self.initialize()
         return self
@@ -327,7 +327,7 @@ _cache_factory: CacheFactory | None = None
 async def init_cache_factory(
     settings: CacheSettings,
     cache_store: CacheStoreABC | None = None,
-    record_store: RecordStoreABC | None = None,
+    record_store: "RecordStoreABC | None" = None,
 ) -> CacheFactory:
     """Initialize the global cache factory.
 

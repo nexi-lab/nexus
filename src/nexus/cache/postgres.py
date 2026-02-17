@@ -160,7 +160,7 @@ class PostgresPermissionCache:
 
     def __init__(
         self,
-        engine: Engine,
+        engine: "Engine",
         ttl: int = 300,
         denial_ttl: int = 60,
     ):
@@ -407,7 +407,7 @@ class PostgresTigerCache:
     Stores pre-materialized Roaring Bitmaps for O(1) permission filtering.
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: "Engine"):
         self._engine = engine
 
     # --- Sync DB helpers ---
@@ -562,7 +562,7 @@ class PostgresResourceMapCache:
     Protocol interface is accepted but not used in queries.
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: "Engine"):
         self._engine = engine
 
     # --- Sync DB helpers ---

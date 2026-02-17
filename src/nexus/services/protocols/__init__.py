@@ -31,7 +31,6 @@ from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
-from nexus.services.protocols.delegation import DelegationProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -63,9 +62,7 @@ from nexus.services.protocols.operation_log import OperationLogProtocol
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
-from nexus.services.protocols.plugin import PluginProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
-from nexus.services.protocols.reputation import ReputationProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
@@ -80,8 +77,6 @@ from nexus.services.protocols.write_back import WriteBackProtocol
 from nexus.workflows.protocol import (
     MetadataStoreProtocol,
     NexusOperationsProtocol,
-    WorkflowLLMProtocol,
-    WorkflowProtocol,
 )
 
 __all__ = [
@@ -91,7 +86,6 @@ __all__ = [
     "AgentRequest",
     "AnomalyDetectorProtocol",
     "ChunkedUploadProtocol",
-    "DelegationProtocol",
     "EventLogConfig",
     "EventLogProtocol",
     "HookContext",
@@ -126,10 +120,8 @@ __all__ = [
     "ParseProtocol",
     "PaymentProtocol",
     "PermissionProtocol",
-    "PluginProtocol",
     "ProgressCallback",
     "ReBACBrickProtocol",
-    "ReputationProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
     "SearchProtocol",
@@ -143,7 +135,5 @@ __all__ = [
     "TrajectoryProtocol",
     "VersionProtocol",
     "WatchProtocol",
-    "WorkflowLLMProtocol",
-    "WorkflowProtocol",
     "WriteBackProtocol",
 ]

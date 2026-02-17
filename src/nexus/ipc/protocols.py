@@ -87,3 +87,27 @@ class EventSubscriber(Protocol):
     async def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
         """Subscribe to events on a channel. Yields events as they arrive."""
         ...
+
+
+@runtime_checkable
+class HotPathPublisher(Protocol):
+    """Publish raw bytes to a NATS subject for hot-path delivery.
+
+    Used by MessageSender to bypass filesystem for instant delivery.
+    """
+
+    async def publish(self, subject: str, data: bytes) -> None:
+        """Publish data to the given subject."""
+        ...
+
+
+@runtime_checkable
+class HotPathSubscriber(Protocol):
+    """Subscribe to raw bytes on a NATS subject for hot-path delivery.
+
+    Used by MessageProcessor to receive messages without filesystem polling.
+    """
+
+    def subscribe(self, subject: str) -> AsyncIterator[bytes]:
+        """Subscribe to a subject. Yields raw message bytes as they arrive."""
+        ...

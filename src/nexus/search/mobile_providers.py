@@ -670,8 +670,8 @@ def _get_reranker_provider_class(
     from nexus.search.mobile_config import ModelProvider
 
     provider_map: dict[ModelProvider, type[MobileRerankerProvider]] = {
-        ModelProvider.SENTENCE_TRANSFORMERS: "CrossEncoderRerankerProvider",
-        ModelProvider.GGUF: "CrossEncoderRerankerProvider",  # Fallback for now
+        ModelProvider.SENTENCE_TRANSFORMERS: CrossEncoderRerankerProvider,
+        ModelProvider.GGUF: CrossEncoderRerankerProvider,  # Fallback for now
     }
 
     provider_class = provider_map.get(config.provider)

@@ -66,10 +66,20 @@ class TestExtractContextIdentityExport:
         assert extract_context_identity is not None
 
 class TestTypesIsLeafModule:
-    """core/types.py must have zero runtime nexus.* imports."""
+    """core/types.py must have minimal runtime nexus.* imports.
 
-    def test_no_runtime_nexus_imports(self) -> None:
-        """AST check: types.py has no runtime imports from nexus.*."""
+    PEP 649 (Python 3.14): dataclass field annotations are still eagerly evaluated,
+    so ReadSet must be a runtime import. All other nexus imports should remain
+    under TYPE_CHECKING.
+    """
+
+    # Imports allowed at runtime because dataclass fields require them
+    _ALLOWED_RUNTIME_IMPORTS = frozenset({
+        "from nexus.core.read_set import ReadSet",
+    })
+
+    def test_only_allowed_runtime_nexus_imports(self) -> None:
+        """AST check: types.py has only the minimal required runtime nexus imports."""
         source = _TYPES_FILE.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(_TYPES_FILE))
 
@@ -94,9 +104,10 @@ class TestTypesIsLeafModule:
                 names = ", ".join(a.name for a in node.names)
                 runtime_nexus_imports.append(f"from {node.module} import {names}")
 
-        assert runtime_nexus_imports == [], (
-            f"core/types.py must be a zero-dependency leaf module, "
-            f"but has runtime nexus imports: {runtime_nexus_imports}"
+        unexpected = [i for i in runtime_nexus_imports if i not in self._ALLOWED_RUNTIME_IMPORTS]
+        assert unexpected == [], (
+            f"core/types.py has unexpected runtime nexus imports: {unexpected}. "
+            f"Only these are allowed (for dataclass fields): {sorted(self._ALLOWED_RUNTIME_IMPORTS)}"
         )
 
     def test_no_future_annotations(self) -> None:

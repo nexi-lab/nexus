@@ -1138,7 +1138,7 @@ class NexusFS(  # type: ignore[misc]
         # P0-4: Zone boundary security check (Issue #819)
         # Even admins need zone boundary checks (unless they have MANAGE_ZONES capability)
         if ctx.is_admin and self._permission_enforcer:
-            from nexus.services.permissions.permissions_enhanced import AdminCapability
+            from nexus.rebac.permissions_enhanced import AdminCapability
 
             # Extract zone from path (format: /zone/{zone_id}/...)
             path_zone_id = None

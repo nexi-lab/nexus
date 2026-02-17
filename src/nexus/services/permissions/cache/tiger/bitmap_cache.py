@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
     from nexus.cache.dragonfly import DragonflyTigerCache
     from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 

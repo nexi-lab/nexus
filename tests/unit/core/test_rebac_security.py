@@ -23,7 +23,7 @@ from nexus.core.permissions import (
     Permission,
 )
 from nexus.services.permissions.enforcer import PermissionEnforcer
-from nexus.services.permissions.rebac_manager_enhanced import (
+from nexus.rebac.manager import (
     CheckResult,
     ConsistencyLevel,
     ConsistencyRequirement,

@@ -55,7 +55,7 @@ from cachetools import TTLCache
 
 if TYPE_CHECKING:
     from nexus.core.persistent_view_store import PersistentViewStore
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 

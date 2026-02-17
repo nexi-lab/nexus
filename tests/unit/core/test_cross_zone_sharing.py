@@ -15,7 +15,7 @@ from sqlalchemy import create_engine
 
 from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
 from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+from nexus.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
 
 
@@ -358,7 +358,7 @@ class TestCrossZoneRustPathFix:
     @pytest.fixture
     def enhanced_manager(self, engine):
         """Create an enhanced ReBAC manager that has _fetch_tuples_for_rust."""
-        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.rebac.manager import EnhancedReBACManager
 
         manager = EnhancedReBACManager(
             engine=engine,

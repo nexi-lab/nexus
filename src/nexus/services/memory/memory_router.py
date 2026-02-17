@@ -558,7 +558,7 @@ class MemoryViewRouter:
             if owner_id:
                 from sqlalchemy import Engine
 
-                from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+                from nexus.rebac.manager import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
@@ -630,7 +630,7 @@ class MemoryViewRouter:
             if user_id:
                 from sqlalchemy import Engine
 
-                from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+                from nexus.rebac.manager import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"

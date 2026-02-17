@@ -120,7 +120,7 @@ class KernelServices:
     Use ``dataclasses.replace()`` to create modified copies if needed.
     """
 
-    # Permission services
+    # --- Tier 0: KERNEL — mandatory, boot-fatal on failure ---
     router: Any = None
     rebac_manager: Any = None
     dir_visibility_cache: Any = None
@@ -129,13 +129,9 @@ class KernelServices:
     permission_enforcer: Any = None
     hierarchy_manager: Any = None
     deferred_permission_buffer: Any = None
-
-    # Workspace services
     workspace_registry: Any = None
     mount_manager: Any = None
     workspace_manager: Any = None
-
-    # Sync/versioning
     write_observer: Any = None
     version_service: Any = None
     overlay_resolver: Any = None
@@ -144,7 +140,7 @@ class KernelServices:
     # Cache invalidation (Issue #1169 / #1519)
     cache_observer: CacheInvalidationObserver | None = None
 
-    # Infrastructure (moved from _service_extras dict)
+    # --- Tier 2: BRICK — infrastructure ---
     event_bus: Any = None
     lock_manager: Any = None
     workflow_engine: WorkflowProtocol | None = None
@@ -162,11 +158,9 @@ class KernelServices:
     resiliency_manager: Any = None
     delivery_worker: Any = None
 
-    # Kernel protocol services (Issue #1502)
+    # --- Tier 1: SYSTEM — kernel protocol services (Issue #1502) ---
     agent_registry: Any = None
     namespace_manager: NamespaceManagerProtocol | None = None
-
-    # Async protocol wrappers (Issue #1502)
     async_agent_registry: Any = None
     async_namespace_manager: Any = None
     async_vfs_router: Any = None

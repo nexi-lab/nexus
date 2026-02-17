@@ -259,7 +259,14 @@ class PermissionEnforcer:
 
         except Exception as e:
             logger.warning(
-                "[HAS-DESCENDANTS] Error: %s, returning True (fallback)", e, exc_info=True
+                "[HAS-DESCENDANTS] Error for zone=%s subject=%s:%s prefix=%s: %s, "
+                "returning True (fallback)",
+                zone_id,
+                subject_type,
+                subject_id,
+                prefix,
+                e,
+                exc_info=True,
             )
             return True  # Fallback: assume accessible
 
@@ -326,6 +333,16 @@ class PermissionEnforcer:
                 logger.debug(f"[BATCH-OPT] Empty bitmap for {subject_type}:{subject_id}")
                 return dict.fromkeys(prefixes, False)
 
+            # P1: Cap bitmap to prevent excessive memory/CPU on huge permission sets
+            max_bitmap_paths = 50_000
+            if len(allowed_ids) > max_bitmap_paths:
+                logger.warning(
+                    "[BATCH-OPT] Bitmap exceeds %d paths (%d), truncating",
+                    max_bitmap_paths,
+                    len(allowed_ids),
+                )
+                allowed_ids = allowed_ids[:max_bitmap_paths]
+
             # Build set of all accessible file paths from allowed IDs (single scan)
             resource_map = tiger_cache._resource_map
             accessible_paths: list[str] = []
@@ -358,10 +375,12 @@ class PermissionEnforcer:
 
         except Exception as e:
             logger.warning(
-                "[BATCH-OPT] has_accessible_descendants_batch error: %s, "
-                "returning all True for %d prefixes (fallback)",
-                e,
+                "[BATCH-OPT] has_accessible_descendants_batch error for "
+                "zone=%s subject=%s prefix_count=%d: %s, returning all True (fallback)",
+                context.zone_id,
+                getattr(context, "user", "?"),
                 len(prefixes),
+                e,
                 exc_info=True,
             )
             return dict.fromkeys(prefixes, True)
@@ -568,7 +587,10 @@ class PermissionEnforcer:
             except Exception as e:
                 # If routing fails, fall back to default "file" type with virtual path
                 logger.warning(
-                    "[_check_rebac] Failed to route path for object type: %s, using default 'file'",
+                    "[_check_rebac] Failed to route path=%s zone=%s for object type: %s, "
+                    "using default 'file'",
+                    path,
+                    context.zone_id,
                     e,
                     exc_info=True,
                 )

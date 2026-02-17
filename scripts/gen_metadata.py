@@ -1009,7 +1009,12 @@ def apply_renames(renames: dict[str, str]) -> list[str]:
     pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in old_names) + r")\b")
 
     # Files to skip (generated or managed by this script)
-    skip = {METADATA_OUT.resolve(), METASTORE_OUT.resolve(), COMPACT_OUT.resolve(), MAPPER_OUT.resolve()}
+    skip = {
+        METADATA_OUT.resolve(),
+        METASTORE_OUT.resolve(),
+        COMPACT_OUT.resolve(),
+        MAPPER_OUT.resolve(),
+    }
 
     modified = []
     for search_dir in [src_dir, tests_dir]:

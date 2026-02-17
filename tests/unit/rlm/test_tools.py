@@ -136,7 +136,7 @@ class TestNexusSearch:
         )
 
         call_kwargs = mock_get.call_args.kwargs
-        assert call_kwargs.get("params", {}).get("limit") == 5 or "limit=5" in str(
+        assert call_kwargs.get("params", {}).get("limit") == "5" or "limit=5" in str(
             mock_get.call_args
         )
 

@@ -1261,6 +1261,28 @@ def create_app(
     else:
         app.state.async_session_factory = None
 
+    # Expose sync session_factory from RecordStoreABC (Issue #1519).
+    # This is the canonical way for sync endpoints to get database sessions
+    # without reaching into NexusFS.SessionLocal internals.
+    if _record_store is not None:
+        app.state.session_factory = _record_store.session_factory
+    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+        app.state.session_factory = nexus_fs.SessionLocal
+    else:
+        app.state.session_factory = None
+
+    # Expose read replica factories (Issue #725).
+    # Read-only routes (graph, search) use these for read replica routing.
+    if _record_store is not None:
+        app.state.read_session_factory = _record_store.read_session_factory
+        try:
+            app.state.async_read_session_factory = _record_store.async_read_session_factory
+        except NotImplementedError:
+            app.state.async_read_session_factory = None
+    else:
+        app.state.read_session_factory = None
+        app.state.async_read_session_factory = None
+
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
         os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")

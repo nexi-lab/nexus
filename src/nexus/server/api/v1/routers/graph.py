@@ -18,7 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from nexus.server.api.v1.dependencies import get_async_session_factory, get_nexus_fs
+from nexus.server.api.v1.dependencies import get_async_read_session_factory, get_nexus_fs
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ async def get_graph_entity(
     entity_id: str,
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(get_nexus_fs),
-    async_sf: Any = Depends(get_async_session_factory),
+    async_sf: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Get an entity by ID from the knowledge graph.
 
@@ -89,7 +89,7 @@ async def get_graph_neighbors(
     direction: str = Query("both", description="Direction: outgoing, incoming, both"),
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(get_nexus_fs),
-    async_sf: Any = Depends(get_async_session_factory),
+    async_sf: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Get N-hop neighbors of an entity.
 
@@ -125,7 +125,7 @@ async def get_graph_subgraph(
     request: Request,
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(get_nexus_fs),
-    async_sf: Any = Depends(get_async_session_factory),
+    async_sf: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Extract a subgraph for GraphRAG context building.
 
@@ -160,7 +160,7 @@ async def search_graph_entities(
     fuzzy: bool = Query(False, description="Search in aliases as well"),
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(get_nexus_fs),
-    async_sf: Any = Depends(get_async_session_factory),
+    async_sf: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Search for entities by name.
 

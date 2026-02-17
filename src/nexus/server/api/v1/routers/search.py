@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from nexus.server.api.v1.dependencies import (
-    get_async_session_factory,
+    get_async_read_session_factory,
     get_optional_search_daemon,
     get_search_daemon,
 )
@@ -87,7 +87,7 @@ async def search_query(
     ),
     _auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(get_search_daemon),
-    async_session_factory: Any = Depends(get_async_session_factory),
+    async_session_factory: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon.
 

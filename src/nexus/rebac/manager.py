@@ -129,17 +129,20 @@ class ReBACManager:
         enable_graph_limits: bool = True,
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
+        read_engine: Engine | None = None,
     ):
         """Initialize ReBAC manager.
 
         Args:
-            engine: SQLAlchemy database engine
+            engine: SQLAlchemy database engine (primary/write)
             cache_ttl_seconds: Cache TTL in seconds (default: 5 minutes)
             max_depth: Maximum graph traversal depth (default: 50 hops)
             enforce_zone_isolation: Enable zone isolation checks (default: True)
             enable_graph_limits: Enable graph limit enforcement (default: True)
             enable_leopard: Enable Leopard transitive closure index (default: True)
             enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True)
+            read_engine: Optional separate engine for read-only operations (Issue #725).
+                        Defaults to ``engine`` when not provided.
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
@@ -149,8 +152,8 @@ class ReBACManager:
         self._namespaces_initialized = False
         self._tuple_version: int = 0
 
-        # Compose TupleRepository for data access delegation
-        self._repo = TupleRepository(engine)
+        # Compose TupleRepository for data access delegation (Issue #725: read/write split)
+        self._repo = TupleRepository(engine, read_engine=read_engine)
 
         # Compose graph traversal and expand engines
         self._computer = PermissionComputer(self._repo, self.get_namespace, max_depth)

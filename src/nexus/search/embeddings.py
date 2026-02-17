@@ -46,8 +46,6 @@ class EmbeddingModel(StrEnum):
     VOYAGE_3 = "voyage-3"  # Best quality, 1024d, $0.06/1M tokens
     VOYAGE_3_LITE = "voyage-3-lite"  # Fast & cheap, 512d, $0.02/1M tokens
     VOYAGE_3_LARGE = "voyage-3-large"  # Highest quality, 1024d
-    VOYAGE_2 = "voyage-2"  # Legacy
-    VOYAGE_LARGE_2 = "voyage-large-2"  # Legacy
 
     # OpenRouter (via OpenAI-compatible API)
     OPENROUTER_DEFAULT = "openai/text-embedding-3-small"

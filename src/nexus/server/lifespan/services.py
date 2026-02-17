@@ -148,7 +148,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             app.state.agent_registry = AgentRegistry(
                 session_factory=app.state.nexus_fs.SessionLocal,

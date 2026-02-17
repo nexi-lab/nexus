@@ -124,7 +124,7 @@ class MemoryGraphPipelineE2ETest:
 
         try:
             # Import Memory API
-            from nexus.core.memory_api import Memory
+            from nexus.services.memory.memory_api import Memory
 
             # Create a mock backend (we don't need actual content storage for this test)
             class MockResult:

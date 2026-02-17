@@ -64,7 +64,7 @@ class SemanticSearchMixin:
     _record_store: Any
     _gw_session_factory: Any
     _gw_backend: Any
-    metadata: Any  # FileMetadataProtocol, provided by SearchService
+    metadata: Any  # MetastoreABC, provided by SearchService
     _read: Any  # Callable, provided by SearchService
     list: Any  # Callable, provided by SearchService
 

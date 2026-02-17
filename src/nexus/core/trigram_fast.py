@@ -29,50 +29,28 @@ _trigram_index_stats: Callable[..., dict[str, Any]] | None = None
 _invalidate_trigram_cache: Callable[..., None] | None = None
 
 try:
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         build_trigram_index as _build_trigram_index,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         build_trigram_index_from_entries as _build_trigram_index_from_entries,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         invalidate_trigram_cache as _invalidate_trigram_cache,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         trigram_grep as _trigram_grep,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         trigram_index_stats as _trigram_index_stats,
     )
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
+    from nexus_fast import (  # type: ignore[no-redef]
         trigram_search_candidates as _trigram_search_candidates,
     )
 
     TRIGRAM_AVAILABLE = True
 except ImportError:
-    try:
-        from nexus_fast import (  # type: ignore[no-redef]
-            build_trigram_index as _build_trigram_index,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            build_trigram_index_from_entries as _build_trigram_index_from_entries,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            invalidate_trigram_cache as _invalidate_trigram_cache,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            trigram_grep as _trigram_grep,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            trigram_index_stats as _trigram_index_stats,
-        )
-        from nexus_fast import (  # type: ignore[no-redef]
-            trigram_search_candidates as _trigram_search_candidates,
-        )
-
-        TRIGRAM_AVAILABLE = True
-    except ImportError:
-        pass
+    pass
 
 
 def is_available() -> bool:

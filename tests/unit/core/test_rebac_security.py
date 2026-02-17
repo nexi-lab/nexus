@@ -21,18 +21,18 @@ import pytest
 from nexus.core.permissions import (
     OperationContext,
     Permission,
+    PermissionEnforcer,
 )
-from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.rebac.manager import (
     CheckResult,
     ConsistencyLevel,
+    ConsistencyMode,
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,
     WriteResult,
 )
-from nexus.services.permissions.types import ConsistencyMode
 
 # ---------------------------------------------------------------------------
 # Helpers

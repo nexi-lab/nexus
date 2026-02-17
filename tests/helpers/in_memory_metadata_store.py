@@ -1,8 +1,8 @@
-"""In-memory FileMetadataProtocol implementation for tests.
+"""In-memory MetastoreABC implementation for tests.
 
 Shared helper that provides all methods used by the NexusFS kernel,
 including rename_path and set_file_metadata which are not part of the
-base FileMetadataProtocol ABC but are used via duck-typing.
+base MetastoreABC ABC but are used via duck-typing.
 """
 
 from __future__ import annotations
@@ -10,11 +10,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
+from nexus.core.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 
 
-class InMemoryFileMetadataStore(FileMetadataProtocol):
-    """In-memory metadata store for tests that don't need Rust Raft extension."""
+class InMemoryMetastore(MetastoreABC):
+    """In-memory Metastore pillar implementation for tests that don't need Rust Raft extension."""
 
     def __init__(self) -> None:
         self._store: dict[str, FileMetadata] = {}

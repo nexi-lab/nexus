@@ -21,6 +21,7 @@ from nexus.core.permissions import (
     OperationContext,
     Permission,
 )
+from nexus.core.read_set import enable_read_tracking
 from nexus.rebac.enforcer import PermissionEnforcer
 
 # ---------------------------------------------------------------------------
@@ -512,14 +513,14 @@ class TestReadSetTracking:
     def test_enable_read_tracking_initializes_read_set(self):
         """enable_read_tracking() creates a ReadSet."""
         ctx = OperationContext(user="alice", groups=[], zone_id="org1")
-        ctx.enable_read_tracking()
+        enable_read_tracking(ctx)
         assert ctx.track_reads is True
         assert ctx.read_set is not None
 
     def test_record_read_with_tracking_enabled(self):
         """record_read() adds an entry when tracking is on."""
         ctx = OperationContext(user="alice", groups=[], zone_id="org1")
-        ctx.enable_read_tracking()
+        enable_read_tracking(ctx)
         ctx.record_read("file", "/inbox/a.txt", revision=10)
         assert len(ctx.read_set) == 1
 
@@ -532,7 +533,7 @@ class TestReadSetTracking:
     def test_disable_read_tracking_preserves_read_set(self):
         """disable_read_tracking() keeps the read_set but stops recording."""
         ctx = OperationContext(user="alice", groups=[], zone_id="org1")
-        ctx.enable_read_tracking()
+        enable_read_tracking(ctx)
         ctx.record_read("file", "/inbox/a.txt", revision=10)
         ctx.disable_read_tracking()
         assert ctx.track_reads is False
@@ -543,13 +544,13 @@ class TestReadSetTracking:
     def test_enable_tracking_uses_zone_id_from_context(self):
         """enable_read_tracking() defaults to context's zone_id."""
         ctx = OperationContext(user="alice", groups=[], zone_id="org_acme")
-        ctx.enable_read_tracking()
+        enable_read_tracking(ctx)
         assert ctx.read_set.zone_id == "org_acme"
 
     def test_enable_tracking_with_explicit_zone_id(self):
         """enable_read_tracking() accepts an explicit zone_id."""
         ctx = OperationContext(user="alice", groups=[], zone_id="org_acme")
-        ctx.enable_read_tracking(zone_id="other_zone")
+        enable_read_tracking(ctx, zone_id="other_zone")
         assert ctx.read_set.zone_id == "other_zone"
 
 

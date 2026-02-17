@@ -19,23 +19,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.async_local import AsyncLocalBackend
-from nexus.core._metadata_generated import (
-    DT_DIR,
-    DT_REG,
-    AsyncFileMetadataWrapper,
-    FileMetadata,
-)
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.core.metadata import (
+    DT_DIR,
+    DT_REG,
+    FileMetadata,
+)
+from nexus.core.metastore import AsyncMetastoreWrapper
 from nexus.core.permissions import OperationContext, Permission
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ class AsyncNexusFS:
     def __init__(
         self,
         backend_root: str | Path,
-        metadata_store: FileMetadataProtocol,
+        metadata_store: MetastoreABC,
         tenant_id: str | None = None,
         enable_content_cache: bool = True,
         content_cache_size_mb: int = 256,
@@ -83,7 +83,7 @@ class AsyncNexusFS:
 
         Args:
             backend_root: Root directory for content storage
-            metadata_store: FileMetadataProtocol instance (e.g. RaftMetadataStore)
+            metadata_store: MetastoreABC instance (e.g. RaftMetadataStore)
             tenant_id: Default tenant ID for operations
             enable_content_cache: Enable in-memory content caching (default: True)
             content_cache_size_mb: Content cache size in MB (default: 256)
@@ -103,7 +103,7 @@ class AsyncNexusFS:
 
         # Components (initialized in initialize())
         self._backend: AsyncLocalBackend | None = None
-        self._metadata: AsyncFileMetadataWrapper | None = None
+        self._metadata: AsyncMetastoreWrapper | None = None
         self._initialized = False
 
         # Default context for operations when none is provided
@@ -127,7 +127,7 @@ class AsyncNexusFS:
         return self._backend
 
     @property
-    def metadata(self) -> AsyncFileMetadataWrapper:
+    def metadata(self) -> AsyncMetastoreWrapper:
         """Async metadata store."""
         if self._metadata is None:
             raise RuntimeError("AsyncNexusFS not initialized. Call initialize() first.")
@@ -146,7 +146,7 @@ class AsyncNexusFS:
         await self._backend.initialize()
 
         # Wrap sync metadata store with async facade (SSOT-generated)
-        self._metadata = AsyncFileMetadataWrapper(self._metadata_store)
+        self._metadata = AsyncMetastoreWrapper(self._metadata_store)
 
         self._initialized = True
 

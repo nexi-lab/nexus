@@ -176,7 +176,7 @@ def jwt_secret(server: dict) -> str:
 
 def _create_jwt(secret: str, claims: dict) -> str:
     """Create a JWT token using the same LocalAuth mechanism."""
-    from nexus.server.auth.local import LocalAuth
+    from nexus.auth.providers.local import LocalAuth
 
     auth = LocalAuth(jwt_secret=secret, token_expiry=3600)
     email = claims.pop("email", "test@example.com")
@@ -317,7 +317,7 @@ class TestJWTAgentGenerationRoundtrip:
     @pytest.mark.parametrize("generation", [0, 1, 42, 999, 2**31 - 1])
     def test_roundtrip_various_generations(self, jwt_secret: str, generation: int):
         """JWT encode → decode preserves agent_generation for various values."""
-        from nexus.server.auth.local import LocalAuth
+        from nexus.auth.providers.local import LocalAuth
 
         auth = LocalAuth(jwt_secret=jwt_secret, token_expiry=3600)
 
@@ -336,7 +336,7 @@ class TestJWTAgentGenerationRoundtrip:
 
     def test_user_token_has_no_generation(self, jwt_secret: str):
         """User tokens should NOT contain agent_generation."""
-        from nexus.server.auth.local import LocalAuth
+        from nexus.auth.providers.local import LocalAuth
 
         auth = LocalAuth(jwt_secret=jwt_secret, token_expiry=3600)
 

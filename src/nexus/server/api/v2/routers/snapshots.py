@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -90,15 +90,9 @@ class CommitErrorResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _get_snapshot_service_and_zone(
-    auth_result: dict[str, Any] | None = None,
-) -> tuple[Any, str, str | None]:
-    """Get snapshot service, zone_id, and agent_id from request context."""
-    # Lazy imports to avoid circular dependencies
-    from nexus.server.api.v2.dependencies import _get_app_state
-
-    app_state = _get_app_state()
-    nexus_fs = app_state.nexus_fs
+async def get_snapshot_context(request: Request) -> tuple[Any, str, str | None]:
+    """FastAPI dependency: get snapshot service + auth context from request."""
+    nexus_fs = getattr(request.app.state, "nexus_fs", None)
     if nexus_fs is None:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
@@ -108,20 +102,18 @@ def _get_snapshot_service_and_zone(
 
     zone_id = "root"
     agent_id = None
-    if auth_result:
-        zone_id = auth_result.get("zone_id", "root")
-        agent_id = auth_result.get("agent_id")
 
-    return snapshot_service, zone_id, agent_id
-
-
-async def get_snapshot_context() -> tuple[Any, str, str | None]:
-    """FastAPI dependency: get snapshot service + auth context."""
+    # Lazy import to avoid circular dependencies
     from nexus.server.api.v2.dependencies import _get_require_auth
 
     require_auth = _get_require_auth()
-    auth_result = require_auth() if require_auth else None
-    return _get_snapshot_service_and_zone(auth_result)
+    if require_auth:
+        auth_result = require_auth()
+        if auth_result:
+            zone_id = auth_result.get("zone_id", "root")
+            agent_id = auth_result.get("agent_id")
+
+    return snapshot_service, zone_id, agent_id
 
 
 # ---------------------------------------------------------------------------

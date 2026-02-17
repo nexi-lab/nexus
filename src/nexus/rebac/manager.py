@@ -33,6 +33,7 @@ from nexus.core.rebac import (
     NamespaceConfig,
 )
 from nexus.rebac.batch.bulk_checker import BulkPermissionChecker
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.cache.tiger.facade import TigerFacade
 from nexus.rebac.consistency.revision import (
     get_zone_revision_for_grant,
@@ -59,7 +60,6 @@ from nexus.rebac.graph.bulk_evaluator import (
 from nexus.rebac.graph.expand import ExpandEngine
 from nexus.rebac.graph.traversal import PermissionComputer
 from nexus.rebac.graph.zone_traversal import ZoneAwareTraversal
-from nexus.rebac.rebac_cache import ReBACPermissionCache
 from nexus.rebac.rebac_fast import (
     check_permissions_bulk_with_fallback,
     is_rust_available,

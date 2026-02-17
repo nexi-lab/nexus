@@ -199,10 +199,16 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         True,  # Method names match (async/sync checked separately)
     ),
     (
-        "EventsProtocol",
-        "nexus.services.protocols.events",
+        "WatchProtocol",
+        "nexus.services.protocols.watch",
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
-        True,  # Method names match (async/sync checked separately)
+        True,  # wait_for_changes method match
+    ),
+    (
+        "LockProtocol",
+        "nexus.services.protocols.lock",
+        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
+        True,  # lock/extend_lock/unlock methods match
     ),
 ]
 
@@ -255,9 +261,9 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
     ("context_manifest", "nexus/services/protocols/context_manifest.py"),
     ("event_log", "nexus/services/protocols/event_log.py"),
-    ("events", "nexus/services/protocols/events.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
+    ("lock", "nexus/services/protocols/lock.py"),
     ("mount", "nexus/services/protocols/mount.py"),
     ("namespace_manager", "nexus/services/protocols/namespace_manager.py"),
     ("oauth", "nexus/services/protocols/oauth.py"),
@@ -267,6 +273,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("share_link", "nexus/services/protocols/share_link.py"),
     ("skills", "nexus/services/protocols/skills.py"),
     ("vfs_router", "nexus/core/protocols/vfs_router.py"),
+    ("watch", "nexus/services/protocols/watch.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

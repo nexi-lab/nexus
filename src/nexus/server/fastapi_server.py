@@ -1861,7 +1861,7 @@ def _register_routes(app: FastAPI) -> None:
             except Exception:
                 return None
 
-        a2a_router = create_a2a_router(
+        a2a_router, a2a_task_manager = create_a2a_router(
             nexus_fs=app.state.nexus_fs,
             config=None,
             base_url=a2a_base_url,
@@ -1869,6 +1869,7 @@ def _register_routes(app: FastAPI) -> None:
             auth_fn=_a2a_auth_adapter,
             data_dir=getattr(app.state, "data_dir", None),
         )
+        app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
         app.include_router(a2a_router)
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
     except ImportError as e:

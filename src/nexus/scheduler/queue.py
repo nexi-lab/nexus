@@ -62,12 +62,56 @@ RETURNING
     request_state, priority_class, executor_state, estimated_service_time
 """
 
+_SQL_DEQUEUE_BY_EXECUTOR = """
+UPDATE scheduled_tasks
+SET status = 'running', started_at = now()
+WHERE id = (
+    SELECT id FROM scheduled_tasks
+    WHERE status = 'queued' AND executor_id = $1
+    ORDER BY effective_tier ASC, enqueued_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
+"""
+
 _SQL_DEQUEUE_HRRN = """
 UPDATE scheduled_tasks
 SET status = 'running', started_at = now()
 WHERE id = (
     SELECT id FROM scheduled_tasks
     WHERE status = 'queued'
+      AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
+    ORDER BY
+        priority_class ASC,
+        hrrn_score(enqueued_at, estimated_service_time) DESC,
+        enqueued_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
+"""
+
+_SQL_DEQUEUE_HRRN_BY_EXECUTOR = """
+UPDATE scheduled_tasks
+SET status = 'running', started_at = now()
+WHERE id = (
+    SELECT id FROM scheduled_tasks
+    WHERE status = 'queued' AND executor_id = $1
       AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
     ORDER BY
         priority_class ASC,
@@ -189,6 +233,17 @@ WHERE status = 'queued'
 GROUP BY priority_class
 """
 
+_SQL_PENDING_METRICS_BY_ZONE = """
+SELECT
+    priority_class,
+    count(*) AS cnt,
+    avg(EXTRACT(EPOCH FROM (now() - enqueued_at))) AS avg_wait,
+    max(EXTRACT(EPOCH FROM (now() - enqueued_at))) AS max_wait
+FROM scheduled_tasks
+WHERE status = 'queued' AND zone_id = $1
+GROUP BY priority_class
+"""
+
 
 # =============================================================================
 # Row-to-Model Conversion
@@ -292,24 +347,40 @@ class TaskQueue:
 
         return str(task_id)
 
-    async def dequeue(self, conn: Any) -> ScheduledTask | None:
+    async def dequeue(self, conn: Any, *, executor_id: str | None = None) -> ScheduledTask | None:
         """Dequeue the highest-priority task (classic effective_tier ordering).
 
         Uses FOR UPDATE SKIP LOCKED to safely handle concurrent workers.
         Atomically sets status to 'running'.
+
+        Args:
+            conn: Database connection.
+            executor_id: If provided, only dequeue tasks assigned to this executor.
         """
-        row = await conn.fetchrow(_SQL_DEQUEUE)
+        if executor_id is not None:
+            row = await conn.fetchrow(_SQL_DEQUEUE_BY_EXECUTOR, executor_id)
+        else:
+            row = await conn.fetchrow(_SQL_DEQUEUE)
         if row is None:
             return None
         return _row_to_task(row)
 
-    async def dequeue_hrrn(self, conn: Any) -> ScheduledTask | None:
+    async def dequeue_hrrn(
+        self, conn: Any, *, executor_id: str | None = None
+    ) -> ScheduledTask | None:
         """Dequeue using HRRN scoring within priority classes (Astraea).
 
         Orders by: priority_class ASC, hrrn_score DESC, enqueued_at ASC.
         Filters out tasks whose executor is SUSPENDED.
+
+        Args:
+            conn: Database connection.
+            executor_id: If provided, only dequeue tasks assigned to this executor.
         """
-        row = await conn.fetchrow(_SQL_DEQUEUE_HRRN)
+        if executor_id is not None:
+            row = await conn.fetchrow(_SQL_DEQUEUE_HRRN_BY_EXECUTOR, executor_id)
+        else:
+            row = await conn.fetchrow(_SQL_DEQUEUE_HRRN)
         if row is None:
             return None
         return _row_to_task(row)
@@ -368,7 +439,17 @@ class TaskQueue:
         rows = await conn.fetch(_SQL_STARVATION_PROMOTE, threshold_seconds)
         return len(rows)
 
-    async def get_queue_metrics(self, conn: Any) -> list[dict[str, Any]]:
-        """Get aggregated queue metrics by priority_class."""
-        rows = await conn.fetch(_SQL_PENDING_METRICS)
+    async def get_queue_metrics(
+        self, conn: Any, *, zone_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get aggregated queue metrics by priority_class.
+
+        Args:
+            conn: Database connection.
+            zone_id: If provided, filter metrics to this zone only.
+        """
+        if zone_id is not None:
+            rows = await conn.fetch(_SQL_PENDING_METRICS_BY_ZONE, zone_id)
+        else:
+            rows = await conn.fetch(_SQL_PENDING_METRICS)
         return [dict(row) for row in rows]

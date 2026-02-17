@@ -72,7 +72,7 @@ class BaseRemoteNexusFS:
 
     def _negative_cache_key(self, path: str) -> str:
         """Generate cache key with zone isolation."""
-        return f"{self._zone_id or 'default'}:{path}"
+        return f"{self._zone_id or 'root'}:{path}"
 
     def _negative_cache_check(self, path: str) -> bool:
         """Check if path is known to not exist (in negative cache).

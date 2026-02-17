@@ -8,6 +8,7 @@ to ``serialization.py`` (Decision 3).
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -39,6 +40,12 @@ class DatabaseTaskStore:
     """
 
     def __init__(self, record_store: RecordStoreABC) -> None:
+        warnings.warn(
+            "DatabaseTaskStore is deprecated. Use VFSTaskStore for "
+            "filesystem-backed persistence (§17.6 convergence).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._session_factory = record_store.session_factory
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:
@@ -59,7 +66,7 @@ class DatabaseTaskStore:
             finally:
                 session.close()
 
-        return await loop.run_in_executor(self._executor, _wrapper)
+        return await loop.run_in_executor(None, _wrapper)
 
     async def save(
         self,

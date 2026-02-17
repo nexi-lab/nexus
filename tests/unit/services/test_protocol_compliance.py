@@ -99,11 +99,17 @@ def assert_protocol_compliance(
                     impl_attr
                 ) or inspect.isasyncgenfunction(impl_attr)
                 if proto_is_async != impl_is_async:
-                    proto_kind = "async" if proto_is_async else "sync"
-                    impl_kind = "async" if impl_is_async else "sync"
-                    errors.append(
-                        f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
-                    )
+                    # Allow sync protocol + async generator impl (e.g. llm_read_stream).
+                    # Async generators use `async def` but return AsyncIterator, not Coroutine,
+                    # so the protocol correctly declares `def ... -> AsyncIterator[T]`.
+                    if not proto_is_async and inspect.isasyncgenfunction(impl_attr):
+                        pass  # valid pattern
+                    else:
+                        proto_kind = "async" if proto_is_async else "sync"
+                        impl_kind = "async" if impl_is_async else "sync"
+                        errors.append(
+                            f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
+                        )
 
         if not check_signatures:
             continue
@@ -152,7 +158,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "LLMProtocol",
         "nexus.services.protocols.llm",
         "nexus.services.llm_service.LLMService",
-        True,
+        True,  # sync protocol + async generator impl is now allowed
     ),
     # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
     (

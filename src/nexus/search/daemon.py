@@ -379,7 +379,7 @@ class SearchDaemon:
                 # Dummy query to warm index (SELECT 1 with vector operation)
                 # Check if embedding column exists first
                 # Skip if embedding column doesn't exist yet
-                with contextlib.suppress(Exception):
+                try:
                     await conn.execute(
                         text("""
                             SELECT 1 FROM document_chunks
@@ -387,6 +387,8 @@ class SearchDaemon:
                             LIMIT 1
                         """)
                     )
+                except Exception as e:
+                    logger.debug("Vector index warmup query skipped: %s", e)
 
             self.stats.vector_warmup_time_ms = (time.perf_counter() - start) * 1000
             logger.info(f"Vector index warmed in {self.stats.vector_warmup_time_ms:.1f}ms")

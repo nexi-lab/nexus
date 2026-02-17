@@ -4,7 +4,7 @@ Validates:
 - Default values for each frozen dataclass
 - frozen=True prevents mutation (raises FrozenInstanceError)
 - dataclasses.replace() creates modified copies
-- KernelServices allows mutation (not frozen)
+- KernelServices is frozen — use dataclasses.replace() for modified copies
 """
 
 from __future__ import annotations
@@ -195,7 +195,7 @@ class TestParseConfig:
 
 
 class TestKernelServices:
-    """Tests for KernelServices mutable dataclass."""
+    """Tests for KernelServices frozen dataclass."""
 
     def test_defaults_all_none(self) -> None:
         ks = KernelServices()
@@ -206,14 +206,22 @@ class TestKernelServices:
         assert ks.workflow_engine is None
         assert ks.version_service is None
         assert ks.write_observer is None
-        # Server-layer extras are in server_extras dict, not direct fields
-        assert ks.server_extras == {}
+        # Server-layer extras are now explicit fields (not an opaque dict)
+        assert ks.observability_subsystem is None
+        assert ks.chunked_upload_service is None
 
-    def test_mutable(self) -> None:
-        """KernelServices is NOT frozen — attributes can be set."""
+    def test_frozen(self) -> None:
+        """KernelServices is frozen — use dataclasses.replace() for copies."""
         ks = KernelServices()
-        ks.router = "some_router"
-        assert ks.router == "some_router"
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            ks.router = "some_router"  # type: ignore[misc]
+
+    def test_replace(self) -> None:
+        """dataclasses.replace() creates a modified copy."""
+        ks = KernelServices()
+        ks2 = dataclasses.replace(ks, router="some_router")
+        assert ks2.router == "some_router"
+        assert ks.router is None  # original unchanged
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
@@ -230,10 +238,8 @@ class TestKernelServices:
     def test_all_service_fields_present(self) -> None:
         """Verify KernelServices has all expected fields.
 
-        Server-layer extras (observability_subsystem, chunked_upload_service,
-        manifest_resolver, manifest_metrics, rebac_circuit_breaker,
-        tool_namespace_middleware, resiliency_manager, delivery_worker) are
-        stored in the opaque server_extras dict, not as direct dataclass fields.
+        Server-layer extras are now explicit typed fields on the frozen
+        dataclass (Issue #1519 consolidation), not an opaque dict.
         """
         field_names = {f.name for f in dataclasses.fields(KernelServices)}
         expected_fields = {
@@ -252,9 +258,26 @@ class TestKernelServices:
             "version_service",
             "overlay_resolver",
             "wallet_provisioner",
+            "cache_observer",
             "event_bus",
             "lock_manager",
             "workflow_engine",
-            "server_extras",
+            "api_key_creator",
+            "observability_subsystem",
+            "chunked_upload_service",
+            "manifest_resolver",
+            "manifest_metrics",
+            "rebac_circuit_breaker",
+            "tool_namespace_middleware",
+            "resiliency_manager",
+            "delivery_worker",
+            "agent_registry",
+            "namespace_manager",
+            "async_agent_registry",
+            "async_namespace_manager",
+            "async_vfs_router",
+            "rebac_service",
+            "search_service",
+            "events_service",
         }
         assert expected_fields.issubset(field_names), f"Missing: {expected_fields - field_names}"

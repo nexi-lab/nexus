@@ -132,7 +132,7 @@ class TestSyncServiceInit:
         """SyncService initializes a ChangeLogStore."""
         service = SyncService(gateway=mock_gateway)
         assert service._change_log is not None
-        assert service._change_log._gw is mock_gateway
+        assert service._change_log._session_factory is mock_gateway.session_factory
 
 
 # =============================================================================

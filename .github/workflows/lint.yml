@@ -5,6 +5,7 @@ on:
     branches: [main, develop, SETUP]
   pull_request:
     branches: [main, develop]
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

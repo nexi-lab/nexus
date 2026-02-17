@@ -458,10 +458,10 @@ class TestWorkflowStore:
         assert workflow_store._get_zone_id() == "test-zone"
 
     def test_default_zone_id(self, async_session_factory):
-        """Test default zone ID."""
+        """Test default zone ID (uses ROOT_ZONE_ID = 'root')."""
         store = WorkflowStore(
             async_session_factory,
             workflow_model=WorkflowModel,
             execution_model=WorkflowExecutionModel,
         )
-        assert store._get_zone_id() == "default"
+        assert store._get_zone_id() == "root"

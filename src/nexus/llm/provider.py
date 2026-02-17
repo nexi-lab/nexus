@@ -414,13 +414,19 @@ class LiteLLMProvider(LLMProvider):
 
     def _init_model_info(self) -> None:
         """Initialize model information."""
-        with contextlib.suppress(Exception):
+        try:
             self.model_info = litellm.get_model_info(self.config.model)
+        except Exception as e:
+            logger.debug("Failed to get model info for %s: %s", self.config.model, e)
 
         # Try without prefix if that didn't work
         if not self.model_info and "/" in self.config.model:
-            with contextlib.suppress(Exception):
+            try:
                 self.model_info = litellm.get_model_info(self.config.model.split("/")[-1])
+            except Exception as e:
+                logger.debug(
+                    "Failed to get model info for %s: %s", self.config.model.split("/")[-1], e
+                )
 
         # Configure max tokens
         if self.config.max_input_tokens is None:

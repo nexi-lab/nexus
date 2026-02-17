@@ -245,24 +245,21 @@ class TestRunSync:
 
 
 # =============================================================================
-# get_stats and backward compat
+# VectorDatabase properties
 # =============================================================================
 
 
-class TestVectorDatabaseStats:
-    """Test get_stats() backward compatibility method."""
+class TestVectorDatabaseProperties:
+    """Test VectorDatabase direct property access."""
 
-    def test_get_stats_returns_dict(self) -> None:
+    def test_properties_reflect_init_state(self) -> None:
         engine = MagicMock()
         engine.dialect.name = "sqlite"
 
         from nexus.search.vector_db import VectorDatabase
 
         vdb = VectorDatabase(engine)
-        stats = vdb.get_stats()
 
-        assert isinstance(stats, dict)
-        assert "vec_enabled" in stats
-        assert "db_type" in stats
-        assert stats["db_type"] == "sqlite"
-        assert stats["vec_enabled"] is False
+        assert vdb.db_type == "sqlite"
+        assert vdb.vec_available is False
+        assert vdb.bm25_available is False

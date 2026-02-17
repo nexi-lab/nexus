@@ -410,7 +410,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
 
         permission_enforcer = PermissionEnforcer(
             metadata_store=ctx.metadata_store,
-            rebac_manager=rebac_manager,  # type: ignore[arg-type]
+            rebac_manager=rebac_manager,
             allow_admin_bypass=ctx.perm.allow_admin_bypass,
             allow_system_bypass=True,
             audit_store=audit_store,

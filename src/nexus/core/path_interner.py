@@ -15,16 +15,11 @@ References:
 - Rust nexus_fast: Already uses string-interner for permissions (lib.rs:26-29)
 """
 
-from __future__ import annotations
-
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
 
 class PathInterner:
     """Thread-safe path string interning for memory efficiency.
@@ -162,7 +157,6 @@ class PathInterner:
                 "total_string_bytes": total_string_bytes,
                 "memory_saved_estimate": memory_saved,
             }
-
 
 class SegmentedPathInterner:
     """Advanced path interner with prefix deduplication via segment interning.
@@ -338,14 +332,12 @@ class SegmentedPathInterner:
                 "memory_saved_estimate": max(0, string_memory - int_memory),
             }
 
-
 # Global interner instances (singleton pattern)
 # Use module-level instances for sharing across the application
 
 _global_path_interner: PathInterner | None = None
 _global_segmented_interner: SegmentedPathInterner | None = None
 _interner_lock = threading.Lock()
-
 
 def get_path_interner() -> PathInterner:
     """Get the global PathInterner instance (thread-safe singleton).
@@ -360,7 +352,6 @@ def get_path_interner() -> PathInterner:
                 _global_path_interner = PathInterner()
     return _global_path_interner
 
-
 def get_segmented_interner() -> SegmentedPathInterner:
     """Get the global SegmentedPathInterner instance (thread-safe singleton).
 
@@ -373,7 +364,6 @@ def get_segmented_interner() -> SegmentedPathInterner:
             if _global_segmented_interner is None:
                 _global_segmented_interner = SegmentedPathInterner()
     return _global_segmented_interner
-
 
 def reset_global_interners() -> None:
     """Reset global interners (primarily for testing).
@@ -389,7 +379,6 @@ def reset_global_interners() -> None:
         if _global_segmented_interner is not None:
             _global_segmented_interner.clear()
             _global_segmented_interner = None
-
 
 @dataclass(slots=True)
 class CompactFileMetadata:
@@ -445,7 +434,7 @@ class CompactFileMetadata:
             interner = get_path_interner()
         return interner.get(self.path_id)
 
-    def to_file_metadata(self, interner: PathInterner | None = None) -> FileMetadata:
+    def to_file_metadata(self, interner: PathInterner | None = None) -> "FileMetadata":
         """Convert to standard FileMetadata.
 
         Args:
@@ -487,9 +476,9 @@ class CompactFileMetadata:
     @classmethod
     def from_file_metadata(
         cls,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         interner: PathInterner | None = None,
-    ) -> CompactFileMetadata:
+    ) -> "CompactFileMetadata":
         """Create CompactFileMetadata from standard FileMetadata.
 
         Args:
@@ -526,7 +515,6 @@ class CompactFileMetadata:
             created_by=metadata.created_by,
             is_directory=metadata.is_dir,
         )
-
 
 # Import FileMetadata for type checking
 if TYPE_CHECKING:

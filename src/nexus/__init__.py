@@ -41,8 +41,6 @@ nexus.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
-from __future__ import annotations
-
 __version__ = "0.7.2.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
@@ -135,7 +133,6 @@ _LAZY_IMPORTS = {
     "SkillRegistry": ("nexus.skills", "SkillRegistry"),
 }
 
-
 def __getattr__(name: str) -> Any:
     """Lazy import for heavy dependencies.
 
@@ -163,10 +160,9 @@ def __getattr__(name: str) -> Any:
 
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
-
 def connect(
-    config: str | Path | dict | NexusConfig | None = None,
-) -> NexusFilesystem:
+    config: "str | Path | dict | NexusConfig | None" = None,
+) -> "NexusFilesystem":
     """
     Connect to Nexus filesystem.
 
@@ -411,7 +407,6 @@ def connect(
         nx_fs._zone_mgr = zone_mgr
 
     return nx_fs
-
 
 __all__ = [
     # Version

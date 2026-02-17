@@ -22,12 +22,11 @@ References:
     - Issue #921: HotspotDetector pattern
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -37,11 +36,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Configuration
 # =============================================================================
-
 
 @dataclass
 class WarmupConfig:
@@ -73,7 +70,6 @@ class WarmupConfig:
     small_file_threshold_kb: int = 1024  # 1MB
     warmup_timeout_seconds: int = 300  # 5 minutes
 
-
 @dataclass
 class BackgroundWarmupConfig:
     """Configuration for background cache warming.
@@ -92,11 +88,9 @@ class BackgroundWarmupConfig:
     window_seconds: int = 300  # 5 minutes
     max_warmup_per_cycle: int = 50
 
-
 # =============================================================================
 # Statistics
 # =============================================================================
-
 
 @dataclass
 class WarmupStats:
@@ -125,11 +119,9 @@ class WarmupStats:
             "skipped": self.skipped,
         }
 
-
 # =============================================================================
 # File Access Tracker
 # =============================================================================
-
 
 @dataclass
 class FileAccessEntry:
@@ -146,7 +138,6 @@ class FileAccessEntry:
     def cache_key(self) -> tuple[str, str]:
         """Return (zone_id, path) tuple for cache lookup."""
         return (self.zone_id, self.path)
-
 
 class FileAccessTracker:
     """Track file access patterns for history-based warmup.
@@ -175,7 +166,8 @@ class FileAccessTracker:
         self._max_tracked_paths = max_tracked_paths
 
         # Access log: (zone_id, path) -> list[timestamps]
-        self._access_log: dict[tuple[str, str], list[float]] = {}
+        # OrderedDict for O(1) LRU eviction via popitem(last=False)
+        self._access_log: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
         # User tracking: (zone_id, path) -> set[user_ids]
         self._user_access: dict[tuple[str, str], set[str]] = {}
         # Size tracking: (zone_id, path) -> total_bytes
@@ -212,6 +204,9 @@ class FileAccessTracker:
                     self._evict_oldest()
                 self._access_log[key] = []
                 self._user_access[key] = set()
+            else:
+                # Move to end (most recently used) for LRU ordering
+                self._access_log.move_to_end(key)
 
             # Record timestamp
             self._access_log[key].append(now)
@@ -231,16 +226,12 @@ class FileAccessTracker:
                 self._access_log[key] = [t for t in self._access_log[key] if t > cutoff]
 
     def _evict_oldest(self) -> None:
-        """Evict oldest entry (must hold lock)."""
+        """Evict least-recently-used entry (must hold lock). O(1) amortized."""
         if not self._access_log:
             return
 
-        # Find key with oldest last access
-        oldest_key = min(
-            self._access_log.keys(),
-            key=lambda k: max(self._access_log[k]) if self._access_log[k] else 0,
-        )
-        del self._access_log[oldest_key]
+        # OrderedDict.popitem(last=False) removes the oldest (first) entry in O(1)
+        oldest_key, _ = self._access_log.popitem(last=False)
         self._user_access.pop(oldest_key, None)
         self._size_cache.pop(oldest_key, None)
 
@@ -395,11 +386,9 @@ class FileAccessTracker:
             self._size_cache.clear()
             self._total_accesses = 0
 
-
 # =============================================================================
 # CacheWarmer
 # =============================================================================
-
 
 class CacheWarmer:
     """Pre-populate caches based on access patterns.
@@ -421,10 +410,10 @@ class CacheWarmer:
 
     def __init__(
         self,
-        nexus_fs: NexusFS,
+        nexus_fs: "NexusFS",
         config: WarmupConfig | None = None,
         file_tracker: FileAccessTracker | None = None,
-        local_disk_cache: LocalDiskCache | None = None,
+        local_disk_cache: "LocalDiskCache | None" = None,
     ):
         """Initialize cache warmer.
 
@@ -867,11 +856,9 @@ class CacheWarmer:
             "file_tracker": self._file_tracker.get_stats() if self._file_tracker else None,
         }
 
-
 # =============================================================================
 # Background Cache Warmer
 # =============================================================================
-
 
 class BackgroundCacheWarmer:
     """Continuously warm cache based on access patterns.
@@ -974,14 +961,12 @@ class BackgroundCacheWarmer:
             "tracker_stats": self._tracker.get_stats(),
         }
 
-
 # =============================================================================
 # Convenience Functions
 # =============================================================================
 
-
 async def warmup_on_mount(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     mount_path: str,
     depth: int = 2,
     include_content: bool = False,
@@ -1010,7 +995,6 @@ async def warmup_on_mount(
         zone_id=zone_id,
     )
 
-
 async def background_warmup_task(
     cache_warmer: CacheWarmer,
     file_tracker: FileAccessTracker,
@@ -1031,14 +1015,12 @@ async def background_warmup_task(
     background = BackgroundCacheWarmer(cache_warmer, file_tracker, config)
     await background.run()
 
-
 # =============================================================================
 # Global Instance Management
 # =============================================================================
 
 _default_tracker: FileAccessTracker | None = None
 _tracker_lock = threading.Lock()
-
 
 def get_file_access_tracker() -> FileAccessTracker:
     """Get or create global FileAccessTracker instance."""
@@ -1050,7 +1032,6 @@ def get_file_access_tracker() -> FileAccessTracker:
                 _default_tracker = FileAccessTracker()
 
     return _default_tracker
-
 
 def set_file_access_tracker(tracker: FileAccessTracker | None) -> None:
     """Set the global FileAccessTracker instance."""

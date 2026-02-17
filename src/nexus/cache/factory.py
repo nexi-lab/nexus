@@ -32,8 +32,6 @@ Usage:
     await factory.shutdown()
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -54,12 +52,11 @@ from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 class CacheFactory:
     """Factory for creating cache instances based on configuration.
@@ -75,21 +72,21 @@ class CacheFactory:
         self,
         settings: CacheSettings,
         cache_store: CacheStoreABC | None = None,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
     ):
         """Initialize cache factory.
 
         Args:
             settings: Cache configuration
             cache_store: Pre-built CacheStoreABC driver. If None, created from settings.
-            record_store: RecordStoreABC for PostgreSQL cache fallback.
+            record_store: "RecordStoreABC" for PostgreSQL cache fallback.
                 If provided and Dragonfly is not available, the factory uses
                 record_store.engine for PostgreSQL-backed caches instead of NullCacheStore.
         """
         self._settings = settings
         self._cache_store: CacheStoreABC = cache_store or NullCacheStore()
-        self._cache_client: DragonflyClient | None = None  # kept for embedding cache
-        self._record_store: RecordStoreABC | None = record_store
+        self._cache_client: "DragonflyClient | None" = None  # kept for embedding cache
+        self._record_store: "RecordStoreABC | None" = record_store
         self._initialized = False
         self._has_cache_store = False
         self._using_postgres = False
@@ -284,11 +281,11 @@ class CacheFactory:
 
     def create_caching_wrapper(
         self,
-        inner: Backend,
-        config: CacheWrapperConfig | None = None,
+        inner: "Backend",
+        config: "CacheWrapperConfig | None" = None,
         *,
         enable_logging: bool = False,
-    ) -> CachingBackendWrapper:
+    ) -> "CachingBackendWrapper":
         """Create a CachingBackendWrapper for the given backend.
 
         Wires the wrapper with this factory's CacheStoreABC for L2 distributed
@@ -312,12 +309,12 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
 
         effective_config = config or CacheWrapperConfig()
 
         # Optional logging layer (Recursive Wrapping — PART 16, Issue #1449)
-        wrapped_inner: Backend = inner
+        wrapped_inner: "Backend" = inner
         if enable_logging:
             from nexus.backends.logging_wrapper import LoggingBackendWrapper
 
@@ -332,7 +329,7 @@ class CacheFactory:
             cache_store=cache_store,
         )
 
-    async def __aenter__(self) -> CacheFactory:
+    async def __aenter__(self) -> "CacheFactory":
         """Async context manager entry."""
         await self.initialize()
         return self
@@ -341,28 +338,25 @@ class CacheFactory:
         """Async context manager exit."""
         await self.shutdown()
 
-
 # Global factory instance for dependency injection
 _cache_factory: CacheFactory | None = None
-
 
 async def init_cache_factory(
     settings: CacheSettings,
     cache_store: CacheStoreABC | None = None,
-    record_store: RecordStoreABC | None = None,
+    record_store: "RecordStoreABC | None" = None,
 ) -> CacheFactory:
     """Initialize the global cache factory.
 
     Args:
         settings: Cache configuration
         cache_store: Pre-built CacheStoreABC driver
-        record_store: RecordStoreABC for SQL-backed cache fallback
+        record_store: "RecordStoreABC" for SQL-backed cache fallback
     """
     global _cache_factory
     _cache_factory = CacheFactory(settings, cache_store=cache_store, record_store=record_store)
     await _cache_factory.initialize()
     return _cache_factory
-
 
 async def shutdown_cache_factory() -> None:
     """Shutdown the global cache factory."""
@@ -370,7 +364,6 @@ async def shutdown_cache_factory() -> None:
     if _cache_factory:
         await _cache_factory.shutdown()
         _cache_factory = None
-
 
 def get_cache_factory() -> CacheFactory:
     """Get the global cache factory instance."""

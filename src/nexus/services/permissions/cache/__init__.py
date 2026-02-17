@@ -11,6 +11,10 @@ Contains multi-layer caching infrastructure:
 Related: Issue #1459 (decomposition)
 """
 
+from nexus.rebac.cache.visibility import (
+    DirectoryVisibilityCache,
+    VisibilityEntry,
+)
 from nexus.services.permissions.cache.boundary import PermissionBoundaryCache
 from nexus.services.permissions.cache.coordinator import CacheCoordinator
 from nexus.services.permissions.cache.iterator import (
@@ -30,10 +34,6 @@ from nexus.services.permissions.cache.tiger import (
     TigerCache,
     TigerCacheUpdater,
     TigerResourceMap,
-)
-from nexus.services.permissions.cache.visibility import (
-    DirectoryVisibilityCache,
-    VisibilityEntry,
 )
 
 __all__ = [

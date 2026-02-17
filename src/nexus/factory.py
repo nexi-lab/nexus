@@ -1189,6 +1189,34 @@ def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any
         return None
 
 
+def _create_provider_registry(parsing: Any) -> Any:
+    """Create ProviderRegistry with auto-discovered providers (Issue #657)."""
+    from nexus.parsers.providers import ProviderRegistry
+    from nexus.parsers.providers.base import ProviderConfig
+
+    registry = ProviderRegistry()
+    if parsing is None:
+        registry.auto_discover()
+        return registry
+    parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
+    if parse_providers:
+        configs = [
+            ProviderConfig(
+                name=p.get("name", "unknown"),
+                enabled=p.get("enabled", True),
+                priority=p.get("priority", 50),
+                api_key=p.get("api_key"),
+                api_url=p.get("api_url"),
+                supported_formats=p.get("supported_formats"),
+            )
+            for p in parse_providers
+        ]
+        registry.auto_discover(configs)
+    else:
+        registry.auto_discover()
+    return registry
+
+
 def _post_init(nx: NexusFS) -> None:
     """Post-construction steps: mount restoration.
 
@@ -1428,6 +1456,27 @@ def create_nexus_fs(
 
     _parse_fn = create_default_parse_fn()
 
+    # Create parser registry (Issue #657: factory builds infrastructure)
+    from nexus.parsers import MarkItDownParser, ParserRegistry
+
+    _parser_registry = ParserRegistry()
+    _parser_registry.register(MarkItDownParser())
+
+    # Create provider registry (Issue #657)
+    _provider_registry = _create_provider_registry(parsing)
+
+    # Create content cache (Issue #657)
+    _content_cache = None
+    if cache is not None and cache.enable_content_cache and backend.has_root_path is True:
+        from nexus.storage.content_cache import ContentCache
+
+        _content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
+
+    # Create VFS lock manager (Issue #657)
+    from nexus.core.lock_fast import create_vfs_lock_manager
+
+    _vfs_lock_manager = create_vfs_lock_manager()
+
     nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
@@ -1442,6 +1491,10 @@ def create_nexus_fs(
         parsing=parsing,
         services=services,
         parse_fn=_parse_fn,
+        content_cache=_content_cache,
+        parser_registry=_parser_registry,
+        provider_registry=_provider_registry,
+        vfs_lock_manager=_vfs_lock_manager,
     )
 
     # Post-construction I/O (mount restoration, etc.)

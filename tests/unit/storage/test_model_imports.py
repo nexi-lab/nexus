@@ -109,6 +109,9 @@ EXPECTED_MODELS = [
     "AdminBypassAuditModel",
     # A2A
     "A2ATaskModel",
+    # Transactional Snapshots (Issue #1752)
+    "TransactionSnapshotModel",
+    "SnapshotEntryModel",
 ]
 
 

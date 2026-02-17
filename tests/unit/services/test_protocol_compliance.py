@@ -278,9 +278,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("skills", "nexus/services/protocols/skills.py"),
     ("vfs_router", "nexus/core/protocols/vfs_router.py"),
     ("watch", "nexus/services/protocols/watch.py"),
-    ("vfs_core", "nexus/core/protocols/vfs_core.py"),
-    ("content_service", "nexus/core/protocols/content_service.py"),
-    ("revision_service", "nexus/core/protocols/revision_service.py"),
     ("snapshot", "nexus/services/protocols/snapshot.py"),
 ]
 

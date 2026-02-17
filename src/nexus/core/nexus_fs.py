@@ -9,7 +9,6 @@ import json
 import logging
 import threading
 from datetime import UTC, datetime, timedelta
-from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -412,6 +411,43 @@ class NexusFS(  # type: ignore[misc]
         from nexus.services.gateway import NexusFSGateway
 
         self._gateway = NexusFSGateway(self)
+
+        # Mount/sync services: accept pre-built or create (Issue #655)
+        if svc.mount_core_service is not None:
+            self._mount_core_service = svc.mount_core_service
+        else:
+            from nexus.services.mount_core_service import MountCoreService
+
+            self._mount_core_service = MountCoreService(self._gateway)
+
+        if svc.sync_service is not None:
+            self._sync_service = svc.sync_service
+        else:
+            from nexus.services.sync_service import SyncService
+
+            self._sync_service = SyncService(self._gateway)
+
+        if svc.sync_job_service is not None:
+            self._sync_job_service = svc.sync_job_service
+        else:
+            from nexus.services.sync_job_service import SyncJobService
+
+            self._sync_job_service = SyncJobService(self._gateway, self._sync_service)
+
+        if svc.mount_persist_service is not None:
+            self._mount_persist_service = svc.mount_persist_service
+        else:
+            from nexus.services.mount_persist_service import MountPersistService
+
+            self._mount_persist_service = MountPersistService(
+                mount_manager=getattr(self, "mount_manager", None),
+                mount_service=self._mount_core_service,
+                sync_service=self._sync_service,
+            )
+
+        # TaskQueueService: accept pre-built (Issue #655)
+        if svc.task_queue_service is not None:
+            self.task_queue_service = svc.task_queue_service
 
         # SkillService: Skill management
         from nexus.services.skill_service import SkillService as _SkillService
@@ -10044,38 +10080,6 @@ class NexusFS(  # type: ignore[misc]
     # These @rpc_expose methods are discovered by the FastAPI server.
     # -------------------------------------------------------------------------
 
-    @cached_property
-    def _mount_core_service(self) -> Any:
-        """Get or create MountCoreService."""
-        from nexus.services.mount_core_service import MountCoreService
-
-        return MountCoreService(self._gateway)
-
-    @cached_property
-    def _sync_service(self) -> Any:
-        """Get or create SyncService."""
-        from nexus.services.sync_service import SyncService
-
-        return SyncService(self._gateway)
-
-    @cached_property
-    def _sync_job_service(self) -> Any:
-        """Get or create SyncJobService."""
-        from nexus.services.sync_job_service import SyncJobService
-
-        return SyncJobService(self._gateway, self._sync_service)
-
-    @cached_property
-    def _mount_persist_service(self) -> Any:
-        """Get or create MountPersistService."""
-        from nexus.services.mount_persist_service import MountPersistService
-
-        return MountPersistService(
-            mount_manager=getattr(self, "mount_manager", None),
-            mount_service=self._mount_core_service,
-            sync_service=self._sync_service,
-        )
-
     @rpc_expose(description="Add dynamic backend mount")
     def add_mount(
         self,
@@ -10685,41 +10689,6 @@ class NexusFS(  # type: ignore[misc]
     # TaskQueueService Delegation Methods (5 methods)
     # Replaces NexusFSTasksMixin (Issue #1387)
     # =========================================================================
-
-    @cached_property
-    def task_queue_service(self) -> Any:
-        """Get or create TaskQueueService."""
-        from nexus.services.task_queue_service import TaskQueueService
-
-        db_path = self._resolve_tasks_db_path()
-        return TaskQueueService(db_path=db_path)
-
-    def _resolve_tasks_db_path(self) -> str:
-        """Resolve the path for the tasks fjall database.
-
-        Priority:
-        1. NEXUS_TASKS_DB_PATH environment variable
-        2. NEXUS_DATA_DIR/tasks-db
-        3. backend.root_path/../tasks-db (alongside backend storage)
-        4. .nexus-data/tasks-db (fallback)
-        """
-        import os
-
-        env_path = os.environ.get("NEXUS_TASKS_DB_PATH")
-        if env_path:
-            return env_path
-
-        data_dir = os.environ.get("NEXUS_DATA_DIR")
-        if data_dir:
-            return os.path.join(data_dir, "tasks-db")
-
-        backend = getattr(self, "backend", None)
-        if backend is not None:
-            root_path = getattr(backend, "root_path", None)
-            if root_path is not None:
-                return os.path.join(str(root_path), "tasks-db")
-
-        return os.path.join(".nexus-data", "tasks-db")
 
     @rpc_expose(description="Submit a task to the durable task queue")
     def submit_task(

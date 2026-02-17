@@ -324,6 +324,7 @@ def create_nexus_services(
     agent_id: str | None = None,
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
+    enabled_bricks: frozenset[str] | None = None,
 ) -> KernelServices:
     """Create default services for NexusFS dependency injection.
 
@@ -342,14 +343,36 @@ def create_nexus_services(
         agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
         enable_write_buffer: Use async WriteBuffer for PG sync (Issue #1246).
         resiliency_raw: Raw resiliency policy dict from YAML config.
+        enabled_bricks: Set of brick names to enable. When None, all bricks
+            are enabled (backward-compatible default = FULL profile).
 
     Returns:
-        KernelServices with all services populated.
+        KernelServices with all services populated (None for disabled bricks).
     """
+    import logging as _factory_logging
+
+    _factory_log = _factory_logging.getLogger(__name__)
+
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import PermissionConfig as _PermissionConfig
+
+    # --- Profile-based brick gating (Issue #1389) ---
+    if enabled_bricks is None:
+        from nexus.core.deployment_profile import DeploymentProfile
+
+        enabled_bricks = DeploymentProfile.FULL.default_bricks()
+
+    def _brick_on(name: str) -> bool:
+        return name in enabled_bricks  # type: ignore[operator]
+
+    _factory_log.info(
+        "Factory: enabled_bricks=%d/%d %s",
+        len(enabled_bricks),
+        20,
+        sorted(enabled_bricks),
+    )
 
     perm = permissions or _PermissionConfig()
     cache_cfg = cache or _CacheConfig()
@@ -359,89 +382,106 @@ def create_nexus_services(
     engine = record_store.engine
     session_factory = record_store.session_factory
 
-    # --- ReBAC Manager ---
-    from nexus.rebac.manager import EnhancedReBACManager
-
-    rebac_manager = EnhancedReBACManager(
-        engine=engine,
-        cache_ttl_seconds=cache_ttl_seconds or 300,
-        max_depth=10,
-        enforce_zone_isolation=perm.enforce_zone_isolation,
-        enable_graph_limits=True,
-        enable_tiger_cache=perm.enable_tiger_cache,
+    # --- Permissions brick (ReBAC + Enforcer + Hierarchy) ---
+    from nexus.core.deployment_profile import (
+        BRICK_AGENT_REGISTRY,
+        BRICK_EVENTLOG,
+        BRICK_MCP,
+        BRICK_NAMESPACE,
+        BRICK_OBSERVABILITY,
+        BRICK_PAY,
+        BRICK_PERMISSIONS,
+        BRICK_RESILIENCY,
+        BRICK_SEARCH,
+        BRICK_UPLOADS,
+        BRICK_WORKFLOWS,
     )
 
-    # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
-    from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+    rebac_manager: Any = None
+    rebac_circuit_breaker: Any = None
+    dir_visibility_cache: Any = None
+    audit_store: Any = None
+    entity_registry: Any = None
+    permission_enforcer: Any = None
+    hierarchy_manager: Any = None
+    deferred_permission_buffer: Any = None
 
-    rebac_circuit_breaker = AsyncCircuitBreaker(
-        name="rebac_db",
-        config=CircuitBreakerConfig(
-            failure_threshold=5,
-            success_threshold=3,
-            reset_timeout=30.0,
-            failure_window=60.0,
-        ),
-    )
+    if _brick_on(BRICK_PERMISSIONS):
+        from nexus.rebac.manager import EnhancedReBACManager
 
-    # --- Directory Visibility Cache ---
-    from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
-
-    dir_visibility_cache = DirectoryVisibilityCache(
-        tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
-        ttl=cache_ttl_seconds or 300,
-        max_entries=10000,
-    )
-
-    # Wire: rebac invalidation -> dir visibility cache
-    rebac_manager.register_dir_visibility_invalidator(
-        "nexusfs",
-        lambda zone_id, path: dir_visibility_cache.invalidate_for_resource(path, zone_id),
-    )
-
-    # --- Audit Store ---
-    from nexus.rebac.permissions_enhanced import AuditStore
-
-    audit_store = AuditStore(engine=engine)
-
-    # --- Entity Registry ---
-    from nexus.rebac.entity_registry import EntityRegistry
-
-    entity_registry = EntityRegistry(session_factory)
-
-    # --- Permission Enforcer ---
-    from nexus.services.permissions.enforcer import PermissionEnforcer
-
-    permission_enforcer = PermissionEnforcer(
-        metadata_store=metadata_store,
-        rebac_manager=rebac_manager,
-        allow_admin_bypass=perm.allow_admin_bypass,
-        allow_system_bypass=True,
-        audit_store=audit_store,
-        admin_bypass_paths=[],
-        router=router,
-        entity_registry=entity_registry,
-    )
-
-    # --- Hierarchy Manager ---
-    from nexus.rebac.hierarchy_manager import HierarchyManager
-
-    hierarchy_manager = HierarchyManager(
-        rebac_manager=rebac_manager,
-        enable_inheritance=perm.inherit,
-    )
-
-    # --- Deferred Permission Buffer ---
-    from nexus.rebac.deferred_permission_buffer import DeferredPermissionBuffer
-
-    deferred_permission_buffer = None
-    if perm.enable_deferred:
-        deferred_permission_buffer = DeferredPermissionBuffer(
-            rebac_manager=rebac_manager,
-            hierarchy_manager=hierarchy_manager,
-            flush_interval_sec=perm.deferred_flush_interval,
+        rebac_manager = EnhancedReBACManager(
+            engine=engine,
+            cache_ttl_seconds=cache_ttl_seconds or 300,
+            max_depth=10,
+            enforce_zone_isolation=perm.enforce_zone_isolation,
+            enable_graph_limits=True,
+            enable_tiger_cache=perm.enable_tiger_cache,
         )
-        deferred_permission_buffer.start()
+
+        from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+
+        rebac_circuit_breaker = AsyncCircuitBreaker(
+            name="rebac_db",
+            config=CircuitBreakerConfig(
+                failure_threshold=5,
+                success_threshold=3,
+                reset_timeout=30.0,
+                failure_window=60.0,
+            ),
+        )
+
+        from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
+
+        dir_visibility_cache = DirectoryVisibilityCache(
+            tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
+            ttl=cache_ttl_seconds or 300,
+            max_entries=10000,
+        )
+
+        rebac_manager.register_dir_visibility_invalidator(
+            "nexusfs",
+            lambda zone_id, path: dir_visibility_cache.invalidate_for_resource(path, zone_id),
+        )
+
+        from nexus.rebac.permissions_enhanced import AuditStore
+
+        audit_store = AuditStore(engine=engine)
+
+        from nexus.rebac.entity_registry import EntityRegistry
+
+        entity_registry = EntityRegistry(session_factory)
+
+        from nexus.services.permissions.enforcer import PermissionEnforcer
+
+        permission_enforcer = PermissionEnforcer(
+            metadata_store=metadata_store,
+            rebac_manager=rebac_manager,
+            allow_admin_bypass=perm.allow_admin_bypass,
+            allow_system_bypass=True,
+            audit_store=audit_store,
+            admin_bypass_paths=[],
+            router=router,
+            entity_registry=entity_registry,
+        )
+
+        from nexus.rebac.hierarchy_manager import HierarchyManager
+
+        hierarchy_manager = HierarchyManager(
+            rebac_manager=rebac_manager,
+            enable_inheritance=perm.inherit,
+        )
+
+        from nexus.rebac.deferred_permission_buffer import DeferredPermissionBuffer
+
+        if perm.enable_deferred:
+            deferred_permission_buffer = DeferredPermissionBuffer(
+                rebac_manager=rebac_manager,
+                hierarchy_manager=hierarchy_manager,
+                flush_interval_sec=perm.deferred_flush_interval,
+            )
+            deferred_permission_buffer.start()
+    else:
+        _factory_log.info("Factory: permissions brick disabled, skipping ReBAC/Enforcer")
 
     # --- Workspace Registry ---
     from nexus.services.workspace.workspace_registry import WorkspaceRegistry
@@ -495,11 +535,8 @@ def create_nexus_services(
         write_observer = RecordStoreSyncer(session_factory)
 
     # --- Event Delivery Worker (Issue #1241) ---
-    # Transactional outbox: polls undelivered operation_log rows and
-    # dispatches FileEvents to EventBus/webhooks with at-least-once semantics.
-    # Only enabled for PostgreSQL — SQLite doesn't support concurrent thread access.
     delivery_worker = None
-    if db_url.startswith(("postgres", "postgresql")):
+    if _brick_on(BRICK_EVENTLOG) and db_url.startswith(("postgres", "postgresql")):
         try:
             from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
@@ -510,9 +547,7 @@ def create_nexus_services(
             )
             delivery_worker.start()
         except Exception as _dw_exc:
-            import logging as _dw_logging
-
-            _dw_logging.getLogger(__name__).warning("EventDeliveryWorker unavailable: %s", _dw_exc)
+            _factory_log.warning("EventDeliveryWorker unavailable: %s", _dw_exc)
 
     # --- VersionService (Task #45) ---
     from nexus.services.version_service import VersionService
@@ -526,79 +561,83 @@ def create_nexus_services(
     )
 
     # --- Observability Subsystem (Issue #1301) ---
-    from nexus.core.config import ObservabilityConfig
-    from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+    observability_subsystem: Any = None
+    if _brick_on(BRICK_OBSERVABILITY):
+        from nexus.core.config import ObservabilityConfig
+        from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
 
-    observability_config = ObservabilityConfig()
-    observability_subsystem = ObservabilitySubsystem(
-        config=observability_config,
-        engines=[engine],
-    )
+        observability_config = ObservabilityConfig()
+        observability_subsystem = ObservabilitySubsystem(
+            config=observability_config,
+            engines=[engine],
+        )
 
     # --- Resiliency Subsystem (Issue #1366) ---
-    from nexus.core.resiliency import ResiliencyManager, set_default_manager
+    resiliency_manager: Any = None
+    if _brick_on(BRICK_RESILIENCY):
+        from nexus.core.resiliency import ResiliencyManager, set_default_manager
 
-    resiliency_config = _parse_resiliency_config(resiliency_raw)
-    resiliency_manager = ResiliencyManager(config=resiliency_config)
-    set_default_manager(resiliency_manager)
+        resiliency_config = _parse_resiliency_config(resiliency_raw)
+        resiliency_manager = ResiliencyManager(config=resiliency_config)
+        set_default_manager(resiliency_manager)
 
     # --- Chunked Upload Service (Issue #788) ---
-    import os as _os
+    chunked_upload_service: Any = None
+    if _brick_on(BRICK_UPLOADS):
+        import os as _os
 
-    from nexus.services.chunked_upload_service import ChunkedUploadConfig, ChunkedUploadService
+        from nexus.services.chunked_upload_service import (
+            ChunkedUploadConfig,
+            ChunkedUploadService,
+        )
 
-    _upload_config_kwargs: dict[str, Any] = {}
-    _upload_env_mapping = {
-        "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "min_chunk_size",
-        "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "max_chunk_size",
-        "NEXUS_UPLOAD_DEFAULT_CHUNK_SIZE": "default_chunk_size",
-        "NEXUS_UPLOAD_MAX_CONCURRENT": "max_concurrent_uploads",
-        "NEXUS_UPLOAD_SESSION_TTL_HOURS": "session_ttl_hours",
-        "NEXUS_UPLOAD_CLEANUP_INTERVAL": "cleanup_interval_seconds",
-        "NEXUS_UPLOAD_MAX_SIZE": "max_upload_size",
-    }
-    for _env_var, _config_key in _upload_env_mapping.items():
-        _val = _os.getenv(_env_var)
-        if _val is not None:
-            _upload_config_kwargs[_config_key] = int(_val)
+        _upload_config_kwargs: dict[str, Any] = {}
+        _upload_env_mapping = {
+            "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "min_chunk_size",
+            "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "max_chunk_size",
+            "NEXUS_UPLOAD_DEFAULT_CHUNK_SIZE": "default_chunk_size",
+            "NEXUS_UPLOAD_MAX_CONCURRENT": "max_concurrent_uploads",
+            "NEXUS_UPLOAD_SESSION_TTL_HOURS": "session_ttl_hours",
+            "NEXUS_UPLOAD_CLEANUP_INTERVAL": "cleanup_interval_seconds",
+            "NEXUS_UPLOAD_MAX_SIZE": "max_upload_size",
+        }
+        for _env_var, _config_key in _upload_env_mapping.items():
+            _val = _os.getenv(_env_var)
+            if _val is not None:
+                _upload_config_kwargs[_config_key] = int(_val)
 
-    chunked_upload_service = ChunkedUploadService(
-        session_factory=session_factory,
-        backend=backend,
-        metadata_store=metadata_store,
-        config=ChunkedUploadConfig(**_upload_config_kwargs),
-    )
+        chunked_upload_service = ChunkedUploadService(
+            session_factory=session_factory,
+            backend=backend,
+            metadata_store=metadata_store,
+            config=ChunkedUploadConfig(**_upload_config_kwargs),
+        )
 
     # --- Search Brick Import Validation (Issue #1520) ---
-    import logging as _search_log
+    if _brick_on(BRICK_SEARCH):
+        try:
+            from nexus.search.manifest import verify_imports as _verify_search
 
-    _search_logger = _search_log.getLogger(__name__)
-    try:
-        from nexus.search.manifest import verify_imports as _verify_search
+            _search_status = _verify_search()
+            _factory_log.debug("[FACTORY] Search brick imports: %s", _search_status)
+        except ImportError:
+            _factory_log.debug("[FACTORY] Search brick manifest not available")
 
-        _search_status = _verify_search()
-        _search_logger.debug("[FACTORY] Search brick imports: %s", _search_status)
-    except ImportError:
-        _search_logger.debug("[FACTORY] Search brick manifest not available")
+        # Wire zoekt callbacks into backends
+        try:
+            from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
 
-    # Wire zoekt callbacks into backends (Issue #1520)
-    try:
-        from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
-
-        if hasattr(backend, "on_write_callback") and backend.on_write_callback is None:
-            backend.on_write_callback = notify_zoekt_write
-        if hasattr(backend, "on_sync_callback") and backend.on_sync_callback is None:
-            backend.on_sync_callback = notify_zoekt_sync_complete
-    except ImportError:
-        _search_logger.debug("[FACTORY] Zoekt not available, skipping callback wiring")
+            if hasattr(backend, "on_write_callback") and backend.on_write_callback is None:
+                backend.on_write_callback = notify_zoekt_write  # type: ignore[union-attr]
+            if hasattr(backend, "on_sync_callback") and backend.on_sync_callback is None:
+                backend.on_sync_callback = notify_zoekt_sync_complete  # type: ignore[union-attr]
+        except ImportError:
+            _factory_log.debug("[FACTORY] Zoekt not available, skipping callback wiring")
 
     # --- Wallet Provisioner (Issue #1210) ---
-    wallet_provisioner = _create_wallet_provisioner()
+    wallet_provisioner = _create_wallet_provisioner() if _brick_on(BRICK_PAY) else None
 
     # --- Manifest Resolver (Issue #1427, #1428) ---
-    import logging as _logging
-
-    _factory_logger = _logging.getLogger(__name__)
     manifest_resolver: Any = None
     manifest_metrics: Any = None
 
@@ -618,7 +657,7 @@ def create_nexus_services(
             try:
                 executors["file_glob"] = FileGlobExecutor(workspace_root=Path(root_path))
             except TypeError:
-                _factory_logger.debug("Cannot create FileGlobExecutor: root_path=%r", root_path)
+                _factory_log.debug("Cannot create FileGlobExecutor: root_path=%r", root_path)
 
         # WorkspaceSnapshotExecutor (Issue #1428)
         try:
@@ -637,14 +676,14 @@ def create_nexus_services(
                 manifest_reader=cas_reader,
             )
         except ImportError as _snap_e:
-            _factory_logger.debug("WorkspaceSnapshotExecutor unavailable: %s", _snap_e)
+            _factory_log.debug("WorkspaceSnapshotExecutor unavailable: %s", _snap_e)
 
         import importlib.util
 
         if importlib.util.find_spec("nexus.services.context_manifest.executors.memory_query"):
-            _factory_logger.debug("MemoryQueryExecutor available for per-agent wiring")
+            _factory_log.debug("MemoryQueryExecutor available for per-agent wiring")
         else:
-            _factory_logger.debug("MemoryQueryExecutor module not found")
+            _factory_log.debug("MemoryQueryExecutor module not found")
 
         manifest_metrics = ManifestMetricsObserver(ManifestMetricsConfig())
 
@@ -653,30 +692,29 @@ def create_nexus_services(
             max_resolve_seconds=5.0,
             metrics_observer=manifest_metrics,
         )
-        _factory_logger.debug(
-            "[FACTORY] ManifestResolver created with %d executors", len(executors)
-        )
+        _factory_log.debug("[FACTORY] ManifestResolver created with %d executors", len(executors))
     except ImportError as _e:
-        _factory_logger.warning("Failed to create ManifestResolver: %s", _e)
+        _factory_log.warning("Failed to create ManifestResolver: %s", _e)
 
     # --- Tool Namespace Middleware (Issue #1272) ---
     tool_namespace_middleware = None
-    try:
-        from nexus.mcp.middleware import ToolNamespaceMiddleware
+    if _brick_on(BRICK_MCP):
+        try:
+            from nexus.mcp.middleware import ToolNamespaceMiddleware
 
-        tool_namespace_middleware = ToolNamespaceMiddleware(
-            rebac_manager=rebac_manager,
-            zone_id=zone_id,
-            cache_ttl=cache_ttl_seconds or 300,
-        )
-        _factory_logger.debug("[FACTORY] ToolNamespaceMiddleware created (zone_id=%s)", zone_id)
-    except ImportError as _e:
-        _factory_logger.debug("ToolNamespaceMiddleware unavailable: %s", _e)
+            tool_namespace_middleware = ToolNamespaceMiddleware(
+                rebac_manager=rebac_manager,
+                zone_id=zone_id,
+                cache_ttl=cache_ttl_seconds or 300,
+            )
+            _factory_log.debug("[FACTORY] ToolNamespaceMiddleware created (zone_id=%s)", zone_id)
+        except ImportError as _e:
+            _factory_log.debug("ToolNamespaceMiddleware unavailable: %s", _e)
 
     # --- Agent Registry (Issue #1502) ---
     agent_registry: Any = None
     async_agent_registry: Any = None
-    if session_factory is not None:
+    if _brick_on(BRICK_AGENT_REGISTRY) and session_factory is not None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
             from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
@@ -687,27 +725,28 @@ def create_nexus_services(
                 flush_interval=60,
             )
             async_agent_registry = AsyncAgentRegistry(agent_registry)
-            _factory_logger.debug("[FACTORY] AgentRegistry + AsyncAgentRegistry created")
+            _factory_log.debug("[FACTORY] AgentRegistry + AsyncAgentRegistry created")
         except ImportError as _e:
-            _factory_logger.debug("AgentRegistry unavailable: %s", _e)
+            _factory_log.debug("AgentRegistry unavailable: %s", _e)
 
     # --- Namespace Manager (Issue #1502) ---
     namespace_manager: Any = None
     async_namespace_manager: Any = None
-    try:
-        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
-        from nexus.services.permissions.namespace_factory import (
-            create_namespace_manager as _create_ns_manager,
-        )
+    if _brick_on(BRICK_NAMESPACE):
+        try:
+            from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
+            from nexus.services.permissions.namespace_factory import (
+                create_namespace_manager as _create_ns_manager,
+            )
 
-        namespace_manager = _create_ns_manager(
-            rebac_manager=rebac_manager,
-            record_store=record_store,
-        )
-        async_namespace_manager = AsyncNamespaceManager(namespace_manager)
-        _factory_logger.debug("[FACTORY] NamespaceManager + AsyncNamespaceManager created")
-    except ImportError as _e:
-        _factory_logger.debug("NamespaceManager unavailable: %s", _e)
+            namespace_manager = _create_ns_manager(
+                rebac_manager=rebac_manager,
+                record_store=record_store,
+            )
+            async_namespace_manager = AsyncNamespaceManager(namespace_manager)
+            _factory_log.debug("[FACTORY] NamespaceManager + AsyncNamespaceManager created")
+        except ImportError as _e:
+            _factory_log.debug("NamespaceManager unavailable: %s", _e)
 
     # --- Async VFS Router (Issue #1502) ---
     async_vfs_router: Any = None
@@ -715,14 +754,14 @@ def create_nexus_services(
         from nexus.services.routing.async_router import AsyncVFSRouter
 
         async_vfs_router = AsyncVFSRouter(router)
-        _factory_logger.debug("[FACTORY] AsyncVFSRouter created")
+        _factory_log.debug("[FACTORY] AsyncVFSRouter created")
     except ImportError as _e:
-        _factory_logger.debug("AsyncVFSRouter unavailable: %s", _e)
+        _factory_log.debug("AsyncVFSRouter unavailable: %s", _e)
 
     # --- Infrastructure: event bus + lock manager (moved from NexusFS.__init__) ---
     event_bus: Any = None
     lock_manager: Any = None
-    if dist.enable_locks or dist.enable_events:
+    if _brick_on(BRICK_EVENTLOG) and (dist.enable_locks or dist.enable_events):
         event_bus, lock_manager = _create_distributed_infra(
             dist,
             metadata_store,
@@ -732,8 +771,7 @@ def create_nexus_services(
 
     # --- Workflow engine (moved from NexusFS.__init__) ---
     workflow_engine: Any = None
-    if dist.enable_workflows:
-        # Try to get Rust glob_match for performance (falls back to fnmatch)
+    if _brick_on(BRICK_WORKFLOWS) and dist.enable_workflows:
         _glob_match_fn: Any = None
         try:
             from nexus.core import glob_fast
@@ -978,6 +1016,7 @@ def create_nexus_fs(
     enable_memory_paging: bool | None = None,
     memory_main_capacity: int | None = None,
     memory_recall_max_age_hours: float | None = None,
+    enabled_bricks: frozenset[str] | None = None,
     # Deprecated — ignored
     zone_id: str | None = None,
     agent_id: str | None = None,
@@ -1115,6 +1154,7 @@ def create_nexus_fs(
             zone_id=zone_id,
             agent_id=agent_id,
             enable_write_buffer=enable_write_buffer,
+            enabled_bricks=enabled_bricks,
         )
     elif services is None:
         from nexus.core.config import KernelServices as _KernelServices

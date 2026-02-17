@@ -7,8 +7,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# Import OAuthConfig - required for OAuth configuration
-from nexus.server.auth.oauth_config import OAuthConfig
+# Import OAuthConfig from package-level location (Issue #1389: no server/ dependency)
+from nexus.auth_config import OAuthConfig
 
 
 class DockerImageTemplate(BaseModel):
@@ -49,34 +49,53 @@ class DockerTemplateConfig(BaseModel):
 
 
 class FeaturesConfig(BaseModel):
-    """Feature flags for optional Nexus functionality."""
+    """Per-brick feature flag overrides.
 
-    semantic_search: bool = Field(
-        default=False,
-        description="Enable semantic search (requires vector database)",
-    )
-    llm_read: bool = Field(
-        default=False,
-        description="Enable LLM-powered document reading",
-    )
-    agent_memory: bool = Field(
-        default=True,
-        description="Enable agent memory API",
-    )
-    job_system: bool = Field(
-        default=False,
-        description="Enable asynchronous job system",
-    )
-    mcp_server: bool = Field(
-        default=True,
-        description="Enable Model Context Protocol server",
-    )
-    a2a_endpoint: bool = Field(
-        default=True,
-        description="Enable Google A2A (Agent-to-Agent) protocol endpoint",
-    )
+    These override the deployment profile defaults. When a flag is None,
+    the profile default is used. When explicitly True/False, it overrides.
+
+    Issue #1389: Expanded from 6 hard-coded flags to per-brick overrides.
+    """
+
+    # System services
+    eventlog: bool | None = Field(default=None, description="Enable event log service")
+    namespace: bool | None = Field(default=None, description="Enable namespace manager")
+    agent_registry: bool | None = Field(default=None, description="Enable agent registry")
+    permissions: bool | None = Field(default=None, description="Enable permission enforcement")
+    scheduler: bool | None = Field(default=None, description="Enable task scheduler")
+
+    # Infrastructure bricks
+    cache: bool | None = Field(default=None, description="Enable cache subsystem")
+    observability: bool | None = Field(default=None, description="Enable observability (OTEL)")
+    uploads: bool | None = Field(default=None, description="Enable chunked uploads")
+    resiliency: bool | None = Field(default=None, description="Enable resiliency manager")
+
+    # Feature bricks
+    search: bool | None = Field(default=None, description="Enable search brick")
+    pay: bool | None = Field(default=None, description="Enable payment brick")
+    llm: bool | None = Field(default=None, description="Enable LLM brick")
+    skills: bool | None = Field(default=None, description="Enable skills brick")
+    sandbox: bool | None = Field(default=None, description="Enable sandbox brick")
+    workflows: bool | None = Field(default=None, description="Enable workflow brick")
+    a2a: bool | None = Field(default=None, description="Enable A2A protocol brick")
+    discovery: bool | None = Field(default=None, description="Enable agent discovery")
+    mcp: bool | None = Field(default=None, description="Enable MCP server brick")
+    memory: bool | None = Field(default=None, description="Enable agent memory")
+    federation: bool | None = Field(default=None, description="Enable federation brick")
 
     model_config = ConfigDict(extra="forbid")
+
+    def to_overrides(self) -> dict[str, bool]:
+        """Convert non-None fields to a brick override dict.
+
+        Returns:
+            Dict of brick_name -> enabled for fields that are explicitly set.
+        """
+        overrides: dict[str, bool] = {}
+        for field_name, value in self:
+            if value is not None:
+                overrides[field_name] = value
+        return overrides
 
 
 class NexusConfig(BaseModel):
@@ -90,10 +109,20 @@ class NexusConfig(BaseModel):
     4. Defaults (standalone mode with ./nexus-data)
     """
 
-    # Deployment mode
+    # Deployment mode (topology)
     mode: str = Field(
         default="standalone",
         description="Deployment mode: standalone (single-node redb), remote (thin HTTP client), or federation (ZoneManager + Raft)",
+    )
+
+    # Deployment profile (capability tier) — Issue #1389
+    profile: str = Field(
+        default="full",
+        description=(
+            "Deployment profile controlling which bricks are enabled: "
+            "embedded (storage+eventlog only), lite (core services), "
+            "full (all bricks), cloud (all + federation)"
+        ),
     )
 
     # Backend selection
@@ -316,6 +345,18 @@ class NexusConfig(BaseModel):
             raise ValueError(f"mode must be one of {allowed}, got '{v}'")
         return v
 
+    @field_validator("profile")
+    @classmethod
+    def validate_profile(cls, v: str) -> str:
+        """Validate deployment profile.
+
+        Valid profiles: embedded, lite, full, cloud
+        """
+        allowed = ["embedded", "lite", "full", "cloud"]
+        if v not in allowed:
+            raise ValueError(f"profile must be one of {allowed}, got '{v}'")
+        return v
+
     @field_validator("backend")
     @classmethod
     def validate_backend(cls, v: str) -> str:
@@ -399,7 +440,7 @@ def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
 
     # Convert oauth dict to OAuthConfig if present
     if "oauth" in merged_dict and isinstance(merged_dict["oauth"], dict):
-        from nexus.server.auth.oauth_config import OAuthConfig as OAuthConfigType
+        from nexus.auth_config import OAuthConfig as OAuthConfigType
 
         merged_dict["oauth"] = OAuthConfigType(**merged_dict["oauth"])
 
@@ -427,6 +468,7 @@ def _load_from_environment() -> NexusConfig:
     # Map environment variables to config fields
     env_mapping = {
         "NEXUS_MODE": "mode",
+        "NEXUS_PROFILE": "profile",
         "NEXUS_BACKEND": "backend",
         "NEXUS_DATA_DIR": "data_dir",
         "NEXUS_GCS_BUCKET_NAME": "gcs_bucket_name",

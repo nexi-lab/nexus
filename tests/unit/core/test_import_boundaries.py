@@ -192,3 +192,20 @@ class TestZoneHelpersInCore:
         from nexus.server.auth.user_helpers import is_zone_admin as ServerFn
 
         assert CoreFn is ServerFn
+
+
+class TestConfigDoesNotImportServer:
+    """Verify nexus/config.py does not import from nexus.server (Issue #1389)."""
+
+    def test_no_server_imports_in_config(self):
+        """config.py must not import from nexus.server."""
+        config_file = NEXUS_ROOT / "config.py"
+        violations: list[str] = []
+
+        for module, lineno, _kind in _collect_imports(config_file):
+            if module.startswith("nexus.server"):
+                violations.append(f"config.py:{lineno} imports {module}")
+
+        assert violations == [], "config.py→server import violations:\n" + "\n".join(
+            f"  - {v}" for v in violations
+        )

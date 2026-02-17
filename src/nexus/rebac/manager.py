@@ -3388,7 +3388,7 @@ class ReBACManager:
 
     def _initialize_default_namespaces_with_conn(self, conn: Any) -> None:
         """Initialize default namespace configurations with given connection."""
-        from nexus.services.permissions.default_namespaces import (
+        from nexus.rebac.default_namespaces import (
             DEFAULT_FILE_NAMESPACE,
             DEFAULT_GROUP_NAMESPACE,
             DEFAULT_MEMORY_NAMESPACE,

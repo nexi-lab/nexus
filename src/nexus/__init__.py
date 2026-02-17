@@ -166,7 +166,7 @@ def __getattr__(name: str) -> Any:
 
 def connect(
     config: str | Path | dict | NexusConfig | None = None,
-) -> "NexusFilesystem":
+) -> NexusFilesystem:
     """
     Connect to Nexus filesystem.
 

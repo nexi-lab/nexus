@@ -6,13 +6,11 @@
 4. No performance regression
 """
 
-import asyncio
 import concurrent.futures
 import os
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -20,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from nexus import connect
-from nexus.fuse import mount_nexus, MountMode
+from nexus.fuse import mount_nexus
 
 
 def test_thread_safety():
@@ -79,7 +77,7 @@ def test_thread_safety():
 
         def read_file(path):
             try:
-                with open(path, "r") as f:
+                with open(path) as f:
                     content = f.read()
                     assert content.startswith("Content"), f"Unexpected content: {content}"
             except Exception as e:

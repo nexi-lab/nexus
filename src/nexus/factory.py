@@ -821,6 +821,29 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except ImportError:
         pass  # Server auth not available (e.g. embedded mode)
 
+    # --- RLM Inference Service (Issue #1306) ---
+    rlm_service: Any = None
+    try:
+        from nexus.rlm.service import RLMInferenceService
+
+        sandbox_mgr = kernel.get("sandbox_manager")
+        llm_provider = kernel.get("llm_provider")
+        if sandbox_mgr is not None:
+            import os
+
+            rlm_service = RLMInferenceService(
+                sandbox_manager=sandbox_mgr,
+                llm_provider=llm_provider,
+                nexus_api_url=os.environ.get("NEXUS_API_URL", "http://localhost:2026"),
+                max_concurrent=int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8")),
+            )
+            logger.debug("[BOOT:BRICK] RLM inference service created (max_concurrent=%d)",
+                         int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8")))
+        else:
+            logger.debug("[BOOT:BRICK] RLM skipped: sandbox_manager not available")
+    except ImportError as _e:
+        logger.debug("[BOOT:BRICK] RLM brick not available: %s", _e)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -831,6 +854,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "lock_manager": lock_manager,
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
+        "rlm_service": rlm_service,
     }
 
     elapsed = time.perf_counter() - t0

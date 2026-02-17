@@ -16,7 +16,6 @@ the inner driver — only writes need zone routing.
 Issue: #1727
 """
 
-from __future__ import annotations
 
 import json
 import logging

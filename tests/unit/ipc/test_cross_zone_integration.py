@@ -6,7 +6,6 @@ across zone boundaries.
 Issue: #1727
 """
 
-from __future__ import annotations
 
 from typing import Any
 

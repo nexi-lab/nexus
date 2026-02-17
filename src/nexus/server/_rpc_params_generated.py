@@ -7,7 +7,6 @@ Manual overrides live in ``_rpc_param_overrides.py`` and are imported
 after this module by ``protocol.py``.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any

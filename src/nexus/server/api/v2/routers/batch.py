@@ -14,7 +14,6 @@ References:
     - Issue #1242: General /batch HTTP endpoint for io_uring-style submission
 """
 
-from __future__ import annotations
 
 import logging
 from collections.abc import Callable

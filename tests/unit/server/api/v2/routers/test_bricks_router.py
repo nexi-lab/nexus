@@ -4,7 +4,6 @@ Tests all 4 endpoints using FastAPI TestClient with a mock
 BrickLifecycleManager.
 """
 
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 

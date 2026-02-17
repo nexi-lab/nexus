@@ -14,7 +14,6 @@ References:
     - Linux io_uring: submission queue / completion queue pattern
 """
 
-from __future__ import annotations
 
 import asyncio
 import base64

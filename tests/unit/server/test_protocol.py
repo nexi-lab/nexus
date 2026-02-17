@@ -1,6 +1,5 @@
 """Unit tests for RPC protocol."""
 
-from __future__ import annotations
 
 import dataclasses
 from datetime import datetime

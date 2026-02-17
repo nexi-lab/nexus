@@ -10,7 +10,6 @@ Tests cover:
 - Invalid override detection
 """
 
-from __future__ import annotations
 
 import logging
 

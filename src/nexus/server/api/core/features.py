@@ -7,7 +7,6 @@ The response is computed once at startup (immutable after boot)
 and served from app.state.features_info with O(1) cost.
 """
 
-from __future__ import annotations
 
 import logging
 

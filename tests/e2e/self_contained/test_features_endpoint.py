@@ -9,7 +9,6 @@ Tests:
 - Response includes version info
 """
 
-from __future__ import annotations
 
 from typing import Any
 from unittest.mock import MagicMock

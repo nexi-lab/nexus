@@ -14,7 +14,6 @@ Contains:
   - DT_REG, DT_DIR, DT_MOUNT: Directory entry type constants
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime

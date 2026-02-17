@@ -12,7 +12,6 @@ Profile hierarchy (superset relationship):
     embedded ⊂ lite ⊂ full ⊆ cloud
 """
 
-from __future__ import annotations
 
 import logging
 from enum import StrEnum

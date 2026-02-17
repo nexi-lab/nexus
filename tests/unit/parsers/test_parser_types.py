@@ -1,6 +1,5 @@
 """Tests for parser data types — ParseResult, TextChunk, ImageData (Issue #1523)."""
 
-from __future__ import annotations
 
 import pytest
 

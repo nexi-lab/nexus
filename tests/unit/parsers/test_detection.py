@@ -1,6 +1,5 @@
 """Tests for detection utilities — MIME type, encoding, compression (Issue #1523)."""
 
-from __future__ import annotations
 
 import gzip
 

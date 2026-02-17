@@ -10,7 +10,6 @@ Endpoints:
     POST /api/v2/bricks/{name}/unmount — Unmount an active brick at runtime
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any

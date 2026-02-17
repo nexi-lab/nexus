@@ -7,7 +7,6 @@ Starts a real nexus server and verifies:
 - Health endpoint still responds quickly (no performance regression)
 """
 
-from __future__ import annotations
 
 import time
 

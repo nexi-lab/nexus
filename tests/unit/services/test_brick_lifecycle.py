@@ -3,7 +3,6 @@
 TDD: Tests written FIRST, implementation follows.
 """
 
-from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock

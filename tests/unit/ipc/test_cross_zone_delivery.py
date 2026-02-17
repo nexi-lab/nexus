@@ -6,7 +6,6 @@ via AgentRegistryProtocol and delegates writes to the correct zone.
 Issue: #1727
 """
 
-from __future__ import annotations
 
 import json
 from typing import Any

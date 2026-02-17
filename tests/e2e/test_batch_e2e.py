@@ -11,7 +11,6 @@ Starts a real Nexus server with permissions enabled and validates:
 Requires: Rust Raft extension (maturin develop -m rust/nexus_raft/Cargo.toml)
 """
 
-from __future__ import annotations
 
 import time
 

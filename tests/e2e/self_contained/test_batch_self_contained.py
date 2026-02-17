@@ -4,7 +4,6 @@ Uses FastAPI TestClient with mock AsyncNexusFS — no Rust extension needed.
 Validates full router wiring, sequential execution, and performance.
 """
 
-from __future__ import annotations
 
 import time
 from typing import Any

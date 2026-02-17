@@ -8,7 +8,6 @@ Verifies:
 5. enable_read_tracking standalone function works correctly
 """
 
-from __future__ import annotations
 
 import ast
 import importlib

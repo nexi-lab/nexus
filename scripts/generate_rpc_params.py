@@ -14,7 +14,6 @@ and ReBAC tuple-field classes) live in ``_rpc_param_overrides.py`` and are
 imported *after* the generated module so they replace the generated versions.
 """
 
-from __future__ import annotations
 
 import importlib
 import inspect
@@ -408,8 +407,6 @@ def generate_file(methods: dict[str, tuple[str, inspect.Signature, str | None]])
         Manual overrides live in ``_rpc_param_overrides.py`` and are imported
         after this module by ``protocol.py``.
         """
-
-        from __future__ import annotations
 
         from dataclasses import dataclass
         from typing import Any

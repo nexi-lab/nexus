@@ -3,7 +3,6 @@
 Phase 4 TDD: integration with factory.py boot sequence.
 """
 
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 

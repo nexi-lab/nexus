@@ -1,6 +1,5 @@
 """Tests for ProviderRegistry — provider selection and parse delegation (Issue #1523)."""
 
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 

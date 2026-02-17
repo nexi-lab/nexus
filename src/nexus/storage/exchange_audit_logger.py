@@ -214,11 +214,13 @@ class ExchangeAuditLogger:
     # Read / Query
     # ------------------------------------------------------------------
 
-    def get_transaction(self, record_id: str) -> ExchangeAuditLogModel | None:
+    def get_transaction(self, record_id: str, zone_id: str | None = None) -> ExchangeAuditLogModel | None:
         """Get a single transaction by ID."""
         session = self._session_factory()
         try:
             stmt = select(ExchangeAuditLogModel).where(ExchangeAuditLogModel.id == record_id)
+            if zone_id is not None:
+                stmt = stmt.where(ExchangeAuditLogModel.zone_id == zone_id)
             return session.execute(stmt).scalar_one_or_none()
         finally:
             session.close()
@@ -352,17 +354,19 @@ class ExchangeAuditLogger:
         self,
         first_id: str,
         last_id: str,
+        zone_id: str | None = None,
     ) -> str:
         """Compute Merkle root over a range of records (by created_at order)."""
         session = self._session_factory()
         try:
             # Get boundary timestamps
-            first_row = session.execute(
-                select(ExchangeAuditLogModel).where(ExchangeAuditLogModel.id == first_id)
-            ).scalar_one_or_none()
-            last_row = session.execute(
-                select(ExchangeAuditLogModel).where(ExchangeAuditLogModel.id == last_id)
-            ).scalar_one_or_none()
+            first_stmt = select(ExchangeAuditLogModel).where(ExchangeAuditLogModel.id == first_id)
+            last_stmt = select(ExchangeAuditLogModel).where(ExchangeAuditLogModel.id == last_id)
+            if zone_id is not None:
+                first_stmt = first_stmt.where(ExchangeAuditLogModel.zone_id == zone_id)
+                last_stmt = last_stmt.where(ExchangeAuditLogModel.zone_id == zone_id)
+            first_row = session.execute(first_stmt).scalar_one_or_none()
+            last_row = session.execute(last_stmt).scalar_one_or_none()
 
             if first_row is None or last_row is None:
                 return hashlib.sha256(b"").hexdigest()

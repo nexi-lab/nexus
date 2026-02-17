@@ -159,10 +159,12 @@ class SecretsAuditLogger:
     # Read / Query
     # ------------------------------------------------------------------
 
-    def get_event(self, record_id: str) -> SecretsAuditLogModel | None:
+    def get_event(self, record_id: str, zone_id: str | None = None) -> SecretsAuditLogModel | None:
         """Get a single audit event by ID."""
         with self._session_factory() as session:
             stmt = select(SecretsAuditLogModel).where(SecretsAuditLogModel.id == record_id)
+            if zone_id is not None:
+                stmt = stmt.where(SecretsAuditLogModel.zone_id == zone_id)
             return session.execute(stmt).scalar_one_or_none()
 
     def list_events_cursor(

@@ -20,7 +20,6 @@ References:
     - Issue #1704: Brick lifecycle manager
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

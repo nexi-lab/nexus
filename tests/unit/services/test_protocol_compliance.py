@@ -152,7 +152,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "LLMProtocol",
         "nexus.services.protocols.llm",
         "nexus.services.llm_service.LLMService",
-        True,
+        False,  # llm_read_stream: protocol is sync, impl is async generator
     ),
     # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
     (

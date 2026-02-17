@@ -123,9 +123,10 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     # In-memory metadata store (same stub as in fastapi e2e test)
     from collections.abc import Sequence
 
-    from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+    from nexus.core.metadata import FileMetadata, PaginatedResult
+    from nexus.core.metastore import MetastoreABC
 
-    class InMemoryMetadataStore(FileMetadataProtocol):
+    class InMemoryMetadataStore(MetastoreABC):
         def __init__(self) -> None:
             self._store: dict[str, FileMetadata] = {}
 

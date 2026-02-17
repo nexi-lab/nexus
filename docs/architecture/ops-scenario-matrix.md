@@ -29,7 +29,7 @@ Two independent ABC axes, each with its own affinity analysis:
                               |
 Ops ABCs  ────────────────────┼──────────────────────────
 ← SOT: scenario affinity      |
-FileMetadataProtocol           |     Concrete class =
+MetastoreABC                   |     Concrete class =
 SearchProtocol                 |     Data ABC × Ops ABC
 PermissionProtocol             |     (composed via DI)
 ...                            |
@@ -120,7 +120,7 @@ Map **scenario requiring properties** ↔ **Ops ABC providing properties**.
 
 **Step 1 Analysis:** All 7 scenarios share identical property profiles: same caller, same auth model, same scope, same federation impact. They form a **single cohesive domain** — basic path-addressed file operations. This is the inode layer.
 
-**Current Ops ABC:** `FileMetadataProtocol` (kernel) — covers get/put/delete/exists/list metadata. BUT: content read/write goes through VFS → ObjectStore separately. The scenario is split across two ABCs today.
+**Current Ops ABC:** `MetastoreABC` (kernel) — covers get/put/delete/exists/list metadata. BUT: content read/write goes through VFS → ObjectStore separately. The scenario is split across two ABCs today.
 
 **Decision:** File I/O is ONE scenario domain. Whether metadata and content operations live in one Protocol or two is a Step 3 question (affinity to Metastore vs ObjectStore).
 
@@ -680,7 +680,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 
 **Source of truth:** Code audit of all Protocol/ABC classes:
 - 15 service-layer protocols (`services/protocols/`)
-- 5 core-layer protocols (`core/protocols/` + `core/_metadata_generated.py`)
+- 5 core-layer protocols (`core/protocols/` + `core/metastore.py`)
 - 3 IPC protocols (`ipc/protocols.py`)
 - 1 governance protocol (`services/governance/protocols.py`)
 - 1 event log protocol (`services/event_log/protocol.py`)
@@ -691,7 +691,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 
 | # | Protocol | File | Tier | Sync | Methods | Coupling | Linux Analogue | Why Exists |
 |---|----------|------|------|------|---------|----------|----------------|------------|
-| P1 | **FileMetadataProtocol** | `core/_metadata_generated.py` | Kernel | Sync | 14 (Large) | Standalone | VFS inode cache | Metadata CRUD for virtual→physical path mapping |
+| P1 | **MetastoreABC** | `core/metastore.py` | Kernel | Sync | 14 (Large) | Standalone | VFS inode cache | Metadata CRUD for virtual→physical path mapping |
 | P2 | **ContentStoreProtocol** | `core/protocols/connector.py` | Kernel | Sync | 6 (Small) | Standalone | block device read/write | Content-addressable blob storage |
 | P3 | **DirectoryOpsProtocol** | `core/protocols/connector.py` | Kernel | Sync | 3 (Micro) | Standalone | `inode_operations` mkdir/rmdir | Directory entry management |
 | P4 | **ConnectorProtocol** | `core/protocols/connector.py` | Kernel | Sync | 13 (Medium) | Composed (P2+P3) | storage driver | Full storage backend interface (ContentStore + DirectoryOps + lifecycle) |
@@ -811,7 +811,7 @@ Map each surviving scenario (S1-S28) to its canonical Ops ABC (existing or propo
 
 | Scenario | Ops ABC | Status | Tier | Match Quality | Notes |
 |----------|---------|--------|------|---------------|-------|
-| **S1** File I/O | **P1** FileMetadataProtocol + **P2** ContentStoreProtocol | EXISTS | Kernel | EXACT | Metadata (P1) + content (P2) = complete file I/O |
+| **S1** File I/O | **P1** MetastoreABC + **P2** ContentStoreProtocol | EXISTS | Kernel | EXACT | Metadata (P1) + content (P2) = complete file I/O |
 | **S2** Content Discovery | **P6** SearchProtocol | EXISTS | Service | EXACT | glob/grep/semantic unified behind one Protocol |
 | **S3** History & Snapshots | *(new)* **VersionProtocol** | MISSING | Service | — | Needs: `get_version`, `list_versions`, `rollback`, `diff`, `snapshot`, `restore`, `log` |
 | **S4** Mount Management | **P10** MountProtocol | EXISTS | Service | EXACT | 15 methods covering full mount lifecycle |

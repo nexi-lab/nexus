@@ -20,9 +20,9 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.core._metadata_generated import FileMetadata
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -52,10 +52,10 @@ class NexusFSCoreMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        from nexus.core._metadata_generated import FileMetadataProtocol
+        from nexus.core.metastore import MetastoreABC
         from nexus.services.permissions.enforcer import PermissionEnforcer
 
-        metadata: FileMetadataProtocol
+        metadata: MetastoreABC
         backend: Backend
         router: PathRouter
         is_admin: bool
@@ -369,7 +369,7 @@ class NexusFSCoreMixin:
                 return int(time.time() * 1000)
 
         # Legacy fallback: FileMetadata-based counter (requires lock)
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
         # Issue #1180: Per-zone lock ensures atomic read-modify-write without

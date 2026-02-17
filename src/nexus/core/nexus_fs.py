@@ -10529,57 +10529,6 @@ class NexusFS(  # type: ignore[misc]
         # Keep backward-compat reference on NexusFS
         self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]
 
-    # Non-prefixed aliases (backward compat — remove in v0.8.0)
-    # Issue #1519, 8A: emit DeprecationWarning so callers get advance notice.
-
-    @property
-    def semantic_search(self) -> Any:  # type: ignore[override]
-        """Deprecated: use ``asemantic_search`` instead."""
-        import warnings
-
-        warnings.warn(
-            "semantic_search is deprecated, use asemantic_search(); will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.asemantic_search
-
-    @property
-    def semantic_search_index(self) -> Any:  # type: ignore[override]
-        """Deprecated: use ``asemantic_search_index`` instead."""
-        import warnings
-
-        warnings.warn(
-            "semantic_search_index is deprecated, use asemantic_search_index(); will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.asemantic_search_index
-
-    @property
-    def semantic_search_stats(self) -> Any:  # type: ignore[override]
-        """Deprecated: use ``asemantic_search_stats`` instead."""
-        import warnings
-
-        warnings.warn(
-            "semantic_search_stats is deprecated, use asemantic_search_stats(); will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.asemantic_search_stats
-
-    @property
-    def initialize_semantic_search(self) -> Any:  # type: ignore[override]
-        """Deprecated: use ``ainitialize_semantic_search`` instead."""
-        import warnings
-
-        warnings.warn(
-            "initialize_semantic_search is deprecated, use ainitialize_semantic_search(); will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.ainitialize_semantic_search
-
     # =========================================================================
     # ShareLinkService Delegation Methods (6 methods)
     # Replaces NexusFSShareLinksMixin (Issue #1387)

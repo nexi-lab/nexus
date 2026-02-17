@@ -31,6 +31,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
     _startup_agent_registry(app)
     _startup_key_service(app)
+    _startup_reputation_service(app)
     _startup_delegation_service(app)
     _startup_sandbox_auth(app)
 
@@ -206,6 +207,26 @@ def _startup_key_service(app: FastAPI) -> None:
         app.state.key_service = None
 
 
+def _startup_reputation_service(app: FastAPI) -> None:
+    """Initialize ReputationService singleton for trust routing (#1619)."""
+    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
+        app.state.reputation_service = None
+        return
+
+    try:
+        from nexus.services.reputation.reputation_service import ReputationService
+
+        app.state.reputation_service = ReputationService(
+            session_factory=app.state.nexus_fs.SessionLocal,
+            cache_maxsize=10_000,
+            cache_ttl=60,
+        )
+        logger.info("[REPUTATION] ReputationService initialized (singleton)")
+    except Exception as e:
+        logger.warning("[REPUTATION] Failed to initialize: %s", e, exc_info=True)
+        app.state.reputation_service = None
+
+
 def _startup_delegation_service(app: FastAPI) -> None:
     """Initialize DelegationService for agent delegation (Issue #1618)."""
     if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
@@ -223,6 +244,7 @@ def _startup_delegation_service(app: FastAPI) -> None:
         namespace_manager = getattr(app.state.nexus_fs, "_namespace_manager", None)
         entity_registry = getattr(app.state.nexus_fs, "_entity_registry", None)
         agent_registry = getattr(app.state, "agent_registry", None)
+        reputation_service = getattr(app.state, "reputation_service", None)
 
         app.state.delegation_service = DelegationService(
             session_factory=app.state.nexus_fs.SessionLocal,
@@ -230,6 +252,7 @@ def _startup_delegation_service(app: FastAPI) -> None:
             namespace_manager=namespace_manager,
             entity_registry=entity_registry,
             agent_registry=agent_registry,
+            reputation_service=reputation_service,
         )
         logger.info("[DELEGATION] DelegationService initialized and wired")
     except Exception as e:

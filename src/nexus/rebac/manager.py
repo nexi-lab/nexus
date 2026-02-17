@@ -6164,4 +6164,7 @@ class ReBACManager:
 
 # Backward-compat aliases (Issue #1385)
 EnhancedReBACManager = ReBACManager
+"""Alias for backward compatibility. The Enhanced features (P0 fixes, Leopard, Tiger Cache,
+graph limits, zone isolation) are now merged into the base ReBACManager class (Issue #1385)."""
+
 ZoneAwareReBACManager = ReBACManager

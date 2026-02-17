@@ -249,9 +249,9 @@ class NexusFUSEOperations(Operations):
                 # Extract connection details from nexus_fs
                 # For RemoteNexusFS, we have _base_url and _api_key
                 if hasattr(nexus_fs, "_base_url") and hasattr(nexus_fs, "_api_key"):
-                    nexus_url = nexus_fs._base_url  # type: ignore[attr-defined]
-                    api_key = nexus_fs._api_key  # type: ignore[attr-defined]
-                    agent_id = getattr(nexus_fs, "_agent_id", None)  # type: ignore[attr-defined]
+                    nexus_url = nexus_fs._base_url  # noqa: SLF001
+                    api_key = nexus_fs._api_key  # noqa: SLF001
+                    agent_id = getattr(nexus_fs, "_agent_id", None)
 
                     logger.info("[FUSE] Initializing Rust FUSE daemon (10-100x faster)")
                     self._rust_client = RustFUSEClient(
@@ -355,7 +355,7 @@ class NexusFUSEOperations(Operations):
         return bool(self._use_rust and self._rust_client and not self._context)
 
     def _try_rust(
-        self, op_name: str, rust_fn: Callable[..., Any], *args: Any, **kwargs: Any
+        self, op_name: str, method_name: str, *args: Any, **kwargs: Any
     ) -> tuple[bool, Any]:
         """Issue 8B: Try a Rust operation with standard fallback handling.
 
@@ -368,16 +368,18 @@ class NexusFUSEOperations(Operations):
 
         Args:
             op_name: Operation name for logging (e.g., "READ", "WRITE")
-            rust_fn: Rust client method to call
-            *args: Positional arguments for rust_fn
-            **kwargs: Keyword arguments for rust_fn
+            method_name: Name of the method on self._rust_client to call
+            *args: Positional arguments for the method
+            **kwargs: Keyword arguments for the method
 
         Returns:
             (True, result) on success, (False, None) on failure
         """
         if not self._rust_available:
             return (False, None)
+        assert self._rust_client is not None  # guaranteed by _rust_available
         try:
+            rust_fn = getattr(self._rust_client, method_name)
             result = rust_fn(*args, **kwargs)
             return (True, result)
         except OSError as e:
@@ -576,7 +578,7 @@ class NexusFUSEOperations(Operations):
 
         # Issue #1569/8B: Delegate to Rust daemon for stat (10-100x faster)
         if not view_type:
-            ok, rust_meta = self._try_rust("GETATTR", self._rust_client.stat, original_path)
+            ok, rust_meta = self._try_rust("GETATTR", "stat", original_path)
             if ok:
                 if rust_meta.is_directory:
                     attrs = self._dir_attrs()
@@ -592,7 +594,7 @@ class NexusFUSEOperations(Operations):
                         "st_uid": os.getuid() if hasattr(os, "getuid") else 0,
                         "st_gid": os.getgid() if hasattr(os, "getgid") else 0,
                     }
-                self.cache.put_attr(path, attrs)
+                self.cache.cache_attr(path, attrs)
                 elapsed = time.time() - start_time
                 logger.debug(f"[FUSE-PERF] getattr via RUST: path={path}, {elapsed:.3f}s")
                 return attrs
@@ -738,7 +740,7 @@ class NexusFUSEOperations(Operations):
             entries.append(".raw")
 
         # Issue #1569/8B: Delegate to Rust daemon for directory listing (10-100x faster)
-        ok, file_entries = self._try_rust("READDIR", self._rust_client.list, path)
+        ok, file_entries = self._try_rust("READDIR", "list", path)
         if ok:
             entries.extend([f.name for f in file_entries])
             elapsed = time.time() - start_time
@@ -952,9 +954,9 @@ class NexusFUSEOperations(Operations):
 
         # Issue #1569/8B: Delegate to Rust daemon for raw reads (10-100x faster)
         if view_type is None:
-            ok, content = self._try_rust("READ", self._rust_client.read, original_path)
+            ok, content = self._try_rust("READ", "read", original_path)
             if ok:
-                return content[offset : offset + size]
+                return bytes(content)[offset : offset + size]
 
         # Issue #1073: Check readahead buffer first (fast path for sequential reads)
         # Only use readahead for raw/binary reads (not parsed views)
@@ -1032,7 +1034,7 @@ class NexusFUSEOperations(Operations):
         # Issue #1569/8B: Delegate to Rust daemon for writes (10-100x faster)
         # Only delegate for non-context writes (Rust doesn't handle ReBAC)
         if not ctx:
-            ok, _ = self._try_rust("WRITE", self._rust_client.write, original_path, new_content)
+            ok, _ = self._try_rust("WRITE", "write", original_path, new_content)
             if not ok:
                 self.nexus_fs.write(original_path, new_content, context=ctx)
         else:
@@ -1145,7 +1147,7 @@ class NexusFUSEOperations(Operations):
         self._check_namespace_visible(original_path)
 
         # Issue #1569/8B: Delegate to Rust daemon for delete (10-100x faster)
-        ok, _ = self._try_rust("UNLINK", self._rust_client.delete, original_path)
+        ok, _ = self._try_rust("UNLINK", "delete", original_path)
         if not ok:
             self.nexus_fs.delete(original_path)
 
@@ -1176,7 +1178,7 @@ class NexusFUSEOperations(Operations):
         self._check_namespace_visible(path)
 
         # Issue #1569/8B: Delegate to Rust daemon for mkdir (10-100x faster)
-        ok, _ = self._try_rust("MKDIR", self._rust_client.mkdir, path)
+        ok, _ = self._try_rust("MKDIR", "mkdir", path)
         if not ok:
             self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
 
@@ -1275,7 +1277,7 @@ class NexusFUSEOperations(Operations):
             logger.debug(f"Renaming file {old_path} to {new_path}")
 
             # Issue #1569/8B: Delegate to Rust daemon for rename (10-100x faster)
-            ok, _ = self._try_rust("RENAME", self._rust_client.rename, old_path, new_path)
+            ok, _ = self._try_rust("RENAME", "rename", old_path, new_path)
             if not ok:
                 self.nexus_fs.rename(old_path, new_path)
 
@@ -1732,7 +1734,7 @@ class NexusFUSEOperations(Operations):
                 if stat_result:
                     stat_size = stat_result.get("st_size") or stat_result.get("size", 0)
                     if stat_size and stat_size > 0:
-                        return stat_size
+                        return int(stat_size)
             except Exception:
                 pass
 

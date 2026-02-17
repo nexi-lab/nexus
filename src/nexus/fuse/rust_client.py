@@ -12,6 +12,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -302,7 +303,8 @@ class RustFUSEClient:
             error_errno = error.get("data", {}).get("errno", 5)  # Default to EIO
             raise OSError(error_errno, error["message"])
 
-        return response.get("result", {})
+        result: dict[Any, Any] = response.get("result", {})
+        return result
 
     def read(self, path: str) -> bytes:
         """Read file contents.
@@ -402,7 +404,8 @@ class RustFUSEClient:
             True if path exists
         """
         result = self._send_request("exists", {"path": path})
-        return result["exists"]
+        exists_value: bool = result["exists"]
+        return exists_value
 
     def close(self) -> None:
         """Close connection and shutdown daemon."""

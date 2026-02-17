@@ -66,8 +66,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             ChangeLogEntry if found, None otherwise
         """
-        from sqlalchemy import select
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
@@ -164,8 +162,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             Most recent synced_at timestamp, or None if no entries
         """
-        from sqlalchemy import func, select
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
@@ -196,8 +192,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             Dict mapping path to ChangeLogEntry
         """
-        from sqlalchemy import select
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
@@ -323,8 +317,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             True if successful, False otherwise
         """
-        from sqlalchemy import delete
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
@@ -359,8 +351,6 @@ class ChangeLogStore(SyncStoreBase):
         """
         if not paths:
             return True
-
-        from sqlalchemy import delete
 
         from nexus.storage.models import BackendChangeLogModel
 

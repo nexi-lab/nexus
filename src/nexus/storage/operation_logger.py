@@ -106,6 +106,12 @@ class OperationLogger:
         Returns:
             operation_id: UUID of logged operation
         """
+        # Auto-assign sequence_number for cursor-based replay (#1138/#1139).
+        # Uses MAX+1 within the current session for gap-free ordering.
+        next_seq = self.session.execute(
+            select(func.coalesce(func.max(OperationLogModel.sequence_number), 0) + 1)
+        ).scalar()
+
         operation = OperationLogModel(
             operation_type=operation_type,
             path=path,
@@ -117,6 +123,7 @@ class OperationLogger:
             status=status,
             error_message=error_message,
             created_at=datetime.now(UTC),
+            sequence_number=next_seq,
         )
 
         operation.validate()

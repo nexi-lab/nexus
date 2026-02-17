@@ -255,6 +255,18 @@ docker = [
 #     "nexus-plugin-skill-seekers>=0.1.0",
 # ]
 
+# Event stream export (Issue #1138)
+kafka = ["aiokafka>=0.11.0"]
+nats-export = ["nats-py>=2.9.0"]
+pubsub = ["gcloud-aio-pubsub>=6.0.0"]
+sse = ["sse-starlette>=2.2.0"]
+event-streaming = [
+    "aiokafka>=0.11.0",
+    "nats-py>=2.9.0",
+    "gcloud-aio-pubsub>=6.0.0",
+    "sse-starlette>=2.2.0",
+]
+
 all = [
     # All optional features (plugins must be installed manually)
     # Default embedding provider: OpenAI (lightweight, requires API key)

@@ -23,6 +23,7 @@ async def startup_realtime(app: FastAPI) -> list[asyncio.Task]:
     Covers:
     - Event Log WAL (Issue #1397)
     - Event bus start + wiring
+    - Event Stream Exporters (Issue #1138)
     - WebSocket Manager (Issue #1116)
     - WriteBack Service (Issue #1129)
     - Lock Manager coordination (Issue #1186)
@@ -31,6 +32,7 @@ async def startup_realtime(app: FastAPI) -> list[asyncio.Task]:
 
     _startup_event_log(app)
     await _startup_event_bus(app)
+    _startup_exporter_registry(app)
     await _startup_websocket(app)
     await _startup_writeback(app)
     await _startup_lock_manager(app)
@@ -74,6 +76,15 @@ async def shutdown_realtime(app: FastAPI) -> None:
             logger.info("Event bus stopped")
         except Exception as e:
             logger.warning(f"Error shutting down event bus: {e}")
+
+    # Close ExporterRegistry (Issue #1138)
+    exporter_registry = getattr(app.state, "exporter_registry", None)
+    if exporter_registry is not None:
+        try:
+            await exporter_registry.close_all()
+            logger.info("Exporter registry closed")
+        except Exception as e:
+            logger.warning(f"Error closing exporter registry: {e}")
 
     # Close Event Log WAL (Issue #1397)
     if app.state.event_log:
@@ -237,3 +248,35 @@ async def _startup_lock_manager(app: FastAPI) -> None:
             logger.info("Lock manager coordination client connected")
         except Exception as e:
             logger.warning(f"Failed to connect lock manager coordination client: {e}")
+
+
+def _startup_exporter_registry(app: FastAPI) -> None:
+    """Initialize ExporterRegistry and configured exporters (Issue #1138)."""
+    app.state.exporter_registry = None
+
+    try:
+        from nexus.services.event_log.exporter_registry import ExporterRegistry
+        from nexus.services.event_log.exporters.config import EventStreamConfig
+        from nexus.services.event_log.exporters.factory import create_exporter
+
+        # Read config from env vars
+        enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")
+        if not enabled:
+            logger.debug("Event stream export disabled (NEXUS_EVENT_STREAM_ENABLED not set)")
+            return
+
+        exporter_type = os.getenv("NEXUS_EVENT_STREAM_EXPORTER", "kafka")
+        config = EventStreamConfig(enabled=True, exporter=exporter_type)  # type: ignore[arg-type]
+
+        registry = ExporterRegistry()
+        exporter = create_exporter(config)
+        if exporter is not None:
+            registry.register(exporter)
+
+        app.state.exporter_registry = registry
+        logger.info(
+            "ExporterRegistry initialized (exporters=%s)",
+            registry.exporter_names,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to initialize ExporterRegistry: {e}")

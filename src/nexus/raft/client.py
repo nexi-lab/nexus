@@ -225,6 +225,7 @@ class RaftClient:
         request = transport_pb2.ProposeRequest(
             command=command,
             request_id=request_id or "",
+            zone_id=self.zone_id or "",
         )
 
         try:
@@ -267,6 +268,7 @@ class RaftClient:
         request = transport_pb2.QueryRequest(
             query=query,
             read_from_leader=read_from_leader,
+            zone_id=self.zone_id or "",
         )
 
         try:
@@ -455,7 +457,7 @@ class RaftClient:
             version=metadata.version,
             zone_id=zone,
             created_by=metadata.created_by or "",
-            entry_type=metadata.entry_type,
+            entry_type=str(metadata.entry_type) if metadata.entry_type else "",
             target_zone_id=metadata.target_zone_id or "",
             owner_id=metadata.owner_id or "",
         )

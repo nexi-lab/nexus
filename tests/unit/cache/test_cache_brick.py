@@ -207,21 +207,28 @@ class TestCacheBrickIsolation:
         import ast
         import pathlib
 
-        brick_path = pathlib.Path(__file__).parent.parent.parent.parent / "src" / "nexus" / "cache" / "brick.py"
+        brick_path = (
+            pathlib.Path(__file__).parent.parent.parent.parent
+            / "src"
+            / "nexus"
+            / "cache"
+            / "brick.py"
+        )
         source = brick_path.read_text()
         tree = ast.parse(source)
 
         # Check only top-level imports (not TYPE_CHECKING guarded ones)
         runtime_violations = []
         for node in ast.iter_child_nodes(tree):
-            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("nexus.core"):
-                runtime_violations.append(
-                    f"line {node.lineno}: from {node.module} import ..."
-                )
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.startswith("nexus.core")
+            ):
+                runtime_violations.append(f"line {node.lineno}: from {node.module} import ...")
 
         assert runtime_violations == [], (
-            "brick.py has runtime imports from nexus.core:\n"
-            + "\n".join(runtime_violations)
+            "brick.py has runtime imports from nexus.core:\n" + "\n".join(runtime_violations)
         )
 
 

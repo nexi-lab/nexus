@@ -164,9 +164,9 @@ class TestCacheBrickLifecycleProtocol:
         from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()  # NullCacheStore fallback
-        await brick.start()   # No-op
+        await brick.start()  # No-op
         assert await brick.health_check() is True
-        await brick.stop()    # No-op
+        await brick.stop()  # No-op
 
     @pytest.mark.asyncio
     async def test_full_lifecycle(self) -> None:

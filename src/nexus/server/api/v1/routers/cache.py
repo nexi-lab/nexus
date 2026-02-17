@@ -15,8 +15,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from nexus.server.cache_warmer import CacheWarmer, WarmupConfig, get_file_access_tracker
 from nexus.server.api.v1.dependencies import get_nexus_fs
+from nexus.server.cache_warmer import CacheWarmer, WarmupConfig, get_file_access_tracker
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)

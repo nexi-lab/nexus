@@ -163,10 +163,7 @@ class InMemoryCacheStore(CacheStoreABC):
 
         # Purge expired entries first (free slots without counting as eviction)
         now = time.monotonic()
-        expired_keys = [
-            k for k, (_, exp) in self._store.items()
-            if exp is not None and now > exp
-        ]
+        expired_keys = [k for k, (_, exp) in self._store.items() if exp is not None and now > exp]
         for k in expired_keys:
             del self._store[k]
 

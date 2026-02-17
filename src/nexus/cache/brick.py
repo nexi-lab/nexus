@@ -86,11 +86,16 @@ class CacheBrick:
         _NullCacheStore: type | None = None
         try:
             from nexus.core.cache_store import NullCacheStore as _NS
+
             _NullCacheStore = _NS
         except ImportError:
             pass
 
-        self._store = cache_store if cache_store is not None else (_NullCacheStore() if _NullCacheStore else InMemoryCacheStore())
+        self._store = (
+            cache_store
+            if cache_store is not None
+            else (_NullCacheStore() if _NullCacheStore else InMemoryCacheStore())
+        )
         self._settings = settings or CacheSettings(dragonfly_url=None)
         self._record_store = record_store
         self._started = False
@@ -233,6 +238,7 @@ class CacheBrick:
         wrapped_inner = inner
         if enable_logging:
             from nexus.backends.logging_wrapper import LoggingBackendWrapper
+
             wrapped_inner = LoggingBackendWrapper(inner=inner)
 
         cache_store = self._store if self.has_cache_store else None

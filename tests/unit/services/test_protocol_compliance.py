@@ -282,6 +282,17 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("content_service", "nexus/core/protocols/content_service.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
+    ("auth", "nexus/services/protocols/auth.py"),
+    ("governance", "nexus/services/protocols/governance.py"),
+    ("llm_provider", "nexus/services/protocols/llm_provider.py"),
+    ("mcp", "nexus/services/protocols/mcp.py"),
+    ("memory", "nexus/services/protocols/memory.py"),
+    ("parse", "nexus/services/protocols/parse.py"),
+    ("payment", "nexus/services/protocols/payment.py"),
+    ("rebac", "nexus/services/protocols/rebac.py"),
+    ("reputation", "nexus/services/protocols/reputation.py"),
+    ("trajectory", "nexus/services/protocols/trajectory.py"),
+    ("version", "nexus/services/protocols/version.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

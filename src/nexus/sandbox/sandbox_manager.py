@@ -191,13 +191,14 @@ class SandboxManager:
                 logger.error("Database error persisted after retry: %s", retry_exc)
                 raise
 
-    def _get_metadata(self, sandbox_id: str) -> dict[str, Any]:
+    def _get_metadata(self, sandbox_id: str, zone_id: str | None = None) -> dict[str, Any]:
         """Get sandbox metadata from database as a dict.
 
         Returns a dict to avoid detached ORM object issues across sessions.
 
         Args:
             sandbox_id: Sandbox ID
+            zone_id: Zone ID for federation isolation filtering.
 
         Returns:
             Sandbox metadata dict with all fields
@@ -207,10 +208,12 @@ class SandboxManager:
         """
 
         def _query(session: Session) -> SandboxMetadataModel | None:
-            result = session.execute(
-                select(SandboxMetadataModel).where(SandboxMetadataModel.sandbox_id == sandbox_id)
+            stmt = select(SandboxMetadataModel).where(
+                SandboxMetadataModel.sandbox_id == sandbox_id
             )
-            return result.scalar_one_or_none()
+            if zone_id is not None:
+                stmt = stmt.where(SandboxMetadataModel.zone_id == zone_id)
+            return session.execute(stmt).scalar_one_or_none()
 
         metadata = self._execute_with_retry(_query, context="metadata lookup")
 
@@ -219,25 +222,30 @@ class SandboxManager:
 
         return self._metadata_to_dict(metadata)
 
-    def _get_metadata_field(self, sandbox_id: str, field: str) -> Any:
+    def _get_metadata_field(self, sandbox_id: str, field: str, zone_id: str | None = None) -> Any:
         """Get a single field from sandbox metadata."""
 
         def _query(session: Session) -> Any:
-            result = session.execute(
-                select(SandboxMetadataModel).where(SandboxMetadataModel.sandbox_id == sandbox_id)
+            stmt = select(SandboxMetadataModel).where(
+                SandboxMetadataModel.sandbox_id == sandbox_id
             )
-            metadata = result.scalar_one_or_none()
+            if zone_id is not None:
+                stmt = stmt.where(SandboxMetadataModel.zone_id == zone_id)
+            metadata = session.execute(stmt).scalar_one_or_none()
             if not metadata:
                 raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
             return getattr(metadata, field)
 
         return self._execute_with_retry(_query, context=f"metadata field {field}")
 
-    def _update_metadata(self, sandbox_id: str, **updates: Any) -> dict[str, Any]:
+    def _update_metadata(
+        self, sandbox_id: str, zone_id: str | None = None, **updates: Any
+    ) -> dict[str, Any]:
         """Re-query and update metadata fields in a fresh session.
 
         Args:
             sandbox_id: Sandbox ID
+            zone_id: Zone ID for federation isolation filtering.
             **updates: Field name -> value pairs to update
 
         Returns:
@@ -247,9 +255,12 @@ class SandboxManager:
             SandboxNotFoundError: If sandbox doesn't exist
         """
         with self._get_session() as session:
-            metadata = session.execute(
-                select(SandboxMetadataModel).where(SandboxMetadataModel.sandbox_id == sandbox_id)
-            ).scalar_one_or_none()
+            stmt = select(SandboxMetadataModel).where(
+                SandboxMetadataModel.sandbox_id == sandbox_id
+            )
+            if zone_id is not None:
+                stmt = stmt.where(SandboxMetadataModel.zone_id == zone_id)
+            metadata = session.execute(stmt).scalar_one_or_none()
             if not metadata:
                 raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
             for key, value in updates.items():

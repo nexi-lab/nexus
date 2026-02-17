@@ -51,10 +51,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
         return
 
     try:
-        from nexus.services.permissions.async_rebac_manager import (
-            AsyncReBACManager,
-            create_async_engine_from_url,
-        )
+        from nexus.rebac.async_manager import AsyncReBACManager, create_async_engine_from_url
 
         engine = create_async_engine_from_url(app.state.database_url)
         app.state.async_rebac_manager = AsyncReBACManager(engine)

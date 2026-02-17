@@ -81,6 +81,7 @@ class _BootContext:
     backend: Any
     router: Any
     engine: Any
+    read_engine: Any  # Read replica engine (Issue #725); same as engine when no replica
     session_factory: Any
     perm: Any  # PermissionConfig
     cache_ttl_seconds: int | None
@@ -297,12 +298,16 @@ def create_record_store(
     db_path: str | None = None,
     create_tables: bool = True,
 ) -> RecordStoreABC:
-    """Create a RecordStore with Cloud SQL support auto-detected from env.
+    """Create a RecordStore with Cloud SQL and read replica support auto-detected from env.
 
     When the ``CLOUD_SQL_INSTANCE`` environment variable is set, the
     Cloud SQL Python Connector is used for IAM-authenticated connections
     (no passwords, no public IP).  Otherwise, the standard URL-based
     connection path is used.
+
+    Read replica support (Issue #725):
+    - ``NEXUS_READ_REPLICA_URL``: Standard read replica connection string
+    - ``CLOUD_SQL_READ_INSTANCE``: Cloud SQL read replica instance
 
     Args:
         db_url: Explicit database URL. Falls back to env vars.
@@ -317,6 +322,8 @@ def create_record_store(
 
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
+    read_replica_url = os.getenv("NEXUS_READ_REPLICA_URL")
+
     cloud_sql_instance = os.getenv("CLOUD_SQL_INSTANCE")
     if cloud_sql_instance:
         from nexus.storage.cloud_sql import create_cloud_sql_creators
@@ -326,17 +333,37 @@ def create_record_store(
             db_user=os.getenv("CLOUD_SQL_USER", "nexus"),
             db_name=os.getenv("CLOUD_SQL_DB", "nexus"),
         )
+
+        # Cloud SQL read replica support (Issue #725)
+        read_replica_creator = None
+        async_read_replica_creator = None
+        cloud_sql_read_instance = os.getenv("CLOUD_SQL_READ_INSTANCE")
+        if cloud_sql_read_instance:
+            read_sync, read_async = create_cloud_sql_creators(
+                instance_connection_name=cloud_sql_read_instance,
+                db_user=os.getenv("CLOUD_SQL_USER", "nexus"),
+                db_name=os.getenv("CLOUD_SQL_DB", "nexus"),
+            )
+            read_replica_creator = read_sync
+            async_read_replica_creator = read_async
+            # Use placeholder URL for read replica engine
+            read_replica_url = read_replica_url or "postgresql://"
+
         return SQLAlchemyRecordStore(
             db_url=db_url or "postgresql://",  # placeholder, creator overrides
             create_tables=create_tables,
             creator=sync_creator,
             async_creator=async_creator,
+            read_replica_url=read_replica_url,
+            read_replica_creator=read_replica_creator,
+            async_read_replica_creator=async_read_replica_creator,
         )
 
     return SQLAlchemyRecordStore(
         db_url=db_url,
         db_path=db_path,
         create_tables=create_tables,
+        read_replica_url=read_replica_url,
     )
 
 
@@ -365,6 +392,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             enforce_zone_isolation=ctx.perm.enforce_zone_isolation,
             enable_graph_limits=True,
             enable_tiger_cache=ctx.perm.enable_tiger_cache,
+            read_engine=ctx.read_engine,
         )
 
         # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
@@ -601,9 +629,13 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         from nexus.core.config import ObservabilityConfig
         from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
 
+        # Instrument both primary and replica pools (Issue #725)
+        obs_engines = [ctx.engine]
+        if ctx.record_store.has_read_replica:
+            obs_engines.append(ctx.read_engine)
         observability_subsystem = ObservabilitySubsystem(
             config=ObservabilityConfig(),
-            engines=[ctx.engine],
+            engines=obs_engines,
         )
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
@@ -635,6 +667,16 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
 
+    # --- Brick Lifecycle Manager (Issue #1704) ---
+    brick_lifecycle_manager: Any = None
+    try:
+        from nexus.services.brick_lifecycle import BrickLifecycleManager
+
+        brick_lifecycle_manager = BrickLifecycleManager()
+        logger.debug("[BOOT:SYSTEM] BrickLifecycleManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
+
     # TODO: EventLog, Hook, Scheduler services (not yet implemented)
 
     result = {
@@ -647,6 +689,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
+        "brick_lifecycle_manager": brick_lifecycle_manager,
     }
 
     elapsed = time.perf_counter() - t0
@@ -986,6 +1029,7 @@ def create_nexus_services(
         backend=backend,
         router=router,
         engine=record_store.engine,
+        read_engine=record_store.read_engine,
         session_factory=record_store.session_factory,
         perm=perm,
         cache_ttl_seconds=cache_cfg.ttl_seconds,
@@ -1034,6 +1078,7 @@ def create_nexus_services(
         async_namespace_manager=system["async_namespace_manager"],
         async_vfs_router=system["async_vfs_router"],
         resiliency_manager=system["resiliency_manager"],
+        brick_lifecycle_manager=system.get("brick_lifecycle_manager"),
         # Brick tier
         overlay_resolver=None,
         wallet_provisioner=brick["wallet_provisioner"],
@@ -1154,6 +1199,34 @@ def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any
     except Exception as e:
         logger.warning("Failed to create workflow engine: %s", e)
         return None
+
+
+def _create_provider_registry(parsing: Any) -> Any:
+    """Create ProviderRegistry with auto-discovered providers (Issue #657)."""
+    from nexus.parsers.providers import ProviderRegistry
+    from nexus.parsers.providers.base import ProviderConfig
+
+    registry = ProviderRegistry()
+    if parsing is None:
+        registry.auto_discover()
+        return registry
+    parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
+    if parse_providers:
+        configs = [
+            ProviderConfig(
+                name=p.get("name", "unknown"),
+                enabled=p.get("enabled", True),
+                priority=p.get("priority", 50),
+                api_key=p.get("api_key"),
+                api_url=p.get("api_url"),
+                supported_formats=p.get("supported_formats"),
+            )
+            for p in parse_providers
+        ]
+        registry.auto_discover(configs)
+    else:
+        registry.auto_discover()
+    return registry
 
 
 def _post_init(nx: NexusFS) -> None:
@@ -1395,6 +1468,27 @@ def create_nexus_fs(
 
     _parse_fn = create_default_parse_fn()
 
+    # Create parser registry (Issue #657: factory builds infrastructure)
+    from nexus.parsers import MarkItDownParser, ParserRegistry
+
+    _parser_registry = ParserRegistry()
+    _parser_registry.register(MarkItDownParser())
+
+    # Create provider registry (Issue #657)
+    _provider_registry = _create_provider_registry(parsing)
+
+    # Create content cache (Issue #657)
+    _content_cache = None
+    if cache is not None and cache.enable_content_cache and backend.has_root_path is True:
+        from nexus.storage.content_cache import ContentCache
+
+        _content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
+
+    # Create VFS lock manager (Issue #657)
+    from nexus.core.lock_fast import create_vfs_lock_manager
+
+    _vfs_lock_manager = create_vfs_lock_manager()
+
     nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
@@ -1409,6 +1503,10 @@ def create_nexus_fs(
         parsing=parsing,
         services=services,
         parse_fn=_parse_fn,
+        content_cache=_content_cache,
+        parser_registry=_parser_registry,
+        provider_registry=_provider_registry,
+        vfs_lock_manager=_vfs_lock_manager,
     )
 
     # Post-construction I/O (mount restoration, etc.)

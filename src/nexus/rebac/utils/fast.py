@@ -28,30 +28,19 @@ NamespaceConfigDict = dict[str, Any]  # Contains 'relations' and 'permissions' k
 
 logger = logging.getLogger(__name__)
 
-# Try to import Rust extensions
-# - nexus._nexus_fast: Internal module (faster bulk operations)
-# - nexus_fast: External package (has compute_permission_single)
+# Try to import Rust extension (nexus_fast PyO3 crate)
 _internal_module: Any = None
 _external_module: Any = None
 RUST_AVAILABLE = False
 
 try:
-    from nexus import _nexus_fast as _internal_module  # type: ignore[no-redef]
+    import nexus_fast as _rust_module
 
+    _internal_module = _rust_module
+    _external_module = _rust_module
     RUST_AVAILABLE = True
-    logger.info("✓ Rust bulk acceleration available (nexus._nexus_fast)")
+    logger.info("✓ Rust acceleration available (nexus_fast)")
 except ImportError:
-    pass
-
-try:
-    import nexus_fast as _external_module  # type: ignore[no-redef]
-
-    RUST_AVAILABLE = True
-    logger.info("✓ Rust single-check acceleration available (nexus_fast)")
-except ImportError:
-    pass
-
-if not RUST_AVAILABLE:
     logger.info("✗ Rust acceleration not available")
 
 

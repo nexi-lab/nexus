@@ -234,9 +234,7 @@ async def create_delegation(
         scope = DelegationScope(
             allowed_operations=frozenset(body.scope.allowed_operations),
             resource_patterns=frozenset(body.scope.resource_patterns),
-            budget_limit=Decimal(body.scope.budget_limit)
-            if body.scope.budget_limit
-            else None,
+            budget_limit=Decimal(body.scope.budget_limit) if body.scope.budget_limit else None,
             max_depth=body.scope.max_depth,
         )
 

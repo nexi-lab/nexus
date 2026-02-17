@@ -11,7 +11,8 @@ from nexus.rebac.async_namespace_manager import (
     _to_namespace_mount,
 )
 from nexus.rebac.namespace_manager import MountEntry
-from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.rebac.namespace_manager import NamespaceMount
+from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
 # ---------------------------------------------------------------------------

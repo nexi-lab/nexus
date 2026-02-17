@@ -44,7 +44,6 @@ from nexus.search.bm25s_search import (
     BM25SIndex,
     BM25SSearchResult,
     CodeTokenizer,
-    get_bm25s_index,
     is_bm25s_available,
 )
 from nexus.search.chunking import (
@@ -297,7 +296,6 @@ __all__ = [
     "BM25SIndex",
     "BM25SSearchResult",
     "CodeTokenizer",
-    "get_bm25s_index",
     "is_bm25s_available",
     # Hot Search Daemon (Issue #951)
     "SearchDaemon",

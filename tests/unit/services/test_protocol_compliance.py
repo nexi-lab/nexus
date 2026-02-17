@@ -99,11 +99,16 @@ def assert_protocol_compliance(
                     impl_attr
                 ) or inspect.isasyncgenfunction(impl_attr)
                 if proto_is_async != impl_is_async:
-                    # Allow sync protocol + async generator impl (e.g. llm_read_stream).
-                    # Async generators use `async def` but return AsyncIterator, not Coroutine,
-                    # so the protocol correctly declares `def ... -> AsyncIterator[T]`.
-                    if not proto_is_async and inspect.isasyncgenfunction(impl_attr):
-                        pass  # valid pattern
+                    # Allow: sync protocol with AsyncIterator return + async generator impl.
+                    # Protocols can't express async generators (no yield in stub body),
+                    # so the correct typing is `def f(...) -> AsyncIterator[T]: ...`
+                    # while the implementation uses `async def f(...) -> AsyncIterator[T]: yield`.
+                    impl_is_asyncgen = inspect.isasyncgenfunction(impl_attr)
+                    ret = proto_sig.return_annotation
+                    ret_str = str(ret)
+                    is_async_iter_return = "AsyncIterator" in ret_str or "AsyncGenerator" in ret_str
+                    if impl_is_asyncgen and not proto_is_async and is_async_iter_return:
+                        pass  # Compatible: async generator satisfies sync protocol with async return
                     else:
                         proto_kind = "async" if proto_is_async else "sync"
                         impl_kind = "async" if impl_is_async else "sync"
@@ -158,7 +163,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "LLMProtocol",
         "nexus.services.protocols.llm",
         "nexus.services.llm_service.LLMService",
-        True,  # Fixed: llm_read_stream uses def (not async) for async generator compat
+        True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
     ),
     # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
     (

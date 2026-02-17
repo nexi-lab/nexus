@@ -87,6 +87,7 @@ class SemanticSearch:
         contextual_chunking: bool = False,
         contextual_config: ContextualChunkingConfig | None = None,
         context_generator: ContextGenerator | None = None,
+        session_factory: Any | None = None,
         *,
         file_reader: FileReaderProtocol | None = None,
     ):
@@ -108,12 +109,18 @@ class SemanticSearch:
             contextual_chunking: Enable contextual chunking (Issue #1192)
             contextual_config: Configuration for contextual chunking
             context_generator: Callable that generates context for each chunk
+            session_factory: RecordStoreABC session_factory for DB access (DI)
             file_reader: FileReaderProtocol instance (preferred over nx).
                          If provided, nx is ignored.
         """
         # Issue #1520: Prefer FileReaderProtocol, fall back to legacy nx
         self.file_reader: FileReaderProtocol | None = file_reader
         self.nx = nx  # Backward compat — used if file_reader is None
+        self._session_factory: Any = (
+            session_factory
+            if session_factory is not None
+            else (nx.SessionLocal if nx is not None else None)
+        )
         self.chunk_size = chunk_size
         self.chunk_strategy = chunk_strategy
 
@@ -182,7 +189,9 @@ class SemanticSearch:
         """Get a database session context manager."""
         if self.file_reader is not None:
             return self.file_reader.get_session()
-        return self.nx.SessionLocal()
+        if self._session_factory is None:
+            raise RuntimeError("session_factory is required when file_reader is not set")
+        return self._session_factory()
 
     def _read_text(self, path: str) -> str:
         """Read file content as text."""

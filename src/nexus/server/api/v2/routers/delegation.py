@@ -34,10 +34,45 @@ def _get_require_auth() -> Any:
 
 
 def _get_delegation_service(request: Request) -> Any:
-    """Get DelegationService from app.state (Issue #1618 lifespan DI)."""
-    service = getattr(request.app.state, "delegation_service", None)
-    if service is None:
-        raise HTTPException(status_code=503, detail="Delegation service not available")
+    """Lazily construct DelegationService from app state."""
+    state = request.app.state
+    cached = getattr(state, "_delegation_service", None)
+    if cached is not None:
+        return cached
+
+    # Construct from available components
+    session_factory = getattr(state, "session_factory", None) or getattr(
+        getattr(state, "nexus_fs", None), "SessionLocal", None
+    )
+    if session_factory is None:
+        raise HTTPException(status_code=503, detail="Session factory not available")
+
+    rebac_manager = getattr(state, "rebac_manager", None) or getattr(
+        getattr(state, "nexus_fs", None), "_rebac_manager", None
+    )
+    if rebac_manager is None:
+        raise HTTPException(status_code=503, detail="ReBAC manager not available")
+
+    namespace_manager = getattr(state, "namespace_manager", None) or getattr(
+        getattr(state, "nexus_fs", None), "_namespace_manager", None
+    )
+    entity_registry = getattr(state, "entity_registry", None) or getattr(
+        getattr(state, "nexus_fs", None), "_entity_registry", None
+    )
+    agent_registry = getattr(state, "agent_registry", None) or getattr(
+        getattr(state, "nexus_fs", None), "_agent_registry", None
+    )
+
+    from nexus.services.delegation.service import DelegationService
+
+    service = DelegationService(
+        session_factory=session_factory,
+        rebac_manager=rebac_manager,
+        namespace_manager=namespace_manager,
+        entity_registry=entity_registry,
+        agent_registry=agent_registry,
+    )
+    state._delegation_service = service
     return service
 
 
@@ -89,6 +124,12 @@ class DelegateRequest(BaseModel):
     )
     scope: DelegationScopeModel | None = Field(
         default=None, description="Fine-grained scope constraints"
+    )
+    min_trust_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum trust score threshold for coordinator (0.0 = disabled)",
     )
 
 
@@ -149,6 +190,15 @@ class DelegationChainResponse(BaseModel):
     total_depth: int
 
 
+class CompleteDelegationRequest(BaseModel):
+    """Request to complete a delegation with outcome feedback (#1619)."""
+
+    outcome: str = Field(description="Delegation outcome: 'completed', 'failed', or 'timeout'")
+    quality_score: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Optional quality rating (0.0-1.0)"
+    )
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -156,9 +206,9 @@ class DelegationChainResponse(BaseModel):
 
 @router.post("", response_model=DelegateResponse)
 async def create_delegation(
-    request: DelegateRequest,
-    http_request: Request,
+    body: DelegateRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    service: Any = Depends(_get_delegation_service),
 ) -> DelegateResponse:
     """Create a delegated worker agent with narrowed permissions.
 
@@ -183,46 +233,43 @@ async def create_delegation(
     from nexus.services.delegation.models import DelegationMode, DelegationScope
 
     try:
-        mode = DelegationMode(request.namespace_mode)
+        mode = DelegationMode(body.namespace_mode)
     except ValueError as e:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid namespace_mode: {request.namespace_mode!r}. "
+            detail=f"Invalid namespace_mode: {body.namespace_mode!r}. "
             "Must be 'copy', 'clean', or 'shared'.",
         ) from e
 
     # Convert Pydantic scope model to domain object
     scope: DelegationScope | None = None
-    if request.scope is not None:
+    if body.scope is not None:
         from decimal import Decimal
 
         scope = DelegationScope(
-            allowed_operations=frozenset(request.scope.allowed_operations),
-            resource_patterns=frozenset(request.scope.resource_patterns),
-            budget_limit=Decimal(request.scope.budget_limit)
-            if request.scope.budget_limit
-            else None,
-            max_depth=request.scope.max_depth,
+            allowed_operations=frozenset(body.scope.allowed_operations),
+            resource_patterns=frozenset(body.scope.resource_patterns),
+            budget_limit=Decimal(body.scope.budget_limit) if body.scope.budget_limit else None,
+            max_depth=body.scope.max_depth,
         )
-
-    service = _get_delegation_service(http_request)
 
     try:
         result = service.delegate(
             coordinator_agent_id=coordinator_agent_id,
             coordinator_owner_id=coordinator_owner_id,
-            worker_id=request.worker_id,
-            worker_name=request.worker_name,
+            worker_id=body.worker_id,
+            worker_name=body.worker_name,
             delegation_mode=mode,
             zone_id=zone_id,
-            scope_prefix=request.scope_prefix,
-            remove_grants=request.remove_grants,
-            add_grants=request.add_grants,
-            readonly_paths=request.readonly_paths,
-            ttl_seconds=request.ttl_seconds,
-            intent=request.intent,
-            can_sub_delegate=request.can_sub_delegate,
+            scope_prefix=body.scope_prefix,
+            remove_grants=body.remove_grants,
+            add_grants=body.add_grants,
+            readonly_paths=body.readonly_paths,
+            ttl_seconds=body.ttl_seconds,
+            intent=body.intent,
+            can_sub_delegate=body.can_sub_delegate,
             scope=scope,
+            min_trust_score=body.min_trust_score,
         )
     except Exception as e:
         _handle_delegation_error(e)
@@ -241,8 +288,8 @@ async def create_delegation(
 @router.delete("/{delegation_id}")
 async def revoke_delegation(
     delegation_id: str,
-    http_request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    service: Any = Depends(_get_delegation_service),
 ) -> dict[str, Any]:
     """Revoke a delegation, removing all worker grants and API keys."""
     subject_type = auth_result.get("subject_type", "")
@@ -251,8 +298,6 @@ async def revoke_delegation(
             status_code=403,
             detail="Only agents can revoke delegations.",
         )
-
-    service = _get_delegation_service(http_request)
 
     # Ownership check: only the parent agent can revoke its delegation
     record = service.get_delegation_by_id(delegation_id)
@@ -277,8 +322,8 @@ async def revoke_delegation(
 
 @router.get("", response_model=DelegationListResponse)
 async def list_delegations(
-    http_request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    service: Any = Depends(_get_delegation_service),
     limit: int = Query(default=50, ge=1, le=200, description="Max records to return"),
     offset: int = Query(default=0, ge=0, description="Records to skip"),
     status: str | None = Query(
@@ -294,7 +339,6 @@ async def list_delegations(
         )
 
     coordinator_agent_id = auth_result.get("subject_id", "")
-    service = _get_delegation_service(http_request)
 
     # Parse optional status filter
     from nexus.services.delegation.models import DelegationStatus
@@ -339,8 +383,8 @@ async def list_delegations(
 @router.get("/{delegation_id}/chain", response_model=DelegationChainResponse)
 async def get_delegation_chain(
     delegation_id: str,
-    http_request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    service: Any = Depends(_get_delegation_service),
 ) -> DelegationChainResponse:
     """Trace delegation chain from a delegation back to the root."""
     subject_type = auth_result.get("subject_type", "")
@@ -350,7 +394,6 @@ async def get_delegation_chain(
             detail="Only agents can trace delegation chains.",
         )
 
-    service = _get_delegation_service(http_request)
     chain = service.get_delegation_chain(delegation_id)
 
     if not chain:
@@ -373,6 +416,64 @@ async def get_delegation_chain(
     return DelegationChainResponse(chain=items, total_depth=len(chain) - 1)
 
 
+@router.post("/{delegation_id}/complete")
+async def complete_delegation(
+    delegation_id: str,
+    request: CompleteDelegationRequest,
+    http_request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Complete a delegation and submit outcome feedback (#1619)."""
+    subject_type = auth_result.get("subject_type", "")
+    if subject_type != "agent":
+        raise HTTPException(
+            status_code=403,
+            detail="Only agents can complete delegations.",
+        )
+
+    service = _get_delegation_service(http_request)
+
+    # Ownership check: only the parent agent can complete its delegation
+    record = service.get_delegation_by_id(delegation_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
+
+    agent_id = auth_result.get("subject_id", "")
+    if record.parent_agent_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the parent agent can complete a delegation.",
+        )
+
+    # Parse outcome
+    from nexus.services.delegation.models import DelegationOutcome
+
+    try:
+        outcome = DelegationOutcome(request.outcome)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid outcome: {request.outcome!r}. "
+            "Must be 'completed', 'failed', or 'timeout'.",
+        ) from e
+
+    try:
+        updated = service.complete_delegation(
+            delegation_id=delegation_id,
+            outcome=outcome,
+            quality_score=request.quality_score,
+        )
+    except Exception as e:
+        _handle_delegation_error(e)
+        raise  # unreachable, but satisfies type checker
+
+    return {
+        "status": updated.status.value,
+        "delegation_id": delegation_id,
+        "outcome": request.outcome,
+    }
+
+
 # =============================================================================
 # Error handling
 # =============================================================================
@@ -385,10 +486,13 @@ def _handle_delegation_error(e: Exception) -> None:
         DelegationNotFoundError,
         DepthExceededError,
         EscalationError,
+        InsufficientTrustError,
         InvalidPrefixError,
         TooManyGrantsError,
     )
 
+    if isinstance(e, InsufficientTrustError):
+        raise HTTPException(status_code=403, detail=str(e)) from e
     if isinstance(e, EscalationError):
         raise HTTPException(status_code=403, detail=str(e)) from e
     if isinstance(e, TooManyGrantsError):

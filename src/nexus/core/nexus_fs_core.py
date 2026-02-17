@@ -147,9 +147,9 @@ class NexusFSCoreMixin:
             try:
                 return await asyncio.wait_for(coro, timeout=timeout)
             except TimeoutError:
-                logger.warning("Event task timed out after %ss: %s", timeout, name or "unnamed")
+                logger.warning(f"Event task timed out after {timeout}s: {name or 'unnamed'}")
             except Exception as e:
-                logger.error("Event task failed: %s: %s", name or "unnamed", e, exc_info=True)
+                logger.error(f"Event task failed: {name or 'unnamed'}: {e}")
 
         task = asyncio.create_task(wrapped_coro(), name=name)
         self._event_tasks.add(task)
@@ -224,7 +224,7 @@ class NexusFSCoreMixin:
 
             fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
-            logger.warning("Failed to create %s event: %s", event_type, e, exc_info=True)
+            logger.warning(f"Failed to create {event_type} event: {e}")
 
     def _fire_workflow_event(
         self,
@@ -245,13 +245,24 @@ class NexusFSCoreMixin:
         if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
             return
 
-        from nexus.core.sync_bridge import fire_and_forget
+        # Bounded queue: try to enqueue, drop on overflow
+        queue = getattr(self, "_workflow_queue", None)
+        if queue is not None:
+            try:
+                queue.put_nowait((trigger_type, event_context))
+            except Exception:
+                logger.warning("Workflow event queue full, dropping event: %s", label)
+        else:
+            # Fallback: fire-and-forget (no queue — CLI or pre-startup)
+            from nexus.core.sync_bridge import fire_and_forget
 
-        fire_and_forget(
-            self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
-        )
+            fire_and_forget(
+                self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
+            )
 
         if self.subscription_manager:  # type: ignore[attr-defined]
+            from nexus.core.sync_bridge import fire_and_forget
+
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(
                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
@@ -260,6 +271,34 @@ class NexusFSCoreMixin:
                     event_context.get("zone_id", "default"),
                 )
             )
+
+    async def _start_workflow_consumer(self) -> None:
+        """Background consumer for bounded workflow event queue (#1522)."""
+        queue = self._workflow_queue  # type: ignore[attr-defined]
+        engine = self.workflow_engine  # type: ignore[attr-defined]
+        while True:
+            trigger_type, event_context = await queue.get()
+            try:
+                await engine.fire_event(trigger_type, event_context)
+            except Exception as e:
+                logger.error("Workflow event processing failed: %s", e)
+            finally:
+                queue.task_done()
+
+    def ensure_workflow_consumer(self) -> None:
+        """Start the workflow consumer task if not already running."""
+        if (
+            getattr(self, "_workflow_queue", None) is None
+            or getattr(self, "_workflow_consumer_task", None) is not None
+        ):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            self._workflow_consumer_task = loop.create_task(  # type: ignore[attr-defined]
+                self._start_workflow_consumer()
+            )
+        except RuntimeError:
+            pass  # No event loop — consumer starts when server starts
 
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
@@ -283,22 +322,6 @@ class NexusFSCoreMixin:
                 logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
         return self._revision_notifier
-
-    @staticmethod
-    def _revision_fallback(zone_id: str, operation: str, default: int, exc: Exception) -> int:
-        """Log a revision operation failure and return *default*.
-
-        Consolidates the duplicated fallback logic for ``_increment_and_get_revision``
-        and ``_get_current_revision`` (Issue #1519, 5B).
-        """
-        logger.warning(
-            "Failed to %s revision for zone %s: %s",
-            operation,
-            zone_id,
-            exc,
-            exc_info=True,
-        )
-        return default
 
     def _get_revision_lock(self, zone_id: str) -> threading.Lock:
         """Get or create a per-zone lock for revision increments (Issue #1180).
@@ -342,7 +365,8 @@ class NexusFSCoreMixin:
             try:
                 return self.metadata.increment_revision(zone_id)
             except Exception as e:
-                return self._revision_fallback(zone_id, "increment", int(time.time() * 1000), e)
+                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                return int(time.time() * 1000)
 
         # Legacy fallback: FileMetadata-based counter (requires lock)
         from nexus.core._metadata_generated import FileMetadata
@@ -368,7 +392,9 @@ class NexusFSCoreMixin:
                 self._get_revision_notifier().notify_revision(zone_id, new_rev)
                 return new_rev
             except Exception as e:
-                return self._revision_fallback(zone_id, "increment", int(time.time() * 1000), e)
+                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                # Fallback: return timestamp-based pseudo-revision
+                return int(time.time() * 1000)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
@@ -387,7 +413,8 @@ class NexusFSCoreMixin:
             try:
                 return self.metadata.get_revision(zone_id)
             except Exception as e:
-                return self._revision_fallback(zone_id, "get", 0, e)
+                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
+                return 0
 
         # Legacy fallback: FileMetadata-based lookup
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
@@ -395,7 +422,8 @@ class NexusFSCoreMixin:
             meta = self.metadata.get(rev_path)
             return meta.version if meta else 0
         except Exception as e:
-            return self._revision_fallback(zone_id, "get", 0, e)
+            logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
+            return 0
 
     def _wait_for_revision(
         self,
@@ -1712,8 +1740,10 @@ class NexusFSCoreMixin:
         # in affected_rows to avoid a redundant get_content_size() round-trip.
         size = write_response.affected_rows
         if size <= 0:
-            with contextlib.suppress(Exception):
+            try:
                 size = route.backend.get_content_size(content_hash, context=context).unwrap()
+            except Exception as e:
+                logger.debug("Failed to get content size for %s: %s", content_hash, e)
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -4173,7 +4203,6 @@ class NexusFSCoreMixin:
             is_implicit: If True, directory is implicit (no metadata, exists due to child files).
                         If None, will be auto-detected.
         """
-        import contextlib
         import errno
 
         path = self._validate_path(path)
@@ -4213,10 +4242,20 @@ class NexusFSCoreMixin:
 
         if recursive and files_in_dir:
             # Delete content from backend for each file
+            _errors: list[str] = []
             for file_meta in files_in_dir:
                 if file_meta.etag and file_meta.mime_type != "inode/directory":
-                    with contextlib.suppress(Exception):
+                    try:
                         route.backend.delete_content(file_meta.etag).unwrap()
+                    except Exception as e:
+                        if len(_errors) < 100:
+                            _errors.append(f"{file_meta.path}: {e}")
+            if _errors:
+                logger.debug(
+                    "Bulk content delete: %d error(s) (showing up to 100): %s",
+                    len(_errors),
+                    "; ".join(_errors),
+                )
 
             # Batch delete from metadata store
             file_paths = [file_meta.path for file_meta in files_in_dir]

@@ -19,8 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from nexus.server.api.v1.dependencies import (
-    get_database_url,
-    get_nexus_fs,
+    get_async_session_factory,
     get_optional_search_daemon,
     get_search_daemon,
 )
@@ -31,146 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["search"])
 
 
-# =============================================================================
-# Helper: graph-enhanced search (Issue #1040)
-# =============================================================================
-
-
-async def _graph_enhanced_search(
-    query: str,
-    search_type: str,
-    limit: int,
-    path_filter: str | None,
-    alpha: float,
-    graph_mode: str,
-    *,
-    nexus_fs: Any,
-    database_url: str | None,
-    search_daemon: Any,
-) -> list:
-    """Execute graph-enhanced search using GraphEnhancedRetriever (Issue #1040).
-
-    Creates a GraphEnhancedRetriever on-the-fly and executes the search.
-    This helper is called when graph_mode is not "none".
-
-    Args:
-        query: Search query text
-        search_type: Base search type (keyword, semantic, hybrid)
-        limit: Maximum results
-        path_filter: Optional path prefix filter
-        alpha: Semantic vs keyword weight
-        graph_mode: Graph enhancement mode (low, high, dual)
-        nexus_fs: NexusFS instance (injected)
-        database_url: Database URL string (injected)
-        search_daemon: SearchDaemon instance (injected)
-
-    Returns:
-        List of GraphEnhancedSearchResult
-    """
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-    from nexus.search.graph_retrieval import (
-        GraphEnhancedRetriever,
-        GraphRetrievalConfig,
-    )
-    from nexus.search.graph_store import GraphStore
-    from nexus.search.semantic import SemanticSearchResult
-
-    # Get database URL
-    db_url = database_url
-    if not db_url:
-        db_url = nexus_fs._record_store.database_url if nexus_fs._record_store else None
-
-    # Convert to async URL
-    if not db_url:
-        raise RuntimeError("No database URL available for graph search endpoint")
-    async_url = db_url
-    if async_url.startswith("postgresql://"):
-        async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")
-    elif async_url.startswith("sqlite:///"):
-        async_url = async_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-
-    # Create async engine and session
-    engine = create_async_engine(async_url, echo=False)
-    async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    try:
-        async with async_session_factory() as session:
-            # Initialize components
-            graph_store = GraphStore(session, zone_id="default")
-
-            # Create a wrapper for SemanticSearch that uses the search daemon
-            class DaemonSemanticSearchWrapper:
-                """Wraps search daemon as SemanticSearch interface."""
-
-                def __init__(self, daemon: Any) -> None:
-                    self.daemon = daemon
-                    self.embedding_provider = getattr(daemon, "_embedding_provider", None)
-
-                async def search(
-                    self,
-                    query: str,
-                    path: str = "/",
-                    limit: int = 10,
-                    search_mode: str = "hybrid",
-                    alpha: float = 0.5,
-                ) -> list[SemanticSearchResult]:
-                    # Map search_mode to daemon's search_type
-                    results = await self.daemon.search(
-                        query=query,
-                        search_type=search_mode,
-                        limit=limit,
-                        path_filter=path if path != "/" else None,
-                        alpha=alpha,
-                    )
-                    # Convert daemon results to SemanticSearchResult
-                    return [
-                        SemanticSearchResult(
-                            path=r.path,
-                            chunk_index=r.chunk_index,
-                            chunk_text=r.chunk_text,
-                            score=r.score,
-                            start_offset=r.start_offset,
-                            end_offset=r.end_offset,
-                            line_start=r.line_start,
-                            line_end=r.line_end,
-                            keyword_score=r.keyword_score,
-                            vector_score=r.vector_score,
-                        )
-                        for r in results
-                    ]
-
-            # Create wrapper and retriever
-            semantic_wrapper = DaemonSemanticSearchWrapper(search_daemon)
-            embedding_provider = getattr(search_daemon, "_embedding_provider", None)
-
-            config = GraphRetrievalConfig(
-                graph_mode=graph_mode,
-                entity_similarity_threshold=0.75,
-                neighbor_hops=2,
-            )
-
-            retriever = GraphEnhancedRetriever(
-                semantic_search=semantic_wrapper,  # type: ignore
-                graph_store=graph_store,
-                embedding_provider=embedding_provider,
-                config=config,
-            )
-
-            # Execute search
-            results = await retriever.search(
-                query=query,
-                path=path_filter or "/",
-                limit=limit,
-                graph_mode=graph_mode,
-                search_mode=search_type,
-                alpha=alpha,
-                include_graph_context=True,
-            )
-
-            return results
-    finally:
-        await engine.dispose()
+# Graph-enhanced search business logic extracted to service layer (Issue #434).
 
 
 # =============================================================================
@@ -227,8 +87,7 @@ async def search_query(
     ),
     _auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(get_search_daemon),
-    nexus_fs: Any = Depends(get_nexus_fs),
-    database_url: str = Depends(get_database_url),
+    async_session_factory: Any = Depends(get_async_session_factory),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon.
 
@@ -305,15 +164,16 @@ async def search_query(
     try:
         # Use graph-enhanced search if effective_graph_mode is not "none" (Issue #1040)
         if effective_graph_mode != "none":
-            results = await _graph_enhanced_search(
+            from nexus.services.graph_search_service import graph_enhanced_search
+
+            results = await graph_enhanced_search(
                 query=q,
                 search_type=type,
                 limit=effective_limit,
                 path_filter=path,
                 alpha=alpha,
                 graph_mode=effective_graph_mode,
-                nexus_fs=nexus_fs,
-                database_url=database_url,
+                async_session_factory=async_session_factory,
                 search_daemon=search_daemon,
             )
             latency_ms = (time.perf_counter() - start_time) * 1000

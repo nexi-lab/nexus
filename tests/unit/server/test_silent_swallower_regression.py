@@ -7,7 +7,6 @@ instead of silently swallowing them.
 import ast
 import inspect
 import logging
-from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
@@ -40,13 +39,11 @@ class TestAuthHelperLogging:
         """get_user_zones should log warning when DB query fails."""
         from nexus.server.auth.user_helpers import get_user_zones
 
-        @contextmanager
-        def failing_connection():
-            raise RuntimeError("DB connection lost")
-            yield  # type: ignore[misc]  # noqa: F401
+        mock_session = MagicMock()
+        mock_session.scalars.side_effect = RuntimeError("DB connection lost")
 
         mock_rebac = MagicMock()
-        mock_rebac._connection = failing_connection
+        mock_rebac._connection.side_effect = RuntimeError("DB connection lost")
 
         with caplog.at_level(logging.WARNING, logger="nexus.core.zone_helpers"):
             result = get_user_zones(mock_rebac, "user-123")

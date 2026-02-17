@@ -17,8 +17,7 @@ from nexus.pay.audit_types import TransactionProtocol
 from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 
 if TYPE_CHECKING:
-    from nexus.services.governance.anomaly_service import AnomalyService
-    from nexus.services.governance.governance_graph_service import GovernanceGraphService
+    from nexus.services.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
     from nexus.services.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
@@ -56,8 +55,8 @@ class GovernanceEnforcedPayment:
     def __init__(
         self,
         inner: PaymentProtocol,
-        graph_service: GovernanceGraphService,
-        anomaly_service: AnomalyService,
+        graph_service: GovernanceGraphProtocol,
+        anomaly_service: AnomalyServiceProtocol,
     ) -> None:
         self._inner = inner
         self._graph_service = graph_service
@@ -78,7 +77,7 @@ class GovernanceEnforcedPayment:
         Pre-check: governance constraint check (~1ms).
         Post-analysis: fire-and-forget anomaly detection.
         """
-        zone_id = request.metadata.get("zone_id", "default") if request.metadata else "default"
+        zone_id = request.metadata.get("zone_id", "root") if request.metadata else "root"
 
         # 1. Pre-check: governance constraints
         from nexus.services.governance.models import ConstraintType

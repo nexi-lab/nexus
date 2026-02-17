@@ -141,9 +141,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
-        # Database session for caching support (deprecated, use session_factory)
-        db_session: "Session | None" = None,
-        # Session factory for caching support (preferred)
+        # Session factory for caching support
         session_factory: "type[Session] | None" = None,
     ):
         """
@@ -157,9 +155,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             access_key_id: AWS access key (alternative to credentials_path)
             secret_access_key: AWS secret key (alternative to credentials_path)
             session_token: AWS session token (for temporary credentials)
-            db_session: Optional SQLAlchemy session for caching (deprecated)
             session_factory: Optional session factory (e.g., metadata_store.session_factory)
-                           for caching support. Preferred over db_session.
+                           for caching support.
         """
         try:
             # Configure retry behavior and connection pool for concurrent operations.
@@ -247,9 +244,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             )
 
             # Store session info for caching support (CacheConnectorMixin)
-            # Prefer session_factory (creates fresh sessions) over db_session
             self.session_factory = session_factory
-            self.db_session = db_session  # Legacy support
 
         except Exception as e:
             if isinstance(e, BackendError):
@@ -1007,7 +1002,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         """
         Read content from S3 with caching support.
 
-        When caching is enabled (db_session provided):
+        When caching is enabled (session_factory provided):
         1. Check cache for non-stale entry with matching version
         2. If cache hit, return cached content
         3. If cache miss, read from S3 and cache result
@@ -1039,9 +1034,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         # expiration (default 5 min) which is sufficient for most use cases.
         # Users needing real-time consistency can use --no-cache.
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
                     logger.info(f"[S3] Cache hit (TTL-based) for {cache_path}")
@@ -1050,6 +1043,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                         backend_name=self.name,
                         path=blob_path,
                     )
+            except Exception as e:
+                logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
 
         # Read from S3 backend
         logger.info(f"[S3] Cache miss, reading from backend: {cache_path}")
@@ -1063,9 +1058,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
 
         # Cache the result if caching is enabled
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 # Use version ID from download instead of making extra API call
                 zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
@@ -1074,6 +1067,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                     backend_version=response_version_id,
                     zone_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=content,
@@ -1197,9 +1192,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         # Update cache after write if caching is enabled
         # Per design doc: both S3 and cache should be updated when write succeeds
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
                     path=cache_path,
@@ -1207,6 +1200,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                     backend_version=new_version,
                     zone_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=new_version,

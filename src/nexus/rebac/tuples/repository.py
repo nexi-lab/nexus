@@ -79,16 +79,18 @@ class TupleRepository:
         Args:
             conn: DBAPI connection to close
         """
-        import contextlib as _contextlib
-
         conn_id = id(conn)
         if conn_id in self._conn_map:
-            with _contextlib.suppress(Exception):
+            try:
                 self._conn_map[conn_id].close()
+            except Exception as e:
+                logger.debug("Failed to close pooled connection %s: %s", conn_id, e)
             self._conn_map.pop(conn_id, None)
         else:
-            with _contextlib.suppress(Exception):
+            try:
                 conn.close()
+            except Exception as e:
+                logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
     def connection(self) -> Generator[Any, None, None]:
@@ -204,13 +206,13 @@ class TupleRepository:
         Used for revision-based cache key generation (Issue #909).
 
         Args:
-            zone_id: Zone ID (defaults to "default")
+            zone_id: Zone ID (defaults to "root")
             conn: Optional database connection to reuse
 
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         should_close = conn is None
         if conn is None:
             conn = self.get_connection()
@@ -235,13 +237,13 @@ class TupleRepository:
         for distributed consistency (Issue #909).
 
         Args:
-            zone_id: Zone ID (defaults to "default")
+            zone_id: Zone ID (defaults to "root")
             conn: Database connection (reuse existing transaction)
 
         Returns:
             New revision number after increment
         """
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         cursor = self.create_cursor(conn)
 
         if self.engine.dialect.name == "postgresql":

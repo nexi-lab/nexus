@@ -4,7 +4,7 @@ Wraps an inner Backend and adds two-layer caching:
 - L1: In-memory ContentCache (sync, fast, process-local, LZ4 compressed)
 - L2: CacheStoreABC/Dragonfly (async background population, distributed)
 
-Follows LEGO Architecture Pattern E (Decorator/Wrapper Composition).
+Follows LEGO Architecture PART 16 (Recursive Wrapping, Mechanism 2).
 All Backend operations pass through transparently. Only CAS read operations
 are cached (read_content, batch_read_content). Writes invalidate or populate
 cache based on the configured CacheStrategy.
@@ -33,6 +33,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.delegating import DelegatingBackend
 from nexus.core.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
@@ -90,11 +91,11 @@ class CacheWrapperConfig:
 # ---------------------------------------------------------------------------
 
 
-class CachingBackendWrapper(Backend):
+class CachingBackendWrapper(DelegatingBackend):
     """Transparent caching decorator for any Backend implementation.
 
-    Delegates all operations to the inner backend. CAS content reads are
-    cached in L1 (in-memory) and optionally L2 (distributed). Writes
+    Inherits property delegation and ``__getattr__`` from ``DelegatingBackend``.
+    Overrides CAS content operations to add two-layer caching. Writes
     invalidate or populate cache based on the configured strategy.
 
     Cache failures are silently swallowed — inner backend is always the
@@ -107,7 +108,7 @@ class CachingBackendWrapper(Backend):
         config: CacheWrapperConfig | None = None,
         cache_store: CacheStoreABC | None = None,
     ) -> None:
-        self._inner = inner
+        super().__init__(inner)
         self._config = config or CacheWrapperConfig()
         self._cache_store = cache_store
 
@@ -130,51 +131,15 @@ class CachingBackendWrapper(Backend):
         self._metrics: dict[str, Any] | None = None
         self._metrics_initialized = False
 
-    # === Name & Properties (explicit delegation) ===
+    # === Name & Chain Introspection ===
 
     @property
     def name(self) -> str:
         return f"cached({self._inner.name})"
 
-    @property
-    def user_scoped(self) -> bool:
-        return self._inner.user_scoped
-
-    @property
-    def is_connected(self) -> bool:
-        return self._inner.is_connected
-
-    @property
-    def thread_safe(self) -> bool:
-        return self._inner.thread_safe
-
-    @property
-    def supports_rename(self) -> bool:
-        return self._inner.supports_rename
-
-    @property
-    def has_virtual_filesystem(self) -> bool:
-        return self._inner.has_virtual_filesystem
-
-    @property
-    def has_root_path(self) -> bool:
-        return self._inner.has_root_path
-
-    @property
-    def has_token_manager(self) -> bool:
-        return self._inner.has_token_manager
-
-    @property
-    def has_data_dir(self) -> bool:
-        return self._inner.has_data_dir
-
-    @property
-    def is_passthrough(self) -> bool:
-        return self._inner.is_passthrough
-
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        return self._inner.supports_parallel_mmap_read
+    def describe(self) -> str:
+        """Return chain description: ``"cache → {inner.describe()}"``."""
+        return f"cache → {self._inner.describe()}"
 
     # === Cached Content Operations ===
 
@@ -366,17 +331,6 @@ class CachingBackendWrapper(Backend):
         self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         return self._inner.is_directory(path, context=context)
-
-    # === Fallback delegation for remaining methods ===
-
-    def __getattr__(self, name: str) -> Any:
-        """Delegate any non-overridden attribute to inner backend.
-
-        Covers: list_dir, connect, disconnect, check_connection,
-        stream_content, write_stream, get_file_info, get_object_type,
-        get_object_id, and any future Backend methods.
-        """
-        return getattr(self._inner, name)
 
     # === Cache management ===
 

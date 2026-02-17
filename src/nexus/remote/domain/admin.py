@@ -19,7 +19,7 @@ class AsyncAdminClient:
         self,
         user_id: str,
         name: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         is_admin: bool = False,
         expires_days: int | None = None,
         subject_type: str | None = None,

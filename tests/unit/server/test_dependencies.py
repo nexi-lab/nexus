@@ -295,7 +295,7 @@ class TestGetAuthResultAuthProvider:
         result.is_admin = overrides.get("is_admin", False)
         result.subject_type = overrides.get("subject_type", "user")
         result.subject_id = overrides.get("subject_id", "alice")
-        result.zone_id = overrides.get("zone_id", "default")
+        result.zone_id = overrides.get("zone_id", "root")
         result.inherit_permissions = overrides.get("inherit_permissions", True)
         result.metadata = overrides.get("metadata", {})
         return result
@@ -442,7 +442,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "user",
                 "subject_id": "root",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": True,
             }
         )
@@ -455,7 +455,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "agent",
                 "subject_id": "agent-001",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
             }
         )
@@ -468,7 +468,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "user",
                 "subject_id": "alice",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "x_agent_id": "my-agent",
             }
@@ -491,7 +491,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "agent",
                 "subject_id": "agent-001",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "metadata": {},
                 "agent_generation": 42,
@@ -505,7 +505,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "agent",
                 "subject_id": "agent-001",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "metadata": {},
             }
@@ -518,7 +518,7 @@ class TestGetOperationContext:
             {
                 "subject_type": "user",
                 "subject_id": "alice",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "agent_generation": 5,
             }

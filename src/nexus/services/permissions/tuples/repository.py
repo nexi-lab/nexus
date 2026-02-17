@@ -16,11 +16,19 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import or_, select, text
+
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
+from nexus.storage.models.permissions import (
+    ReBACTupleModel as RT,
+)
+from nexus.storage.models.permissions import (
+    ReBACVersionSequenceModel as RVS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -79,16 +87,18 @@ class TupleRepository:
         Args:
             conn: DBAPI connection to close
         """
-        import contextlib as _contextlib
-
         conn_id = id(conn)
         if conn_id in self._conn_map:
-            with _contextlib.suppress(Exception):
+            try:
                 self._conn_map[conn_id].close()
+            except Exception as e:
+                logger.debug("Failed to close pooled connection %s: %s", conn_id, e)
             self._conn_map.pop(conn_id, None)
         else:
-            with _contextlib.suppress(Exception):
+            try:
                 conn.close()
+            except Exception as e:
+                logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
     def connection(self) -> Generator[Any, None, None]:
@@ -103,7 +113,6 @@ class TupleRepository:
                 cursor.execute(...)
                 conn.commit()
         """
-        from sqlalchemy import text
 
         with self.engine.connect() as sa_conn:
             # Fix PostgreSQL prepared statement performance issue (#683)
@@ -141,10 +150,10 @@ class TupleRepository:
             except (ImportError, AttributeError):
                 return conn.cursor()
         elif "sqlite3" in conn_module:
-            import sqlite3
-
             if not hasattr(actual_conn, "row_factory") or actual_conn.row_factory is None:
-                actual_conn.row_factory = sqlite3.Row
+                from sqlite3 import Row as SQLiteRow
+
+                actual_conn.row_factory = SQLiteRow
             return conn.cursor()
         else:
             return conn.cursor()
@@ -198,35 +207,23 @@ class TupleRepository:
     # Zone revision tracking (Issue #909)
     # ------------------------------------------------------------------
 
-    def get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:
+    def get_zone_revision(self, zone_id: str | None, _conn: Any | None = None) -> int:
         """Get current revision for a zone (read-only, no increment).
 
         Used for revision-based cache key generation (Issue #909).
 
         Args:
-            zone_id: Zone ID (defaults to "default")
-            conn: Optional database connection to reuse
+            zone_id: Zone ID (defaults to "root")
+            _conn: Optional database connection (unused, kept for API compat)
 
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
-        effective_zone = zone_id or "default"
-        should_close = conn is None
-        if conn is None:
-            conn = self.get_connection()
-        try:
-            cursor = self.create_cursor(conn)
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-            return int(row["current_version"]) if row else 0
-        finally:
-            if should_close:
-                self.close_connection(conn)
+        effective_zone = zone_id or "root"
+        stmt = select(RVS.current_version).where(RVS.zone_id == effective_zone)
+        with self.engine.connect() as sa_conn:
+            row = sa_conn.execute(stmt).first()
+            return int(row.current_version) if row else 0
 
     def increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
         """Increment and return the new revision for a zone.
@@ -235,60 +232,49 @@ class TupleRepository:
         for distributed consistency (Issue #909).
 
         Args:
-            zone_id: Zone ID (defaults to "default")
-            conn: Database connection (reuse existing transaction)
+            zone_id: Zone ID (defaults to "root")
+            conn: Database connection (DBAPI — participates in caller's txn)
 
         Returns:
             New revision number after increment
         """
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         cursor = self.create_cursor(conn)
 
         if self.engine.dialect.name == "postgresql":
             cursor.execute(
-                """
-                INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                VALUES (%s, 1, NOW())
-                ON CONFLICT (zone_id)
-                DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
-                              updated_at = NOW()
-                RETURNING current_version
-                """,
-                (effective_zone,),
+                "INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at) "
+                "VALUES (%(zone_id)s, 1, NOW()) "
+                "ON CONFLICT (zone_id) "
+                "DO UPDATE SET current_version = rebac_version_sequences.current_version + 1, "
+                "              updated_at = NOW() "
+                "RETURNING current_version",
+                {"zone_id": effective_zone},
             )
             row = cursor.fetchone()
             return int(row["current_version"]) if row else 1
         else:
             cursor.execute(
-                self.fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
+                "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?",
                 (effective_zone,),
             )
             row = cursor.fetchone()
 
+            now = datetime.now(UTC).isoformat()
             if row:
                 new_version = row["current_version"] + 1
                 cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        UPDATE rebac_version_sequences
-                        SET current_version = ?, updated_at = ?
-                        WHERE zone_id = ?
-                        """
-                    ),
-                    (new_version, datetime.now(UTC).isoformat(), effective_zone),
+                    "UPDATE rebac_version_sequences "
+                    "SET current_version = ?, updated_at = ? "
+                    "WHERE zone_id = ?",
+                    (new_version, now, effective_zone),
                 )
             else:
                 new_version = 1
                 cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                        VALUES (?, ?, ?)
-                        """
-                    ),
-                    (effective_zone, new_version, datetime.now(UTC).isoformat()),
+                    "INSERT INTO rebac_version_sequences "
+                    "(zone_id, current_version, updated_at) VALUES (?, ?, ?)",
+                    (effective_zone, new_version, now),
                 )
 
             return int(new_version)
@@ -307,7 +293,7 @@ class TupleRepository:
         (5-8x faster than iterative BFS for deep hierarchies).
 
         Args:
-            conn: Database connection
+            conn: Database connection (DBAPI — participates in caller's txn)
             subject: The child node (e.g., file A)
             object_entity: The parent node (e.g., file B)
             zone_id: Optional zone ID for isolation
@@ -328,81 +314,64 @@ class TupleRepository:
         max_depth = 50
 
         if self.engine.dialect.name == "postgresql":
-            query = """
-                WITH RECURSIVE ancestors AS (
-                    SELECT
-                        object_type as ancestor_type,
-                        object_id as ancestor_id,
-                        1 as depth
-                    FROM rebac_tuples
-                    WHERE subject_type = %s
-                      AND subject_id = %s
-                      AND relation = 'parent'
-                      AND (zone_id = %s OR (zone_id IS NULL AND %s IS NULL))
-
-                    UNION ALL
-
-                    SELECT
-                        t.object_type,
-                        t.object_id,
-                        a.depth + 1
-                    FROM rebac_tuples t
-                    INNER JOIN ancestors a
-                        ON t.subject_type = a.ancestor_type
-                        AND t.subject_id = a.ancestor_id
-                    WHERE t.relation = 'parent'
-                      AND (t.zone_id = %s OR (t.zone_id IS NULL AND %s IS NULL))
-                      AND a.depth < %s
-                )
-                SELECT 1 FROM ancestors
-                WHERE ancestor_type = %s AND ancestor_id = %s
-                LIMIT 1
-            """
-        else:
-            query = self.fix_sql_placeholders(
-                """
-                WITH RECURSIVE ancestors AS (
-                    SELECT
-                        object_type as ancestor_type,
-                        object_id as ancestor_id,
-                        1 as depth
-                    FROM rebac_tuples
-                    WHERE subject_type = ?
-                      AND subject_id = ?
-                      AND relation = 'parent'
-                      AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
-
-                    UNION ALL
-
-                    SELECT
-                        t.object_type,
-                        t.object_id,
-                        a.depth + 1
-                    FROM rebac_tuples t
-                    INNER JOIN ancestors a
-                        ON t.subject_type = a.ancestor_type
-                        AND t.subject_id = a.ancestor_id
-                    WHERE t.relation = 'parent'
-                      AND (t.zone_id = ? OR (t.zone_id IS NULL AND ? IS NULL))
-                      AND a.depth < ?
-                )
-                SELECT 1 FROM ancestors
-                WHERE ancestor_type = ? AND ancestor_id = ?
-                LIMIT 1
-            """
+            query = (
+                "WITH RECURSIVE ancestors AS ("
+                "  SELECT object_type as ancestor_type, object_id as ancestor_id, 1 as depth"
+                "  FROM rebac_tuples"
+                "  WHERE subject_type = %(obj_type)s AND subject_id = %(obj_id)s"
+                "    AND relation = 'parent'"
+                "    AND (zone_id = %(zone_id)s OR (zone_id IS NULL AND %(zone_id)s IS NULL))"
+                "  UNION ALL"
+                "  SELECT t.object_type, t.object_id, a.depth + 1"
+                "  FROM rebac_tuples t"
+                "  INNER JOIN ancestors a"
+                "    ON t.subject_type = a.ancestor_type AND t.subject_id = a.ancestor_id"
+                "  WHERE t.relation = 'parent'"
+                "    AND (t.zone_id = %(zone_id)s OR (t.zone_id IS NULL AND %(zone_id)s IS NULL))"
+                "    AND a.depth < %(max_depth)s"
+                ") SELECT 1 FROM ancestors"
+                " WHERE ancestor_type = %(subj_type)s AND ancestor_id = %(subj_id)s"
+                " LIMIT 1"
             )
-
-        params = (
-            object_entity.entity_type,
-            object_entity.entity_id,
-            zone_id,
-            zone_id,
-            zone_id,
-            zone_id,
-            max_depth,
-            subject.entity_type,
-            subject.entity_id,
-        )
+            params: dict[str, Any] | tuple[Any, ...] = {
+                "obj_type": object_entity.entity_type,
+                "obj_id": object_entity.entity_id,
+                "zone_id": zone_id,
+                "max_depth": max_depth,
+                "subj_type": subject.entity_type,
+                "subj_id": subject.entity_id,
+            }
+        else:
+            query = (
+                "WITH RECURSIVE ancestors AS ("
+                "  SELECT object_type as ancestor_type, object_id as ancestor_id, 1 as depth"
+                "  FROM rebac_tuples"
+                "  WHERE subject_type = ? AND subject_id = ?"
+                "    AND relation = 'parent'"
+                "    AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))"
+                "  UNION ALL"
+                "  SELECT t.object_type, t.object_id, a.depth + 1"
+                "  FROM rebac_tuples t"
+                "  INNER JOIN ancestors a"
+                "    ON t.subject_type = a.ancestor_type AND t.subject_id = a.ancestor_id"
+                "  WHERE t.relation = 'parent'"
+                "    AND (t.zone_id = ? OR (t.zone_id IS NULL AND ? IS NULL))"
+                "    AND a.depth < ?"
+                ") SELECT 1 FROM ancestors"
+                " WHERE ancestor_type = ? AND ancestor_id = ?"
+                " LIMIT 1"
+            )
+            params = (
+                object_entity.entity_type,
+                object_entity.entity_id,
+                zone_id,
+                zone_id,
+                zone_id,
+                zone_id,
+                max_depth,
+                subject.entity_type,
+                subject.entity_id,
+            )
 
         cursor.execute(query, params)
         result = cursor.fetchone()
@@ -475,49 +444,26 @@ class TupleRepository:
         Returns:
             List of (subject_type, subject_id, subject_relation) tuples
         """
-        with self.connection() as conn:
-            cursor = self.create_cursor(conn)
+        now = datetime.now(UTC)
+        expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
 
-            if zone_id is None:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id, subject_relation
-                        FROM rebac_tuples
-                        WHERE zone_id IS NULL
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND subject_relation IS NOT NULL
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (relation, obj.entity_type, obj.entity_id, datetime.now(UTC).isoformat()),
-                )
-            else:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id, subject_relation
-                        FROM rebac_tuples
-                        WHERE zone_id = ?
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND subject_relation IS NOT NULL
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (
-                        zone_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                )
+        stmt = select(RT.subject_type, RT.subject_id, RT.subject_relation).where(
+            RT.relation == relation,
+            RT.object_type == obj.entity_type,
+            RT.object_id == obj.entity_id,
+            RT.subject_relation.is_not(None),
+            expires_filter,
+        )
 
+        if zone_id is None:
+            stmt = stmt.where(RT.zone_id.is_(None))
+        else:
+            stmt = stmt.where(RT.zone_id == zone_id)
+
+        with self.engine.connect() as sa_conn:
             return [
-                (row["subject_type"], row["subject_id"], row["subject_relation"])
-                for row in cursor.fetchall()
+                (row.subject_type, row.subject_id, row.subject_relation)
+                for row in sa_conn.execute(stmt)
             ]
 
     def find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
@@ -540,31 +486,23 @@ class TupleRepository:
                 relation,
             )
 
-        with self.connection() as conn:
-            cursor = self.create_cursor(conn)
+        now = datetime.now(UTC)
+        expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
 
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    """
-                    SELECT object_type, object_id
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND relation = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
-            )
+        stmt = select(RT.object_type, RT.object_id).where(
+            RT.subject_type == obj.entity_type,
+            RT.subject_id == obj.entity_id,
+            RT.relation == relation,
+            expires_filter,
+        )
 
-            results = []
-            for row in cursor.fetchall():
-                entity = Entity(row["object_type"], row["object_id"])
-                results.append(entity)
+        with self.engine.connect() as sa_conn:
+            results = [Entity(row.object_type, row.object_id) for row in sa_conn.execute(stmt)]
 
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("find_related_objects: found %d results", len(results))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("find_related_objects: found %d results", len(results))
 
-            return results
+        return results
 
     def find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
         """Find all subjects that have a relation to obj.
@@ -586,31 +524,23 @@ class TupleRepository:
                 obj,
             )
 
-        with self.connection() as conn:
-            cursor = self.create_cursor(conn)
+        now = datetime.now(UTC)
+        expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
 
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
-                    FROM rebac_tuples
-                    WHERE object_type = ? AND object_id = ?
-                      AND relation = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
-            )
+        stmt = select(RT.subject_type, RT.subject_id).where(
+            RT.object_type == obj.entity_type,
+            RT.object_id == obj.entity_id,
+            RT.relation == relation,
+            expires_filter,
+        )
 
-            results = []
-            for row in cursor.fetchall():
-                entity = Entity(row["subject_type"], row["subject_id"])
-                results.append(entity)
+        with self.engine.connect() as sa_conn:
+            results = [Entity(row.subject_type, row.subject_id) for row in sa_conn.execute(stmt)]
 
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("find_subjects_with_relation: found %d results", len(results))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("find_subjects_with_relation: found %d results", len(results))
 
-            return results
+        return results
 
     def get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object.
@@ -622,23 +552,18 @@ class TupleRepository:
         Returns:
             List of (subject_type, subject_id) tuples
         """
-        with self.connection() as conn:
-            cursor = self.create_cursor(conn)
+        now = datetime.now(UTC)
+        expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
 
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
-                    FROM rebac_tuples
-                    WHERE relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (relation, obj.entity_type, obj.entity_id, datetime.now(UTC).isoformat()),
-            )
+        stmt = select(RT.subject_type, RT.subject_id).where(
+            RT.relation == relation,
+            RT.object_type == obj.entity_type,
+            RT.object_id == obj.entity_id,
+            expires_filter,
+        )
 
-            return [(row["subject_type"], row["subject_id"]) for row in cursor.fetchall()]
+        with self.engine.connect() as sa_conn:
+            return [(row.subject_type, row.subject_id) for row in sa_conn.execute(stmt)]
 
     def bulk_check_tuples_exist(
         self,
@@ -648,7 +573,7 @@ class TupleRepository:
         """Check which tuples already exist (bulk query).
 
         Args:
-            cursor: Database cursor
+            cursor: Database cursor (DBAPI — participates in caller's txn)
             parsed_tuples: List of parsed tuple dicts
 
         Returns:
@@ -659,42 +584,62 @@ class TupleRepository:
 
         CHUNK_SIZE = 100
         existing: set[tuple[Any, ...]] = set()
+        is_pg = self.engine.dialect.name == "postgresql"
 
         for chunk_start in range(0, len(parsed_tuples), CHUNK_SIZE):
             chunk = parsed_tuples[chunk_start : chunk_start + CHUNK_SIZE]
 
             conditions = []
-            params: list[Any] = []
+            params: dict[str, Any] | list[Any]
 
-            for pt in chunk:
-                conditions.append(
-                    "(subject_type = ? AND subject_id = ? AND "
-                    "(subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL)) AND "
-                    "relation = ? AND object_type = ? AND object_id = ? AND "
-                    "(zone_id = ? OR (zone_id IS NULL AND ? IS NULL)))"
-                )
-                params.extend(
-                    [
-                        pt["subject_type"],
-                        pt["subject_id"],
-                        pt["subject_relation"],
-                        pt["subject_relation"],
-                        pt["relation"],
-                        pt["object_type"],
-                        pt["object_id"],
-                        pt["zone_id"],
-                        pt["zone_id"],
-                    ]
-                )
+            if is_pg:
+                pg_params: dict[str, Any] = {}
+                for idx, pt in enumerate(chunk):
+                    conditions.append(
+                        f"(subject_type = %(st{idx})s AND subject_id = %(si{idx})s AND "
+                        f"(subject_relation = %(sr{idx})s OR (subject_relation IS NULL AND %(sr{idx})s IS NULL)) AND "
+                        f"relation = %(rel{idx})s AND object_type = %(ot{idx})s AND object_id = %(oi{idx})s AND "
+                        f"(zone_id = %(zid{idx})s OR (zone_id IS NULL AND %(zid{idx})s IS NULL)))"
+                    )
+                    pg_params[f"st{idx}"] = pt["subject_type"]
+                    pg_params[f"si{idx}"] = pt["subject_id"]
+                    pg_params[f"sr{idx}"] = pt["subject_relation"]
+                    pg_params[f"rel{idx}"] = pt["relation"]
+                    pg_params[f"ot{idx}"] = pt["object_type"]
+                    pg_params[f"oi{idx}"] = pt["object_id"]
+                    pg_params[f"zid{idx}"] = pt["zone_id"]
+                params = pg_params
+            else:
+                positional_params: list[Any] = []
+                for pt in chunk:
+                    conditions.append(
+                        "(subject_type = ? AND subject_id = ? AND "
+                        "(subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL)) AND "
+                        "relation = ? AND object_type = ? AND object_id = ? AND "
+                        "(zone_id = ? OR (zone_id IS NULL AND ? IS NULL)))"
+                    )
+                    positional_params.extend(
+                        [
+                            pt["subject_type"],
+                            pt["subject_id"],
+                            pt["subject_relation"],
+                            pt["subject_relation"],
+                            pt["relation"],
+                            pt["object_type"],
+                            pt["object_id"],
+                            pt["zone_id"],
+                            pt["zone_id"],
+                        ]
+                    )
+                params = positional_params
 
-            query = f"""
-                SELECT subject_type, subject_id, subject_relation, relation,
-                       object_type, object_id, zone_id
-                FROM rebac_tuples
-                WHERE {" OR ".join(conditions)}
-            """
+            query = (
+                "SELECT subject_type, subject_id, subject_relation, relation, "
+                "object_type, object_id, zone_id "
+                f"FROM rebac_tuples WHERE {' OR '.join(conditions)}"
+            )
 
-            cursor.execute(self.fix_sql_placeholders(query), params)
+            cursor.execute(query, params)
             results = cursor.fetchall()
 
             for row in results:
@@ -847,7 +792,7 @@ class TupleRepository:
 
     def find_direct_tuple_by_subject(
         self,
-        cursor: Any,
+        _cursor: Any,
         subject: Entity,
         relation: str,
         obj: Entity,
@@ -860,7 +805,7 @@ class TupleRepository:
         requires the permission computation layer.
 
         Args:
-            cursor: Database cursor (caller manages connection)
+            _cursor: Database cursor (unused, kept for API compat)
             subject: Subject entity
             relation: Relation type
             obj: Object entity
@@ -869,168 +814,99 @@ class TupleRepository:
         Returns:
             Tuple dict or None if not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
+        expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
+
+        tuple_cols = (
+            RT.tuple_id,
+            RT.subject_type,
+            RT.subject_id,
+            RT.subject_relation,
+            RT.relation,
+            RT.object_type,
+            RT.object_id,
+            RT.conditions,
+            RT.expires_at,
+        )
 
         # Check 1: Direct concrete subject
+        stmt = (
+            select(*tuple_cols)
+            .where(
+                RT.subject_type == subject.entity_type,
+                RT.subject_id == subject.entity_id,
+                RT.subject_relation.is_(None),
+                RT.relation == relation,
+                RT.object_type == obj.entity_type,
+                RT.object_id == obj.entity_id,
+                expires_filter,
+            )
+            .limit(1)
+        )
         if zone_id is None:
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND subject_relation IS NULL
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                      AND zone_id IS NULL
-                    LIMIT 1
-                    """
-                ),
-                (
-                    subject.entity_type,
-                    subject.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    now,
-                ),
-            )
+            stmt = stmt.where(RT.zone_id.is_(None))
         else:
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND subject_relation IS NULL
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                      AND zone_id = ?
-                    LIMIT 1
-                    """
-                ),
-                (
-                    subject.entity_type,
-                    subject.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    now,
-                    zone_id,
-                ),
-            )
+            stmt = stmt.where(RT.zone_id == zone_id)
 
-        row = cursor.fetchone()
-        if row:
-            # Evaluate ABAC conditions if present
-            conditions_json = row["conditions"]
-            if conditions_json:
-                try:
-                    conds = (
-                        json.loads(conditions_json)
-                        if isinstance(conditions_json, str)
-                        else conditions_json
-                    )
-                    # Return None with a flag if conditions need context evaluation
-                    # The caller (manager) will handle context-based evaluation
-                    return dict(row) if not conds else dict(row)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            return dict(row)
-
-        # Check 2: Wildcard/public access
-        if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
-            wildcard_entity = Entity(WILDCARD_SUBJECT[0], WILDCARD_SUBJECT[1])
-
-            if zone_id is None:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND subject_relation IS NULL
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                          AND zone_id IS NULL
-                        LIMIT 1
-                        """
-                    ),
-                    (
-                        wildcard_entity.entity_type,
-                        wildcard_entity.entity_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        now,
-                    ),
-                )
-            else:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND subject_relation IS NULL
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                          AND zone_id = ?
-                        LIMIT 1
-                        """
-                    ),
-                    (
-                        wildcard_entity.entity_type,
-                        wildcard_entity.entity_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        now,
-                        zone_id,
-                    ),
-                )
-
-            row = cursor.fetchone()
+        with self.engine.connect() as sa_conn:
+            row = sa_conn.execute(stmt).first()
             if row:
-                return dict(row)
+                # Evaluate ABAC conditions if present
+                conditions_json = row.conditions
+                if conditions_json:
+                    with suppress(json.JSONDecodeError, TypeError):
+                        json.loads(conditions_json) if isinstance(
+                            conditions_json, str
+                        ) else conditions_json
+                return dict(row._mapping)
 
-            # Check 2b: Cross-zone wildcard access (Issue #1064)
-            if zone_id is not None:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND subject_relation IS NULL
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        LIMIT 1
-                        """
-                    ),
-                    (
-                        wildcard_entity.entity_type,
-                        wildcard_entity.entity_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        now,
-                    ),
+            # Check 2: Wildcard/public access
+            if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
+                wildcard_entity = Entity(WILDCARD_SUBJECT[0], WILDCARD_SUBJECT[1])
+
+                wildcard_stmt = (
+                    select(*tuple_cols)
+                    .where(
+                        RT.subject_type == wildcard_entity.entity_type,
+                        RT.subject_id == wildcard_entity.entity_id,
+                        RT.subject_relation.is_(None),
+                        RT.relation == relation,
+                        RT.object_type == obj.entity_type,
+                        RT.object_id == obj.entity_id,
+                        expires_filter,
+                    )
+                    .limit(1)
                 )
-                row = cursor.fetchone()
-                if row:
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug("Cross-zone wildcard access: *:* -> %s -> %s", relation, obj)
-                    return dict(row)
+                if zone_id is None:
+                    wildcard_stmt = wildcard_stmt.where(RT.zone_id.is_(None))
+                else:
+                    wildcard_stmt = wildcard_stmt.where(RT.zone_id == zone_id)
+
+                wildcard_row = sa_conn.execute(wildcard_stmt).first()
+                if wildcard_row:
+                    return dict(wildcard_row._mapping)
+
+                # Check 2b: Cross-zone wildcard access (Issue #1064)
+                if zone_id is not None:
+                    cross_zone_stmt = (
+                        select(*tuple_cols)
+                        .where(
+                            RT.subject_type == wildcard_entity.entity_type,
+                            RT.subject_id == wildcard_entity.entity_id,
+                            RT.subject_relation.is_(None),
+                            RT.relation == relation,
+                            RT.object_type == obj.entity_type,
+                            RT.object_id == obj.entity_id,
+                            expires_filter,
+                        )
+                        .limit(1)
+                    )
+                    cross_zone_row = sa_conn.execute(cross_zone_stmt).first()
+                    if cross_zone_row:
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(
+                                "Cross-zone wildcard access: *:* -> %s -> %s", relation, obj
+                            )
+                        return dict(cross_zone_row._mapping)
 
         return None

@@ -99,11 +99,17 @@ def assert_protocol_compliance(
                     impl_attr
                 ) or inspect.isasyncgenfunction(impl_attr)
                 if proto_is_async != impl_is_async:
-                    proto_kind = "async" if proto_is_async else "sync"
-                    impl_kind = "async" if impl_is_async else "sync"
-                    errors.append(
-                        f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
-                    )
+                    # Allow sync protocol + async generator impl (e.g. llm_read_stream).
+                    # Async generators use `async def` but return AsyncIterator, not Coroutine,
+                    # so the protocol correctly declares `def ... -> AsyncIterator[T]`.
+                    if not proto_is_async and inspect.isasyncgenfunction(impl_attr):
+                        pass  # valid pattern
+                    else:
+                        proto_kind = "async" if proto_is_async else "sync"
+                        impl_kind = "async" if impl_is_async else "sync"
+                        errors.append(
+                            f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
+                        )
 
         if not check_signatures:
             continue
@@ -152,7 +158,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "LLMProtocol",
         "nexus.services.protocols.llm",
         "nexus.services.llm_service.LLMService",
-        True,
+        True,  # sync protocol + async generator impl is now allowed
     ),
     # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
     (
@@ -193,10 +199,16 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         True,  # Method names match (async/sync checked separately)
     ),
     (
-        "EventsProtocol",
-        "nexus.services.protocols.events",
+        "WatchProtocol",
+        "nexus.services.protocols.watch",
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
-        True,  # Method names match (async/sync checked separately)
+        True,  # wait_for_changes method match
+    ),
+    (
+        "LockProtocol",
+        "nexus.services.protocols.lock",
+        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
+        True,  # lock/extend_lock/unlock methods match
     ),
 ]
 
@@ -249,9 +261,9 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
     ("context_manifest", "nexus/services/protocols/context_manifest.py"),
     ("event_log", "nexus/services/protocols/event_log.py"),
-    ("events", "nexus/services/protocols/events.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
+    ("lock", "nexus/services/protocols/lock.py"),
     ("mount", "nexus/services/protocols/mount.py"),
     ("namespace_manager", "nexus/services/protocols/namespace_manager.py"),
     ("oauth", "nexus/services/protocols/oauth.py"),
@@ -261,6 +273,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("share_link", "nexus/services/protocols/share_link.py"),
     ("skills", "nexus/services/protocols/skills.py"),
     ("vfs_router", "nexus/core/protocols/vfs_router.py"),
+    ("watch", "nexus/services/protocols/watch.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

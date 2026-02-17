@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import OperationalError
 
 from nexus.core.rebac import Entity
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.types import ConsistencyLevel
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -155,8 +155,8 @@ class BulkPermissionChecker:
             if is_production:
                 raise ValueError("zone_id is required for bulk permission checks in production")
             else:
-                logger.warning("rebac_check_bulk called without zone_id, defaulting to 'default'")
-                zone_id = "default"
+                logger.warning("rebac_check_bulk called without zone_id, defaulting to 'root'")
+                zone_id = "root"
 
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool] = {}
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]] = []

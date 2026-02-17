@@ -37,7 +37,7 @@ def _create_test_app(
     mock_policy_service: AsyncMock,
     is_admin: bool = False,
     agent_id: str = "test-agent",
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> FastAPI:
     """Create a lightweight FastAPI app with pay router + policy service."""
     app = FastAPI()
@@ -104,7 +104,7 @@ def mock_policy_service():
     }
     service.create_policy.return_value = SpendingPolicy(
         policy_id="new-p1",
-        zone_id="default",
+        zone_id="root",
         agent_id="agent-a",
         daily_limit=Decimal("100"),
         per_tx_limit=Decimal("50"),
@@ -364,7 +364,7 @@ def _create_integration_app(
     mock_credits_service: AsyncMock,
     is_admin: bool = False,
     agent_id: str = "test-agent",
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> FastAPI:
     """Create FastAPI app with REAL SpendingPolicyService + mocked CreditsService."""
     app = FastAPI()

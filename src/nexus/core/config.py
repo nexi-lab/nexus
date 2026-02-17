@@ -14,8 +14,15 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from nexus.constants import DEFAULT_NATS_URL
+
+if TYPE_CHECKING:
+    from nexus.core.cache_invalidation import CacheInvalidationObserver
+    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+    from nexus.workflows.protocol import WorkflowProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -72,7 +79,7 @@ class DistributedConfig:
     enable_locks: bool = True
     enable_workflows: bool = True
     event_bus_backend: str = "redis"
-    nats_url: str = "nats://localhost:4222"
+    nats_url: str = DEFAULT_NATS_URL
 
 
 @dataclass(frozen=True)
@@ -97,11 +104,11 @@ class ParseConfig:
 
 
 # ---------------------------------------------------------------------------
-# KernelServices — mutable container for injected service dependencies
+# KernelServices — frozen container for injected service dependencies
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class KernelServices:
     """Injected service dependencies for NexusFS kernel.
 
@@ -109,10 +116,11 @@ class KernelServices:
     ``nexus.factory.create_nexus_services()`` and bundled here
     for clean injection into the kernel constructor.
 
-    NOT frozen — services are wired post-construction by factory.
+    Frozen — all wiring must happen at construction time in factory.py.
+    Use ``dataclasses.replace()`` to create modified copies if needed.
     """
 
-    # Permission services
+    # --- Tier 0: KERNEL — mandatory, boot-fatal on failure ---
     router: Any = None
     rebac_manager: Any = None
     dir_visibility_cache: Any = None
@@ -121,38 +129,38 @@ class KernelServices:
     permission_enforcer: Any = None
     hierarchy_manager: Any = None
     deferred_permission_buffer: Any = None
-
-    # Workspace services
     workspace_registry: Any = None
     mount_manager: Any = None
     workspace_manager: Any = None
-
-    # Sync/versioning
     write_observer: Any = None
     version_service: Any = None
     overlay_resolver: Any = None
     wallet_provisioner: Any = None
 
     # Cache invalidation (Issue #1169 / #1519)
-    cache_observer: Any = None  # CacheInvalidationObserver protocol
+    cache_observer: CacheInvalidationObserver | None = None
 
-    # Infrastructure (moved from _service_extras dict)
+    # --- Tier 2: BRICK — infrastructure ---
     event_bus: Any = None
     lock_manager: Any = None
-    workflow_engine: Any = None
+    workflow_engine: WorkflowProtocol | None = None
 
     # Auth services — injected from server layer (Issue #1519, 3A)
     api_key_creator: Any = None  # APIKeyCreatorProtocol
 
-    # Server-layer extras — opaque to the kernel, passed through to server
-    # code via NexusFS._service_extras. The kernel never inspects these.
-    server_extras: dict[str, Any] = field(default_factory=dict)
+    # Server-layer services — explicitly typed fields instead of opaque dict
+    observability_subsystem: Any = None
+    chunked_upload_service: Any = None
+    manifest_resolver: Any = None
+    manifest_metrics: Any = None
+    rebac_circuit_breaker: Any = None
+    tool_namespace_middleware: Any = None
+    resiliency_manager: Any = None
+    delivery_worker: Any = None
 
-    # Kernel protocol services (Issue #1502)
+    # --- Tier 1: SYSTEM — kernel protocol services (Issue #1502) ---
     agent_registry: Any = None
-    namespace_manager: Any = None
-
-    # Async protocol wrappers (Issue #1502)
+    namespace_manager: NamespaceManagerProtocol | None = None
     async_agent_registry: Any = None
     async_namespace_manager: Any = None
     async_vfs_router: Any = None

@@ -89,17 +89,6 @@ class Backend(ABC):
     - Compatible with path router and mounting
     """
 
-    @staticmethod
-    def resolve_database_url(db_param: str) -> str:
-        """Resolve database URL with TOKEN_MANAGER_DB env var priority.
-
-        .. deprecated::
-            Use ``nexus.backends.connector_utils.resolve_database_url`` instead.
-        """
-        from nexus.backends.connector_utils import resolve_database_url
-
-        return resolve_database_url(db_param)
-
     @property
     @abstractmethod
     def name(self) -> str:
@@ -262,6 +251,18 @@ class Backend(ABC):
             Default: False
         """
         return False
+
+    # === Chain Introspection (Issue #1449) ===
+
+    def describe(self) -> str:
+        """Return a human-readable description of this backend for debugging.
+
+        Leaf backends return their ``name``.  Wrappers override to build
+        the full composition chain, e.g. ``"cache → logging → s3"``.
+
+        See NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping Rule #3.
+        """
+        return self.name
 
     # === Connection Management ===
 
@@ -743,9 +744,8 @@ class Backend(ABC):
     def get_object_type(self, _backend_path: str) -> str:
         """Map backend path to ReBAC object type.
 
-        .. deprecated::
-            Use ``ObjectTypeMapper.get_object_type()`` instead. Kept on Backend
-            so IPCVFSDriver and other subclass overrides still work.
+        Override in subclasses (e.g. IPCVFSDriver) for custom object type mapping.
+        Called by ObjectTypeMapper as the virtual dispatch target.
 
         Returns:
             ReBAC object type string. Default: 'file'.
@@ -755,9 +755,8 @@ class Backend(ABC):
     def get_object_id(self, backend_path: str) -> str:
         """Map backend path to ReBAC object identifier.
 
-        .. deprecated::
-            Use ``ObjectTypeMapper.get_object_id()`` instead. Kept on Backend
-            so IPCVFSDriver and other subclass overrides still work.
+        Override in subclasses for custom object ID mapping.
+        Called by ObjectTypeMapper as the virtual dispatch target.
 
         Returns:
             Object identifier for ReBAC. Default: backend_path as-is.

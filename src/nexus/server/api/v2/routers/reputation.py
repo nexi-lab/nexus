@@ -60,6 +60,16 @@ class ReputationScoreResponse(BaseModel):
     updated_at: datetime
 
 
+class TrustScoreResponse(BaseModel):
+    """Lightweight trust score for routing decisions (#1619)."""
+
+    agent_id: str
+    dimension: str
+    score: float
+    confidence: float
+    zone_id: str | None
+
+
 class ReputationLeaderboardResponse(BaseModel):
     """Leaderboard of agents ranked by reputation."""
 
@@ -245,9 +255,57 @@ def get_agent_reputation(
     return _score_to_response(score)
 
 
+_VALID_DIMENSIONS = {"composite", "reliability", "quality", "timeliness", "fairness"}
+
+
+@router.get("/api/v2/agents/{agent_id}/trust-score")
+def get_trust_score(
+    agent_id: str,
+    dimension: str = "composite",
+    zone_id: str | None = None,
+    deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
+) -> TrustScoreResponse:
+    """Get lightweight trust score for routing decisions (#1619)."""
+    if dimension not in _VALID_DIMENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid dimension: {dimension!r}. Must be one of: {sorted(_VALID_DIMENSIONS)}",
+        )
+
+    reputation_service, _dispute_service, _auth_ctx = deps
+
+    score = reputation_service.get_reputation(agent_id)
+    if score is None:
+        raise HTTPException(
+            status_code=404, detail=f"No reputation score found for agent {agent_id}"
+        )
+
+    if dimension == "composite":
+        return TrustScoreResponse(
+            agent_id=agent_id,
+            dimension="composite",
+            score=score.composite_score,
+            confidence=score.composite_confidence,
+            zone_id=zone_id,
+        )
+
+    # Per-dimension score from alpha/beta
+    from nexus.services.reputation.reputation_math import compute_beta_score, compute_confidence
+
+    alpha = getattr(score, f"{dimension}_alpha")
+    beta = getattr(score, f"{dimension}_beta")
+    return TrustScoreResponse(
+        agent_id=agent_id,
+        dimension=dimension,
+        score=compute_beta_score(alpha, beta),
+        confidence=compute_confidence(alpha, beta),
+        zone_id=zone_id,
+    )
+
+
 @router.get("/api/v2/reputation/leaderboard")
 def get_leaderboard(
-    zone_id: str = "default",
+    zone_id: str = "root",
     context: str = "general",
     limit: int = 50,
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
@@ -269,7 +327,7 @@ def submit_feedback(
     from nexus.services.reputation.reputation_service import DuplicateFeedbackError
 
     reputation_service, _dispute_service, auth_ctx = deps
-    zone_id = auth_ctx.get("zone_id", "default") or "default"
+    zone_id = auth_ctx.get("zone_id", "root") or "root"
 
     try:
         event = reputation_service.submit_feedback(
@@ -315,7 +373,7 @@ def file_dispute(
     from nexus.services.reputation.dispute_service import DuplicateDisputeError
 
     _reputation_service, dispute_service, auth_ctx = deps
-    zone_id = auth_ctx.get("zone_id", "default") or "default"
+    zone_id = auth_ctx.get("zone_id", "root") or "root"
 
     try:
         dispute = dispute_service.file_dispute(

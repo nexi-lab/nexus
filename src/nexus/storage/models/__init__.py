@@ -21,6 +21,8 @@ Domain modules:
     models.operation_log   -- OperationLogModel
     models.audit_checkpoint -- AuditCheckpointModel
     models.exchange_audit_log -- ExchangeAuditLogModel
+    models.identity        -- AgentKeyModel (Issue #1355)
+    models.a2a             -- A2ATaskModel
     models.ipc_message     -- IPCMessageModel (Issue #1469)
 """
 
@@ -32,6 +34,9 @@ from nexus.storage.models._base import ZoneIsolationMixin as ZoneIsolationMixin
 from nexus.storage.models._base import _generate_uuid as _generate_uuid
 from nexus.storage.models._base import _get_uuid_server_default as _get_uuid_server_default
 from nexus.storage.models._base import uuid_pk as uuid_pk
+
+# Domain: A2A (Task persistence)
+from nexus.storage.models.a2a import A2ATaskModel as A2ATaskModel
 
 # Domain: ACE (Trajectories, Feedback, Playbooks)
 from nexus.storage.models.ace import PlaybookModel as PlaybookModel
@@ -68,6 +73,9 @@ from nexus.storage.models.filesystem import DocumentChunkModel as DocumentChunkM
 from nexus.storage.models.filesystem import FileMetadataModel as FileMetadataModel
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel as WorkspaceSnapshotModel
 
+# Domain: Identity (Agent signing keys, Issue #1355)
+from nexus.storage.models.identity import AgentKeyModel as AgentKeyModel
+
 # Domain: Infrastructure (Sandbox, Config, Sessions, Migrations)
 from nexus.storage.models.infrastructure import MigrationHistoryModel as MigrationHistoryModel
 from nexus.storage.models.infrastructure import MountConfigModel as MountConfigModel
@@ -96,6 +104,7 @@ from nexus.storage.models.payments import PaymentTransactionMeta as PaymentTrans
 from nexus.storage.models.payments import UsageEvent as UsageEvent
 
 # Domain: Permissions (ReBAC + Tiger Cache)
+from nexus.storage.models.permissions import AdminBypassAuditModel as AdminBypassAuditModel
 from nexus.storage.models.permissions import (
     FileSystemVersionSequenceModel as FileSystemVersionSequenceModel,
 )
@@ -120,6 +129,9 @@ from nexus.storage.models.refresh_token_history import (
 from nexus.storage.models.reputation_event import ReputationEventModel as ReputationEventModel
 from nexus.storage.models.reputation_score import ReputationScoreModel as ReputationScoreModel
 
+# Domain: Scheduler (Task Queue, Issue #1212)
+from nexus.storage.models.scheduler import ScheduledTaskModel as ScheduledTaskModel
+
 # Domain: Secrets Audit (Issue #997)
 from nexus.storage.models.secrets_audit_log import SecretsAuditEventType as SecretsAuditEventType
 from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel as SecretsAuditLogModel
@@ -136,6 +148,7 @@ from nexus.storage.models.spending_policy import SpendingPolicyModel as Spending
 # Domain: Sync and Conflict Resolution
 from nexus.storage.models.sync import BackendChangeLogModel as BackendChangeLogModel
 from nexus.storage.models.sync import ConflictLogModel as ConflictLogModel
+from nexus.storage.models.sync import PendingOperationModel as PendingOperationModel
 from nexus.storage.models.sync import SyncBacklogModel as SyncBacklogModel
 from nexus.storage.models.sync import SyncJobModel as SyncJobModel
 

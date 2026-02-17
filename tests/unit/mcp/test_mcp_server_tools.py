@@ -136,9 +136,7 @@ def mock_nx_with_sandbox():
     nx.write = Mock()
 
     # Add sandbox support
-    nx._ensure_sandbox_manager = Mock()
-    nx._sandbox_manager = Mock()
-    nx._sandbox_manager.providers = {"docker": Mock()}
+    nx.sandbox_available = True
 
     nx.sandbox_create = Mock(
         return_value={
@@ -171,9 +169,8 @@ def mock_nx_no_sandbox():
     nx.read = Mock(return_value=b"test")
     nx.write = Mock()
 
-    # No sandbox support (no _ensure_sandbox_manager method)
-    if hasattr(nx, "_ensure_sandbox_manager"):
-        delattr(nx, "_ensure_sandbox_manager")
+    # No sandbox support
+    nx.sandbox_available = False
 
     return nx
 
@@ -212,9 +209,7 @@ def mock_nx_full():
     nx.search = Mock(return_value=[])
 
     # Sandbox
-    nx._ensure_sandbox_manager = Mock()
-    nx._sandbox_manager = Mock()
-    nx._sandbox_manager.providers = {"docker": Mock()}
+    nx.sandbox_available = True
     nx.sandbox_create = Mock(return_value={"sandbox_id": "test-123"})
     nx.sandbox_list = Mock(return_value=[])
     nx.sandbox_run = Mock(
@@ -962,7 +957,10 @@ class TestSandboxAvailability:
         assert tool_exists(server, "nexus_sandbox_stop")
 
     def test_sandbox_not_available(self, mock_nx_no_sandbox):
-        """Test sandbox tools not registered when no providers."""
+        """Test sandbox tools not registered when sandbox_available is False."""
+        # Explicitly set sandbox_available to False (Mock returns truthy by default)
+        mock_nx_no_sandbox.sandbox_available = False
+
         server = create_mcp_server(nx=mock_nx_no_sandbox)
 
         list(server._tool_manager._tools.keys())
@@ -972,12 +970,9 @@ class TestSandboxAvailability:
         assert not tool_exists(server, "nexus_sandbox_list")
         assert not tool_exists(server, "nexus_sandbox_stop")
 
-    def test_sandbox_available_with_empty_providers(self, mock_nx_basic):
-        """Test sandbox not available when providers dict is empty."""
-        # Add sandbox manager but with empty providers
-        mock_nx_basic._ensure_sandbox_manager = Mock()
-        mock_nx_basic._sandbox_manager = Mock()
-        mock_nx_basic._sandbox_manager.providers = {}
+    def test_sandbox_not_available_when_property_false(self, mock_nx_basic):
+        """Test sandbox not available when sandbox_available is False."""
+        mock_nx_basic.sandbox_available = False
 
         server = create_mcp_server(nx=mock_nx_basic)
 
@@ -985,10 +980,10 @@ class TestSandboxAvailability:
         assert not tool_exists(server, "nexus_python")
         assert not tool_exists(server, "nexus_bash")
 
-    def test_sandbox_detection_handles_exception(self, mock_nx_basic):
-        """Test sandbox detection gracefully handles exceptions."""
-        # Make _ensure_sandbox_manager raise an exception
-        mock_nx_basic._ensure_sandbox_manager = Mock(side_effect=RuntimeError("Init failed"))
+    def test_sandbox_detection_handles_missing_attribute(self, mock_nx_basic):
+        """Test sandbox detection gracefully handles missing sandbox_available."""
+        # getattr with default=False should handle missing attribute
+        mock_nx_basic.sandbox_available = False
 
         # Should not raise, sandbox tools should just not be registered
         server = create_mcp_server(nx=mock_nx_basic)

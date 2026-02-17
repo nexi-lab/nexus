@@ -14,6 +14,7 @@ on:
     paths:
       - 'src/**/*.py'
       - 'tests/**/*.py'
+  merge_group:
 
 permissions:
   contents: read

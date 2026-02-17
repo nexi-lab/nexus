@@ -21,9 +21,8 @@ Key differences from GCSBackend:
 - Requires backend_path in OperationContext
 
 Caching:
-    This connector supports the CacheConnectorMixin for caching content
-    in the local database. Enable caching by passing a db_session when
-    creating the connector.
+    This connector supports the CacheConnectorMixin for caching content.
+    Enable caching by passing a session_factory when creating the connector.
 
 Authentication (Recommended):
     Use service account credentials for production (no daily re-auth):
@@ -88,7 +87,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     - If bucket has no versioning: Only current version retained (overwrites on update)
 
     Caching:
-    - Pass db_session to enable local caching
+    - Pass session_factory to enable local caching
     - Use read_content() with use_cache=True to read from cache first
     - Use sync() to bulk-sync files to cache
 
@@ -139,9 +138,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         prefix: str = "",
         # OAuth access token (alternative to credentials_path)
         access_token: str | None = None,
-        # Database session for caching support (deprecated, use session_factory)
-        db_session: "Session | None" = None,
-        # Session factory for caching support (preferred)
+        # Session factory for caching support
         session_factory: "type[Session] | None" = None,
     ):
         """
@@ -153,9 +150,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             credentials_path: Optional path to service account credentials JSON file
             prefix: Optional prefix for all paths in bucket (e.g., "data/")
             access_token: OAuth access token (alternative to credentials_path)
-            db_session: Optional SQLAlchemy session for caching (deprecated)
             session_factory: Optional session factory (e.g., metadata_store.session_factory)
-                           for caching support. Preferred over db_session.
+                           for caching support.
         """
         try:
             # Priority: access_token > credentials_path > ADC
@@ -195,9 +191,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             )
 
             # Store session info for caching support (CacheConnectorMixin)
-            # Prefer session_factory (creates fresh sessions) over db_session
             self.session_factory = session_factory
-            self.db_session = db_session  # Legacy support
 
         except Exception as e:
             if isinstance(e, BackendError):
@@ -943,7 +937,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         """
         Read content from GCS with caching support.
 
-        When caching is enabled (db_session provided):
+        When caching is enabled (session_factory provided):
         1. Check cache for non-stale entry with matching version
         2. If cache hit, return cached content
         3. If cache miss, read from GCS and cache result
@@ -975,9 +969,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         # expiration (default 5 min) which is sufficient for most use cases.
         # Users needing real-time consistency can use --no-cache.
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
                     logger.info(f"[GCS] Cache hit (TTL-based) for {cache_path}")
@@ -986,6 +978,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                         backend_name=self.name,
                         path=blob_path,
                     )
+            except Exception as e:
+                logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
 
         # Read from GCS backend
         logger.info(f"[GCS] Cache miss, reading from backend: {cache_path}")
@@ -999,9 +993,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
 
         # Cache the result if caching is enabled
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 # Use generation from download instead of making extra API call
                 zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
@@ -1010,6 +1002,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                     backend_version=generation,
                     zone_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=content,
@@ -1063,9 +1057,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         # Update cache after write if caching is enabled
         # Per design doc: both GCS and cache should be updated when write succeeds
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
                     path=virtual_path,
@@ -1073,6 +1065,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                     backend_version=new_version,
                     zone_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
         return HandlerResponse.ok(
             data=new_version,

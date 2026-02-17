@@ -158,8 +158,8 @@ async def _startup_event_bus(app: FastAPI) -> None:
     app.state.nexus_fs._main_event_loop = asyncio.get_running_loop()
 
     # Wire event_log into EventBus for WAL-first durability (Issue #1397)
-    if app.state.event_log is not None:
-        event_bus_ref._event_log = app.state.event_log
+    if app.state.event_log is not None and hasattr(event_bus_ref, "set_event_log"):
+        event_bus_ref.set_event_log(app.state.event_log)
         logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
 
@@ -199,15 +199,15 @@ async def _startup_writeback(app: FastAPI) -> None:
         gw = NexusFSGateway(app.state.nexus_fs)
 
         # ConflictLogStore is always available for the REST API
-        conflict_log_store = ConflictLogStore(gw)
+        conflict_log_store = ConflictLogStore(gw.session_factory)
         app.state.conflict_log_store = conflict_log_store
 
         wb_event_bus = None
         if hasattr(app.state.nexus_fs, "_event_bus"):
             wb_event_bus = app.state.nexus_fs._event_bus
         if wb_event_bus:
-            backlog_store = SyncBacklogStore(gw)
-            change_log_store = ChangeLogStore(gw)
+            backlog_store = SyncBacklogStore(gw.session_factory)
+            change_log_store = ChangeLogStore(gw.session_factory)
 
             # Map env var to ConflictStrategy (backward compat)
             _policy_map = {

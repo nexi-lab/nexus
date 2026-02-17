@@ -304,7 +304,7 @@ class EventBusProtocol(Protocol):
     """Protocol defining the event bus interface.
 
     This protocol allows different backend implementations:
-    - Redis Pub/Sub (default, implemented as GlobalEventBus)
+    - Redis Pub/Sub (default, implemented as RedisEventBus)
     - etcd watch (future)
     - ZooKeeper watchers (future)
     - P2P gossip protocol (future)
@@ -700,7 +700,7 @@ class RedisEventBus(EventBusBase):
         >>> event = FileEvent(
         ...     type=FileEventType.FILE_WRITE,
         ...     path="/inbox/test.txt",
-        ...     zone_id="default",
+        ...     zone_id="root",
         ... )
         >>> await bus.publish(event)
     """
@@ -728,6 +728,14 @@ class RedisEventBus(EventBusBase):
         self._pubsub: Any = None
         self._started = False
         self._lock = asyncio.Lock()
+
+    def set_event_log(self, event_log: Any) -> None:
+        """Wire an event log for WAL-first durability (Issue #1397).
+
+        Called during server startup after the event log is initialized,
+        since the event bus may be constructed before the event log is available.
+        """
+        self._event_log = event_log
 
     def _channel_name(self, zone_id: str) -> str:
         """Get Redis channel name for a zone."""
@@ -778,7 +786,7 @@ class RedisEventBus(EventBusBase):
             except Exception as e:
                 logger.error(f"Event log append failed (event still published): {e}")
 
-        zone_id = event.zone_id or "default"
+        zone_id = event.zone_id or "root"
         channel = self._channel_name(zone_id)
         message = event.to_json()
 

@@ -142,7 +142,7 @@ class TestDelegationUsesAgentRegistry:
     def _setup_coordinator(self, entity_registry, rebac_manager, agent_registry):
         """Register user + coordinator with file grants."""
         entity_registry.register_entity("user", "alice")
-        agent_registry.register("coord-1", "alice", zone_id="default", name="Coordinator")
+        agent_registry.register("coord-1", "alice", zone_id="root", name="Coordinator")
 
         rebac_manager.rebac_write_batch(
             [
@@ -150,13 +150,13 @@ class TestDelegationUsesAgentRegistry:
                     "subject": ("agent", "coord-1"),
                     "relation": "direct_editor",
                     "object": ("file", "/workspace/src/main.py"),
-                    "zone_id": "default",
+                    "zone_id": "root",
                 },
                 {
                     "subject": ("agent", "coord-1"),
                     "relation": "direct_editor",
                     "object": ("file", "/workspace/src/utils.py"),
-                    "zone_id": "default",
+                    "zone_id": "root",
                 },
             ]
         )
@@ -173,7 +173,7 @@ class TestDelegationUsesAgentRegistry:
             worker_id="worker-del-1",
             worker_name="Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id="root",
             ttl_seconds=3600,
         )
 
@@ -202,7 +202,7 @@ class TestDelegationUsesAgentRegistry:
             worker_id="worker-rev-1",
             worker_name="Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id="root",
         )
 
         delegation_service.revoke_delegation(result.delegation_id)

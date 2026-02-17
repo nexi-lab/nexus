@@ -8,7 +8,6 @@ Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -122,9 +121,6 @@ class MCPMountManager:
     # Mount configuration filename (per-folder)
     MOUNT_CONFIG_FILENAME = "mount.json"
 
-    # Legacy global mounts config (for migration)
-    LEGACY_MOUNTS_CONFIG_PATH = "/skills/system/mcp-tools/.mounts.json"
-
     def __init__(self, filesystem: NexusFilesystem | None = None):
         """Initialize MCP mount manager.
 
@@ -148,19 +144,11 @@ class MCPMountManager:
     def _load_mounts_config(self) -> None:
         """Load mount configurations from per-folder mount.json files.
 
-        New structure: Each mount has its own folder with mount.json
+        Each mount has its own folder with mount.json:
         /skills/system/mcp-tools/{mount_name}/mount.json
-
-        Also supports legacy .mounts.json for migration.
         """
         try:
-            # First, try to load from per-folder mount.json files (new structure)
-            loaded_from_folders = self._load_mounts_from_folders()
-
-            # If no mounts found, try legacy .mounts.json
-            if not loaded_from_folders:
-                self._load_legacy_mounts_config()
-
+            self._load_mounts_from_folders()
         except Exception as e:
             logger.warning(f"Failed to load mount configurations: {e}")
 
@@ -226,46 +214,6 @@ class MCPMountManager:
 
         return loaded_any
 
-    def _load_legacy_mounts_config(self) -> None:
-        """Load from legacy .mounts.json and migrate to per-folder structure."""
-        try:
-            if self._filesystem:
-                if self._filesystem.exists(self.LEGACY_MOUNTS_CONFIG_PATH):
-                    raw_content = self._filesystem.read(self.LEGACY_MOUNTS_CONFIG_PATH)
-                    content_str = (
-                        raw_content.decode("utf-8")
-                        if isinstance(raw_content, bytes)
-                        else str(raw_content)
-                    )
-                    config = json.loads(content_str)
-                    for mount_data in config.get("mounts", []):
-                        mount = MCPMount.from_dict(mount_data)
-                        mount.mounted = False
-                        self._mounts[mount.name] = mount
-
-                    # Migrate to new structure
-                    if self._mounts:
-                        logger.info("Migrating from legacy .mounts.json to per-folder mount.json")
-                        self._save_mounts_config()
-                        # Optionally delete legacy file after migration
-                        # self._filesystem.delete(self.LEGACY_MOUNTS_CONFIG_PATH)
-            else:
-                config_path = Path(self.LEGACY_MOUNTS_CONFIG_PATH.lstrip("/"))
-                if config_path.exists():
-                    config = json.loads(config_path.read_text())
-                    for mount_data in config.get("mounts", []):
-                        mount = MCPMount.from_dict(mount_data)
-                        mount.mounted = False
-                        self._mounts[mount.name] = mount
-
-                    # Migrate to new structure
-                    if self._mounts:
-                        logger.info("Migrating from legacy .mounts.json to per-folder mount.json")
-                        self._save_mounts_config()
-
-        except Exception as e:
-            logger.warning(f"Failed to load legacy mount config: {e}")
-
     def _save_mounts_config(self) -> None:
         """Save mount configurations to per-folder mount.json files.
 
@@ -288,8 +236,12 @@ class MCPMountManager:
             if self._filesystem:
                 # Ensure mount directory exists
                 mount_dir = f"{self.MCP_TOOLS_PATH}{mount.name}/"
-                with contextlib.suppress(Exception):
+                try:
                     self._filesystem.mkdir(mount_dir, parents=True)
+                except FileExistsError:
+                    pass
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", mount_dir, e)
 
                 self._filesystem.write(mount_json_path, content.encode("utf-8"))
             else:
@@ -860,8 +812,12 @@ class MCPMountManager:
         if self._filesystem:
             # Ensure directory exists
             if mount.tools_path:
-                with contextlib.suppress(Exception):
+                try:
                     self._filesystem.mkdir(mount.tools_path, parents=True)
+                except FileExistsError:
+                    pass
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
 
             # Write tool.json
             self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
@@ -892,8 +848,12 @@ class MCPMountManager:
 
         if self._filesystem:
             if mount.tools_path:
-                with contextlib.suppress(Exception):
+                try:
                     self._filesystem.mkdir(mount.tools_path, parents=True)
+                except FileExistsError:
+                    pass
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
             self._filesystem.write(skill_md_path, skill_md.encode("utf-8"))
         else:
             if mount.tools_path:

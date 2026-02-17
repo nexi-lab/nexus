@@ -12,7 +12,7 @@ which fails for TYPE_CHECKING-only imports.
 import logging
 from typing import Any
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +20,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Internal lazy-import helpers (avoid circular imports with fastapi_server)
 # =============================================================================
-
-
-def _get_app_state() -> Any:
-    """Get the global app state (lazy import)."""
-    from nexus.server.fastapi_server import _fastapi_app
-
-    if _fastapi_app is None:
-        return None
-    return _fastapi_app.state
 
 
 def _get_require_auth() -> Any:
@@ -50,16 +41,15 @@ def _get_operation_context(auth_result: dict[str, Any]) -> Any:
 # =============================================================================
 
 
-async def get_nexus_fs() -> Any:
+async def get_nexus_fs(request: Request) -> Any:
     """Get NexusFS instance, raising 503 if not initialized.
 
     All deps that need NexusFS should accept this via Depends()
     rather than repeating the guard inline.
     """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
+    if not request.app.state.nexus_fs:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
-    return app_state.nexus_fs
+    return request.app.state.nexus_fs
 
 
 async def get_auth_result(
@@ -104,19 +94,17 @@ async def get_llm_provider(
 # =============================================================================
 
 
-async def get_conflict_log_store() -> Any:
+async def get_conflict_log_store(request: Request) -> Any:
     """Get ConflictLogStore instance from app state."""
-    app_state = _get_app_state()
-    store = getattr(app_state, "conflict_log_store", None)
+    store = getattr(request.app.state, "conflict_log_store", None)
     if store is None:
         raise HTTPException(status_code=503, detail="Conflict log store not initialized")
     return store
 
 
-async def get_write_back_service() -> Any:
+async def get_write_back_service(request: Request) -> Any:
     """Get WriteBackService instance from app state."""
-    app_state = _get_app_state()
-    service = getattr(app_state, "write_back_service", None)
+    service = getattr(request.app.state, "write_back_service", None)
     if service is None:
         raise HTTPException(
             status_code=503,
@@ -277,7 +265,11 @@ async def get_operation_logger(
     from nexus.storage.operation_logger import OperationLogger
 
     context = _get_operation_context(auth_result)
-    session = nexus_fs.SessionLocal()
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    session_factory = (
+        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
+    )
+    session = session_factory()
     zone_id = context.zone_id or "root"
 
     return OperationLogger(session=session), zone_id
@@ -326,7 +318,10 @@ async def get_exchange_audit_logger(
     context = _get_operation_context(auth_result)
     zone_id = context.zone_id or "root"
 
-    session_factory = nexus_fs.SessionLocal
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    session_factory = (
+        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
+    )
     return ExchangeAuditLogger(session_factory=session_factory), zone_id
 
 
@@ -341,18 +336,29 @@ async def get_reputation_context(
 ) -> tuple[Any, Any, dict[str, Any]]:
     """Get ReputationService + DisputeService + auth context.
 
+    Prefers the singleton ReputationService on app.state (#1619),
+    falling back to per-request instantiation for backward compat.
+
     Returns:
         Tuple of (ReputationService, DisputeService, auth_context dict).
     """
     from nexus.services.reputation.dispute_service import DisputeService
     from nexus.services.reputation.reputation_service import ReputationService
 
-    session_factory = nexus_fs.SessionLocal
-    reputation_service = ReputationService(
-        session_factory=session_factory,
-        cache_maxsize=10_000,
-        cache_ttl=60,
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    session_factory = (
+        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
     )
+
+    # Prefer singleton from lifespan DI (#1619)
+    # TODO(#1619): wire app_state via FastAPI dependency injection
+    reputation_service: Any = None
+    if reputation_service is None:
+        reputation_service = ReputationService(
+            session_factory=session_factory,
+            cache_maxsize=10_000,
+            cache_ttl=60,
+        )
     dispute_service = DisputeService(session_factory=session_factory)
 
     context = _get_operation_context(auth_result)

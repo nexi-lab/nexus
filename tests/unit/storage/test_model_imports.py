@@ -99,6 +99,16 @@ EXPECTED_MODELS = [
     "RefreshTokenHistoryModel",
     # Secrets Audit (Issue #997)
     "SecretsAuditLogModel",
+    # Scheduler (Issue #1469)
+    "ScheduledTaskModel",
+    # Sync
+    "PendingOperationModel",
+    # Identity
+    "AgentKeyModel",
+    # Permissions
+    "AdminBypassAuditModel",
+    # A2A
+    "A2ATaskModel",
     # Dead Letter Queue (Issue #1138)
     "DeadLetterModel",
 ]

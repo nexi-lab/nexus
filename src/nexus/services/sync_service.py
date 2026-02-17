@@ -122,7 +122,7 @@ class SyncService:
         """
         self._gw = gateway
         # Issue #1127: Initialize change log store for delta sync
-        self._change_log = ChangeLogStore(gateway)
+        self._change_log = ChangeLogStore(gateway.session_factory)
         # Issue #1127: Per-mount sync locks to prevent concurrent races
         self._mount_locks: dict[str, threading.Lock] = {}
         self._lock_guard = threading.Lock()
@@ -387,7 +387,7 @@ class SyncService:
         if not ctx.full_sync and hasattr(backend, "get_file_info"):
             cached_entries = self._change_log.get_change_logs_batch(
                 backend_name=backend.name,
-                zone_id=zone_id or "default",
+                zone_id=zone_id or "root",
                 path_prefix=ctx.mount_point or "",
             )
             if cached_entries:
@@ -581,7 +581,7 @@ class SyncService:
                         cached = cached_entries.get(virtual_path)
                     else:
                         cached = self._change_log.get_change_log(
-                            virtual_path, backend.name, zone_id or "default"
+                            virtual_path, backend.name, zone_id or "root"
                         )
                     if cached and self._file_unchanged(file_info, cached):
                         result.files_skipped += 1
@@ -648,7 +648,7 @@ class SyncService:
                         pending_upserts,
                         virtual_path,
                         backend.name,
-                        zone_id or "default",
+                        zone_id or "root",
                         file_info,
                     )
 
@@ -662,7 +662,7 @@ class SyncService:
                     pending_upserts,
                     virtual_path,
                     backend.name,
-                    zone_id or "default",
+                    zone_id or "root",
                     file_info,
                 )
 
@@ -898,7 +898,7 @@ class SyncService:
             # Issue #1127: Batch-delete stale change log entries (single DB session)
             if paths_to_delete:
                 self._change_log.delete_change_logs_batch(
-                    paths_to_delete, backend.name, zone_id or "default"
+                    paths_to_delete, backend.name, zone_id or "root"
                 )
 
         except Exception as e:

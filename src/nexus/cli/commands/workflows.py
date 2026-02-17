@@ -13,51 +13,28 @@ from nexus.cli.utils import console, handle_error
 
 
 def _get_engine_with_storage():  # type: ignore[no-untyped-def]
-    """Get or create workflow engine with persistent storage.
+    """Get workflow engine from NexusFS (factory-created, no private access).
 
-    Constructs engine directly via DI (no global singletons).
+    Uses the public ``workflow_engine`` attribute already wired by the factory
+    via ``_create_workflow_engine()``.  No private attribute access, no concrete
+    storage-model imports, no global singleton creation.
     """
     import nexus
-    from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
-    from nexus.workflows.engine import WorkflowEngine
-    from nexus.workflows.protocol import WorkflowServices
-    from nexus.workflows.storage import WorkflowStore
 
     # Get data directory from env or default
     data_dir = os.getenv("NEXUS_DATA_DIR", "./nexus-data")
 
-    # Connect to Nexus to get the record store
+    # Connect to Nexus — factory creates workflow_engine via _create_workflow_engine()
     nx = nexus.connect(config={"data_dir": str(data_dir)})
 
-    # Get record_store for async session factory
-    record_store = getattr(nx, "_record_store", None)
-    if record_store is None:
-        raise RuntimeError("Workflow storage requires a NexusFS instance with a record store")
+    engine = getattr(nx, "workflow_engine", None)
+    if engine is None:
+        raise RuntimeError(
+            "Workflow engine not available. Ensure workflows are enabled "
+            "and a record store is configured."
+        )
 
-    # Get zone_id from Nexus filesystem (or use default)
-    zone_id = getattr(nx, "zone_id", None) or "default"
-
-    # Try to get Rust glob_match for production performance
-    glob_match_fn = None
-    try:
-        from nexus.core import glob_fast
-
-        glob_match_fn = glob_fast.glob_match
-    except ImportError:
-        pass
-
-    # Create workflow store with async session factory and injected models
-    workflow_store = WorkflowStore(
-        session_factory=record_store.async_session_factory,
-        workflow_model=WorkflowModel,
-        execution_model=WorkflowExecutionModel,
-        zone_id=zone_id,
-    )
-
-    services = WorkflowServices(glob_match=glob_match_fn)
-    engine = WorkflowEngine(workflow_store=workflow_store, services=services)
-
-    # Load workflows from storage (async startup)
+    # Load workflows from persistent storage (async startup)
     asyncio.run(engine.startup())
 
     return engine

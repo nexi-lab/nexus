@@ -111,7 +111,7 @@ class TestBackfillAdminE2E:
                 result.is_admin = False  # NOT admin
                 result.subject_type = "user"
                 result.subject_id = "regular-user"
-                result.zone_id = "default"
+                result.zone_id = "root"
                 result.inherit_permissions = True
                 result.metadata = {}
                 return result

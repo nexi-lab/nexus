@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -31,6 +31,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
     _startup_agent_registry(app)
     _startup_key_service(app)
+    _startup_reputation_service(app)
     _startup_delegation_service(app)
     _startup_sandbox_auth(app)
 
@@ -173,13 +174,15 @@ def _startup_key_service(app: FastAPI) -> None:
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-            from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
             from nexus.server.auth.oauth_crypto import OAuthCrypto
+            from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists
             _nx_engine = getattr(app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
-                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)  # type: ignore[attr-defined]
+                from sqlalchemy import Table
+
+                cast(Table, AgentKeyModel.__table__).create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
@@ -190,7 +193,7 @@ def _startup_key_service(app: FastAPI) -> None:
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             app.state.key_service = KeyService(
-                session_factory=app.state.nexus_fs.SessionLocal,
+                record_store=app.state.nexus_fs._record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
@@ -202,6 +205,26 @@ def _startup_key_service(app: FastAPI) -> None:
             app.state.key_service = None
     else:
         app.state.key_service = None
+
+
+def _startup_reputation_service(app: FastAPI) -> None:
+    """Initialize ReputationService singleton for trust routing (#1619)."""
+    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
+        app.state.reputation_service = None
+        return
+
+    try:
+        from nexus.services.reputation.reputation_service import ReputationService
+
+        app.state.reputation_service = ReputationService(
+            session_factory=app.state.nexus_fs.SessionLocal,
+            cache_maxsize=10_000,
+            cache_ttl=60,
+        )
+        logger.info("[REPUTATION] ReputationService initialized (singleton)")
+    except Exception as e:
+        logger.warning("[REPUTATION] Failed to initialize: %s", e, exc_info=True)
+        app.state.reputation_service = None
 
 
 def _startup_delegation_service(app: FastAPI) -> None:
@@ -221,6 +244,7 @@ def _startup_delegation_service(app: FastAPI) -> None:
         namespace_manager = getattr(app.state.nexus_fs, "_namespace_manager", None)
         entity_registry = getattr(app.state.nexus_fs, "_entity_registry", None)
         agent_registry = getattr(app.state, "agent_registry", None)
+        reputation_service = getattr(app.state, "reputation_service", None)
 
         app.state.delegation_service = DelegationService(
             session_factory=app.state.nexus_fs.SessionLocal,
@@ -228,6 +252,7 @@ def _startup_delegation_service(app: FastAPI) -> None:
             namespace_manager=namespace_manager,
             entity_registry=entity_registry,
             agent_registry=agent_registry,
+            reputation_service=reputation_service,
         )
         logger.info("[DELEGATION] DelegationService initialized and wired")
     except Exception as e:
@@ -463,3 +488,6 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
             logger.info("Workflow engine started — loaded workflows from storage")
         except Exception as e:
             logger.warning(f"Workflow engine startup failed (non-fatal): {e}")
+
+    # Expose on app.state so routers can access without reaching into NexusFS
+    app.state.workflow_engine = engine

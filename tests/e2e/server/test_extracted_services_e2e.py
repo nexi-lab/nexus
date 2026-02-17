@@ -26,7 +26,7 @@ import base64
 
 HEADERS = {
     "X-Nexus-Subject": "user:admin",
-    "X-Nexus-Zone-Id": "default",
+    "X-Nexus-Zone-Id": "root",
 }
 
 
@@ -191,7 +191,7 @@ class TestMCPServiceE2E:
 
 ALICE_HEADERS = {
     "X-Nexus-Subject": "user:alice",
-    "X-Nexus-Zone-Id": "default",
+    "X-Nexus-Zone-Id": "root",
 }
 
 

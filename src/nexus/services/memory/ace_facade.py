@@ -82,7 +82,7 @@ class AceFacade:
         if self._feedback is None:
             from nexus.services.ace.feedback import FeedbackManager
 
-            self._feedback = FeedbackManager(self._session)
+            self._feedback = FeedbackManager(self._session, zone_id=self._zone_id)
         return self._feedback
 
     @property

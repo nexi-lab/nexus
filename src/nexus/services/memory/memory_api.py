@@ -1668,8 +1668,10 @@ class Memory:
 
         target_agent_id = agent_id or self.agent_id
 
-        # Query trajectories
+        # Query trajectories (zone-scoped for federation isolation)
         query = self.session.query(TrajectoryModel).filter_by(agent_id=target_agent_id)
+        if self.zone_id is not None:
+            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
 
         if since:
             since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))

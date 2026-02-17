@@ -175,11 +175,12 @@ class TrajectoryManager:
         # Try to get from memory first
         if trajectory_id not in self._active_trajectories:
             # Load from database if not in memory
-            db_traj = (
-                self.session.query(TrajectoryModel)
-                .filter_by(trajectory_id=trajectory_id, status="in_progress")
-                .first()
+            query = self.session.query(TrajectoryModel).filter_by(
+                trajectory_id=trajectory_id, status="in_progress"
             )
+            if self.zone_id is not None:
+                query = query.filter(TrajectoryModel.zone_id == self.zone_id)
+            db_traj = query.first()
 
             if not db_traj:
                 raise ValueError(f"Trajectory {trajectory_id} not found or already completed")
@@ -223,7 +224,10 @@ class TrajectoryManager:
         self._active_trajectories[trajectory_id]["trace_hash"] = new_trace_hash
 
         # Update database
-        db_traj = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
+        query = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
+        if self.zone_id is not None:
+            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
+        db_traj = query.first()
         if db_traj:
             db_traj.trace_hash = new_trace_hash
             self.session.commit()
@@ -259,11 +263,12 @@ class TrajectoryManager:
         # Try to get from memory first
         if trajectory_id not in self._active_trajectories:
             # Load from database if not in memory
-            db_traj = (
-                self.session.query(TrajectoryModel)
-                .filter_by(trajectory_id=trajectory_id, status="in_progress")
-                .first()
+            query = self.session.query(TrajectoryModel).filter_by(
+                trajectory_id=trajectory_id, status="in_progress"
             )
+            if self.zone_id is not None:
+                query = query.filter(TrajectoryModel.zone_id == self.zone_id)
+            db_traj = query.first()
 
             if not db_traj:
                 raise ValueError(f"Trajectory {trajectory_id} not found or already completed")
@@ -308,9 +313,10 @@ class TrajectoryManager:
         cost_usd = metrics.get("cost_usd")
 
         # Update existing trajectory record (was created in start_trajectory)
-        db_trajectory = (
-            self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
-        )
+        query = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
+        if self.zone_id is not None:
+            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
+        db_trajectory = query.first()
 
         if db_trajectory:
             # Update existing record
@@ -361,9 +367,10 @@ class TrajectoryManager:
         Raises:
             PermissionError: If user lacks READ permission
         """
-        trajectory = (
-            self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
-        )
+        query = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
+        if self.zone_id is not None:
+            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
+        trajectory = query.first()
         if not trajectory:
             return None
 
@@ -415,6 +422,8 @@ class TrajectoryManager:
             List of trajectory summaries (without full trace), filtered by permissions
         """
         query = self.session.query(TrajectoryModel)
+        if self.zone_id is not None:
+            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
 
         if agent_id:
             query = query.filter_by(agent_id=agent_id)

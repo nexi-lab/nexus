@@ -152,6 +152,19 @@ class RaftMetadataStore(FileMetadataProtocol):
         """True if this store has an embedded engine (not a gRPC client)."""
         return self._engine is not None
 
+    def is_leader(self) -> bool:
+        """Check if this node is the Raft leader for its zone.
+
+        Returns:
+            True if the embedded engine is a ZoneHandle and is the leader,
+            False if not leader, no engine, or engine doesn't support leadership.
+        """
+        if self._engine is None:
+            return False
+        if not hasattr(self._engine, "is_leader"):
+            return False
+        return self._engine.is_leader()
+
     # =========================================================================
     # Shared Engine Helpers — DRY extraction
     # Used by both sync and async public methods for engine mode operations.

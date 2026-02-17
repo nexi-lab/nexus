@@ -307,6 +307,33 @@ class BM25SIndex:
     - Thread-safe operations
     """
 
+    # Class-level instance cache keyed by resolved index_dir.
+    # Each zone can have its own index_dir, so this supports zone isolation.
+    _instances: dict[str, BM25SIndex] = {}
+    _instances_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(
+        cls,
+        index_dir: str | Path = ".nexus-data/bm25s",
+    ) -> BM25SIndex:
+        """Get or create a BM25SIndex for the given index directory.
+
+        Instances are cached per resolved index_dir so each zone can
+        maintain an independent index without sharing process-global state.
+
+        Args:
+            index_dir: Directory for index storage
+
+        Returns:
+            BM25SIndex instance for the given directory
+        """
+        key = str(Path(index_dir).resolve())
+        with cls._instances_lock:
+            if key not in cls._instances:
+                cls._instances[key] = cls(index_dir=index_dir)
+            return cls._instances[key]
+
     def __init__(
         self,
         index_dir: str | Path = ".nexus-data/bm25s",
@@ -813,28 +840,6 @@ class BM25SIndex:
             except Exception as e:
                 logger.error(f"Failed to clear index: {e}")
                 return False
-
-
-# Global singleton for shared index access
-_global_index: BM25SIndex | None = None
-_global_lock = threading.Lock()
-
-
-def get_bm25s_index(index_dir: str | Path = ".nexus-data/bm25s") -> BM25SIndex:
-    """Get or create global BM25S index.
-
-    Args:
-        index_dir: Directory for index storage
-
-    Returns:
-        BM25SIndex instance
-    """
-    global _global_index
-
-    with _global_lock:
-        if _global_index is None:
-            _global_index = BM25SIndex(index_dir=index_dir)
-        return _global_index
 
 
 def is_bm25s_available() -> bool:

@@ -47,13 +47,13 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.config import (
         CacheConfig,
         DistributedConfig,
         KernelServices,
         PermissionConfig,
     )
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
     from nexus.storage.record_store import RecordStoreABC
@@ -972,7 +972,7 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
 
 def create_nexus_services(
     record_store: RecordStoreABC,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     backend: Backend,
     router: PathRouter,
     *,
@@ -1000,7 +1000,7 @@ def create_nexus_services(
 
     Args:
         record_store: RecordStoreABC instance (provides engine + session_factory).
-        metadata_store: FileMetadataProtocol instance (for PermissionEnforcer).
+        metadata_store: MetastoreABC instance (for PermissionEnforcer).
         backend: Backend instance (for WorkspaceManager).
         router: PathRouter instance (for PermissionEnforcer object type resolution).
         permissions: Permission config (defaults from PermissionConfig()).
@@ -1100,7 +1100,7 @@ def create_nexus_services(
 
 def _create_distributed_infra(
     dist: DistributedConfig,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     session_factory: Any,
     coordination_url: str | None,
 ) -> tuple[Any, Any]:
@@ -1269,7 +1269,7 @@ def _post_init(nx: NexusFS) -> None:
 
 def create_nexus_fs(
     backend: Backend,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     record_store: RecordStoreABC | None = None,
     *,
     cache_store: Any = None,
@@ -1321,7 +1321,7 @@ def create_nexus_fs(
 
     Args:
         backend: Backend instance for file storage.
-        metadata_store: FileMetadataProtocol instance.
+        metadata_store: MetastoreABC instance.
         record_store: Optional RecordStoreABC. When provided, all services
             (ReBAC, Audit, Permissions, etc.) are created and injected.
         cache: CacheConfig object (or build from legacy flat params).

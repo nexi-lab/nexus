@@ -21,8 +21,9 @@ from typing import Any
 
 import pytest
 
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
 from nexus.core.config import ParseConfig, PermissionConfig
+from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ from nexus.storage.models import Base
 # ---------------------------------------------------------------------------
 
 
-class InMemoryMetadataStore(FileMetadataProtocol):
+class InMemoryMetadataStore(MetastoreABC):
     def __init__(self) -> None:
         self._store: dict[str, FileMetadata] = {}
 

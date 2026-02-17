@@ -64,7 +64,6 @@ if TYPE_CHECKING:
     from nexus.backends.gcs import GCSBackend
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
-    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.exceptions import (
         BackendError,
         InvalidPathError,
@@ -74,6 +73,7 @@ if TYPE_CHECKING:
         NexusPermissionError,
     )
     from nexus.core.filesystem import NexusFilesystem
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
@@ -289,7 +289,7 @@ def connect(
         metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
 
     # Create metadata store based on mode
-    metadata_store: FileMetadataProtocol
+    metadata_store: MetastoreABC
     if cfg.mode == "federation":
         try:
             from nexus.constants import DEFAULT_GRPC_BIND_ADDR

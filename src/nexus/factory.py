@@ -1162,6 +1162,9 @@ def _create_provider_registry(parsing: Any) -> Any:
     from nexus.parsers.providers.base import ProviderConfig
 
     registry = ProviderRegistry()
+    if parsing is None:
+        registry.auto_discover()
+        return registry
     parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
     if parse_providers:
         configs = [

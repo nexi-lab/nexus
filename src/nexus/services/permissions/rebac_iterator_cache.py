@@ -10,7 +10,7 @@ New code should import from:
 Related: Issue #1459 (decomposition)
 """
 
-from nexus.services.permissions.cache.iterator import (  # noqa: F401
+from nexus.rebac.cache.iterator import (  # noqa: F401
     CachedResult,
     CursorExpiredError,
     IteratorCache,

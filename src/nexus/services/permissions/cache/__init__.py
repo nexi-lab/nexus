@@ -11,13 +11,13 @@ Contains multi-layer caching infrastructure:
 Related: Issue #1459 (decomposition)
 """
 
-from nexus.services.permissions.cache.boundary import PermissionBoundaryCache
-from nexus.services.permissions.cache.coordinator import CacheCoordinator
-from nexus.services.permissions.cache.iterator import (
+from nexus.rebac.cache.iterator import (
     CachedResult,
     CursorExpiredError,
     IteratorCache,
 )
+from nexus.services.permissions.cache.boundary import PermissionBoundaryCache
+from nexus.services.permissions.cache.coordinator import CacheCoordinator
 from nexus.services.permissions.cache.leopard import (
     ClosureEntry,
     LeopardCache,

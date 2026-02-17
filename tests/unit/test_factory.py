@@ -198,6 +198,7 @@ class TestBootSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
+            "context_branch_service",
         }
         assert expected_keys == set(result.keys())
 

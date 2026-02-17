@@ -9873,7 +9873,7 @@ class NexusFS(  # type: ignore[misc]
         """Remove a backend mount - delegates to MountService."""
         return await self.mount_service.remove_mount(
             mount_point=mount_point,
-            _context=_context,
+            context=_context,
         )
 
     async def alist_connectors(
@@ -9888,7 +9888,7 @@ class NexusFS(  # type: ignore[misc]
         _context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List all backend mounts - delegates to MountService."""
-        return await self.mount_service.list_mounts(_context=_context)
+        return await self.mount_service.list_mounts(context=_context)
 
     async def aget_mount(
         self,

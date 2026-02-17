@@ -12,14 +12,13 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from nexus.services.protocols.transactional_snapshot import (
-    ConflictInfo,
     InvalidTransactionStateError,
     OverlappingTransactionError,
     SnapshotId,
@@ -29,7 +28,6 @@ from nexus.services.protocols.transactional_snapshot import (
 )
 from nexus.storage.models._base import Base
 from nexus.storage.models.transactional_snapshot import TransactionSnapshotModel
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

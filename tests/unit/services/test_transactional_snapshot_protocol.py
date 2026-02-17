@@ -14,12 +14,12 @@ from nexus.services.protocols.transactional_snapshot import (
     OverlappingTransactionError,
     PathSnapshot,
     SnapshotId,
+    TransactionalSnapshotProtocol,
     TransactionConfig,
     TransactionInfo,
     TransactionNotFoundError,
     TransactionResult,
     TransactionState,
-    TransactionalSnapshotProtocol,
 )
 
 

@@ -215,6 +215,31 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # lock/extend_lock/unlock methods match
     ),
+    # ── Governance ISP split (Issue #550) ─────────────────────────────
+    (
+        "AnomalyProtocol",
+        "nexus.services.protocols.governance",
+        "nexus.services.governance.anomaly_service.AnomalyService",
+        True,  # 3/3 method match: analyze_transaction, get_alerts, resolve_alert
+    ),
+    (
+        "CollusionProtocol",
+        "nexus.services.protocols.governance",
+        "nexus.services.governance.collusion_service.CollusionService",
+        True,  # 4/4 method match: detect_rings, detect_sybils, compute_fraud_scores, get_fraud_score
+    ),
+    (
+        "GovernanceConstraintProtocol",
+        "nexus.services.protocols.governance",
+        "nexus.services.governance.governance_graph_service.GovernanceGraphService",
+        True,  # 4/4 method match: add/remove/check/list_constraints
+    ),
+    (
+        "GovernanceResponseProtocol",
+        "nexus.services.protocols.governance",
+        "nexus.services.governance.response_service.ResponseService",
+        True,  # 5/5 method match: auto_throttle, suspend/appeal/decide/list_suspensions
+    ),
 ]
 
 

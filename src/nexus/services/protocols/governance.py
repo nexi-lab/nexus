@@ -1,14 +1,14 @@
-"""Governance service protocol (ops-scenario-matrix S25: Governance).
+"""Governance service protocols (ops-scenario-matrix S25: Governance).
 
-Defines the unified contract for the governance domain — anomaly detection,
-collusion/fraud analysis, constraint graph management, throttling,
-suspension/appeal workflow.
+Defines four focused contracts for the governance domain per Interface
+Segregation Principle — anomaly detection, collusion/fraud analysis,
+constraint graph management, and response actions (throttle/suspend/appeal).
 
-Combines public APIs from:
-    - ``services/governance/anomaly_service.AnomalyService``
-    - ``services/governance/collusion_service.CollusionService``
-    - ``services/governance/governance_graph_service.GovernanceGraphService``
-    - ``services/governance/response_service.ResponseService``
+Each protocol maps 1:1 to a concrete service class:
+    - ``AnomalyProtocol``             → ``governance/anomaly_service.AnomalyService``
+    - ``CollusionProtocol``           → ``governance/collusion_service.CollusionService``
+    - ``GovernanceConstraintProtocol`` → ``governance/governance_graph_service.GovernanceGraphService``
+    - ``GovernanceResponseProtocol``  → ``governance/response_service.ResponseService``
 
 Storage Affinity: **RecordStore** (alerts, edges, suspensions, throttles,
                   fraud scores) + **CacheStore** (constraint TTL cache).
@@ -24,16 +24,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+# ── Anomaly Detection (AnomalyService) ────────────────────────────────
+
 
 @runtime_checkable
-class GovernanceProtocol(Protocol):
-    """Service contract for governance: anomaly, collusion, constraints, response.
+class AnomalyProtocol(Protocol):
+    """Service contract for anomaly detection lifecycle.
 
-    Unifies the four governance sub-services into a single protocol so that
-    consumers need only one dependency.
+    Mirrors ``services/governance/anomaly_service.AnomalyService``.
     """
-
-    # ── Anomaly Detection (AnomalyService) ────────────────────────────
 
     async def analyze_transaction(
         self,
@@ -75,7 +74,16 @@ class GovernanceProtocol(Protocol):
         """
         ...
 
-    # ── Collusion / Fraud (CollusionService) ──────────────────────────
+
+# ── Collusion / Fraud (CollusionService) ──────────────────────────────
+
+
+@runtime_checkable
+class CollusionProtocol(Protocol):
+    """Service contract for collusion/fraud detection.
+
+    Mirrors ``services/governance/collusion_service.CollusionService``.
+    """
 
     async def detect_rings(self, zone_id: str) -> list[Any]:
         """Detect transaction rings (cycles) in the interaction graph.
@@ -113,7 +121,16 @@ class GovernanceProtocol(Protocol):
         """
         ...
 
-    # ── Constraint Graph (GovernanceGraphService) ─────────────────────
+
+# ── Constraint Graph (GovernanceGraphService) ─────────────────────────
+
+
+@runtime_checkable
+class GovernanceConstraintProtocol(Protocol):
+    """Service contract for governance constraint graph.
+
+    Mirrors ``services/governance/governance_graph_service.GovernanceGraphService``.
+    """
 
     async def add_constraint(
         self,
@@ -163,7 +180,16 @@ class GovernanceProtocol(Protocol):
         """
         ...
 
-    # ── Response Actions (ResponseService) ────────────────────────────
+
+# ── Response Actions (ResponseService) ────────────────────────────────
+
+
+@runtime_checkable
+class GovernanceResponseProtocol(Protocol):
+    """Service contract for governance response actions.
+
+    Mirrors ``services/governance/response_service.ResponseService``.
+    """
 
     async def auto_throttle(
         self,

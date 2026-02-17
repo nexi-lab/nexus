@@ -559,21 +559,15 @@ class TestVFSEnvelopeFormat:
 
 
 class TestDatabaseTaskStoreDeprecation:
-    def test_instantiation_with_record_store(self) -> None:
-        """DatabaseTaskStore can be instantiated with a RecordStoreABC mock.
-
-        The class is documented as deprecated (docstring) but does not
-        emit a runtime ``DeprecationWarning``.  This test verifies that
-        instantiation succeeds when given a proper RecordStoreABC with
-        a ``session_factory`` attribute.
-        """
+    def test_emits_deprecation_warning(self) -> None:
+        """DatabaseTaskStore emits DeprecationWarning on instantiation."""
         from unittest.mock import MagicMock
-
-        # Create a minimal fake RecordStoreABC with session_factory attribute
-        fake_record_store = MagicMock()
-        fake_record_store.session_factory = MagicMock()
 
         from nexus.a2a.stores.database import DatabaseTaskStore
 
-        store = DatabaseTaskStore(fake_record_store)
+        fake_record_store = MagicMock()
+        fake_record_store.session_factory = MagicMock()
+
+        with pytest.warns(DeprecationWarning):
+            store = DatabaseTaskStore(fake_record_store)
         assert store._session_factory is fake_record_store.session_factory

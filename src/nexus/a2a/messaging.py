@@ -1,9 +1,10 @@
 """Shared messaging primitives for A2A and IPC.
 
 Re-exports the canonical Part types from ``a2a.models`` and defines
-common metadata fields used across message formats.  This module
-provides a single import point for code that needs Part types without
-depending directly on the A2A module.
+common metadata fields used across message formats.
+
+Moved from ``core/`` to ``a2a/`` because this module depends on
+``nexus.a2a.models`` — the kernel must not import from services.
 
 See: Decision 2 / #1587
 """

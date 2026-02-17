@@ -286,18 +286,28 @@ class CacheFactory:
         self,
         inner: Backend,
         config: CacheWrapperConfig | None = None,
+        *,
+        enable_logging: bool = False,
     ) -> CachingBackendWrapper:
         """Create a CachingBackendWrapper for the given backend.
 
         Wires the wrapper with this factory's CacheStoreABC for L2 distributed
         caching. If no CacheStoreABC is available, L2 is disabled automatically.
 
+        When ``enable_logging=True``, wraps the inner backend with
+        ``LoggingBackendWrapper`` first, producing a 2-deep chain::
+
+            CachingBackendWrapper(LoggingBackendWrapper(inner))
+            # describe() → "cache → logging → <inner.name>"
+
         Args:
             inner: The backend to wrap with caching.
             config: Optional wrapper configuration. If None, uses defaults.
+            enable_logging: If True, insert a LoggingBackendWrapper between
+                the caching layer and the inner backend.
 
         Returns:
-            CachingBackendWrapper wrapping the inner backend.
+            CachingBackendWrapper wrapping the (optionally logged) inner backend.
         """
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
@@ -306,11 +316,18 @@ class CacheFactory:
 
         effective_config = config or CacheWrapperConfig()
 
+        # Optional logging layer (Recursive Wrapping — PART 16, Issue #1449)
+        wrapped_inner: Backend = inner
+        if enable_logging:
+            from nexus.backends.logging_wrapper import LoggingBackendWrapper
+
+            wrapped_inner = LoggingBackendWrapper(inner=inner)
+
         # Use the factory's CacheStoreABC for L2 if available
         cache_store = self._cache_store if self._has_cache_store else None
 
         return CachingBackendWrapper(
-            inner=inner,
+            inner=wrapped_inner,
             config=effective_config,
             cache_store=cache_store,
         )

@@ -56,6 +56,7 @@ from nexus.services.protocols.oauth import OAuthProtocol
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
+from nexus.services.protocols.plugin import PluginProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.reputation import ReputationProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
@@ -106,6 +107,7 @@ __all__ = [
     "ParseProtocol",
     "PaymentProtocol",
     "PermissionProtocol",
+    "PluginProtocol",
     "ProgressCallback",
     "ReBACBrickProtocol",
     "ReputationProtocol",

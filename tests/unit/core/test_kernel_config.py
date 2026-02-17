@@ -206,7 +206,7 @@ class TestKernelServices:
         assert ks.workflow_engine is None
         assert ks.version_service is None
         assert ks.write_observer is None
-        # Server-layer extras are now explicit fields (not opaque dict)
+        # Server-layer extras are now explicit fields (not an opaque dict)
         assert ks.observability_subsystem is None
         assert ks.chunked_upload_service is None
 

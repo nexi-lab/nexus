@@ -314,7 +314,6 @@ def get_protocol_method_name(protocol: TransactionProtocol) -> str:
 
 __all__ = [
     "CreditsPaymentProtocol",
-    "PaymentProtocol",
     "ProtocolDetectionError",
     "ProtocolDetector",
     "ProtocolError",

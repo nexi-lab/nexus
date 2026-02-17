@@ -1292,6 +1292,8 @@ def create_app(
     app.state.key_service = None
     app.state.rebac_circuit_breaker = None
     app.state.chunked_upload_service = None
+    app.state.delegation_service = None
+    app.state.reputation_service = None
 
     # Initialize subscription manager if we have a metadata store
     try:
@@ -1805,8 +1807,8 @@ def _register_routes(app: FastAPI) -> None:
     )
 
     v2_registry = build_v2_registry(
-        async_nexus_fs_getter=lambda: _fastapi_app.state.async_nexus_fs,
-        chunked_upload_service_getter=lambda: _fastapi_app.state.chunked_upload_service,
+        async_nexus_fs_getter=lambda: app.state.async_nexus_fs,
+        chunked_upload_service_getter=lambda: app.state.chunked_upload_service,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
@@ -1835,8 +1837,7 @@ def _register_routes(app: FastAPI) -> None:
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
-            getattr(_fastapi_app.state, "api_key", None)
-            or getattr(_fastapi_app.state, "auth_provider", None)
+            getattr(app.state, "api_key", None) or getattr(app.state, "auth_provider", None)
         )
 
         # Auth adapter: server-side concern, NOT imported by the brick.
@@ -1859,17 +1860,52 @@ def _register_routes(app: FastAPI) -> None:
                 return None
 
         a2a_router = create_a2a_router(
-            nexus_fs=_fastapi_app.state.nexus_fs,
-            config=None,  # Will use defaults; config can be passed when available
+            nexus_fs=app.state.nexus_fs,
+            config=None,
             base_url=a2a_base_url,
             auth_required=a2a_auth_required,
             auth_fn=_a2a_auth_adapter,
-            data_dir=getattr(_fastapi_app.state, "data_dir", None),
+            data_dir=getattr(app.state, "data_dir", None),
         )
         app.include_router(a2a_router)
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
     except ImportError as e:
         logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+
+    # Secrets audit log endpoints (Issue #997)
+    try:
+        from nexus.server.api.v2.routers.secrets_audit import (
+            get_secrets_audit_logger as _secrets_audit_dep,
+        )
+        from nexus.server.api.v2.routers.secrets_audit import (
+            router as secrets_audit_router,
+        )
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        _secrets_audit_logger_instance: SecretsAuditLogger | None = None
+
+        def _get_secrets_audit_logger_override(
+            auth_result: dict[str, Any] = Depends(require_auth),
+        ) -> tuple:
+            nonlocal _secrets_audit_logger_instance
+            if not auth_result.get("is_admin", False):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Secrets audit log access requires admin privileges",
+                )
+            if _secrets_audit_logger_instance is None:
+                session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
+                if session_factory is None:
+                    raise HTTPException(status_code=500, detail="Secrets audit not configured")
+                _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
+            zone_id = auth_result.get("zone_id", "root")
+            return _secrets_audit_logger_instance, zone_id
+
+        app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override
+        app.include_router(secrets_audit_router)
+        logger.info("Secrets audit routes registered")
+    except ImportError as e:
+        logger.warning(f"Failed to import secrets audit router: {e}")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])

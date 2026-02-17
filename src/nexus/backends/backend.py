@@ -278,6 +278,18 @@ class Backend(ABC):
         """
         return False
 
+    # === Chain Introspection (Issue #1449) ===
+
+    def describe(self) -> str:
+        """Return a human-readable description of this backend for debugging.
+
+        Leaf backends return their ``name``.  Wrappers override to build
+        the full composition chain, e.g. ``"cache → logging → s3"``.
+
+        See NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping Rule #3.
+        """
+        return self.name
+
     # === Connection Management ===
 
     def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":

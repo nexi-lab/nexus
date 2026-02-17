@@ -10,15 +10,13 @@ Uses SyncStoreBase for shared session management and dialect detection.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import Any
 
 from nexus.core.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
-
-if TYPE_CHECKING:
-    from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +43,13 @@ class ChangeLogStore(SyncStoreBase):
     Inherits from SyncStoreBase for session management and dialect detection.
     """
 
-    def __init__(self, gateway: NexusFSGateway) -> None:
+    def __init__(self, session_factory: Callable[..., Any] | None) -> None:
         """Initialize change log store.
 
         Args:
-            gateway: NexusFSGateway for database session access
+            session_factory: SQLAlchemy session factory callable.
         """
-        super().__init__(gateway)
+        super().__init__(session_factory)
 
     def get_change_log(
         self, path: str, backend_name: str, zone_id: str = "root"

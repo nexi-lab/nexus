@@ -8,7 +8,6 @@ This module contains server-related CLI commands for:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import sys
 import time
@@ -24,7 +23,8 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.constants import DEFAULT_GRPC_BIND_ADDR
+
+logger = logging.getLogger(__name__)
 
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:
@@ -150,7 +150,7 @@ def _is_federation_syntax(source: str, target: str | None) -> bool:
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default=DEFAULT_GRPC_BIND_ADDR,
+    default="0.0.0.0:2126",
     show_default=True,
     help="[Federation] gRPC bind address",
 )
@@ -966,10 +966,12 @@ def serve(
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
             from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -990,8 +992,13 @@ def serve(
                     "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
                 )
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
-            session_factory = _record_store.session_factory
+            engine = create_engine(
+                db_url,
+                pool_pre_ping=True,
+                pool_recycle=1800,
+                pool_size=5,
+            )
+            session_factory = sessionmaker(bind=engine)
 
             # Create composite provider that routes tokens to appropriate handler
             auth_provider = DiscriminatingAuthProvider(
@@ -1010,8 +1017,10 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
             from nexus.auth.providers.database_local import DatabaseLocalAuth
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1030,8 +1039,13 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
-            session_factory = _record_store.session_factory
+            engine = create_engine(
+                db_url,
+                pool_pre_ping=True,  # Test connections before use (fixes stale connection errors)
+                pool_recycle=1800,  # Recycle connections every 30 min
+                pool_size=5,  # Auth doesn't need many connections
+            )
+            session_factory = sessionmaker(bind=engine)
             # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
             auth_provider = DatabaseLocalAuth(
                 session_factory=session_factory,
@@ -1044,7 +1058,7 @@ def serve(
             # Single OIDC provider authentication
             import os
 
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             oidc_issuer = os.getenv("NEXUS_OIDC_ISSUER")
             oidc_audience = os.getenv("NEXUS_OIDC_AUDIENCE")
@@ -1065,7 +1079,7 @@ def serve(
             import json
             import os
 
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             oidc_providers_json = os.getenv("NEXUS_OIDC_PROVIDERS")
             if not oidc_providers_json:
@@ -1088,7 +1102,7 @@ def serve(
 
         elif auth_type == "static":
             # Static API key authentication (deprecated, use database instead)
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             if not api_key:
                 console.print("[red]Error:[/red] Static authentication requires --api-key")
@@ -1103,7 +1117,7 @@ def serve(
 
         elif api_key:
             # Backward compatibility: --api-key without --auth-type defaults to static
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.factory import create_auth_provider  # stays in server
 
             auth_provider = create_auth_provider("static", api_key=api_key)
             console.print("[yellow]⚠️  Using static API key authentication (deprecated)[/yellow]")
@@ -1131,13 +1145,9 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import delete
-            from sqlalchemy import table as sa_table
+            from sqlalchemy import create_engine, text
 
-            from nexus.storage.record_store import SQLAlchemyRecordStore
-
-            _reset_store = SQLAlchemyRecordStore(db_url=db_url, create_tables=False)
-            engine = _reset_store.engine
+            engine = create_engine(db_url)
 
             # List of tables to clear (in dependency order)
             tables_to_clear = [
@@ -1178,7 +1188,7 @@ def serve(
                     with engine.connect() as conn:
                         trans = conn.begin()
                         try:
-                            cursor_result = conn.execute(delete(sa_table(table_name)))
+                            cursor_result = conn.execute(text(f"DELETE FROM {table_name}"))
                             count = cursor_result.rowcount
                             trans.commit()
                             deleted_counts[table_name] = count
@@ -1234,25 +1244,29 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
             from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.rebac.entity_registry import EntityRegistry
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            _init_store = SQLAlchemyRecordStore(db_url=db_url)
-            Session = _init_store.session_factory
+            engine = create_engine(db_url)
+            Session = sessionmaker(bind=engine)
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)
-            zone_id = "root"
+            zone_id = "default"
 
             # User might already exist, ignore errors
-            with contextlib.suppress(Exception):
+            try:
                 entity_registry.register_entity(
                     entity_type="user",
                     entity_id=admin_user,
                     parent_type="zone",
                     parent_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("Entity registration skipped (may already exist): %s", e)
 
             # Create API key using DatabaseAPIKeyAuth
             try:
@@ -1307,7 +1321,7 @@ def serve(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        zone_id="root",
+                        zone_id="default",
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"
@@ -1409,28 +1423,34 @@ def serve(
             and nx._rebac_manager
             and hasattr(nx._rebac_manager, "get_cache_stats")
         ):
-            with contextlib.suppress(Exception):
+            try:
                 cache_stats_before = nx._rebac_manager.get_cache_stats()
+            except Exception as e:
+                logger.debug("Failed to get cache stats before warmup: %s", e)
 
         warmed_count = 0
         try:
             # Warm up common paths (non-blocking, best effort)
             common_paths = ["/", "/workspace", "/tmp", "/data"]
             for path in common_paths:
-                with contextlib.suppress(Exception):
+                try:
                     # Check if path exists and warm permission cache
                     if nx.exists(path):
                         # List directory to warm listing cache
-                        with contextlib.suppress(Exception):
+                        try:
                             nx.list(path, recursive=False, details=False)
                             warmed_count += 1
+                        except Exception as e:
+                            logger.debug("Failed to warm listing cache for %s: %s", path, e)
+                except Exception as e:
+                    logger.debug("Failed to warm permission cache for %s: %s", path, e)
 
             elapsed = time.time() - start_time
             console.print(f" [green]✓[/green] ({warmed_count} paths, {elapsed:.2f}s)")
 
             # Show cache stats if available
             if cache_stats_before:
-                with contextlib.suppress(Exception):
+                try:
                     cache_stats_after = nx._rebac_manager.get_cache_stats()  # type: ignore[attr-defined]
                     l2_before = cache_stats_before.get("l2_size", 0)
                     l2_after = cache_stats_after.get("l2_size", 0)
@@ -1438,6 +1458,8 @@ def serve(
 
                     if l2_warmed > 0:
                         console.print(f"  [dim]L2 permission cache: +{l2_warmed} entries[/dim]")
+                except Exception as e:
+                    logger.debug("Failed to get cache stats after warmup: %s", e)
 
         except Exception as e:
             console.print(f" [yellow]⚠ [/yellow] ({str(e)})")

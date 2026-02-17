@@ -525,6 +525,23 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
+    # --- TransactionalSnapshotService (Issue #1752) ---
+    snapshot_service = None
+    try:
+        from nexus.services.snapshot.service import TransactionalSnapshotService
+
+        snapshot_service = TransactionalSnapshotService(
+            session_factory=session_factory,
+            cas_store=backend,
+            metadata_store=metadata_store,
+        )
+    except ImportError as _snap_exc:
+        import logging as _snap_logging
+
+        _snap_logging.getLogger(__name__).debug(
+            "TransactionalSnapshotService unavailable: %s", _snap_exc
+        )
+
     # --- Observability Subsystem (Issue #1301) ---
     from nexus.core.config import ObservabilityConfig
     from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
@@ -768,6 +785,7 @@ def create_nexus_services(
         version_service=version_service,
         overlay_resolver=None,
         wallet_provisioner=wallet_provisioner,
+        snapshot_service=snapshot_service,
         event_bus=event_bus,
         lock_manager=lock_manager,
         workflow_engine=workflow_engine,

@@ -140,6 +140,7 @@ class KernelServices:
     version_service: Any = None
     overlay_resolver: Any = None
     wallet_provisioner: Any = None
+    snapshot_service: Any = None  # Issue #1752: Transactional snapshots
 
     # Cache invalidation (Issue #1169 / #1519)
     cache_observer: CacheInvalidationObserver | None = None

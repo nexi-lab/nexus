@@ -198,6 +198,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # Method names match (async/sync checked separately)
     ),
+    # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
+    (
+        "SnapshotServiceProtocol",
+        "nexus.services.protocols.snapshot",
+        "nexus.services.snapshot.service.TransactionalSnapshotService",
+        True,
+    ),
 ]
 
 
@@ -261,6 +268,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("share_link", "nexus/services/protocols/share_link.py"),
     ("skills", "nexus/services/protocols/skills.py"),
     ("vfs_router", "nexus/core/protocols/vfs_router.py"),
+    ("snapshot", "nexus/services/protocols/snapshot.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

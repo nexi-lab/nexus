@@ -48,8 +48,8 @@ async def _graph_session(async_session_factory: Any, zone_id: str) -> AsyncItera
 
 
 def _zone_id_from(nexus_fs: Any) -> str:
-    """Extract zone_id from a NexusFS instance, defaulting to ``"default"``."""
-    return getattr(nexus_fs, "zone_id", None) or "default"
+    """Extract zone_id from a NexusFS instance, defaulting to ``"root"``."""
+    return getattr(nexus_fs, "zone_id", None) or "root"
 
 
 # ---------------------------------------------------------------------------

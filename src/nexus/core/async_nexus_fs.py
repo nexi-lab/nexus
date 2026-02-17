@@ -30,11 +30,10 @@ from nexus.core.exceptions import (
     NexusPermissionError,
 )
 from nexus.core.permissions import OperationContext, Permission
-from nexus.storage.content_cache import ContentCache
-
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
+    from nexus.storage.content_cache import ContentCache
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +93,10 @@ class AsyncNexusFS:
         self._permission_enforcer = permission_enforcer
 
         # Create content cache if enabled
-        self._content_cache: ContentCache | None = None
+        self._content_cache: "ContentCache | None" = None
         if enable_content_cache:
+            from nexus.storage.content_cache import ContentCache
+
             self._content_cache = ContentCache(max_size_mb=content_cache_size_mb)
 
         # Components (initialized in initialize())

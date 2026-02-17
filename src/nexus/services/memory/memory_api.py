@@ -1680,6 +1680,8 @@ class Memory:
         from sqlalchemy import select
 
         stmt = select(TrajectoryModel).filter_by(agent_id=target_agent_id)
+        if self.zone_id:
+            stmt = stmt.where(TrajectoryModel.zone_id == self.zone_id)
 
         if since:
             since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))

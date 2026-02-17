@@ -30,11 +30,12 @@ class TimeTravelReader:
         self.session = session
         self.backend = backend
 
-    def get_operation_by_id(self, operation_id: str) -> OperationLogModel:
+    def get_operation_by_id(self, operation_id: str, zone_id: str | None = None) -> OperationLogModel:
         """Get operation by ID.
 
         Args:
             operation_id: Operation UUID
+            zone_id: Zone ID for multi-tenancy isolation
 
         Returns:
             Operation log entry
@@ -43,6 +44,8 @@ class TimeTravelReader:
             NexusFileNotFoundError: If operation not found
         """
         stmt = select(OperationLogModel).where(OperationLogModel.operation_id == operation_id)
+        if zone_id is not None:
+            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
         operation = self.session.execute(stmt).scalar_one_or_none()
 
         if not operation:

@@ -28,7 +28,7 @@ class VersionManager:
     """
 
     @staticmethod
-    def get_version(session: Session, path: str) -> FileMetadata | None:
+    def get_version(session: Session, path: str, *, zone_id: str | None = None) -> FileMetadata | None:
         """Get a specific version of a file.
 
         Retrieves file metadata for a specific version from version history.
@@ -38,6 +38,7 @@ class VersionManager:
         Args:
             session: SQLAlchemy session
             path: Virtual path
+            zone_id: Zone ID for multi-tenancy isolation
             version: Version number to retrieve
 
         Returns:
@@ -70,6 +71,8 @@ class VersionManager:
                 FilePathModel.virtual_path == virtual_path,
                 FilePathModel.deleted_at.is_(None),
             )
+            if zone_id is not None:
+                path_stmt = path_stmt.where(FilePathModel.zone_id == zone_id)
             path_id = session.scalar(path_stmt)
 
             if not path_id:
@@ -89,6 +92,8 @@ class VersionManager:
             # Build FileMetadata from version entry
             # Note: We don't have backend info in version history, so use current file's backend
             file_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
+            if zone_id is not None:
+                file_stmt = file_stmt.where(FilePathModel.zone_id == zone_id)
             file_path = session.scalar(file_stmt)
 
             if not file_path:

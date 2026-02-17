@@ -477,6 +477,8 @@ class CacheService:
             if session and path_id:
                 try:
                     file_path_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
+                    if cache_zone is not None:
+                        file_path_stmt = file_path_stmt.where(FilePathModel.zone_id == cache_zone)
                     file_path_result = session.execute(file_path_stmt)
                     file_path = file_path_result.scalar_one_or_none()
                     if file_path:

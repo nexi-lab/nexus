@@ -103,8 +103,8 @@ class MkdirOp(BaseModel):
 def _get_op_discriminator(v: Any) -> str:
     """Extract discriminator value from raw data or model instance."""
     if isinstance(v, dict):
-        return v.get("op", "")
-    return getattr(v, "op", "")
+        return str(v.get("op", ""))
+    return str(getattr(v, "op", ""))
 
 
 BatchOperation = Annotated[
@@ -240,6 +240,7 @@ class BatchExecutor:
                     OperationResult(
                         index=i,
                         status=504,
+                        data=None,
                         error="Operation timed out",
                     )
                 )
@@ -248,7 +249,7 @@ class BatchExecutor:
                     break
             except Exception as exc:
                 status, error = _map_exception(exc)
-                results.append(OperationResult(index=i, status=status, error=error))
+                results.append(OperationResult(index=i, status=status, data=None, error=error))
                 if request.stop_on_error:
                     results.extend(self._skip_remaining(i + 1, len(request.operations)))
                     break
@@ -257,7 +258,7 @@ class BatchExecutor:
 
     async def _dispatch(
         self,
-        op: BatchOperation,  # type: ignore[type-arg]
+        op: ReadOp | WriteOp | DeleteOp | StatOp | ExistsOp | ListOp | MkdirOp,
         context: OperationContext,
     ) -> OperationResult:
         """Dispatch a single operation to the appropriate AsyncNexusFS method."""
@@ -279,16 +280,19 @@ class BatchExecutor:
         raise ValueError(msg)
 
     async def _exec_read(self, op: ReadOp, context: OperationContext) -> OperationResult:
-        content = await self._fs.read(op.path, context=context)
-        if isinstance(content, bytes):
-            content = content.decode("utf-8", errors="replace")
-        elif isinstance(content, dict):
+        raw_content: Any = await self._fs.read(op.path, context=context)
+        text: str
+        if isinstance(raw_content, bytes):
+            text = raw_content.decode("utf-8", errors="replace")
+        elif isinstance(raw_content, dict):
             # read with return_metadata=True returns a dict
-            raw = content.get("content", b"")
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8", errors="replace")
-            content = raw
-        return OperationResult(index=0, status=200, data={"content": content})
+            inner = raw_content.get("content", b"")
+            text = (
+                inner.decode("utf-8", errors="replace") if isinstance(inner, bytes) else str(inner)
+            )
+        else:
+            text = str(raw_content)
+        return OperationResult(index=0, status=200, data={"content": text}, error=None)
 
     async def _exec_write(self, op: WriteOp, context: OperationContext) -> OperationResult:
         if op.encoding == "base64":
@@ -300,11 +304,11 @@ class BatchExecutor:
             content=content,
             context=context,
         )
-        return OperationResult(index=0, status=201, data=result)
+        return OperationResult(index=0, status=201, data=result, error=None)
 
     async def _exec_delete(self, op: DeleteOp, context: OperationContext) -> OperationResult:
         result = await self._fs.delete(op.path, context=context)
-        return OperationResult(index=0, status=200, data=result)
+        return OperationResult(index=0, status=200, data=result, error=None)
 
     async def _exec_stat(self, op: StatOp, context: OperationContext) -> OperationResult:
         meta = await self._fs.get_metadata(op.path, context=context)
@@ -322,19 +326,22 @@ class BatchExecutor:
                 "created_at": (meta.created_at.isoformat() if meta.created_at else None),
                 "modified_at": (meta.modified_at.isoformat() if meta.modified_at else None),
             },
+            error=None,
         )
 
     async def _exec_exists(self, op: ExistsOp, context: OperationContext) -> OperationResult:
         exists = await self._fs.exists(op.path, context=context)
-        return OperationResult(index=0, status=200, data={"exists": exists})
+        return OperationResult(index=0, status=200, data={"exists": exists}, error=None)
 
     async def _exec_list(self, op: ListOp, context: OperationContext) -> OperationResult:
         items = await self._fs.list_dir(op.path, context=context)
-        return OperationResult(index=0, status=200, data={"items": items})
+        return OperationResult(index=0, status=200, data={"items": items}, error=None)
 
     async def _exec_mkdir(self, op: MkdirOp, context: OperationContext) -> OperationResult:
         await self._fs.mkdir(op.path, parents=op.parents, context=context)
-        return OperationResult(index=0, status=201, data={"created": True, "path": op.path})
+        return OperationResult(
+            index=0, status=201, data={"created": True, "path": op.path}, error=None
+        )
 
     @staticmethod
     def _skip_remaining(start: int, end: int) -> list[OperationResult]:
@@ -343,6 +350,7 @@ class BatchExecutor:
             OperationResult(
                 index=j,
                 status=424,
+                data=None,
                 error="Skipped due to prior failure (stop_on_error=true)",
             )
             for j in range(start, end)

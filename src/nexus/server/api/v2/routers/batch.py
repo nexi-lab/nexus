@@ -86,7 +86,7 @@ def create_batch_router(
                 from nexus.core.permissions import OperationContext as OC
 
                 return OC(user="anonymous", groups=[], zone_id="root")
-            return _real_get_operation_context(auth_result)
+            return cast("OperationContext", _real_get_operation_context(auth_result))
 
     @router.post("/batch", response_model=BatchResponse)
     async def batch_operations(

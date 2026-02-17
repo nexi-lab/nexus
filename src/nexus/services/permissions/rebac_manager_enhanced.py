@@ -245,7 +245,7 @@ class EnhancedReBACManager(ReBACManager):
         ] = []
 
         # Issue #1459: Unified cache coordinator
-        from nexus.services.permissions.cache.coordinator import CacheCoordinator
+        from nexus.rebac.cache.coordinator import CacheCoordinator
 
         self._cache_coordinator: CacheCoordinator = CacheCoordinator(
             l1_cache=self._l1_cache,

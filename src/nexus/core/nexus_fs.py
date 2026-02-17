@@ -259,6 +259,9 @@ class NexusFS(  # type: ignore[misc]
         self._overlay_resolver = svc.overlay_resolver
         self._wallet_provisioner = svc.wallet_provisioner
 
+        # Issue #1752: Transactional snapshot service (optional)
+        self._snapshot_service = getattr(svc, "snapshot_service", None)
+
         # Kernel protocol services + async wrappers (Issue #1502)
         self._agent_registry = svc.agent_registry
         self._namespace_manager = svc.namespace_manager

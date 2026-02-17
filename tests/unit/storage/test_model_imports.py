@@ -111,6 +111,9 @@ EXPECTED_MODELS = [
     "A2ATaskModel",
     # Dead Letter Queue (Issue #1138)
     "DeadLetterModel",
+    # Transactional Snapshots (Issue #1752)
+    "TransactionSnapshotModel",
+    "SnapshotEntryModel",
 ]
 
 

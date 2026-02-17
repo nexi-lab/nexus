@@ -11,6 +11,7 @@ Contains multi-layer caching infrastructure:
 Related: Issue #1459 (decomposition)
 """
 
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.services.permissions.cache.boundary import PermissionBoundaryCache
 from nexus.services.permissions.cache.coordinator import CacheCoordinator
 from nexus.services.permissions.cache.iterator import (
@@ -23,7 +24,6 @@ from nexus.services.permissions.cache.leopard import (
     LeopardCache,
     LeopardIndex,
 )
-from nexus.services.permissions.cache.result_cache import ReBACPermissionCache
 from nexus.services.permissions.cache.tiger import (
     CacheKey,
     DirectoryGrantExpander,

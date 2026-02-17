@@ -9,6 +9,6 @@ New code should import from:
 Related: Issue #1077, Issue #1459 (decomposition)
 """
 
-from nexus.services.permissions.cache.result_cache import ReBACPermissionCache  # noqa: F401
+from nexus.rebac.cache.result_cache import ReBACPermissionCache  # noqa: F401
 
 __all__ = ["ReBACPermissionCache"]

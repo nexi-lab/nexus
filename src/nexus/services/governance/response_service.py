@@ -275,7 +275,7 @@ class ResponseService:
             for c in constraints:
                 metadata = c.metadata or {}
                 if str(metadata.get("constraint_type", "")) == ConstraintType.BLOCK:
-                    await self._graph_service.remove_constraint(c.edge_id)
+                    await self._graph_service.remove_constraint(c.edge_id, zone_id=record.zone_id)
 
         if logger.isEnabledFor(logging.INFO):
             logger.info(

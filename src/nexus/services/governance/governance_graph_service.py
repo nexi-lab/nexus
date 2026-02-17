@@ -107,7 +107,7 @@ class GovernanceGraphService:
             created_at=now,
         )
 
-    async def remove_constraint(self, edge_id: str) -> bool:
+    async def remove_constraint(self, edge_id: str, zone_id: str | None = None) -> bool:
         """Remove a constraint by edge ID.
 
         Returns True if removed, False if not found.
@@ -117,22 +117,26 @@ class GovernanceGraphService:
         from nexus.services.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session, session.begin():
-            # Fetch for cache invalidation
+            # Fetch for cache invalidation (zone-scoped)
             stmt = select(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
+            if zone_id is not None:
+                stmt = stmt.where(GovernanceEdgeModel.zone_id == zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
 
             if model is None:
                 return False
 
-            zone_id = model.zone_id
+            model_zone_id = model.zone_id
             from_node = model.from_node
             to_node = model.to_node
 
             del_stmt = delete(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
+            if zone_id is not None:
+                del_stmt = del_stmt.where(GovernanceEdgeModel.zone_id == zone_id)
             await session.execute(del_stmt)
 
-        self._invalidate(zone_id, from_node, to_node)
+        self._invalidate(model_zone_id, from_node, to_node)
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Removed constraint %s", edge_id)
@@ -203,6 +207,7 @@ class GovernanceGraphService:
         edge_id: str,
         constraint_type: ConstraintType | None = None,
         reason: str | None = None,
+        zone_id: str | None = None,
     ) -> GovernanceEdge | None:
         """Update a constraint. Returns updated edge or None if not found."""
         from sqlalchemy import select
@@ -211,6 +216,8 @@ class GovernanceGraphService:
 
         async with self._session_factory() as session, session.begin():
             stmt = select(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
+            if zone_id is not None:
+                stmt = stmt.where(GovernanceEdgeModel.zone_id == zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:

@@ -333,7 +333,7 @@ class TestAlerts:
 
         # Resolve
         resp = await client.post(
-            f"/api/v2/governance/alerts/{alert_id}/resolve",
+            f"/api/v2/governance/alerts/{alert_id}/resolve?zone_id=root",
             json={"resolved_by": "admin-1"},
         )
         assert resp.status_code == 200
@@ -404,7 +404,7 @@ class TestSuspensionLifecycle:
 
         # 2. Appeal
         appeal_resp = await client.post(
-            f"/api/v2/governance/suspensions/{suspension_id}/appeal",
+            f"/api/v2/governance/suspensions/{suspension_id}/appeal?zone_id=root",
             json={"reason": "I was framed!"},
         )
         assert appeal_resp.status_code == 200
@@ -413,7 +413,7 @@ class TestSuspensionLifecycle:
 
         # 3. Decide (approve)
         decide_resp = await client.post(
-            f"/api/v2/governance/suspensions/{suspension_id}/decide",
+            f"/api/v2/governance/suspensions/{suspension_id}/decide?zone_id=root",
             json={"approved": True, "decided_by": "admin-1"},
         )
         assert decide_resp.status_code == 200
@@ -434,12 +434,12 @@ class TestSuspensionLifecycle:
         suspension_id = suspend_resp.json()["suspension_id"]
 
         await client.post(
-            f"/api/v2/governance/suspensions/{suspension_id}/appeal",
+            f"/api/v2/governance/suspensions/{suspension_id}/appeal?zone_id=root",
             json={"reason": "Please reconsider"},
         )
 
         decide_resp = await client.post(
-            f"/api/v2/governance/suspensions/{suspension_id}/decide",
+            f"/api/v2/governance/suspensions/{suspension_id}/decide?zone_id=root",
             json={"approved": False, "decided_by": "admin-2"},
         )
         assert decide_resp.json()["appeal_status"] == "rejected"
@@ -447,7 +447,7 @@ class TestSuspensionLifecycle:
     @pytest.mark.asyncio
     async def test_appeal_nonexistent_404(self, client: AsyncClient) -> None:
         resp = await client.post(
-            "/api/v2/governance/suspensions/nonexistent/appeal",
+            "/api/v2/governance/suspensions/nonexistent/appeal?zone_id=root",
             json={"reason": "test"},
         )
         assert resp.status_code == 404

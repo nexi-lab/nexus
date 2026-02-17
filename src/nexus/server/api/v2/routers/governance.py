@@ -145,10 +145,13 @@ async def resolve_alert(
     request: Request,
     alert_id: str,
     body: ResolveAlertRequest,
+    zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """Resolve an anomaly alert."""
     service = _get_anomaly_service(request)
-    alert = await service.resolve_alert(alert_id=alert_id, resolved_by=body.resolved_by)
+    alert = await service.resolve_alert(
+        alert_id=alert_id, resolved_by=body.resolved_by, zone_id=zone_id
+    )
 
     if alert is None:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
@@ -431,6 +434,7 @@ async def appeal_suspension(
     request: Request,
     suspension_id: str,
     body: AppealRequest,
+    zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """Appeal a suspension."""
     service = _get_response_service(request)
@@ -439,6 +443,7 @@ async def appeal_suspension(
         record = await service.appeal_suspension(
             suspension_id=suspension_id,
             reason=body.reason,
+            zone_id=zone_id,
         )
     except KeyError:
         raise HTTPException(
@@ -461,6 +466,7 @@ async def decide_appeal(
     request: Request,
     suspension_id: str,
     body: DecideAppealRequest,
+    zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """Decide on a suspension appeal."""
     service = _get_response_service(request)
@@ -470,6 +476,7 @@ async def decide_appeal(
             suspension_id=suspension_id,
             approved=body.approved,
             decided_by=body.decided_by,
+            zone_id=zone_id,
         )
     except KeyError:
         raise HTTPException(

@@ -67,8 +67,14 @@ class GovernanceProtocol(Protocol):
         self,
         alert_id: str,
         resolved_by: str,
+        zone_id: str = "root",
     ) -> Any | None:
         """Mark an anomaly alert as resolved.
+
+        Args:
+            alert_id: Alert ID.
+            resolved_by: ID of the resolver.
+            zone_id: Zone ID for zone isolation.
 
         Returns:
             Updated AnomalyAlert or None if not found.
@@ -197,8 +203,14 @@ class GovernanceProtocol(Protocol):
         self,
         suspension_id: str,
         reason: str,
+        zone_id: str = "root",
     ) -> Any:
         """File an appeal for a suspension.
+
+        Args:
+            suspension_id: Suspension ID.
+            reason: Appeal reason.
+            zone_id: Zone ID for zone isolation.
 
         Returns:
             Updated SuspensionRecord.
@@ -210,8 +222,15 @@ class GovernanceProtocol(Protocol):
         suspension_id: str,
         approved: bool,
         decided_by: str,
+        zone_id: str = "root",
     ) -> Any:
         """Decide on a suspension appeal.
+
+        Args:
+            suspension_id: Suspension ID.
+            approved: Whether to approve the appeal.
+            decided_by: ID of the decision maker.
+            zone_id: Zone ID for zone isolation.
 
         Returns:
             Updated SuspensionRecord.

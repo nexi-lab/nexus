@@ -11,6 +11,7 @@ Public API:
     DelegationMode        — Enum: COPY, CLEAN, SHARED
     DelegationStatus      — Enum: ACTIVE, REVOKED, EXPIRED, COMPLETED
     DelegationScope       — Fine-grained scope constraints
+    DelegationOutcome     — Enum: COMPLETED, FAILED, TIMEOUT (#1619)
     derive_grants         — Pure function: parent grants → child grants
     GrantSpec             — Single grant to materialize
 
@@ -23,6 +24,7 @@ Errors:
     DelegationChainError  — Delegated agent tries to delegate
     DepthExceededError    — Sub-delegation depth exceeded
     InvalidPrefixError    — Malformed scope_prefix
+    InsufficientTrustError — Trust score below threshold (#1619)
 """
 
 from nexus.services.delegation.derivation import GrantSpec as GrantSpec
@@ -32,12 +34,14 @@ from nexus.services.delegation.errors import DelegationError as DelegationError
 from nexus.services.delegation.errors import DelegationNotFoundError as DelegationNotFoundError
 from nexus.services.delegation.errors import DepthExceededError as DepthExceededError
 from nexus.services.delegation.errors import EscalationError as EscalationError
+from nexus.services.delegation.errors import InsufficientTrustError as InsufficientTrustError
 from nexus.services.delegation.errors import (
     InvalidDelegationModeError as InvalidDelegationModeError,
 )
 from nexus.services.delegation.errors import InvalidPrefixError as InvalidPrefixError
 from nexus.services.delegation.errors import TooManyGrantsError as TooManyGrantsError
 from nexus.services.delegation.models import DelegationMode as DelegationMode
+from nexus.services.delegation.models import DelegationOutcome as DelegationOutcome
 from nexus.services.delegation.models import DelegationRecord as DelegationRecord
 from nexus.services.delegation.models import DelegationResult as DelegationResult
 from nexus.services.delegation.models import DelegationScope as DelegationScope

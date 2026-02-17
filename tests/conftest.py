@@ -182,14 +182,12 @@ def make_test_nexus(
 
 @pytest.fixture(autouse=True)
 def _reset_auth_cache_fixture():
-    """Reset the TTLCache auth cache between tests for isolation."""
-    yield
-    try:
-        from nexus.server.dependencies import _reset_auth_cache
+    """No-op: auth cache is now CacheStoreABC-based (instance-level, not module-level).
 
-        _reset_auth_cache()
-    except ImportError:
-        pass
+    Tests that need auth caching create their own InMemoryCacheStore,
+    so no global state needs resetting.
+    """
+    yield
 
 
 @pytest.fixture(autouse=True)

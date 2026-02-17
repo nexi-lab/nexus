@@ -319,6 +319,7 @@ class NexusFSGateway:
         relation: str | None = None,
         object: tuple[str, str] | None = None,
         relation_in: builtins.list[str] | None = None,
+        zone_id: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """List ReBAC relationship tuples matching filters.
 
@@ -327,6 +328,7 @@ class NexusFSGateway:
             relation: Optional relation type filter
             object: Optional (object_type, object_id) filter
             relation_in: Optional list of relation types to filter
+            zone_id: Zone ID filter for federation isolation
 
         Returns:
             List of tuple dictionaries
@@ -336,6 +338,7 @@ class NexusFSGateway:
             relation=relation,
             object=object,
             relation_in=relation_in,
+            zone_id=zone_id,
         )
 
     def rebac_delete(self, tuple_id: str) -> bool:

@@ -3267,6 +3267,7 @@ class ReBACManager:
         relation: str | None = None,
         relation_in: list[str] | None = None,
         object: tuple[str, str] | None = None,
+        zone_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """List ReBAC tuples with optional filters.
 
@@ -3275,6 +3276,7 @@ class ReBACManager:
             relation: Single relation filter
             relation_in: Multiple relation filter (mutually exclusive with relation)
             object: (object_type, object_id) filter
+            zone_id: Zone ID filter for federation isolation
 
         Returns:
             List of tuple dicts.
@@ -3283,6 +3285,10 @@ class ReBACManager:
         try:
             query = "SELECT * FROM rebac_tuples WHERE 1=1"
             params: list[Any] = []
+
+            if zone_id is not None:
+                query += " AND zone_id = ?"
+                params.append(zone_id)
 
             if subject:
                 query += " AND subject_type = ? AND subject_id = ?"

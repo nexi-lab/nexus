@@ -834,6 +834,7 @@ class ReBACService(ReBACShareMixin):
                 relation=relation,
                 relation_in=relation_in,
                 object=object,
+                zone_id=_zone_id,
             )
 
         return await self._run_in_thread(_list_tuples_sync)

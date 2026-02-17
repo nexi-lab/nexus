@@ -7728,6 +7728,7 @@ class NexusFS(  # type: ignore[misc]
         relation: str | None = None,
         object: tuple[str, str] | None = None,
         relation_in: list[str] | None = None,
+        zone_id: str | None = None,
     ) -> list[dict]:
         """List relationship tuples matching filters.
 
@@ -7781,6 +7782,10 @@ class NexusFS(  # type: ignore[misc]
         try:
             query = "SELECT * FROM rebac_tuples WHERE 1=1"
             params: list = []
+
+            if zone_id is not None:
+                query += " AND zone_id = ?"
+                params.append(zone_id)
 
             if subject:
                 query += " AND subject_type = ? AND subject_id = ?"
@@ -8658,7 +8663,7 @@ class NexusFS(  # type: ignore[misc]
     def list_outgoing_shares(
         self,
         resource: tuple[str, str] | None = None,
-        zone_id: str | None = None,  # noqa: ARG002 - Reserved for future zone filtering
+        zone_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
         cursor: str | None = None,
@@ -8730,16 +8735,17 @@ class NexusFS(  # type: ignore[misc]
                 for t in tuples
             ]
 
+        # Get current zone ID for cache isolation
+        current_zone = zone_id or getattr(self, "_current_zone_id", "root")
+
         def _compute_shares() -> list[dict[str, Any]]:
             """Compute all shares (called on cache miss)."""
             all_tuples = self.rebac_list_tuples(
                 relation_in=["shared-viewer", "shared-editor", "shared-owner"],
                 object=resource,
+                zone_id=current_zone,
             )
             return _transform_tuples(all_tuples)
-
-        # Get current zone ID for cache isolation
-        current_zone = getattr(self, "_current_zone_id", "root")
 
         # Try to use cursor-based pagination
         if cursor:

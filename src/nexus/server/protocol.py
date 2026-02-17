@@ -364,6 +364,7 @@ class RebacListTuplesParams:
     subject: tuple[str, str] | None = None
     relation: str | None = None
     object: tuple[str, str] | None = None
+    zone_id: str | None = None
 
 # Cross-zone sharing params
 @dataclass

@@ -20,15 +20,22 @@ from nexus.storage.models import MemoryModel, VersionHistoryModel
 class MemoryViewRouter:
     """Router for resolving virtual paths to canonical memory IDs."""
 
-    def __init__(self, session: Session, entity_registry: EntityRegistry | None = None):
+    def __init__(
+        self,
+        session: Session,
+        entity_registry: EntityRegistry | None = None,
+        zone_id: str | None = None,
+    ):
         """Initialize memory view router.
 
         Args:
             session: SQLAlchemy database session.
             entity_registry: Entity registry instance (creates new if None).
+            zone_id: Zone ID for federation isolation filtering.
         """
         self.session = session
         self.entity_registry = entity_registry or EntityRegistry(session)
+        self.zone_id = zone_id
 
     @staticmethod
     def is_memory_path(path: str) -> bool:
@@ -176,6 +183,8 @@ class MemoryViewRouter:
             MemoryModel or None if not found.
         """
         stmt = select(MemoryModel).where(MemoryModel.memory_id == memory_id)
+        if self.zone_id is not None:
+            stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
         return self.session.execute(stmt).scalar_one_or_none()
 
     def query_memories(

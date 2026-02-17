@@ -237,6 +237,8 @@ class MemoryPager:
             from nexus.storage.models import MemoryModel
 
             stmt = select(MemoryModel).where(MemoryModel.memory_id == memory_id)
+            if self.zone_id is not None:
+                stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
             memory = session.execute(stmt).scalar_one_or_none()
             if memory:
                 self.recall.remove(memory_id)

@@ -297,7 +297,7 @@ class TestGetAuthResultAuthProvider:
         result.zone_id = overrides.get("zone_id", "root")
         result.inherit_permissions = overrides.get("inherit_permissions", True)
         result.metadata = overrides.get("metadata", {})
-        result.agent_generation = overrides.get("agent_generation", None)
+        result.agent_generation = overrides.get("agent_generation")
         return result
 
     async def test_provider_success_returns_result(self):

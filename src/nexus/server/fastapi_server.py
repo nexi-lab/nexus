@@ -276,6 +276,7 @@ def create_app(
     app.state.chunked_upload_service = None
     app.state.delegation_service = None
     app.state.reputation_service = None
+    app.state.transactional_snapshot_service = None
 
     # Initialize subscription manager if we have a metadata store
     try:

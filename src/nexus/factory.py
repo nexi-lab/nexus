@@ -450,7 +450,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         # --- Mount Manager ---
         from nexus.services.mount_manager import MountManager
 
-        mount_manager = MountManager(ctx.session_factory)
+        mount_manager = MountManager(ctx.record_store)
 
         # --- Workspace Manager ---
         from nexus.services.workspace_manager import WorkspaceManager

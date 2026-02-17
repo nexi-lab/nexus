@@ -829,6 +829,19 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except ImportError:
         pass  # Server auth not available (e.g. embedded mode)
 
+    # --- TransactionalSnapshotService (Issue #1752) ---
+    snapshot_service: Any = None
+    try:
+        from nexus.services.snapshot.service import TransactionalSnapshotService
+
+        snapshot_service = TransactionalSnapshotService(
+            session_factory=ctx.session_factory,
+            cas_store=ctx.backend,
+            metadata_store=ctx.metadata_store,
+        )
+    except ImportError as _snap_exc:
+        logger.debug("[BOOT:BRICK] TransactionalSnapshotService unavailable: %s", _snap_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -839,6 +852,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "lock_manager": lock_manager,
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
+        "snapshot_service": snapshot_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -996,6 +1010,7 @@ def create_nexus_services(
         tool_namespace_middleware=brick["tool_namespace_middleware"],
         delivery_worker=system["delivery_worker"],
         api_key_creator=brick["api_key_creator"],
+        snapshot_service=brick["snapshot_service"],
     )
 
 

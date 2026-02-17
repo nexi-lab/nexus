@@ -30,12 +30,10 @@ from rich.console import Console
 from rich.table import Table
 
 from nexus.cli.utils import console
-from nexus.server.auth import (
-    GoogleOAuthProvider,
-    MicrosoftOAuthProvider,
-    TokenManager,
-)
-from nexus.server.auth.x_oauth import XOAuthProvider
+from nexus.auth.google_oauth import GoogleOAuthProvider
+from nexus.auth.microsoft_oauth import MicrosoftOAuthProvider
+from nexus.auth.token_manager import TokenManager
+from nexus.auth.x_oauth import XOAuthProvider
 
 # Rich console for output
 _console = Console()
@@ -314,7 +312,7 @@ def setup_gdrive(
         nexus oauth setup-gdrive --user-email "alice@example.com"
     """
 
-    from nexus.server.auth import GoogleOAuthProvider
+    from nexus.auth.google_oauth import GoogleOAuthProvider
 
     # Validate that credentials are provided (either via options or environment)
     if not client_id:

@@ -24,7 +24,7 @@ class OAuthProviderConfig(BaseModel):
         description="Human-readable display name (e.g., 'Google', 'Microsoft', 'X (Twitter)')"
     )
     provider_class: str = Field(
-        description="Fully qualified class path (e.g., 'nexus.server.auth.google_oauth.GoogleOAuthProvider')"
+        description="Fully qualified class path (e.g., 'nexus.auth.google_oauth.GoogleOAuthProvider')"
     )
     scopes: list[str] = Field(
         default_factory=list,

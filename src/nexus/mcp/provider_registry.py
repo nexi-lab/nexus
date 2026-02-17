@@ -40,7 +40,7 @@ class ProviderType(Enum):
 class OAuthConfig:
     """OAuth configuration for local providers."""
 
-    provider_class: str  # e.g., "nexus.server.auth.google_oauth.GoogleOAuthProvider"
+    provider_class: str  # e.g., "nexus.auth.google_oauth.GoogleOAuthProvider"
     client_id_env: str  # Environment variable for client ID
     client_secret_env: str  # Environment variable for client secret
     scopes: list[str] = field(default_factory=list)

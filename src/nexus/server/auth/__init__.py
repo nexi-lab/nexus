@@ -28,8 +28,8 @@ from nexus.auth.oauth_provider import (  # noqa: F401
     OAuthProvider,
 )
 from nexus.auth.token_manager import TokenManager  # noqa: F401
-from nexus.server.auth.google_oauth import GoogleOAuthProvider  # noqa: F401
-from nexus.server.auth.microsoft_oauth import MicrosoftOAuthProvider  # noqa: F401
+from nexus.auth.google_oauth import GoogleOAuthProvider  # noqa: F401
+from nexus.auth.microsoft_oauth import MicrosoftOAuthProvider  # noqa: F401
 
 __all__ = [
     # Auth brick (canonical: nexus.auth)

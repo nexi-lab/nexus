@@ -1292,6 +1292,12 @@ def create_app(
         app.state.read_session_factory = None
         app.state.async_read_session_factory = None
 
+    # Expose kernel services on app.state so routers never reach into
+    # NexusFS private attributes (Issue #701).
+    app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
+    app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
+    app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
+
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
         os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")

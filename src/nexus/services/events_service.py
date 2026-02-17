@@ -1,7 +1,6 @@
-"""Events Service - Extracted from NexusFSEventsMixin.
+"""Events Service — file watching and advisory locking.
 
-This service handles file watching and advisory locking operations
-with dual-track support:
+Dual-track support:
 
 Layer 1 (Same-box): OS-native file watching (inotify/FSEvents) + in-memory locks
 Layer 2 (Distributed): EventBus (gRPC point-to-point / CacheStoreABC fan-out) + distributed locks

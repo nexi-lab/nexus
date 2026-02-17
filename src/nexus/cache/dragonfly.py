@@ -960,7 +960,7 @@ class DragonflyEmbeddingCache:
             self._errors += 1
             return False
 
-    async def clear(self, _model: str | None = None) -> int:
+    async def clear(self, model: str | None = None) -> int:  # noqa: ARG002
         """Clear cached embeddings.
 
         Args:

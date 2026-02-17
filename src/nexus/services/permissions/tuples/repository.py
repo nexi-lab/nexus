@@ -207,14 +207,14 @@ class TupleRepository:
     # Zone revision tracking (Issue #909)
     # ------------------------------------------------------------------
 
-    def get_zone_revision(self, zone_id: str | None, _conn: Any | None = None) -> int:
+    def get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:  # noqa: ARG002
         """Get current revision for a zone (read-only, no increment).
 
         Used for revision-based cache key generation (Issue #909).
 
         Args:
             zone_id: Zone ID (defaults to "root")
-            _conn: Optional database connection (unused, kept for API compat)
+            conn: Optional database connection (unused, kept for API compat)
 
         Returns:
             Current revision number (0 if zone has no writes yet)

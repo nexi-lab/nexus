@@ -215,6 +215,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # lock/extend_lock/unlock methods match
     ),
+    # ── Plugin (Issue #554) ──────────────────────────────────────────
+    (
+        "PluginProtocol",
+        "nexus.services.protocols.plugin",
+        "nexus.plugins.registry.PluginRegistry",
+        True,  # 11/11 method match: discover, initialize_all, shutdown_all, etc.
+    ),
 ]
 
 
@@ -282,6 +289,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("content_service", "nexus/core/protocols/content_service.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
+    ("plugin", "nexus/services/protocols/plugin.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

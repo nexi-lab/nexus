@@ -107,6 +107,7 @@ class TestKernelTopLevelImports:
         "core/async_bridge.py",  # async_rebac_manager (TYPE_CHECKING)
         "core/async_nexus_fs.py",  # async_permissions (TYPE_CHECKING)
         "core/nexus_fs.py",  # memory_api, entity_registry (TYPE_CHECKING)
+        "core/config.py",  # namespace_manager (TYPE_CHECKING)
     }
 
     def test_no_top_level_services_imports_in_core_modules(self):

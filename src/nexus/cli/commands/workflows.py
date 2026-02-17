@@ -37,12 +37,6 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     # Load workflows from persistent storage (async startup)
     asyncio.run(engine.startup())
 
-    services = WorkflowServices(glob_match=glob_match_fn)
-    engine = WorkflowEngine(workflow_store=workflow_store, services=services)
-
-    # Load workflows from storage (async startup)
-    asyncio.run(engine.startup())
-
     return engine
 
 

@@ -23,8 +23,6 @@ References:
     - LightRAG Paper: https://arxiv.org/abs/2410.05779
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import logging
@@ -55,7 +53,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
 
 # Test documents simulating a codebase
 TEST_DOCUMENTS = {
@@ -136,7 +133,6 @@ class UserRepository:
         pass
 """,
 }
-
 
 class GraphRetrievalE2ETest:
     """End-to-end test runner for GraphEnhancedRetriever."""
@@ -560,7 +556,6 @@ class GraphRetrievalE2ETest:
 
         return self.failed == 0
 
-
 async def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Graph-Enhanced Retrieval E2E Tests")
@@ -588,7 +583,6 @@ async def main():
         sys.exit(0 if success else 1)
     finally:
         await test.teardown()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -23,7 +23,6 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-
 def get_db_url_from_docker():
     """Get postgres connection URL from docker container."""
     import subprocess
@@ -85,7 +84,6 @@ def get_db_url_from_docker():
     except Exception as e:
         print(f"Error getting docker postgres URL: {e}")
         raise
-
 
 def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
     """Test Gmail connector with real API calls."""
@@ -259,7 +257,6 @@ def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
         traceback.print_exc()
         raise
 
-
 def main():
     parser = argparse.ArgumentParser(description="Test Gmail connector with real API")
     parser.add_argument("--user", type=str, help="Gmail user email", required=True)
@@ -281,7 +278,6 @@ def main():
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

@@ -27,8 +27,6 @@ Usage:
     python scripts/test_etag_304.py --port 9999
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import contextlib
@@ -64,32 +62,25 @@ RED = "\033[0;31m"
 CYAN = "\033[0;36m"
 NC = "\033[0m"  # No Color
 
-
 def print_section(title: str) -> None:
     print(f"\n{'=' * 60}")
     print(f"  {title}")
     print(f"{'=' * 60}\n")
 
-
 def print_success(msg: str) -> None:
     print(f"{GREEN}✓{NC} {msg}")
-
 
 def print_info(msg: str) -> None:
     print(f"{BLUE}ℹ{NC} {msg}")
 
-
 def print_warning(msg: str) -> None:
     print(f"{YELLOW}⚠{NC} {msg}")
-
 
 def print_error(msg: str) -> None:
     print(f"{RED}✗{NC} {msg}")
 
-
 def print_test(msg: str) -> None:
     print(f"{CYAN}TEST:{NC} {msg}")
-
 
 class ETagTester:
     """Test ETag/304 functionality."""
@@ -911,7 +902,6 @@ class ETagTester:
             print_error(f"{self.tests_failed} test(s) failed")
             return False
 
-
 class NexusTestServer:
     """Manages a test Nexus server with uvicorn in a background thread."""
 
@@ -977,7 +967,6 @@ class NexusTestServer:
         if self.temp_dir:
             self.temp_dir.cleanup()
 
-
 async def wait_for_server(url: str, timeout: int = 30) -> bool:
     """Wait for server to be ready."""
     async with httpx.AsyncClient() as client:
@@ -990,7 +979,6 @@ async def wait_for_server(url: str, timeout: int = 30) -> bool:
                 pass
             await asyncio.sleep(0.5)
     return False
-
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Test ETag/304 functionality")
@@ -1057,7 +1045,6 @@ async def main() -> int:
             print_info("Stopping test server...")
             server.stop()
             print_success("Server stopped")
-
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

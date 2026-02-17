@@ -12,7 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 def try_import(import_stmt: str) -> tuple[bool, str]:
     """Try to run an import and return (success, stderr)."""
     result = subprocess.run(
@@ -24,7 +23,6 @@ def try_import(import_stmt: str) -> tuple[bool, str]:
     if result.returncode == 0:
         return True, ""
     return False, result.stderr
-
 
 def parse_name_error(stderr: str) -> tuple[str | None, str | None, int | None]:
     """Parse NameError from stderr. Returns (filepath, name, lineno)."""
@@ -38,7 +36,6 @@ def parse_name_error(stderr: str) -> tuple[str | None, str | None, int | None]:
     last_file = file_matches[-1]
     return last_file.group(1), error_name, int(last_file.group(2))
 
-
 def parse_type_error(stderr: str) -> tuple[str | None, int | None]:
     """Parse TypeError for 'str | NoneType' from stderr. Returns (filepath, lineno)."""
     if "unsupported operand type(s) for |:" not in stderr:
@@ -48,7 +45,6 @@ def parse_type_error(stderr: str) -> tuple[str | None, int | None]:
         return None, None
     last_file = file_matches[-1]
     return last_file.group(1), int(last_file.group(2))
-
 
 def parse_module_not_found(stderr: str) -> tuple[str | None, str | None, int | None]:
     """Parse ModuleNotFoundError. Returns (filepath_of_importer, bad_module, lineno)."""
@@ -61,7 +57,6 @@ def parse_module_not_found(stderr: str) -> tuple[str | None, str | None, int | N
         return None, bad_module, None
     last_file = file_matches[-1]
     return last_file.group(1), bad_module, int(last_file.group(2))
-
 
 def fix_name_error(filepath: str, name: str, lineno: int) -> bool:
     """Quote a bare name reference on the given line."""
@@ -106,7 +101,6 @@ def fix_name_error(filepath: str, name: str, lineno: int) -> bool:
 
     return False
 
-
 def fix_str_union(filepath: str, lineno: int) -> bool:
     """Fix '"ClassName" | None' -> '"ClassName | None"' on the given line."""
     path = Path(filepath)
@@ -133,7 +127,6 @@ def fix_str_union(filepath: str, lineno: int) -> bool:
 
     return False
 
-
 def fix_bad_runtime_import(filepath: str, lineno: int) -> bool:
     """Remove a runtime import that should stay under TYPE_CHECKING and quote usages."""
     path = Path(filepath)
@@ -153,7 +146,6 @@ def fix_bad_runtime_import(filepath: str, lineno: int) -> bool:
         return True
 
     return False
-
 
 def main():
     if len(sys.argv) < 2:
@@ -238,7 +230,6 @@ def main():
         return
 
     print(f"\nReached max iterations ({max_iters})")
-
 
 if __name__ == "__main__":
     main()

@@ -40,7 +40,6 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-
 def setup_test_environment():
     """Set up test environment and check prerequisites."""
     print("=" * 80)
@@ -83,7 +82,6 @@ def setup_test_environment():
 
     print("\n✓ All prerequisites met!")
     return True
-
 
 def test_slack_client_quick():
     """Quick test using slack-sdk directly with a token."""
@@ -152,7 +150,6 @@ def test_slack_client_quick():
         traceback.print_exc()
         return False
 
-
 def test_slack_connector_initialization():
     """Test Slack connector initialization."""
     print("\n" + "=" * 80)
@@ -190,7 +187,6 @@ def test_slack_connector_initialization():
 
         traceback.print_exc()
         return None
-
 
 def test_list_channels(connector):
     """Test listing channels through connector."""
@@ -242,7 +238,6 @@ def test_list_channels(connector):
 
         traceback.print_exc()
         return False
-
 
 def test_read_messages(connector):
     """Test reading messages through connector."""
@@ -309,7 +304,6 @@ def test_read_messages(connector):
 
         traceback.print_exc()
         return False
-
 
 def test_post_message(connector):
     """Test posting a message through connector."""
@@ -382,7 +376,6 @@ def test_post_message(connector):
         traceback.print_exc()
         return False
 
-
 def main():
     """Main test runner."""
     parser = argparse.ArgumentParser(description="Test Slack connector")
@@ -437,7 +430,6 @@ def main():
     else:
         print("\n⚠️  Some tests failed.")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

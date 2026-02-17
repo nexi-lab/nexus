@@ -22,7 +22,6 @@ from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-
 def main() -> int:
     print("=" * 80)
     print("Direct Test: provision_user Method")
@@ -115,7 +114,6 @@ def main() -> int:
 
         traceback.print_exc()
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

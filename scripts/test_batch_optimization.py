@@ -18,7 +18,6 @@ NEXUS_API_KEY = os.getenv(
 
 NUM_FILES = 50  # Number of files to test
 
-
 def test_individual_writes(client, test_dir):
     """Test writing files individually."""
     print(f"\n[Individual Writes] Writing {NUM_FILES} files one by one...")
@@ -42,7 +41,6 @@ def test_individual_writes(client, test_dir):
 
     return total_time, per_file
 
-
 def test_batch_writes(client, test_dir):
     """Test writing files in a single batch."""
     print(f"\n[Batch Write] Writing {NUM_FILES} files in one batch...")
@@ -65,7 +63,6 @@ def test_batch_writes(client, test_dir):
     print(f"  Files written: {len(results)}")
 
     return total_time, per_file
-
 
 def main():
     print("=" * 70)
@@ -115,7 +112,6 @@ def main():
             print(f"  Warning: {e}")
 
     print("\nDone! Check /tmp/nexus-debug.log for [WRITE-BATCH-PERF] logs.")
-
 
 if __name__ == "__main__":
     main()

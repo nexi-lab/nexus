@@ -1,6 +1,5 @@
 """Fix TYPE_CHECKING imports used at runtime.
 
-After removing `from __future__ import annotations`, any name imported under
 `if TYPE_CHECKING:` that appears in a runtime annotation (function signature,
 class body variable annotation, default value) will cause a NameError.
 
@@ -14,7 +13,6 @@ Usage:
 import ast
 import sys
 from pathlib import Path
-
 
 def get_tc_block_ranges(tree: ast.Module) -> list[tuple[int, int]]:
     """Get line ranges of TYPE_CHECKING if-blocks."""
@@ -32,18 +30,15 @@ def get_tc_block_ranges(tree: ast.Module) -> list[tuple[int, int]]:
                 ranges.append((start, end))
     return ranges
 
-
 def in_tc_block(lineno: int, tc_ranges: list[tuple[int, int]]) -> bool:
     """Check if a line number is inside a TYPE_CHECKING block."""
     return any(start <= lineno <= end for start, end in tc_ranges)
-
 
 def in_string_annotation(node, lines: list[str]) -> bool:
     """Check if an AST node is inside a string annotation (already quoted)."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return True
     return False
-
 
 def collect_tc_imports(tree: ast.Module) -> dict[str, tuple[str, str, int]]:
     """Collect all names imported under TYPE_CHECKING.
@@ -66,7 +61,6 @@ def collect_tc_imports(tree: ast.Module) -> dict[str, tuple[str, str, int]]:
                             )
     return tc_names
 
-
 def collect_runtime_name_usages(tree: ast.Module, tc_ranges: list[tuple[int, int]]) -> set[str]:
     """Collect all Name references that appear outside TYPE_CHECKING blocks."""
     used = set()
@@ -86,7 +80,6 @@ def collect_runtime_name_usages(tree: ast.Module, tc_ranges: list[tuple[int, int
     NameCollector().visit(tree)
     return used
 
-
 def already_imported_at_runtime(tree: ast.Module, name: str, tc_ranges: list[tuple[int, int]]) -> bool:
     """Check if a name is already imported at module level (not in TC block)."""
     for node in ast.walk(tree):
@@ -104,7 +97,6 @@ def already_imported_at_runtime(tree: ast.Module, name: str, tc_ranges: list[tup
                     return True
     return False
 
-
 def find_insert_point(lines: list[str], tree: ast.Module) -> int:
     """Find the best line to insert new runtime imports.
 
@@ -121,7 +113,6 @@ def find_insert_point(lines: list[str], tree: ast.Module) -> int:
                 # Insert before TC block
                 return node.lineno - 1
     return last_import_line
-
 
 def fix_file(filepath: Path, dry_run: bool = False) -> int:
     """Fix TYPE_CHECKING imports used at runtime.
@@ -192,7 +183,6 @@ def fix_file(filepath: Path, dry_run: bool = False) -> int:
     filepath.write_text(''.join(lines))
     return len(to_move)
 
-
 def main():
     dry_run = "--dry-run" in sys.argv
     src_dir = Path("src/nexus")
@@ -214,7 +204,6 @@ def main():
 
     print(f"\nTotal imports moved: {total}")
     print(f"{'DRY RUN - no files modified' if dry_run else 'Files updated.'}")
-
 
 if __name__ == "__main__":
     main()

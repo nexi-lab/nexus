@@ -29,8 +29,6 @@ References:
     - https://github.com/nexi-lab/nexus/issues/1039
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import logging
@@ -53,7 +51,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
 
 class MemoryGraphPipelineE2ETest:
     """End-to-end test for memory -> graph pipeline."""
@@ -369,7 +366,6 @@ class MemoryGraphPipelineE2ETest:
             logger.error(f"\n  {self.failed} TEST(S) FAILED")
             return 1
 
-
 def main():
     parser = argparse.ArgumentParser(description="Memory -> Graph Pipeline E2E Test")
     parser.add_argument(
@@ -407,7 +403,6 @@ def main():
         test.teardown()
 
     sys.exit(exit_code)
-
 
 if __name__ == "__main__":
     main()

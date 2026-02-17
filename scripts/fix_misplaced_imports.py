@@ -16,7 +16,6 @@ IMPORT_PATTERNS = [
     "from nexus.storage.raft_metadata_store import RaftMetadataStore",
 ]
 
-
 def find_import_section_end(lines: list[str]) -> int:
     """Find the index of the last top-level import line (including closing parens).
 
@@ -88,7 +87,6 @@ def find_import_section_end(lines: list[str]) -> int:
 
     return last_import_end
 
-
 def is_inside_parens(lines: list[str], idx: int) -> bool:
     """Check if line at `idx` is inside a parenthesized import."""
     paren_depth = 0
@@ -98,7 +96,6 @@ def is_inside_parens(lines: list[str], idx: int) -> bool:
             continue
         paren_depth += stripped.count("(") - stripped.count(")")
     return paren_depth > 0
-
 
 def fix_file(filepath: Path, dry_run: bool = True) -> bool:
     """Fix misplaced imports in a single file. Returns True if modified."""
@@ -187,7 +184,6 @@ def fix_file(filepath: Path, dry_run: bool = True) -> bool:
 
     return True
 
-
 def main():
     dry_run = "--apply" not in sys.argv
     if dry_run:
@@ -207,7 +203,6 @@ def main():
                 print(f"  ERROR: {fp.name}: {e}")
 
     print(f"\n{'Would fix' if dry_run else 'Fixed'} {fixed} files")
-
 
 if __name__ == "__main__":
     main()

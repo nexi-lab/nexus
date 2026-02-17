@@ -29,7 +29,6 @@ from sqlalchemy.orm import sessionmaker
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.permissions.entity_registry import EntityRegistry
 
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Register Nexus agent (v0.5.0 ACE - Auth-agnostic)",
@@ -184,7 +183,6 @@ Agent Identity System (v0.5.0):
 
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

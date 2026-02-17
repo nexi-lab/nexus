@@ -15,7 +15,6 @@ from sqlalchemy.orm import sessionmaker
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel
 
-
 def create_test_agent_key(
     database_url: str,
     api_key: str,
@@ -84,7 +83,6 @@ def create_test_agent_key(
         print(f"✗ Error creating API key: {e}", file=sys.stderr)
         return False
 
-
 def main() -> int:
     """Main entry point."""
     if len(sys.argv) != 7:
@@ -110,7 +108,6 @@ def main() -> int:
     )
 
     return 0 if success else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

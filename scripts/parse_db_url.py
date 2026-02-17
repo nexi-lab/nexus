@@ -13,7 +13,6 @@ Components:
 import sys
 from urllib.parse import urlparse
 
-
 def parse_db_url(database_url: str, component: str) -> str:
     """
     Parse database URL and extract component.
@@ -37,7 +36,6 @@ def parse_db_url(database_url: str, component: str) -> str:
     except Exception:
         return ""
 
-
 def main() -> None:
     """Main entry point."""
     if len(sys.argv) < 3:
@@ -51,7 +49,6 @@ def main() -> None:
     result = parse_db_url(database_url, component)
     print(result)
     sys.exit(0 if result else 1)
-
 
 if __name__ == "__main__":
     main()

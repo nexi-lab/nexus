@@ -9,7 +9,6 @@ import os
 import zipfile
 from pathlib import Path
 
-
 def zip_skill_folder(skill_folder_path: Path, output_path: Path) -> None:
     """Zip a skill folder into a .skill package.
 
@@ -51,7 +50,6 @@ def zip_skill_folder(skill_folder_path: Path, output_path: Path) -> None:
 
     print(f"  ✓ Created {output_path}")
 
-
 def main() -> None:
     """Zip all default skills and save them to data/skills/."""
     # Get the nexus directory (parent of scripts/)
@@ -87,7 +85,6 @@ def main() -> None:
             traceback.print_exc()
 
     print(f"\n✓ All skills zipped to {skills_output_dir}")
-
 
 if __name__ == "__main__":
     main()

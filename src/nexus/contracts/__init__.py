@@ -1,4 +1,14 @@
-"""Backward-compat re-exports — canonical source is nexus.contracts.exceptions."""
+"""Tier-neutral shared contracts for the Nexus VFS (Issue #1501).
+
+This package is the canonical home for types and exceptions that are shared
+across kernel, bricks, services, and backends.  It has **zero** runtime
+imports from ``nexus.core`` or any other kernel module.
+
+Usage:
+    from nexus.contracts import OperationContext, Permission, NexusError
+    from nexus.contracts.types import ContextIdentity, extract_context_identity
+    from nexus.contracts.exceptions import BackendError, ValidationError
+"""
 
 from nexus.contracts.exceptions import (
     AccessDeniedError,
@@ -43,8 +53,20 @@ from nexus.contracts.exceptions import (
     UploadOffsetMismatchError,
     ValidationError,
 )
+from nexus.contracts.types import (
+    ContextIdentity,
+    OperationContext,
+    Permission,
+    extract_context_identity,
+)
 
 __all__ = [
+    # Types
+    "ContextIdentity",
+    "OperationContext",
+    "Permission",
+    "extract_context_identity",
+    # Exceptions
     "AccessDeniedError",
     "AuditLogError",
     "AuthenticationError",

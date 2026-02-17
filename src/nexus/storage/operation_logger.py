@@ -132,16 +132,19 @@ class OperationLogger:
 
         return operation.operation_id
 
-    def get_operation(self, operation_id: str) -> OperationLogModel | None:
+    def get_operation(self, operation_id: str, zone_id: str | None = None) -> OperationLogModel | None:
         """Get operation by ID.
 
         Args:
             operation_id: Operation UUID
+            zone_id: Zone ID for isolation filtering
 
         Returns:
             Operation log entry or None if not found
         """
         stmt = select(OperationLogModel).where(OperationLogModel.operation_id == operation_id)
+        if zone_id is not None:
+            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
         return self.session.execute(stmt).scalar_one_or_none()
 
     def list_operations(

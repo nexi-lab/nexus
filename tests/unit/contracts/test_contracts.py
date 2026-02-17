@@ -32,9 +32,8 @@ def _get_runtime_nexus_imports(module_path: Path) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.If):
             test = node.test
-            is_type_checking = (
-                (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
-                or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
+            is_type_checking = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+                isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
             )
             if is_type_checking:
                 for child in ast.walk(node):
@@ -65,30 +64,37 @@ class TestImportPaths:
 
     def test_import_operation_context_from_contracts(self):
         from nexus.contracts.types import OperationContext
+
         assert OperationContext is not None
 
     def test_import_permission_from_contracts(self):
         from nexus.contracts.types import Permission
+
         assert Permission is not None
 
     def test_import_context_identity_from_contracts(self):
         from nexus.contracts.types import ContextIdentity
+
         assert ContextIdentity is not None
 
     def test_import_extract_context_identity_from_contracts(self):
         from nexus.contracts.types import extract_context_identity
+
         assert callable(extract_context_identity)
 
     def test_import_nexus_error_from_contracts(self):
         from nexus.contracts.exceptions import NexusError
+
         assert NexusError is not None
 
     def test_import_parser_error_from_contracts(self):
         from nexus.contracts.exceptions import ParserError
+
         assert ParserError is not None
 
     def test_import_from_contracts_package_init(self):
         from nexus.contracts import NexusError, OperationContext, Permission
+
         assert OperationContext is not None
         assert Permission is not None
         assert NexusError is not None
@@ -106,6 +112,7 @@ class TestObjectIdentity:
         from nexus.contracts.types import OperationContext as ContractsOC
         from nexus.core.permissions import OperationContext as PermsOC
         from nexus.core.types import OperationContext as CoreOC
+
         assert ContractsOC is CoreOC
         assert ContractsOC is PermsOC
 
@@ -113,27 +120,32 @@ class TestObjectIdentity:
         from nexus.contracts.types import Permission as ContractsPerm
         from nexus.core.permissions import Permission as PermsPerm
         from nexus.core.types import Permission as CorePerm
+
         assert ContractsPerm is CorePerm
         assert ContractsPerm is PermsPerm
 
     def test_nexus_error_identity(self):
         from nexus.contracts.exceptions import NexusError as ContractsErr
         from nexus.core.exceptions import NexusError as CoreErr
+
         assert ContractsErr is CoreErr
 
     def test_parser_error_identity(self):
         from nexus.contracts.exceptions import ParserError as ContractsPE
         from nexus.core.exceptions import ParserError as CorePE
+
         assert ContractsPE is CorePE
 
     def test_backend_error_identity(self):
         from nexus.contracts.exceptions import BackendError as ContractsBE
         from nexus.core.exceptions import BackendError as CoreBE
+
         assert ContractsBE is CoreBE
 
     def test_validation_error_identity(self):
         from nexus.contracts.exceptions import ValidationError as ContractsVE
         from nexus.core.exceptions import ValidationError as CoreVE
+
         assert ContractsVE is CoreVE
 
 
@@ -167,61 +179,55 @@ class TestSkillsDuplicateRemoval:
     def test_skill_manager_error_not_defined_in_manager(self):
         """SkillManagerError should NOT be defined in skills/manager.py."""
         import nexus.skills.manager as mod
+
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
-        class_names = [
-            node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-        ]
+        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
         assert "SkillManagerError" not in class_names
 
     def test_skill_export_error_not_defined_in_exporter(self):
         """SkillExportError should NOT be defined in skills/exporter.py."""
         import nexus.skills.exporter as mod
+
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
-        class_names = [
-            node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-        ]
+        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
         assert "SkillExportError" not in class_names
 
     def test_skill_parse_error_not_defined_in_parser(self):
         """SkillParseError should NOT be defined in skills/parser.py."""
         import nexus.skills.parser as mod
+
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
-        class_names = [
-            node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-        ]
+        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
         assert "SkillParseError" not in class_names
 
     def test_skill_not_found_error_not_defined_in_registry(self):
         """SkillNotFoundError should NOT be defined in skills/registry.py."""
         import nexus.skills.registry as mod
+
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
-        class_names = [
-            node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-        ]
+        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
         assert "SkillNotFoundError" not in class_names
 
     def test_skill_dependency_error_not_defined_in_registry(self):
         """SkillDependencyError should NOT be defined in skills/registry.py."""
         import nexus.skills.registry as mod
+
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
-        class_names = [
-            node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-        ]
+        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
         assert "SkillDependencyError" not in class_names
 
     def test_skill_import_error_not_defined_in_importer(self):
         """SkillImportError should NOT be defined in skills/importer.py."""
         import nexus.skills.importer as mod
+
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
-        class_names = [
-            node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-        ]
+        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
         assert "SkillImportError" not in class_names
 
     def test_all_skill_exceptions_in_exceptions_module(self):
@@ -236,6 +242,7 @@ class TestSkillsDuplicateRemoval:
             SkillPermissionDeniedError,
             SkillValidationError,
         )
+
         # Verify they're all importable
         assert SkillValidationError is not None
         assert SkillPermissionDeniedError is not None

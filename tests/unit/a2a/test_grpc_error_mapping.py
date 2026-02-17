@@ -65,9 +65,7 @@ class TestGrpcStatusMapping:
     def test_all_subclasses_have_grpc_status(self) -> None:
         """Every A2AError subclass must define a grpc_status attribute."""
         for cls in A2AError.__subclasses__():
-            assert hasattr(cls, "grpc_status"), (
-                f"{cls.__name__} missing grpc_status attribute"
-            )
+            assert hasattr(cls, "grpc_status"), f"{cls.__name__} missing grpc_status attribute"
             assert isinstance(cls.grpc_status, grpc.StatusCode), (
                 f"{cls.__name__}.grpc_status is not a grpc.StatusCode"
             )

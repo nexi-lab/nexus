@@ -47,6 +47,7 @@ def task_state_from_proto(value: int) -> models.TaskState:
 # Metadata / Struct helpers
 # ============================================================================
 
+
 def _dict_to_struct(d: dict[str, Any] | None) -> struct_pb2.Struct | None:
     """Convert a dict to a google.protobuf.Struct, or None."""
     if not d:
@@ -68,6 +69,7 @@ def _struct_to_dict(s: struct_pb2.Struct | None) -> dict[str, Any] | None:
 # Timestamp helpers
 # ============================================================================
 
+
 def _datetime_to_timestamp(dt: datetime | None) -> timestamp_pb2.Timestamp | None:
     """Convert a datetime to a google.protobuf.Timestamp, or None."""
     if dt is None:
@@ -87,6 +89,7 @@ def _timestamp_to_datetime(ts: timestamp_pb2.Timestamp | None) -> datetime | Non
 # ============================================================================
 # Part conversion
 # ============================================================================
+
 
 def part_to_proto(part: models.TextPart | models.FilePart | models.DataPart) -> a2a_pb2.Part:
     """Convert a Pydantic Part to a proto Part."""
@@ -150,6 +153,7 @@ def part_from_proto(pb: a2a_pb2.Part) -> models.TextPart | models.FilePart | mod
 # Message conversion
 # ============================================================================
 
+
 def message_to_proto(msg: models.Message) -> a2a_pb2.Message:
     """Convert a Pydantic Message to a proto Message."""
     pb = a2a_pb2.Message(role=msg.role)
@@ -171,6 +175,7 @@ def message_from_proto(pb: a2a_pb2.Message) -> models.Message:
 # ============================================================================
 # Artifact conversion
 # ============================================================================
+
 
 def artifact_to_proto(art: models.Artifact) -> a2a_pb2.Artifact:
     """Convert a Pydantic Artifact to a proto Artifact."""
@@ -204,6 +209,7 @@ def artifact_from_proto(pb: a2a_pb2.Artifact) -> models.Artifact:
 # TaskStatus conversion
 # ============================================================================
 
+
 def task_status_to_proto(status: models.TaskStatus) -> a2a_pb2.TaskStatus:
     """Convert a Pydantic TaskStatus to a proto TaskStatus."""
     pb = a2a_pb2.TaskStatus(state=task_state_to_proto(status.state))
@@ -229,6 +235,7 @@ def task_status_from_proto(pb: a2a_pb2.TaskStatus) -> models.TaskStatus:
 # ============================================================================
 # Task conversion
 # ============================================================================
+
 
 def task_to_proto(task: models.Task) -> a2a_pb2.Task:
     """Convert a Pydantic Task to a proto Task."""
@@ -264,6 +271,7 @@ def task_from_proto(pb: a2a_pb2.Task) -> models.Task:
 # ============================================================================
 # Request conversion helpers
 # ============================================================================
+
 
 def send_request_from_proto(
     pb: a2a_pb2.SendMessageRequest,

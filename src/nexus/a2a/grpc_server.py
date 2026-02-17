@@ -45,7 +45,9 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
         try:
             msg, metadata = send_request_from_proto(request)
             task = await self._tm.create_task(
-                msg, zone_id=self._zone_id, metadata=metadata,
+                msg,
+                zone_id=self._zone_id,
+                metadata=metadata,
             )
             return a2a_pb2.SendMessageResponse(task=task_to_proto(task))
         except A2AError as exc:
@@ -63,7 +65,9 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
         try:
             msg, metadata = send_request_from_proto(request)
             task = await self._tm.create_task(
-                msg, zone_id=self._zone_id, metadata=metadata,
+                msg,
+                zone_id=self._zone_id,
+                metadata=metadata,
             )
         except A2AError as exc:
             await context.abort(exc.grpc_status, exc.message)
@@ -93,7 +97,9 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
         try:
             history_length = request.history_length if request.history_length else None
             task = await self._tm.get_task(
-                request.id, zone_id=self._zone_id, history_length=history_length,
+                request.id,
+                zone_id=self._zone_id,
+                history_length=history_length,
             )
             return task_to_proto(task)
         except A2AError as exc:

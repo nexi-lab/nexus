@@ -133,9 +133,7 @@ class TestStreamingIntegration:
         task = await tm.create_task(msg)
 
         # Subscribe via gRPC
-        call = stub.SubscribeToTask(
-            a2a_pb2.SubscribeToTaskRequest(id=task.id)
-        )
+        call = stub.SubscribeToTask(a2a_pb2.SubscribeToTaskRequest(id=task.id))
 
         # Read initial task
         first = await call.read()

@@ -354,9 +354,7 @@ class TestSupportedInterfaces:
             grpc_port=2027,
         )
 
-        grpc_iface = next(
-            i for i in card.supportedInterfaces if i.protocol_binding == "GRPC"
-        )
+        grpc_iface = next(i for i in card.supportedInterfaces if i.protocol_binding == "GRPC")
         assert grpc_iface.url == "nexus.example.com:2027"
         assert grpc_iface.protocol_version == "1.0"
 

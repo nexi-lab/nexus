@@ -248,9 +248,7 @@ class TestSubscribeToTask:
     @pytest.mark.asyncio
     async def test_subscribe_to_nonexistent_task(self, stub) -> None:
         with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-            call = stub.SubscribeToTask(
-                a2a_pb2.SubscribeToTaskRequest(id="nonexistent")
-            )
+            call = stub.SubscribeToTask(a2a_pb2.SubscribeToTaskRequest(id="nonexistent"))
             await call.read()
 
         assert exc_info.value.code() == grpc.StatusCode.NOT_FOUND

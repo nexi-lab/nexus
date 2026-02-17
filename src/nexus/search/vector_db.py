@@ -392,3 +392,16 @@ class VectorDatabase:
             limit=limit,
             id_key="chunk_id",
         )
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return diagnostic stats about the vector database.
+
+        Returns:
+            Dictionary with vec_enabled, bm25_available, db_type, and initialized status.
+        """
+        return {
+            "vec_enabled": self.vec_available,
+            "bm25_available": self.bm25_available,
+            "db_type": self.db_type,
+            "initialized": self._initialized,
+        }

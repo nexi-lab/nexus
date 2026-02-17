@@ -2605,7 +2605,9 @@ def _handle_query_memories(params: Any, context: Any) -> dict[str, Any]:
             except ImportError:
                 pass
             except Exception as e:
-                logger.warning("Failed to create embedding provider %s: %s", params.embedding_provider, e)
+                logger.warning(
+                    "Failed to create embedding provider %s: %s", params.embedding_provider, e
+                )
 
         # Use search method with semantic search
         search_mode = params.search_mode or "hybrid"

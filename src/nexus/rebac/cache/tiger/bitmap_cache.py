@@ -433,6 +433,59 @@ class TigerCache:
             with self._engine.connect() as new_conn:
                 return execute(new_conn)
 
+    def get_accessible_paths_list(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        zone_id: str,
+    ) -> list[str] | None:
+        """Get list of accessible resource paths for a subject (Issue #1565).
+
+        Combines bitmap lookup + resource map resolution into a single public API.
+        Returns None if no bitmap is available (caller should use fallback behavior).
+        Returns empty list if bitmap exists but has no matching paths.
+
+        Unlike get_accessible_paths() (which returns set for SQL pushdown),
+        this returns a list suitable for Rust prefix matching.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission to check (e.g., "read")
+            resource_type: Type of resource (e.g., "file")
+            zone_id: Zone ID (passed through to get_bitmap_bytes)
+
+        Returns:
+            List of accessible paths, or None if no bitmap available
+        """
+        bitmap_bytes = self.get_bitmap_bytes(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            permission=permission,
+            resource_type=resource_type,
+            zone_id=zone_id,
+        )
+
+        if bitmap_bytes is None:
+            return None
+
+        # Decode bitmap to get allowed int IDs
+        try:
+            import nexus_fast
+
+            allowed_ids = nexus_fast.decode_roaring_bitmap(bitmap_bytes)
+        except (ImportError, AttributeError):
+            bitmap = RoaringBitmap.deserialize(bitmap_bytes)
+            allowed_ids = list(bitmap)
+
+        if not allowed_ids:
+            return []
+
+        # Resolve int IDs to paths via the resource map
+        return self._resource_map.resolve_ids_to_paths(allowed_ids, resource_type)
+
     def get_cache_age(
         self,
         subject_type: str,

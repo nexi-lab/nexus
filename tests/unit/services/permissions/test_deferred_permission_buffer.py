@@ -10,7 +10,7 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from nexus.services.permissions.deferred_permission_buffer import (
+from nexus.rebac.deferred_permission_buffer import (
     DeferredPermissionBuffer,
     get_default_buffer,
     set_default_buffer,

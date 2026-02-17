@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+from nexus.a2a.messaging_adapters import (
+    a2a_message_to_envelope,
+    envelope_to_a2a_message,
+)
 from nexus.a2a.models import (
     DataPart,
     FileContent,
     FilePart,
     Message,
     TextPart,
-)
-from nexus.core.messaging_adapters import (
-    a2a_message_to_envelope,
-    envelope_to_a2a_message,
 )
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 

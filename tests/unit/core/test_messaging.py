@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.core.messaging import (
+from nexus.a2a.messaging import (
     DataPart,
     FilePart,
     MessageMetadata,

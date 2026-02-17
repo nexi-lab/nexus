@@ -76,7 +76,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
             if enforce_permissions and hasattr(app.state, "nexus_fs"):
                 sync_rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
-                    from nexus.services.permissions.namespace_factory import (
+                    from nexus.rebac.namespace_factory import (
                         create_namespace_manager,
                     )
 

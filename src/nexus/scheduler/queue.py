@@ -189,6 +189,17 @@ WHERE status = 'queued'
 GROUP BY priority_class
 """
 
+_SQL_PENDING_METRICS_BY_ZONE = """
+SELECT
+    priority_class,
+    count(*) AS cnt,
+    avg(EXTRACT(EPOCH FROM (now() - enqueued_at))) AS avg_wait,
+    max(EXTRACT(EPOCH FROM (now() - enqueued_at))) AS max_wait
+FROM scheduled_tasks
+WHERE status = 'queued' AND zone_id = $1
+GROUP BY priority_class
+"""
+
 
 # =============================================================================
 # Row-to-Model Conversion
@@ -368,7 +379,17 @@ class TaskQueue:
         rows = await conn.fetch(_SQL_STARVATION_PROMOTE, threshold_seconds)
         return len(rows)
 
-    async def get_queue_metrics(self, conn: Any) -> list[dict[str, Any]]:
-        """Get aggregated queue metrics by priority_class."""
-        rows = await conn.fetch(_SQL_PENDING_METRICS)
+    async def get_queue_metrics(
+        self, conn: Any, *, zone_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get aggregated queue metrics by priority_class.
+
+        Args:
+            conn: Database connection.
+            zone_id: If provided, filter metrics to this zone only.
+        """
+        if zone_id is not None:
+            rows = await conn.fetch(_SQL_PENDING_METRICS_BY_ZONE, zone_id)
+        else:
+            rows = await conn.fetch(_SQL_PENDING_METRICS)
         return [dict(row) for row in rows]

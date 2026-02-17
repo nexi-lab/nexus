@@ -236,6 +236,22 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Bricks routes: %s", e)
 
+    # ---- Batch operations router (Issue #1242) ----
+    try:
+        from nexus.server.api.v2.routers.batch import create_batch_router
+
+        batch_router = create_batch_router(get_fs=async_nexus_fs_getter)
+        registry.add(
+            RouterEntry(
+                router=batch_router,
+                name="batch",
+                prefix="/api/v2",
+                endpoint_count=1,
+            )
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Batch routes: %s", e)
+
     return registry
 
 

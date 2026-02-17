@@ -394,14 +394,14 @@ class VectorDatabase:
         )
 
     def get_stats(self) -> dict[str, Any]:
-        """Return diagnostic stats about the vector database.
+        """Return diagnostic statistics about the vector database.
 
         Returns:
-            Dictionary with vec_enabled, bm25_available, db_type, and initialized status.
+            Dict with database type, extension availability, and init state.
         """
         return {
-            "vec_enabled": self.vec_available,
-            "bm25_available": self.bm25_available,
             "db_type": self.db_type,
+            "vec_enabled": self.vec_available,
+            "bm25_enabled": self.bm25_available,
             "initialized": self._initialized,
         }

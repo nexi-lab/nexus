@@ -172,10 +172,6 @@ class ReBACManager:
 
         self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
-        # Backward-compat aliases for code accessing _conn_map / _pg_version directly
-        self._conn_map = self._repo._conn_map
-        self._pg_version = self._repo._pg_version
-
         # ── Enhanced initialization ──
         # Zone isolation (absorbed from ZoneAwareReBACManager — Phase 10)
         self.enforce_zone_isolation = enforce_zone_isolation

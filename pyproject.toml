@@ -465,7 +465,7 @@ module = "nexus.backends.passthrough"
 disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
-module = "nexus.core.file_watcher"
+module = "nexus.services.watch.file_watcher"
 # inotify_simple and pywin32 return untyped values
 disable_error_code = ["no-any-return"]
 

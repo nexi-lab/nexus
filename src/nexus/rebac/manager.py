@@ -279,7 +279,7 @@ class ReBACManager:
         )
 
         # Issue #922: Permission boundary cache for O(1) inheritance checks
-        from nexus.rebac.permission_boundary_cache import PermissionBoundaryCache
+        from nexus.rebac.cache.boundary import PermissionBoundaryCache
 
         self._boundary_cache: PermissionBoundaryCache = PermissionBoundaryCache()
 

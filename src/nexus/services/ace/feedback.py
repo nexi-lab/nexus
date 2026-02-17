@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import TrajectoryFeedbackModel, TrajectoryModel
@@ -103,9 +104,12 @@ class FeedbackManager:
             ...     print(f"{f['created_at']}: {f['message']} (score={f['revised_score']})")
         """
         feedbacks = (
-            self.session.query(TrajectoryFeedbackModel)
-            .filter_by(trajectory_id=trajectory_id)
-            .order_by(TrajectoryFeedbackModel.created_at.asc())
+            self.session.execute(
+                select(TrajectoryFeedbackModel)
+                .filter_by(trajectory_id=trajectory_id)
+                .order_by(TrajectoryFeedbackModel.created_at.asc())
+            )
+            .scalars()
             .all()
         )
 
@@ -144,7 +148,9 @@ class FeedbackManager:
             >>> print(f"Effective score: {score:.2f}")
         """
         trajectory = (
-            self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
         )
         if not trajectory:
             raise ValueError(f"Trajectory {trajectory_id} not found")
@@ -211,7 +217,9 @@ class FeedbackManager:
             ... )
         """
         trajectory = (
-            self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
         )
         if not trajectory:
             raise ValueError(f"Trajectory {trajectory_id} not found")
@@ -287,13 +295,16 @@ class FeedbackManager:
             ...     print(f"Priority {item['priority']}: {item['task_description']}")
         """
         trajectories = (
-            self.session.query(TrajectoryModel)
-            .filter(TrajectoryModel.needs_relearning == True)  # noqa: E712
-            .order_by(
-                TrajectoryModel.relearning_priority.desc(),
-                TrajectoryModel.last_feedback_at.desc(),
+            self.session.execute(
+                select(TrajectoryModel)
+                .where(TrajectoryModel.needs_relearning == True)  # noqa: E712
+                .order_by(
+                    TrajectoryModel.relearning_priority.desc(),
+                    TrajectoryModel.last_feedback_at.desc(),
+                )
+                .limit(limit)
             )
-            .limit(limit)
+            .scalars()
             .all()
         )
 
@@ -320,7 +331,9 @@ class FeedbackManager:
             >>> feedback_mgr.clear_relearning_flag(traj_id)
         """
         trajectory = (
-            self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
         )
         if trajectory:
             trajectory.needs_relearning = False  # PostgreSQL boolean
@@ -339,7 +352,9 @@ class FeedbackManager:
             score: New score (or None)
         """
         trajectory = (
-            self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
         )
         if not trajectory:
             return

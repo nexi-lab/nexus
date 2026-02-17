@@ -180,6 +180,41 @@ class TestRPCTypesInCore:
         assert CoreCode is ServerCode
 
 
+class TestConfigDoesNotImportServer:
+    """Verify nexus/config.py does not import from nexus.server (Issue #1389).
+
+    The OAuthConfig models were moved to nexus.auth_config so that config.py
+    can use them without reaching into the server layer.
+    """
+
+    def test_config_no_server_imports(self):
+        """nexus/config.py must not import from nexus.server at any level."""
+        config_path = NEXUS_ROOT / "config.py"
+        violations: list[str] = []
+
+        for module, lineno, _kind in _collect_imports(config_path):
+            if module.startswith("nexus.server"):
+                violations.append(f"config.py:{lineno} imports {module}")
+
+        assert violations == [], "config.py→server import violations found:\n" + "\n".join(
+            f"  - {v}" for v in violations
+        )
+
+    def test_auth_config_importable_from_package_level(self):
+        """OAuthConfig should be importable from nexus.auth_config (not server/)."""
+        from nexus.auth_config import OAuthConfig, OAuthProviderConfig
+
+        assert OAuthConfig is not None
+        assert OAuthProviderConfig is not None
+
+    def test_auth_config_re_exported_from_server(self):
+        """Backward-compat: server.auth.oauth_config re-exports from nexus.auth_config."""
+        from nexus.auth_config import OAuthConfig as PkgConfig
+        from nexus.server.auth.oauth_config import OAuthConfig as ServerConfig
+
+        assert PkgConfig is ServerConfig
+
+
 class TestZoneHelpersInCore:
     """Verify zone helpers are importable from core (Issue #1519, 3A)."""
 

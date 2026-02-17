@@ -201,26 +201,12 @@ def export_metadata(
     is_flag=True,
     help="Don't preserve original UUIDs from export (default: preserve)",
 )
-@click.option(
-    "--overwrite",
-    is_flag=True,
-    hidden=True,
-    help="(Deprecated) Use --conflict-mode=overwrite instead",
-)
-@click.option(
-    "--no-skip-existing",
-    is_flag=True,
-    hidden=True,
-    help="(Deprecated) Use --conflict-mode option instead",
-)
 @add_backend_options
 def import_metadata(
     input_file: str,
     conflict_mode: str,
     dry_run: bool,
     no_preserve_ids: bool,
-    overwrite: bool,
-    no_skip_existing: bool,
     backend_config: BackendConfig,
 ) -> None:
     """Import metadata from JSONL file.
@@ -254,15 +240,6 @@ def import_metadata(
             console.print("[red]Error:[/red] Metadata import is only available in standalone mode")
             nx.close()
             sys.exit(1)
-
-        # Handle deprecated options for backward compatibility
-        _ = no_skip_existing  # Deprecated parameter, kept for backward compatibility
-
-        if overwrite:
-            console.print(
-                "[yellow]Warning:[/yellow] --overwrite is deprecated, use --conflict-mode=overwrite"
-            )
-            conflict_mode = "overwrite"
 
         # Create import options
         import_options = ImportOptions(

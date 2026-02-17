@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.core.exceptions import AuthenticationError
 from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.server.auth.token_manager import TokenManager, _hash_token
@@ -55,8 +56,12 @@ class TestTokenRotation:
             db_path_obj.unlink(missing_ok=True)
 
     @pytest.fixture
-    def manager(self, temp_db):
-        manager = TokenManager(db_path=temp_db)
+    def cache_store(self):
+        return InMemoryCacheStore()
+
+    @pytest.fixture
+    def manager(self, temp_db, cache_store):
+        manager = TokenManager(db_path=temp_db, cache_store=cache_store)
         yield manager
         manager.close()
         gc.collect()
@@ -245,7 +250,7 @@ class TestTokenRotation:
         assert len(creds_after) == 0  # list_credentials filters revoked
 
     @pytest.mark.asyncio
-    async def test_cache_returns_valid_token(self, manager, valid_credential):
+    async def test_cache_returns_valid_token(self, manager, cache_store, valid_credential):
         """Second call should return from cache without DB hit."""
         await manager.store_credential(
             provider="google",
@@ -256,16 +261,16 @@ class TestTokenRotation:
         # First call populates cache
         token1 = await manager.get_valid_token("google", "alice@example.com")
 
-        # Verify cache is populated
-        cache_key = ("google", "alice@example.com", "root")
-        assert cache_key in manager._token_cache
+        # Verify cache is populated via CacheStoreABC
+        cache_key = manager._token_cache_key("google", "alice@example.com", "root")
+        assert await cache_store.exists(cache_key)
 
         # Second call should use cache
         token2 = await manager.get_valid_token("google", "alice@example.com")
         assert token1 == token2
 
     @pytest.mark.asyncio
-    async def test_cache_invalidated_on_revoke(self, manager, valid_credential):
+    async def test_cache_invalidated_on_revoke(self, manager, cache_store, valid_credential):
         """Revoking a credential should clear the cache."""
         await manager.store_credential(
             provider="google",
@@ -275,12 +280,12 @@ class TestTokenRotation:
 
         # Populate cache
         await manager.get_valid_token("google", "alice@example.com")
-        cache_key = ("google", "alice@example.com", "root")
-        assert cache_key in manager._token_cache
+        cache_key = manager._token_cache_key("google", "alice@example.com", "root")
+        assert await cache_store.exists(cache_key)
 
         # Revoke should clear cache
         await manager.revoke_credential("google", "alice@example.com")
-        assert cache_key not in manager._token_cache
+        assert not await cache_store.exists(cache_key)
 
     @pytest.mark.asyncio
     async def test_no_rotation_when_same_refresh_token(self, manager, expired_credential):
@@ -404,7 +409,7 @@ class TestConcurrentRefresh:
 
     @pytest.fixture
     def manager(self, temp_db):
-        manager = TokenManager(db_path=temp_db)
+        manager = TokenManager(db_path=temp_db, cache_store=InMemoryCacheStore())
         yield manager
         manager.close()
         gc.collect()
@@ -462,7 +467,7 @@ class TestReuseDetectionDuringRefresh:
 
     @pytest.fixture
     def manager(self, temp_db):
-        manager = TokenManager(db_path=temp_db)
+        manager = TokenManager(db_path=temp_db, cache_store=InMemoryCacheStore())
         yield manager
         manager.close()
         gc.collect()

@@ -9,43 +9,6 @@ from sqlalchemy.orm import Session
 
 from nexus.storage.models import ZoneModel
 
-# Personal email providers (free email services)
-# Users with these domains get personal workspaces
-PERSONAL_EMAIL_DOMAINS = {
-    # Google
-    "gmail.com",
-    "googlemail.com",
-    # Microsoft
-    "hotmail.com",
-    "outlook.com",
-    "live.com",
-    "msn.com",
-    # Yahoo
-    "yahoo.com",
-    "yahoo.co.uk",
-    "yahoo.ca",
-    "yahoo.fr",
-    "yahoo.de",
-    "ymail.com",
-    # Apple
-    "icloud.com",
-    "me.com",
-    "mac.com",
-    # Other popular providers
-    "aol.com",
-    "protonmail.com",
-    "proton.me",
-    "mail.com",
-    "zoho.com",
-    "fastmail.com",
-    "gmx.com",
-    "gmx.net",
-    "qq.com",
-    "163.com",
-    "126.com",
-}
-
-
 # Reserved zone_id values that cannot be used
 RESERVED_ZONE_IDS = {
     # System identifiers
@@ -79,69 +42,6 @@ RESERVED_ZONE_IDS = {
     "pricing",
     "features",
 }
-
-
-def is_personal_email_domain(domain: str) -> bool:
-    """Check if email domain is a personal/free email provider.
-
-    Args:
-        domain: Email domain (e.g., "gmail.com", "acme.com")
-
-    Returns:
-        True if personal email provider, False if company domain
-
-    Example:
-        >>> is_personal_email_domain("gmail.com")
-        True
-        >>> is_personal_email_domain("acme.com")
-        False
-    """
-    return domain.lower() in PERSONAL_EMAIL_DOMAINS
-
-
-def get_zone_strategy_from_email(
-    email: str,
-) -> tuple[str, str, str | None, bool]:
-    """Determine zone strategy based on email domain.
-
-    Args:
-        email: User's email address
-
-    Returns:
-        Tuple of (base_slug, zone_name_base, domain, is_personal)
-        - base_slug: Base for zone_id generation
-        - zone_name_base: Base for zone display name
-        - domain: Domain to store in zone
-        - is_personal: True if personal workspace, False if company zone
-
-    Example:
-        >>> get_zone_strategy_from_email("alice@gmail.com")
-        ("alice", "alice", "gmail.com", True)  # Personal workspace
-
-        >>> get_zone_strategy_from_email("bob@acme.com")
-        ("acme-com", "Acme", "acme.com", False)  # Company zone
-    """
-    if "@" not in email:
-        # Fallback for invalid email
-        return "user", "user", None, True
-
-    username, domain = email.split("@", 1)
-    domain = domain.lower()
-
-    if is_personal_email_domain(domain):
-        # Personal email: Use username as zone_id base
-        # zone_name will be "<FirstName>'s Workspace"
-        return username, username, domain, True
-    else:
-        # Company email: Use domain as zone_id base
-        # Convert "acme.com" -> "acme-com" slug
-        domain_slug = domain.replace(".", "-")
-
-        # Extract company name from domain for display
-        # "acme.com" -> "Acme", "tech-startup.io" -> "Tech Startup"
-        company_name = domain.split(".")[0].replace("-", " ").title()
-
-        return domain_slug, company_name, domain, False
 
 
 def validate_zone_id(zone_id: str) -> tuple[bool, str | None]:

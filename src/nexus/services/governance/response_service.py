@@ -182,12 +182,13 @@ class ResponseService:
         self,
         suspension_id: str,
         reason: str,
+        zone_id: str | None = None,
     ) -> SuspensionRecord:
         """File an appeal for a suspension.
 
         Uses the shared ApprovalWorkflow for state management.
         """
-        record = await self._get_suspension(suspension_id)
+        record = await self._get_suspension(suspension_id, zone_id=zone_id)
         if record is None:
             msg = f"Suspension {suspension_id!r} not found"
             raise KeyError(msg)
@@ -225,13 +226,14 @@ class ResponseService:
         suspension_id: str,
         approved: bool,
         decided_by: str,
+        zone_id: str | None = None,
     ) -> SuspensionRecord:
         """Decide on a suspension appeal.
 
         If approved: remove BLOCK constraint, set appeal_status=approved.
         If rejected: set appeal_status=rejected.
         """
-        record = await self._get_suspension(suspension_id)
+        record = await self._get_suspension(suspension_id, zone_id=zone_id)
         if record is None:
             msg = f"Suspension {suspension_id!r} not found"
             raise KeyError(msg)
@@ -310,7 +312,7 @@ class ResponseService:
 
             return [_suspension_model_to_domain(m) for m in models]
 
-    async def _get_suspension(self, suspension_id: str) -> SuspensionRecord | None:
+    async def _get_suspension(self, suspension_id: str, zone_id: str | None = None) -> SuspensionRecord | None:
         """Get a suspension by ID."""
         from sqlalchemy import select
 
@@ -318,6 +320,8 @@ class ResponseService:
 
         async with self._session_factory() as session:
             stmt = select(SuspensionModel).where(SuspensionModel.id == suspension_id)
+            if zone_id is not None:
+                stmt = stmt.where(SuspensionModel.zone_id == zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
 

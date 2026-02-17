@@ -64,6 +64,7 @@ class GovernanceProtocol(Protocol):
         self,
         alert_id: str,
         resolved_by: str,
+        zone_id: str | None = None,
     ) -> Any | None:
         """Mark an anomaly alert as resolved.
 

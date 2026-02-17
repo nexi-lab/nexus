@@ -1,10 +1,10 @@
-"""Agent discovery via filesystem.
+"""Agent discovery via IPC storage.
 
-Agents discover each other by listing the filesystem:
-- ``ls /agents/`` = who exists
+Agents discover each other by querying the storage driver:
+- ``list_dir /agents/`` = who exists
 - ``read /agents/{id}/AGENT.json`` = capabilities and status
 
-Bridges internal discovery (filesystem) with external discovery
+Bridges internal discovery (IPC storage) with external discovery
 (A2A Agent Card at ``/.well-known/agent.json``).
 """
 
@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.ipc.conventions import AGENTS_ROOT, agent_card_path
-from nexus.ipc.protocols import VFSOperations
+from nexus.ipc.storage.protocol import IPCStorageDriver
+
+if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
+
+_DISCOVERY_CACHE_KEY = "nexus:ipc:discovery:agents"
 
 
 @dataclass(frozen=True)
@@ -44,24 +48,33 @@ class DiscoveredAgent:
 
 
 class AgentDiscovery:
-    """Discovers agents by reading the filesystem.
+    """Discovers agents by reading IPC storage.
+
+    Uses CacheStoreABC for TTL-based caching per KERNEL-ARCHITECTURE.md §2
+    (CacheStore pillar: ephemeral KV with TTL).
 
     Args:
-        vfs: VFS operations for listing and reading.
+        storage: Storage driver for IPC listing and reading.
         zone_id: Zone ID for multi-tenant isolation.
+        cache_store: CacheStoreABC for ephemeral caching (optional, degrades gracefully).
+        cache_ttl_seconds: TTL for the agent discovery cache.
     """
 
     def __init__(
         self,
-        vfs: VFSOperations,
+        storage: IPCStorageDriver,
         zone_id: str = "root",
         cache_ttl_seconds: float = 10.0,
+        cache_store: CacheStoreABC | None = None,
     ) -> None:
-        self._vfs = vfs
+        self._storage = storage
         self._zone_id = zone_id
         self._cache_ttl = cache_ttl_seconds
-        self._cache: list[DiscoveredAgent] | None = None
-        self._cache_expires_at: float = 0.0
+        self._cache_store = cache_store
+
+    def _cache_key(self) -> str:
+        """Zone-scoped cache key for agent discovery."""
+        return f"{_DISCOVERY_CACHE_KEY}:{self._zone_id}"
 
     async def list_agents(self) -> list[str]:
         """List all registered agent IDs.
@@ -70,7 +83,7 @@ class AgentDiscovery:
             List of agent directory names under ``/agents/``.
         """
         try:
-            entries = await self._vfs.list_dir(AGENTS_ROOT, self._zone_id)
+            entries = await self._storage.list_dir(AGENTS_ROOT, self._zone_id)
             return sorted(entries)
         except Exception:
             logger.warning(
@@ -91,7 +104,7 @@ class AgentDiscovery:
         """
         card_path = agent_card_path(agent_id)
         try:
-            data = await self._vfs.read(card_path, self._zone_id)
+            data = await self._storage.read(card_path, self._zone_id)
             card_dict = json.loads(data)
         except Exception:
             logger.debug(
@@ -115,8 +128,8 @@ class AgentDiscovery:
     async def discover_all(self, *, bypass_cache: bool = False) -> list[DiscoveredAgent]:
         """Discover all agents with valid agent cards.
 
-        Uses a TTL-based cache to avoid re-scanning the filesystem on
-        every call. Cache can be bypassed for one-off fresh lookups.
+        Uses CacheStoreABC for TTL-based caching when available. Falls back
+        to direct scan when no cache store is configured.
 
         Args:
             bypass_cache: If True, skip the cache and re-scan.
@@ -125,10 +138,15 @@ class AgentDiscovery:
             List of DiscoveredAgent instances for all agents that have
             a valid AGENT.json file.
         """
-        now = time.monotonic()
-        if not bypass_cache and self._cache is not None and now < self._cache_expires_at:
-            return list(self._cache)  # Return copy to prevent mutation
+        key = self._cache_key()
 
+        # Try cache first
+        if not bypass_cache and self._cache_store is not None:
+            cached_bytes = await self._cache_store.get(key)
+            if cached_bytes is not None:
+                return _deserialize_agents(cached_bytes)
+
+        # Cache miss or bypass — scan filesystem
         agent_ids = await self.list_agents()
         discovered: list[DiscoveredAgent] = []
         for agent_id in agent_ids:
@@ -136,8 +154,11 @@ class AgentDiscovery:
             if agent is not None:
                 discovered.append(agent)
 
-        self._cache = discovered
-        self._cache_expires_at = now + self._cache_ttl
+        # Write to cache
+        if self._cache_store is not None:
+            serialized = _serialize_agents(discovered)
+            await self._cache_store.set(key, serialized, ttl=int(self._cache_ttl))
+
         return discovered
 
     async def find_by_skill(self, skill: str) -> list[DiscoveredAgent]:
@@ -151,3 +172,35 @@ class AgentDiscovery:
         """
         all_agents = await self.discover_all()
         return [a for a in all_agents if skill in a.skills]
+
+
+def _serialize_agents(agents: list[DiscoveredAgent]) -> bytes:
+    """Serialize a list of DiscoveredAgent to JSON bytes for CacheStoreABC."""
+    payload = [
+        {
+            "agent_id": a.agent_id,
+            "name": a.name,
+            "skills": a.skills,
+            "status": a.status,
+            "inbox": a.inbox,
+            "metadata": a.metadata,
+        }
+        for a in agents
+    ]
+    return json.dumps(payload).encode()
+
+
+def _deserialize_agents(data: bytes) -> list[DiscoveredAgent]:
+    """Deserialize JSON bytes back to a list of DiscoveredAgent."""
+    payload = json.loads(data)
+    return [
+        DiscoveredAgent(
+            agent_id=d["agent_id"],
+            name=d["name"],
+            skills=d["skills"],
+            status=d["status"],
+            inbox=d["inbox"],
+            metadata=d["metadata"],
+        )
+        for d in payload
+    ]

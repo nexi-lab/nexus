@@ -333,7 +333,11 @@ class AsyncLocalBackend(AsyncBackend):
     # === Batch Read Operations ===
 
     async def batch_read_content(
-        self, content_hashes: list[str], context: "OperationContext | None" = None
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """
         Optimized batch read for async backend with concurrent I/O.
@@ -341,6 +345,7 @@ class AsyncLocalBackend(AsyncBackend):
         Args:
             content_hashes: List of BLAKE3 hashes as hex strings
             context: Operation context (ignored for local backend)
+            contexts: Per-hash contexts (ignored — local backend uses CAS paths)
 
         Returns:
             Dictionary mapping hash to content (or None if not found)

@@ -186,7 +186,7 @@ def revoke_credential(
     manager = get_token_manager(db_path)
 
     async def _revoke() -> None:
-        success = await manager.revoke_credential(provider, user_email, zone_id or "default")
+        success = await manager.revoke_credential(provider, user_email, zone_id or "root")
 
         if success:
             console.print(f"[green]✓[/green] Revoked credential: {provider}:{user_email}")
@@ -238,7 +238,7 @@ def test_credential(
     async def _test() -> None:
         try:
             # Try to get a valid token (will auto-refresh if needed)
-            token = await manager.get_valid_token(provider, user_email, zone_id or "default")
+            token = await manager.get_valid_token(provider, user_email, zone_id or "root")
 
             console.print("[green]✓[/green] Credential is valid")
             console.print(f"[dim]Token length: {len(token)} chars[/dim]")
@@ -384,7 +384,7 @@ def setup_gdrive(
             provider="google",
             user_email=user_email,
             credential=credential,
-            zone_id=zone_id or "default",
+            zone_id=zone_id or "root",
             created_by=user_email,
         )
         manager.close()
@@ -546,7 +546,7 @@ def setup_x(
             provider="twitter",
             user_email=user_email,
             credential=credential,
-            zone_id=zone_id or "default",
+            zone_id=zone_id or "root",
             created_by=user_email,
         )
         manager.close()

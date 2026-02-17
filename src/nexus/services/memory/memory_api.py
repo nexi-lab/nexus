@@ -150,7 +150,7 @@ class Memory:
         from nexus.services.memory.versioning import MemoryVersioning
 
         self._versioning = MemoryVersioning(
-            session=session,
+            session_factory=lambda: session,
             memory_router=self.memory_router,
             permission_enforcer=self.permission_enforcer,
             backend=backend,
@@ -521,45 +521,33 @@ class Memory:
         import json
         import os
 
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
         from nexus.core.sync_bridge import run_sync
         from nexus.search.graph_store import GraphStore
+        from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Get database URL from session's engine
-        sync_url = os.environ.get("NEXUS_DATABASE_URL", "")
-        if not sync_url:
+        db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+        if not db_url:
             # Try to get from the session's engine bind
             try:
                 bind = self.session.get_bind()
                 url = getattr(bind, "url", None)
                 if url:
-                    sync_url = str(url)
+                    db_url = str(url)
             except Exception as e:
                 logger.debug("Failed to extract database URL from session: %s", e)
                 return
 
-        if not sync_url:
+        if not db_url:
             return
 
-        # Convert to async URL
-        if sync_url.startswith("postgresql://"):
-            async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
-        elif sync_url.startswith("sqlite:///"):
-            async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-        else:
-            async_url = sync_url
-
         # Use default zone if not provided
-        effective_zone_id = zone_id or "default"
+        effective_zone_id = zone_id or "root"
 
         async def _do_store() -> None:
-            engine = create_async_engine(async_url)
-            async_session_factory = async_sessionmaker(
-                engine, class_=AsyncSession, expire_on_commit=False
-            )
+            _store = SQLAlchemyRecordStore(db_url=db_url)
             try:
-                async with async_session_factory() as session:
+                async with _store.async_session_factory() as session:
                     graph_store = GraphStore(session, zone_id=effective_zone_id)
 
                     # Store entities
@@ -620,7 +608,7 @@ class Memory:
 
                     await session.commit()
             finally:
-                await engine.dispose()
+                _store.close()
 
         run_sync(_do_store())
 

@@ -7,7 +7,7 @@ Handles the supersedes chain traversal, version history queries, and
 garbage collection of old versions.
 
 Usage:
-    versioning = MemoryVersioning(session, memory_router, permission_enforcer, backend, context)
+    versioning = MemoryVersioning(session_factory, memory_router, permission_enforcer, backend, context)
     versions = versioning.list_versions("mem_123")
     versioning.rollback("mem_123", version=1)
 """
@@ -17,10 +17,9 @@ from __future__ import annotations
 import builtins
 import difflib
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
-
-from sqlalchemy.orm import Session
 
 from nexus.core.permissions import OperationContext, Permission
 from nexus.services.memory.memory_router import MemoryViewRouter
@@ -38,13 +37,13 @@ class MemoryVersioning:
 
     def __init__(
         self,
-        session: Session,
+        session_factory: Callable[..., Any],
         memory_router: MemoryViewRouter,
         permission_enforcer: MemoryPermissionEnforcer,
         backend: Any,
         context: OperationContext,
     ) -> None:
-        self._session = session
+        self._session_factory = session_factory
         self._memory_router = memory_router
         self._permission_enforcer = permission_enforcer
         self._backend = backend
@@ -140,23 +139,27 @@ class MemoryVersioning:
             .order_by(VersionHistoryModel.version_number.desc())
         )
 
-        versions: builtins.list[dict[str, Any]] = []
-        for v in self._session.scalars(stmt):
-            versions.append(
-                {
-                    "version": v.version_number,
-                    "content_hash": v.content_hash,
-                    "size": v.size_bytes,
-                    "mime_type": v.mime_type,
-                    "created_at": v.created_at.isoformat() if v.created_at else None,
-                    "created_by": v.created_by,
-                    "change_reason": v.change_reason,
-                    "source_type": v.source_type,
-                    "parent_version_id": v.parent_version_id,
-                }
-            )
+        session = self._session_factory()
+        try:
+            versions: builtins.list[dict[str, Any]] = []
+            for v in session.scalars(stmt):
+                versions.append(
+                    {
+                        "version": v.version_number,
+                        "content_hash": v.content_hash,
+                        "size": v.size_bytes,
+                        "mime_type": v.mime_type,
+                        "created_at": v.created_at.isoformat() if v.created_at else None,
+                        "created_by": v.created_by,
+                        "change_reason": v.change_reason,
+                        "source_type": v.source_type,
+                        "parent_version_id": v.parent_version_id,
+                    }
+                )
 
-        return versions
+            return versions
+        finally:
+            session.close()
 
     def get_version(
         self,
@@ -196,28 +199,32 @@ class MemoryVersioning:
             VersionHistoryModel.resource_id.in_(chain_ids),
             VersionHistoryModel.version_number == version,
         )
-        version_entry = self._session.scalar(stmt)
+        session = self._session_factory()
+        try:
+            version_entry = session.scalar(stmt)
 
-        if not version_entry:
-            return None
+            if not version_entry:
+                return None
 
-        # Read content from CAS
-        content = self._read_version_content(version_entry.content_hash)
+            # Read content from CAS
+            content = self._read_version_content(version_entry.content_hash)
 
-        return {
-            "memory_id": memory_id,
-            "version": version_entry.version_number,
-            "content": content,
-            "content_hash": version_entry.content_hash,
-            "size": version_entry.size_bytes,
-            "mime_type": version_entry.mime_type,
-            "created_at": version_entry.created_at.isoformat()
-            if version_entry.created_at
-            else None,
-            "created_by": version_entry.created_by,
-            "source_type": version_entry.source_type,
-            "change_reason": version_entry.change_reason,
-        }
+            return {
+                "memory_id": memory_id,
+                "version": version_entry.version_number,
+                "content": content,
+                "content_hash": version_entry.content_hash,
+                "size": version_entry.size_bytes,
+                "mime_type": version_entry.mime_type,
+                "created_at": version_entry.created_at.isoformat()
+                if version_entry.created_at
+                else None,
+                "created_by": version_entry.created_by,
+                "source_type": version_entry.source_type,
+                "change_reason": version_entry.change_reason,
+            }
+        finally:
+            session.close()
 
     def rollback(
         self,
@@ -259,50 +266,54 @@ class MemoryVersioning:
             latest_memory = memory
         latest_memory_id = latest_memory.memory_id
 
-        target_stmt = select(VersionHistoryModel).where(
-            VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id.in_(chain_ids),
-            VersionHistoryModel.version_number == version,
-        )
-        target_version = self._session.scalar(target_stmt)
+        session = self._session_factory()
+        try:
+            target_stmt = select(VersionHistoryModel).where(
+                VersionHistoryModel.resource_type == "memory",
+                VersionHistoryModel.resource_id.in_(chain_ids),
+                VersionHistoryModel.version_number == version,
+            )
+            target_version = session.scalar(target_stmt)
 
-        if not target_version:
-            raise ValueError(f"Version {version} not found for memory {memory_id}")
+            if not target_version:
+                raise ValueError(f"Version {version} not found for memory {memory_id}")
 
-        # Get current version entry for lineage
-        current_stmt = select(VersionHistoryModel).where(
-            VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id.in_(chain_ids),
-            VersionHistoryModel.version_number == latest_memory.current_version,
-        )
-        current_version_entry = self._session.scalar(current_stmt)
-        parent_version_id = current_version_entry.version_id if current_version_entry else None
+            # Get current version entry for lineage
+            current_stmt = select(VersionHistoryModel).where(
+                VersionHistoryModel.resource_type == "memory",
+                VersionHistoryModel.resource_id.in_(chain_ids),
+                VersionHistoryModel.version_number == latest_memory.current_version,
+            )
+            current_version_entry = session.scalar(current_stmt)
+            parent_version_id = current_version_entry.version_id if current_version_entry else None
 
-        # Update the latest memory to target version's content
-        latest_memory.content_hash = target_version.content_hash
-        latest_memory.updated_at = datetime.now(UTC)
+            # Update the latest memory to target version's content
+            latest_memory.content_hash = target_version.content_hash
+            latest_memory.updated_at = datetime.now(UTC)
 
-        # Atomically increment version at database level
-        self._session.execute(
-            update(MemoryModel)
-            .where(MemoryModel.memory_id == latest_memory_id)
-            .values(current_version=MemoryModel.current_version + 1)
-        )
-        self._session.refresh(latest_memory)
+            # Atomically increment version at database level
+            session.execute(
+                update(MemoryModel)
+                .where(MemoryModel.memory_id == latest_memory_id)
+                .values(current_version=MemoryModel.current_version + 1)
+            )
+            session.refresh(latest_memory)
 
-        # Create version history entry for the rollback
-        self._memory_router._create_version_entry(
-            memory_id=latest_memory_id,
-            content_hash=target_version.content_hash,
-            size_bytes=target_version.size_bytes,
-            version_number=latest_memory.current_version,
-            source_type="rollback",
-            parent_version_id=parent_version_id,
-            change_reason=f"Rollback to version {version}",
-            created_by=check_context.user if check_context else None,
-        )
+            # Create version history entry for the rollback
+            self._memory_router._create_version_entry(
+                memory_id=latest_memory_id,
+                content_hash=target_version.content_hash,
+                size_bytes=target_version.size_bytes,
+                version_number=latest_memory.current_version,
+                source_type="rollback",
+                parent_version_id=parent_version_id,
+                change_reason=f"Rollback to version {version}",
+                created_by=check_context.user if check_context else None,
+            )
 
-        self._session.commit()
+            session.commit()
+        finally:
+            session.close()
 
     def diff_versions(
         self,
@@ -348,34 +359,43 @@ class MemoryVersioning:
             VersionHistoryModel.version_number.in_([v1, v2]),
         )
 
-        versions_dict = {v.version_number: v for v in self._session.scalars(stmt)}
+        session = self._session_factory()
+        try:
+            versions_dict = {v.version_number: v for v in session.scalars(stmt)}
 
-        if v1 not in versions_dict:
-            raise ValueError(f"Version {v1} not found for memory {memory_id}")
-        if v2 not in versions_dict:
-            raise ValueError(f"Version {v2} not found for memory {memory_id}")
+            if v1 not in versions_dict:
+                raise ValueError(f"Version {v1} not found for memory {memory_id}")
+            if v2 not in versions_dict:
+                raise ValueError(f"Version {v2} not found for memory {memory_id}")
 
-        version1 = versions_dict[v1]
-        version2 = versions_dict[v2]
+            version1 = versions_dict[v1]
+            version2 = versions_dict[v2]
 
-        if mode == "metadata":
-            return {
-                "memory_id": memory_id,
-                "v1": v1,
-                "v2": v2,
-                "content_hash_v1": version1.content_hash,
-                "content_hash_v2": version2.content_hash,
-                "content_changed": version1.content_hash != version2.content_hash,
-                "size_v1": version1.size_bytes,
-                "size_v2": version2.size_bytes,
-                "size_delta": version2.size_bytes - version1.size_bytes,
-                "created_at_v1": version1.created_at.isoformat() if version1.created_at else None,
-                "created_at_v2": version2.created_at.isoformat() if version2.created_at else None,
-            }
+            if mode == "metadata":
+                return {
+                    "memory_id": memory_id,
+                    "v1": v1,
+                    "v2": v2,
+                    "content_hash_v1": version1.content_hash,
+                    "content_hash_v2": version2.content_hash,
+                    "content_changed": version1.content_hash != version2.content_hash,
+                    "size_v1": version1.size_bytes,
+                    "size_v2": version2.size_bytes,
+                    "size_delta": version2.size_bytes - version1.size_bytes,
+                    "created_at_v1": version1.created_at.isoformat()
+                    if version1.created_at
+                    else None,
+                    "created_at_v2": version2.created_at.isoformat()
+                    if version2.created_at
+                    else None,
+                }
 
-        # Content diff mode
-        raw1 = self._read_version_content(version1.content_hash)
-        raw2 = self._read_version_content(version2.content_hash)
+            # Content diff mode
+            raw1 = self._read_version_content(version1.content_hash)
+            raw2 = self._read_version_content(version2.content_hash)
+        finally:
+            session.close()
+
         content1 = raw1 if isinstance(raw1, str) else str(raw1)
         content2 = raw2 if isinstance(raw2, str) else str(raw2)
 
@@ -470,17 +490,21 @@ class MemoryVersioning:
             MemoryModel.invalid_at.isnot(None),
             MemoryModel.invalid_at <= threshold,
         )
-        old_memories = list(self._session.execute(stmt).scalars().all())
+        session = self._session_factory()
+        try:
+            old_memories = list(session.execute(stmt).scalars().all())
 
-        removed = 0
-        for memory in old_memories:
-            self._session.delete(memory)
-            removed += 1
+            removed = 0
+            for memory in old_memories:
+                session.delete(memory)
+                removed += 1
 
-        if removed > 0:
-            self._session.commit()
+            if removed > 0:
+                session.commit()
 
-        return removed
+            return removed
+        finally:
+            session.close()
 
     def _read_version_content(
         self, content_hash: str, *, parse_json: bool = False

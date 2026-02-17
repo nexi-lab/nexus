@@ -8,6 +8,7 @@ Defines the directory layout for agent communication:
         outbox/             # Sent messages (audit trail)
         processed/          # Successfully processed messages
         dead_letter/        # Failed messages
+        tasks/              # A2A task persistence (§17.6 convergence)
 
 All functions are pure — they compose path strings with no I/O.
 """
@@ -23,6 +24,7 @@ INBOX_DIR = "inbox"
 OUTBOX_DIR = "outbox"
 PROCESSED_DIR = "processed"
 DEAD_LETTER_DIR = "dead_letter"
+TASKS_DIR = "tasks"
 AGENT_CARD_FILENAME = "AGENT.json"
 
 # All directories auto-provisioned for each agent
@@ -31,6 +33,7 @@ AGENT_SUBDIRS: tuple[str, ...] = (
     OUTBOX_DIR,
     PROCESSED_DIR,
     DEAD_LETTER_DIR,
+    TASKS_DIR,
 )
 
 
@@ -62,6 +65,28 @@ def dead_letter_path(agent_id: str) -> str:
 def agent_card_path(agent_id: str) -> str:
     """Agent card file: ``/agents/{agent_id}/AGENT.json``."""
     return f"{AGENTS_ROOT}/{agent_id}/{AGENT_CARD_FILENAME}"
+
+
+def tasks_path(agent_id: str) -> str:
+    """Tasks directory: ``/agents/{agent_id}/tasks``."""
+    return f"{AGENTS_ROOT}/{agent_id}/{TASKS_DIR}"
+
+
+def task_file_path(agent_id: str, task_id: str, timestamp: datetime) -> str:
+    """Full path for a task file in an agent's tasks directory.
+
+    Format: ``/agents/{agent_id}/tasks/{ISO_timestamp}_{task_id}.json``
+
+    The timestamp prefix ensures ``ls --sort=name`` gives chronological
+    ordering.  The task_id suffix ensures uniqueness.
+    """
+    ts = timestamp.strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{tasks_path(agent_id)}/{ts}_{task_id}.json"
+
+
+def task_dead_letter_path(agent_id: str) -> str:
+    """Dead letter directory for deleted tasks: ``/agents/{agent_id}/tasks/_dead_letter``."""
+    return f"{tasks_path(agent_id)}/_dead_letter"
 
 
 def message_filename(msg_id: str, timestamp: datetime) -> str:

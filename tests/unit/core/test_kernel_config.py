@@ -4,7 +4,7 @@ Validates:
 - Default values for each frozen dataclass
 - frozen=True prevents mutation (raises FrozenInstanceError)
 - dataclasses.replace() creates modified copies
-- KernelServices allows mutation (not frozen)
+- KernelServices is frozen — use dataclasses.replace() for modified copies
 """
 
 from __future__ import annotations
@@ -195,7 +195,7 @@ class TestParseConfig:
 
 
 class TestKernelServices:
-    """Tests for KernelServices mutable dataclass."""
+    """Tests for KernelServices frozen dataclass."""
 
     def test_defaults_all_none(self) -> None:
         ks = KernelServices()
@@ -206,14 +206,15 @@ class TestKernelServices:
         assert ks.workflow_engine is None
         assert ks.version_service is None
         assert ks.write_observer is None
-        # Server-layer extras are in server_extras dict, not direct fields
-        assert ks.server_extras == {}
+        # Server-layer extras are now explicit fields (not an opaque dict)
+        assert ks.observability_subsystem is None
+        assert ks.chunked_upload_service is None
 
-    def test_mutable(self) -> None:
-        """KernelServices is NOT frozen — attributes can be set."""
+    def test_frozen(self) -> None:
+        """KernelServices is frozen — use dataclasses.replace() for copies."""
         ks = KernelServices()
-        ks.router = "some_router"
-        assert ks.router == "some_router"
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            ks.router = "some_router"  # type: ignore[misc]
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
@@ -221,6 +222,13 @@ class TestKernelServices:
         assert ks.version_service is sentinel
         assert ks.event_bus is sentinel
         assert ks.rebac_manager is None  # others still None
+
+    def test_replace(self) -> None:
+        """Use dataclasses.replace() to create modified copies."""
+        ks = KernelServices()
+        new = dataclasses.replace(ks, router="new_router")
+        assert new.router == "new_router"
+        assert ks.router is None  # original unchanged
 
     def test_is_dataclass(self) -> None:
         assert dataclasses.is_dataclass(KernelServices)
@@ -230,15 +238,14 @@ class TestKernelServices:
     def test_all_service_fields_present(self) -> None:
         """Verify KernelServices has all expected fields.
 
-        Server-layer extras (observability_subsystem, chunked_upload_service,
-        manifest_resolver, manifest_metrics, rebac_circuit_breaker,
-        tool_namespace_middleware, resiliency_manager, delivery_worker) are
-        stored in the opaque server_extras dict, not as direct dataclass fields.
+        All service fields are first-class typed fields (no server_extras dict).
         """
         field_names = {f.name for f in dataclasses.fields(KernelServices)}
         expected_fields = {
+            # Tier 0: KERNEL
             "router",
             "rebac_manager",
+            "rebac_circuit_breaker",
             "dir_visibility_cache",
             "audit_store",
             "entity_registry",
@@ -252,9 +259,47 @@ class TestKernelServices:
             "version_service",
             "overlay_resolver",
             "wallet_provisioner",
+            # Tier 1: SYSTEM
+            "agent_registry",
+            "async_agent_registry",
+            "namespace_manager",
+            "async_namespace_manager",
+            "async_vfs_router",
+            # Tier 2: BRICK / Infrastructure
             "event_bus",
             "lock_manager",
             "workflow_engine",
-            "server_extras",
+            # Server-layer services (first-class fields)
+            "cache_observer",
+            "observability_subsystem",
+            "chunked_upload_service",
+            "manifest_resolver",
+            "manifest_metrics",
+            "tool_namespace_middleware",
+            "resiliency_manager",
+            "delivery_worker",
+            # Auth services
+            "api_key_creator",
+            # Pre-built domain services
+            "rebac_service",
+            "search_service",
+            "events_service",
         }
         assert expected_fields.issubset(field_names), f"Missing: {expected_fields - field_names}"
+
+    def test_protocol_type_annotations(self) -> None:
+        """Verify Protocol-typed fields have correct annotation strings.
+
+        Uses ``__annotations__`` (string form) instead of ``get_type_hints()``
+        because the Protocol imports live behind TYPE_CHECKING and are not
+        resolvable at runtime.
+        """
+        annotations = KernelServices.__annotations__
+        # workflow_engine should reference WorkflowProtocol | None
+        wf_ann = str(annotations.get("workflow_engine", ""))
+        assert "WorkflowProtocol" in wf_ann
+        assert "None" in wf_ann
+        # namespace_manager should reference NamespaceManagerProtocol | None
+        ns_ann = str(annotations.get("namespace_manager", ""))
+        assert "NamespaceManagerProtocol" in ns_ann
+        assert "None" in ns_ann

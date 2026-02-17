@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from nexus.services.protocols.namespace_manager import NamespaceMount
+from nexus.rebac.namespace_manager import NamespaceMount
 
 if TYPE_CHECKING:
     from nexus.rebac.namespace_manager import MountEntry, NamespaceManager

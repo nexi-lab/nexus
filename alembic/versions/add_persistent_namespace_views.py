@@ -35,7 +35,7 @@ def upgrade() -> None:
             "zone_id",
             sa.String(255),
             nullable=False,
-            server_default="default",
+            server_default="root",
         ),
         sa.Column("mount_paths_json", sa.Text(), nullable=False),
         sa.Column("grants_hash", sa.String(16), nullable=False),

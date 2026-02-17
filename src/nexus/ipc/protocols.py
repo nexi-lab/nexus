@@ -1,9 +1,14 @@
 """Protocols (interfaces) for IPC brick dependencies.
 
-The IPC brick depends on VFS and EventBus capabilities but does NOT
-import from ``nexus.core`` directly. Instead, it defines minimal
-Protocol interfaces here. The real implementations are injected at
-wiring time (factory/builder).
+The IPC brick depends on EventBus capabilities and a pluggable storage
+driver (``IPCStorageDriver``) but does NOT import from ``nexus.core``
+directly. It defines minimal Protocol interfaces here for event
+publishing/subscribing. The real implementations are injected at wiring
+time (factory/builder).
+
+``VFSOperations`` is retained for the ``VFSStorageDriver`` adapter and
+``ProxyVFSBrick``, but IPC delivery/sweep/discovery/provisioning
+components use ``IPCStorageDriver`` from ``nexus.ipc.storage.protocol``.
 
 This keeps the IPC brick testable in isolation — unit tests inject
 in-memory fakes that satisfy these Protocols.
@@ -81,4 +86,28 @@ class EventSubscriber(Protocol):
 
     async def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
         """Subscribe to events on a channel. Yields events as they arrive."""
+        ...
+
+
+@runtime_checkable
+class HotPathPublisher(Protocol):
+    """Publish raw bytes to a NATS subject for hot-path delivery.
+
+    Used by MessageSender to bypass filesystem for instant delivery.
+    """
+
+    async def publish(self, subject: str, data: bytes) -> None:
+        """Publish data to the given subject."""
+        ...
+
+
+@runtime_checkable
+class HotPathSubscriber(Protocol):
+    """Subscribe to raw bytes on a NATS subject for hot-path delivery.
+
+    Used by MessageProcessor to receive messages without filesystem polling.
+    """
+
+    def subscribe(self, subject: str) -> AsyncIterator[bytes]:
+        """Subscribe to a subject. Yields raw message bytes as they arrive."""
         ...

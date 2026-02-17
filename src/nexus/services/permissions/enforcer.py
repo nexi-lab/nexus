@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
 
 if TYPE_CHECKING:
+    from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.hotspot_detector import HotspotDetector
     from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
     from nexus.services.permissions.permissions_enhanced import AuditStore
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class PermissionEnforcer:
         self,
         metadata_store: Any = None,
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         entity_registry: Any = None,  # Entity registry (reserved for future use)
         router: Any = None,  # PathRouter for backend object type resolution
         # P0-4: Enhanced features
@@ -95,7 +95,7 @@ class PermissionEnforcer:
             agent_registry: AgentRegistry for stale-session detection (Issue #1240)
         """
         self.metadata_store = metadata_store
-        self.rebac_manager: EnhancedReBACManager | None = rebac_manager
+        self.rebac_manager: ReBACManager | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
         self.router = router  # For backend object type resolution
 
@@ -126,9 +126,7 @@ class PermissionEnforcer:
         self._boundary_cache = self._cache.boundary_cache
         self._hotspot_detector = self._cache.hotspot_detector
         self._bitmap_completeness_cache = self._cache._bitmap_completeness_cache
-        self._bitmap_completeness_ttl = self._cache._bitmap_completeness_ttl
         self._leopard_dir_index = self._cache._leopard_dir_index
-        self._leopard_dir_ttl = self._cache._leopard_dir_ttl
 
         # Register boundary cache invalidation callback with rebac_manager
         if (
@@ -572,7 +570,7 @@ class PermissionEnforcer:
 
         # Check ReBAC permission using backend-provided object type
         # P0-4: Pass zone_id for multi-zone isolation
-        zone_id = context.zone_id or "default"
+        zone_id = context.zone_id or "root"
         subject = context.get_subject()
 
         logger.debug(
@@ -1019,7 +1017,7 @@ class PermissionEnforcer:
         # Use strategy chain if rebac_manager supports bulk checks
         if self.rebac_manager and hasattr(self.rebac_manager, "rebac_check_bulk"):
             overall_start = time.time()
-            zone_id = context.zone_id or "default"
+            zone_id = context.zone_id or "root"
             subject = context.get_subject()
 
             logger.debug(

@@ -6,13 +6,10 @@ Provides background cleanup tasks for session management and expired resources.
 import asyncio
 import logging
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.services.sessions import cleanup_expired_sessions, cleanup_inactive_sessions
 from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
-
-if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +114,7 @@ async def inactive_session_cleanup_task(
 
 
 async def tiger_cache_queue_task(
-    nexus_fs: "NexusFS",
+    rebac_manager: Any,
     interval_seconds: int = 60,  # Process less frequently since write-through handles new grants
     batch_size: int = 1,  # Process ONE entry at a time to avoid blocking
 ) -> None:
@@ -130,13 +127,13 @@ async def tiger_cache_queue_task(
     New permission grants are handled immediately by persist_single_grant().
 
     Args:
-        nexus_fs: NexusFS instance with ReBAC manager
+        rebac_manager: ReBAC manager instance (injected via DI)
         interval_seconds: How often to process queue (default: 60 seconds)
         batch_size: Number of queue entries to process per batch (default: 1)
 
     Examples:
         >>> # Start Tiger Cache queue processor
-        >>> asyncio.create_task(tiger_cache_queue_task(nexus_fs, 60, 1))
+        >>> asyncio.create_task(tiger_cache_queue_task(rebac_manager, 60, 1))
     """
     logger.info(
         f"Starting Tiger Cache queue task (interval: {interval_seconds}s, batch: {batch_size})"
@@ -147,16 +144,14 @@ async def tiger_cache_queue_task(
 
     while True:
         try:
-            # Access the rebac_manager from nexus_fs
-            rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
-            if rebac_manager and hasattr(rebac_manager, "tiger_process_queue"):
+            if hasattr(rebac_manager, "tiger_process_queue"):
                 # Run blocking queue processing in thread to avoid blocking event loop
                 processed = await asyncio.to_thread(
                     rebac_manager.tiger_process_queue, batch_size=batch_size
                 )
                 if processed > 0:
                     logger.info(f"Tiger Cache: processed {processed} queue entries (background)")
-            elif rebac_manager:
+            else:
                 tiger_updater = getattr(rebac_manager, "_tiger_updater", None)
                 if tiger_updater is None:
                     logger.debug("Tiger Cache: _tiger_updater is None, queue cannot be processed")
@@ -222,7 +217,9 @@ async def version_gc_task(
 
 
 async def hotspot_prefetch_task(
-    nexus_fs: "NexusFS",
+    hotspot_detector: Any,
+    tiger_cache: Any,
+    tiger_updater: Any,
     interval_seconds: int = 10,
     cleanup_interval_seconds: int = 60,
 ) -> None:
@@ -237,13 +234,15 @@ async def hotspot_prefetch_task(
     - JuiceFS: --prefetch for read patterns
 
     Args:
-        nexus_fs: NexusFS instance with permission enforcer
+        hotspot_detector: HotspotDetector instance (injected via DI)
+        tiger_cache: TigerBitmapCache instance (injected via DI)
+        tiger_updater: TigerCacheUpdater instance (injected via DI)
         interval_seconds: How often to check for prefetch candidates (default: 10s)
         cleanup_interval_seconds: How often to cleanup stale entries (default: 60s)
 
     Examples:
         >>> # Start hotspot prefetch task
-        >>> asyncio.create_task(hotspot_prefetch_task(nexus_fs, 10, 60))
+        >>> asyncio.create_task(hotspot_prefetch_task(detector, cache, updater, 10, 60))
     """
     logger.info(
         f"Starting hotspot prefetch task (interval: {interval_seconds}s, "
@@ -258,31 +257,6 @@ async def hotspot_prefetch_task(
 
     while True:
         try:
-            # Get hotspot detector from permission enforcer
-            permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
-            hotspot_detector = None
-
-            if permission_enforcer:
-                hotspot_detector = getattr(permission_enforcer, "_hotspot_detector", None)
-
-            if not hotspot_detector:
-                # Hotspot tracking not enabled, skip
-                await asyncio.sleep(interval_seconds)
-                continue
-
-            # Get rebac manager for Tiger Cache access
-            rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
-            if not rebac_manager:
-                await asyncio.sleep(interval_seconds)
-                continue
-
-            tiger_cache = getattr(rebac_manager, "_tiger_cache", None)
-            tiger_updater = getattr(rebac_manager, "_tiger_updater", None)
-
-            if not tiger_cache or not tiger_updater:
-                await asyncio.sleep(interval_seconds)
-                continue
-
             # Get prefetch candidates
             cache_ttl = getattr(tiger_cache, "_cache_ttl", 300)
             candidates = hotspot_detector.get_prefetch_candidates(tiger_cache, cache_ttl=cache_ttl)

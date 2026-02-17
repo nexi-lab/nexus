@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Any, cast
 
+from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 
 from nexus.core.filesystem import NexusFilesystem
@@ -143,8 +144,8 @@ def create_mcp_server(
     _default_nx: NexusFilesystem = nx
     _remote_url = remote_url
 
-    # Connection pool for per-request API keys (cached by API key)
-    _connection_cache: dict[str, NexusFilesystem] = {}
+    # Connection pool for per-request API keys (bounded LRU, cached by API key)
+    _connection_cache: LRUCache[str, NexusFilesystem] = LRUCache(maxsize=256)
 
     def _get_nexus_instance(ctx: Context | None = None) -> NexusFilesystem:
         """Get Nexus instance for current request using context API key.
@@ -997,16 +998,20 @@ def create_mcp_server(
             "\n\n".join(output_parts) if output_parts else "Code executed successfully (no output)"
         )
 
-    # Check if sandbox support is available (use default connection for check)
+    # Check if sandbox support is available
+    # First check the explicit sandbox_available property, then probe internals
     sandbox_available = False
     try:
-        if hasattr(_default_nx, "_ensure_sandbox_manager"):
+        sa = getattr(_default_nx, "sandbox_available", None)
+        if sa is False:
+            sandbox_available = False
+        elif sa is True:
+            sandbox_available = True
+        elif hasattr(_default_nx, "_ensure_sandbox_manager"):
             _default_nx._ensure_sandbox_manager()
-            if (
-                hasattr(_default_nx, "_sandbox_manager")
-                and _default_nx._sandbox_manager is not None
-            ):
-                sandbox_available = len(_default_nx._sandbox_manager.providers) > 0
+            mgr = getattr(_default_nx, "_sandbox_manager", None)
+            if mgr is not None and getattr(mgr, "providers", None):
+                sandbox_available = True
     except Exception:
         sandbox_available = False
 

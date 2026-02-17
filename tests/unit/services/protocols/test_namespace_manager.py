@@ -6,7 +6,8 @@ import dataclasses
 
 import pytest
 
-from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.rebac.namespace_manager import NamespaceMount
+from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # NamespaceMount frozen dataclass tests

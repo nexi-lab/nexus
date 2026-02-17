@@ -117,8 +117,8 @@ class TestWriteBackIntegration:
     ):
         """Full flow: event -> enqueue -> process -> backend write -> change log update."""
         # Setup stores with real SQLite
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -134,13 +134,13 @@ class TestWriteBackIntegration:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/mnt/gcs/project/file.txt",
-            zone_id="default",
+            zone_id="root",
             etag="abc123",
         )
         await service._on_file_event(event)
 
         # Step 2: Verify backlog entry was created
-        entries = backlog_store.fetch_pending("test_gcs", "default")
+        entries = backlog_store.fetch_pending("test_gcs", "root")
         assert len(entries) == 1
         assert entries[0].path == "/mnt/gcs/project/file.txt"
         assert entries[0].operation_type == "write"
@@ -159,7 +159,7 @@ class TestWriteBackIntegration:
 
         # Step 5: Verify change log was updated
         change_log = change_log_store.get_change_log(
-            "/mnt/gcs/project/file.txt", "test_gcs", "default"
+            "/mnt/gcs/project/file.txt", "test_gcs", "root"
         )
         assert change_log is not None
         assert change_log.content_hash == "new_content_hash"
@@ -174,14 +174,14 @@ class TestWriteBackIntegration:
         assert completed_events[0].path == "/mnt/gcs/project/file.txt"
 
         # Step 7: Verify backlog entry is now completed (no more pending)
-        remaining = backlog_store.fetch_pending("test_gcs", "default")
+        remaining = backlog_store.fetch_pending("test_gcs", "root")
         assert len(remaining) == 0
 
     @pytest.mark.asyncio
     async def test_multiple_writes_coalesce_in_backlog(self, mock_gateway, mock_event_bus):
         """Multiple writes to same path coalesce into single backlog entry."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -195,13 +195,13 @@ class TestWriteBackIntegration:
             event = FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag=etag,
             )
             await service._on_file_event(event)
 
         # Only 1 pending entry (coalesced)
-        entries = backlog_store.fetch_pending("test_gcs", "default")
+        entries = backlog_store.fetch_pending("test_gcs", "root")
         assert len(entries) == 1
         assert entries[0].content_hash == "v3"  # Latest wins
 
@@ -217,9 +217,9 @@ class TestConflictIntegration:
     @pytest.mark.asyncio
     async def test_keep_newer_nexus_wins_with_real_stores(self, mock_gateway, mock_event_bus):
         """KEEP_NEWER: Nexus newer -> write proceeds, conflict logged."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
-        conflict_log_store = ConflictLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
+        conflict_log_store = ConflictLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -234,7 +234,7 @@ class TestConflictIntegration:
         change_log_store.upsert_change_log(
             path="/mnt/gcs/project/file.txt",
             backend_name="test_gcs",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
@@ -258,7 +258,7 @@ class TestConflictIntegration:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag="nexus_new_hash",
             )
         )
@@ -275,9 +275,9 @@ class TestConflictIntegration:
     @pytest.mark.asyncio
     async def test_keep_newer_backend_wins_with_real_stores(self, mock_gateway, mock_event_bus):
         """KEEP_NEWER: Backend newer -> write skipped, conflict logged."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
-        conflict_log_store = ConflictLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
+        conflict_log_store = ConflictLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -292,7 +292,7 @@ class TestConflictIntegration:
         change_log_store.upsert_change_log(
             path="/mnt/gcs/project/file.txt",
             backend_name="test_gcs",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
@@ -316,7 +316,7 @@ class TestConflictIntegration:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag="nexus_old_hash",
             )
         )
@@ -335,9 +335,9 @@ class TestConflictIntegration:
         self, mock_gateway, mock_event_bus
     ):
         """RENAME_CONFLICT: creates copy and proceeds with real stores."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
-        conflict_log_store = ConflictLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
+        conflict_log_store = ConflictLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -352,7 +352,7 @@ class TestConflictIntegration:
         change_log_store.upsert_change_log(
             path="/mnt/gcs/project/file.txt",
             backend_name="test_gcs",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
@@ -374,7 +374,7 @@ class TestConflictIntegration:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag="nexus_new_hash",
             )
         )
@@ -400,9 +400,9 @@ class TestConflictIntegration:
         """Full conflict lifecycle: enqueue -> detect -> auto-resolve -> log -> query -> manual resolve."""
         from nexus.services.conflict_resolution import ConflictStatus, ResolutionOutcome
 
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
-        conflict_log_store = ConflictLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
+        conflict_log_store = ConflictLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -417,7 +417,7 @@ class TestConflictIntegration:
         change_log_store.upsert_change_log(
             path="/mnt/gcs/project/file.txt",
             backend_name="test_gcs",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
@@ -439,7 +439,7 @@ class TestConflictIntegration:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag="nexus_newer",
             )
         )
@@ -479,8 +479,8 @@ class TestMultiZoneIntegration:
         self, mock_gateway, mock_event_bus
     ):
         """Events from different zones create separate backlog entries."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,

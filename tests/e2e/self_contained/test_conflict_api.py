@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -45,7 +44,7 @@ def _make_record(
     record_id: str = "test-id-1",
     path: str = "/test/file.txt",
     backend_name: str = "gcs",
-    zone_id: str = "default",
+    zone_id: str = "root",
     strategy: ConflictStrategy = ConflictStrategy.KEEP_NEWER,
     outcome: ResolutionOutcome = ResolutionOutcome.NEXUS_WINS,
     status: ConflictStatus = ConflictStatus.AUTO_RESOLVED,
@@ -84,9 +83,7 @@ def store() -> ConflictLogStore:
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    gw = MagicMock()
-    gw.session_factory = sessionmaker(bind=engine)
-    return ConflictLogStore(gw)
+    return ConflictLogStore(sessionmaker(bind=engine))
 
 
 @pytest.fixture

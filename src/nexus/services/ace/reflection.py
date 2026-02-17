@@ -10,8 +10,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from nexus.llm.message import Message, MessageRole
-from nexus.llm.provider import LLMProvider
 from nexus.services.ace.trajectory import TrajectoryManager
+from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel
 
 
@@ -26,7 +26,7 @@ class Reflector:
         self,
         session: Session,
         backend: Any,
-        llm_provider: LLMProvider,
+        llm_provider: LLMProviderProtocol,
         trajectory_manager: TrajectoryManager,
         user_id: str,
         agent_id: str | None = None,

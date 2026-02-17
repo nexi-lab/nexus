@@ -384,7 +384,7 @@ class TestEventBusIntegration:
             event = FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/test/event_bus_test.txt",
-                zone_id="default",
+                zone_id="root",
                 size=100,
             )
 

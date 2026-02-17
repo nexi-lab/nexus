@@ -83,7 +83,7 @@ def delegation_service(session_factory, rebac_manager, entity_registry, agent_re
 def _setup_coordinator(entity_registry, rebac_manager, agent_registry):
     """Register user + coordinator agent with file grants."""
     entity_registry.register_entity("user", "alice")
-    agent_registry.register("coord-srv", "alice", zone_id="default", name="Coordinator")
+    agent_registry.register("coord-srv", "alice", zone_id="root", name="Coordinator")
 
     rebac_manager.rebac_write_batch(
         [
@@ -91,7 +91,7 @@ def _setup_coordinator(entity_registry, rebac_manager, agent_registry):
                 "subject": ("agent", "coord-srv"),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/main.py"),
-                "zone_id": "default",
+                "zone_id": "root",
             },
         ]
     )
@@ -171,7 +171,7 @@ class TestServerDelegationPath:
             "subject_type": "agent",
             "subject_id": "coord-srv",
             "user_id": "alice",
-            "zone_id": "default",
+            "zone_id": "root",
         }
         app = _create_test_app(delegation_service, auth)
         return TestClient(app)

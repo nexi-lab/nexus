@@ -10,7 +10,6 @@ Architecture:
     - passport.py: Digital Agent Passport (DAP) bundle
     - signing.py: RFC 9421 HTTP message signing (outbound)
     - verification.py: RFC 9421 signature verification (inbound middleware)
-    - models.py: AgentKeyModel (SQLAlchemy)
     - key_service.py: Idempotent key management with TTL cache
     - utils.py: Shared helpers (JSON metadata serialization)
 

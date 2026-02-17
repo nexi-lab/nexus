@@ -23,8 +23,8 @@ Example (Metastore - embedded mode):
 Example (ZoneManager - consensus mode):
     from nexus.raft import ZoneManager
 
-    mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
-    handle = mgr.create_zone("default", ["2@peer:2126"])
+    mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
+    handle = mgr.create_zone("root", ["2@peer:2126"])
     handle.set_metadata("/path/to/file", metadata_bytes)  # replicated via consensus
 
 Example (RaftClient - remote):
@@ -106,7 +106,7 @@ except (ImportError, AttributeError):
     pass
 
 # Python wrappers for multi-zone federation
-from nexus.raft.zone_aware_metadata import ZoneAwareMetadataStore
+from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
 from nexus.raft.zone_manager import ZoneManager
 from nexus.raft.zone_path_resolver import ZonePathResolver
 
@@ -140,7 +140,7 @@ __all__ = [
     # PyO3 FFI: Metastore driver (embedded mode)
     "Metastore",
     # Multi-zone federation
-    "ZoneAwareMetadataStore",
+    "FederatedMetadataProxy",
     "ZoneManager",
     "ZonePathResolver",
     "ZoneHandle",

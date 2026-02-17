@@ -91,9 +91,9 @@ class TestUnexpectedErrors:
         resp = nexus_error_handler(MagicMock(), MetadataError("DB error"))
         assert resp.status_code == 500
 
-    def test_service_unavailable_returns_500(self) -> None:
+    def test_service_unavailable_returns_503(self) -> None:
         resp = nexus_error_handler(MagicMock(), ServiceUnavailableError("Down"))
-        assert resp.status_code == 500
+        assert resp.status_code == 503
 
     def test_audit_log_error_returns_500(self) -> None:
         resp = nexus_error_handler(MagicMock(), AuditLogError("Audit failed"))

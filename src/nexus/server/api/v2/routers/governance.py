@@ -33,7 +33,7 @@ class AddConstraintRequest(BaseModel):
 
     from_agent: str = Field(..., description="Source agent ID")
     to_agent: str = Field(..., description="Target agent ID")
-    zone_id: str = Field(default="default", description="Zone ID")
+    zone_id: str = Field(default="root", description="Zone ID")
     constraint_type: str = Field(default="block", description="block, require_approval, rate_limit")
     reason: str = Field(default="", description="Reason for constraint")
 
@@ -42,7 +42,7 @@ class SuspendAgentRequest(BaseModel):
     """Request to suspend an agent."""
 
     agent_id: str = Field(..., description="Agent to suspend")
-    zone_id: str = Field(default="default", description="Zone ID")
+    zone_id: str = Field(default="root", description="Zone ID")
     reason: str = Field(..., description="Reason for suspension")
     duration_hours: float = Field(default=24.0, description="Suspension duration in hours")
     severity: str = Field(default="high", description="Severity level")
@@ -108,7 +108,7 @@ def _get_response_service(request: Request) -> Any:
 @router.get("/alerts")
 async def list_alerts(
     request: Request,
-    zone_id: str = Query(default="default"),
+    zone_id: str = Query(default="root"),
     severity: str | None = Query(default=None),
     resolved: bool | None = Query(default=None),
 ) -> JSONResponse:
@@ -170,7 +170,7 @@ async def resolve_alert(
 @router.get("/fraud-scores")
 async def list_fraud_scores(
     request: Request,
-    zone_id: str = Query(default="default"),
+    zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """List fraud scores for all agents in a zone."""
     service = _get_collusion_service(request)
@@ -197,7 +197,7 @@ async def list_fraud_scores(
 async def get_fraud_score(
     request: Request,
     agent_id: str,
-    zone_id: str = Query(default="default"),
+    zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """Get fraud score for a specific agent."""
     service = _get_collusion_service(request)
@@ -220,7 +220,7 @@ async def get_fraud_score(
 @router.get("/rings")
 async def list_fraud_rings(
     request: Request,
-    zone_id: str = Query(default="default"),
+    zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """List detected fraud rings in a zone."""
     service = _get_collusion_service(request)
@@ -290,7 +290,7 @@ async def add_constraint(
 @router.get("/constraints")
 async def list_constraints(
     request: Request,
-    zone_id: str = Query(default="default"),
+    zone_id: str = Query(default="root"),
     agent_id: str | None = Query(default=None),
 ) -> JSONResponse:
     """List governance constraints."""
@@ -335,7 +335,7 @@ async def check_constraint(
     request: Request,
     from_agent: str,
     to_agent: str,
-    zone_id: str = Query(default="default"),
+    zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """Check governance constraint between two agents."""
     service = _get_graph_service(request)
@@ -399,7 +399,7 @@ async def suspend_agent(
 @router.get("/suspensions")
 async def list_suspensions(
     request: Request,
-    zone_id: str = Query(default="default"),
+    zone_id: str = Query(default="root"),
     agent_id: str | None = Query(default=None),
 ) -> JSONResponse:
     """List suspensions."""

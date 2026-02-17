@@ -638,7 +638,7 @@ class TestgRPCDirectOperations:
             from nexus.raft.client import RaftClient
             from nexus.raft.zone_manager import ROOT_ZONE_ID
         except ImportError:
-            pytest.skip("RaftClient or FileMetadata not available")
+            pytest.skip("RaftClient not available (requires Rust extension)")
 
         uid = _uid()
         try:
@@ -667,7 +667,7 @@ class TestgRPCDirectOperations:
             from nexus.raft.client import RaftClient
             from nexus.raft.zone_manager import ROOT_ZONE_ID
         except ImportError:
-            pytest.skip("RaftClient not available")
+            pytest.skip("RaftClient not available (requires Rust extension)")
 
         try:
             async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:

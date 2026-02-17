@@ -120,7 +120,7 @@ class SecretsAuditLogger:
         provider: str | None = None,
         credential_id: str | None = None,
         token_family_id: str | None = None,
-        zone_id: str = "default",
+        zone_id: str = "root",
         ip_address: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> str:

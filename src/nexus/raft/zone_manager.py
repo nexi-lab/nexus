@@ -722,8 +722,7 @@ class ZoneManager:
         """
         # Standard Raft: only leader can propose
         try:
-            engine = root_store._engine  # noqa: SLF001
-            if engine is None or not hasattr(engine, "is_leader") or not engine.is_leader():
+            if not root_store.is_leader():
                 return False
         except Exception:
             return False

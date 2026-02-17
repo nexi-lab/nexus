@@ -155,6 +155,9 @@ class KernelServices:
     # Auth services — injected from server layer (Issue #1519, 3A)
     api_key_creator: Any = None  # APIKeyCreatorProtocol
 
+    # Administrative RecordStore queries (violationfix #129)
+    admin_store: Any = None  # AdminStoreProtocol
+
     # Server-layer services — explicitly typed fields instead of opaque dict
     observability_subsystem: Any = None
     chunked_upload_service: Any = None

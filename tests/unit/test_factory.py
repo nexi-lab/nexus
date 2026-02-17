@@ -254,6 +254,7 @@ class TestBootBrickServices:
             "api_key_creator",
             "snapshot_service",
             "task_queue_service",
+            "admin_store",
         }
         assert expected_keys == set(result.keys())
 

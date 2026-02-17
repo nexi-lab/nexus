@@ -267,6 +267,9 @@ class NexusFS(  # type: ignore[misc]
         # Auth services — injected from server layer (Issue #1519, 3A)
         self._api_key_creator = svc.api_key_creator
 
+        # Administrative RecordStore queries (violationfix #129)
+        self._admin_store = svc.admin_store
+
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
 
@@ -3653,44 +3656,9 @@ class NexusFS(  # type: ignore[misc]
         session: Any,
     ) -> datetime:
         """Determine expiration date for agent API key based on owner's key."""
-        from datetime import UTC, datetime, timedelta
-
-        from sqlalchemy import select
-
-        from nexus.storage.models import APIKeyModel
-
-        # Find the owner's active API key (exclude agent keys)
-        stmt = (
-            select(APIKeyModel)
-            .where(
-                APIKeyModel.user_id == user_id,
-                APIKeyModel.revoked == 0,  # Active keys only
-                APIKeyModel.subject_type != "agent",  # Only user keys, not agent keys
-            )
-            .order_by(APIKeyModel.created_at.desc())
-        )  # Get most recent key
-
-        owner_key = session.scalar(stmt)
-
-        # Determine expiration for agent key
-        if owner_key and owner_key.expires_at:
-            # Use owner's key expiration as maximum
-            now = datetime.now(UTC)
-            owner_expires: datetime = owner_key.expires_at
-            if owner_expires.tzinfo is None:
-                owner_expires = owner_expires.replace(tzinfo=UTC)
-
-            if owner_expires > now:
-                return owner_expires  # Agent key expires with owner's key
-            else:
-                # Owner's key is expired, cannot create agent API key
-                raise ValueError(
-                    f"Cannot generate API key for agent: Your API key has expired on {owner_expires.isoformat()}. "
-                    "Please renew your API key before creating agent API keys."
-                )
-        else:
-            # No expiration on owner's key or no key found, use default 365 days
-            return datetime.now(UTC) + timedelta(days=365)
+        if self._admin_store is not None:
+            return self._admin_store.get_agent_key_expiration(user_id)
+        raise RuntimeError("AdminStoreService not injected — cannot determine agent key expiration")
 
     def _create_agent_api_key(
         self,
@@ -4136,22 +4104,11 @@ class NexusFS(  # type: ignore[misc]
                     if description is not None:
                         entity_meta["description"] = description
 
-                    # Update entity metadata
-                    from sqlalchemy import update
-
-                    from nexus.storage.models import EntityRegistryModel
-
-                    with self._entity_registry._get_session() as session:
-                        stmt = (
-                            update(EntityRegistryModel)
-                            .where(
-                                EntityRegistryModel.entity_type == "agent",
-                                EntityRegistryModel.entity_id == agent_id,
-                            )
-                            .values(entity_metadata=json.dumps(entity_meta))
+                    # Update entity metadata via AdminStoreService
+                    if self._admin_store is not None:
+                        self._admin_store.update_entity_metadata(
+                            "agent", agent_id, json.dumps(entity_meta)
                         )
-                        session.execute(stmt)
-                        session.commit()
                         logger.info(f"Updated entity registry metadata for agent {agent_id}")
                 except Exception as e:
                     logger.warning(f"Failed to update entity registry: {e}")
@@ -4183,20 +4140,9 @@ class NexusFS(  # type: ignore[misc]
         result = []
 
         # Query API keys for all agents in one go for efficiency
-        from sqlalchemy import select
-
-        from nexus.storage.models import APIKeyModel
-
-        session = self.SessionLocal()
-        try:
-            # Get all agent API keys
-            agent_keys_stmt = select(APIKeyModel).where(
-                APIKeyModel.subject_type == "agent",
-                APIKeyModel.revoked == 0,  # Only active keys
-            )
-            agent_keys = {key.subject_id: key for key in session.scalars(agent_keys_stmt).all()}
-        finally:
-            session.close()
+        agent_keys: dict[str, dict[str, Any]] = {}
+        if self._admin_store is not None:
+            agent_keys = self._admin_store.get_all_active_agent_keys()
 
         for e in entities:
             import json
@@ -4224,7 +4170,7 @@ class NexusFS(  # type: ignore[misc]
             agent_key = agent_keys.get(e.entity_id)
             if agent_key:
                 agent_info["has_api_key"] = True
-                agent_info["inherit_permissions"] = bool(agent_key.inherit_permissions)
+                agent_info["inherit_permissions"] = agent_key.get("inherit_permissions", False)
             else:
                 agent_info["has_api_key"] = False
                 # If no API key, try to read from config.yaml or use default True
@@ -4305,143 +4251,122 @@ class NexusFS(  # type: ignore[misc]
             agent_info["description"] = metadata["description"]
 
         # Check if agent has an API key (same logic as list_agents)
-        from sqlalchemy import select
+        agent_key = self._admin_store.get_agent_api_key(agent_id) if self._admin_store else None
 
-        from nexus.storage.models import APIKeyModel
+        if agent_key:
+            agent_info["has_api_key"] = True
+            agent_info["inherit_permissions"] = agent_key.get("inherit_permissions", False)
 
-        session = self.SessionLocal()
-        try:
-            # Check if agent has an API key in database
-            agent_key_stmt = select(APIKeyModel).where(
-                APIKeyModel.subject_type == "agent",
-                APIKeyModel.subject_id == agent_id,
-                APIKeyModel.revoked == 0,  # Only active keys
-            )
-            agent_key = session.scalar(agent_key_stmt)
+            # Read config.yaml file to get API key and other config fields
+            try:
+                # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
+                if "," in entity.entity_id:
+                    user_id, agent_name = entity.entity_id.split(",", 1)
+                    # Get zone_id from context
+                    ctx = self._parse_context(_context)
+                    zone_id = self._extract_zone_id(_context) or "root"
+                    config_path = (
+                        f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
+                    )
+                    try:
+                        config_content = self.read(config_path, context=ctx)
+                        import yaml
 
-            if agent_key:
-                agent_info["has_api_key"] = True
-                agent_info["inherit_permissions"] = bool(agent_key.inherit_permissions)
+                        if isinstance(config_content, bytes):
+                            config_data = yaml.safe_load(config_content.decode("utf-8"))
+                            # Return API key from config if available
+                            if config_data.get("api_key"):
+                                agent_info["api_key"] = config_data["api_key"]
 
-                # Read config.yaml file to get API key and other config fields
-                try:
-                    # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
-                    if "," in entity.entity_id:
-                        user_id, agent_name = entity.entity_id.split(",", 1)
-                        # Get zone_id from context
-                        ctx = self._parse_context(_context)
-                        zone_id = self._extract_zone_id(_context) or "root"
-                        config_path = (
-                            f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
-                        )
-                        try:
-                            config_content = self.read(config_path, context=ctx)
-                            import yaml
+                            # Check metadata first, then top-level for config fields
+                            metadata = config_data.get("metadata", {})
+                            if isinstance(metadata, dict):
+                                if metadata.get("platform"):
+                                    agent_info["platform"] = metadata["platform"]
+                                if metadata.get("endpoint_url"):
+                                    agent_info["endpoint_url"] = metadata["endpoint_url"]
+                                if metadata.get("agent_id"):
+                                    agent_info["config_agent_id"] = metadata["agent_id"]
 
-                            if isinstance(config_content, bytes):
-                                config_data = yaml.safe_load(config_content.decode("utf-8"))
-                                # Return API key from config if available
-                                if config_data.get("api_key"):
-                                    agent_info["api_key"] = config_data["api_key"]
-
-                                # Check metadata first, then top-level for config fields
-                                # Config fields can be in metadata (from provision script) or at top-level
-                                metadata = config_data.get("metadata", {})
-                                if isinstance(metadata, dict):
-                                    # Platform and endpoint_url are often in metadata
-                                    if metadata.get("platform"):
-                                        agent_info["platform"] = metadata["platform"]
-                                    if metadata.get("endpoint_url"):
-                                        agent_info["endpoint_url"] = metadata["endpoint_url"]
-                                    # agent_id in metadata is the LangGraph graph/assistant ID (e.g., "agent")
-                                    if metadata.get("agent_id"):
-                                        agent_info["config_agent_id"] = metadata["agent_id"]
-
-                                # Fall back to top-level if not in metadata
-                                if not agent_info.get("platform") and config_data.get("platform"):
-                                    agent_info["platform"] = config_data["platform"]
-                                if not agent_info.get("endpoint_url") and config_data.get(
-                                    "endpoint_url"
-                                ):
-                                    agent_info["endpoint_url"] = config_data["endpoint_url"]
-                                # Only use top-level agent_id if config_agent_id not set and it's different from full agent_id
-                                if (
-                                    not agent_info.get("config_agent_id")
-                                    and config_data.get("agent_id")
-                                    and config_data["agent_id"] != entity.entity_id
-                                ):
-                                    # Only use if it's actually a LangGraph graph ID, not the full agent_id
-                                    agent_info["config_agent_id"] = config_data["agent_id"]
+                            # Fall back to top-level if not in metadata
+                            if not agent_info.get("platform") and config_data.get("platform"):
+                                agent_info["platform"] = config_data["platform"]
+                            if not agent_info.get("endpoint_url") and config_data.get("endpoint_url"):
+                                agent_info["endpoint_url"] = config_data["endpoint_url"]
+                            if (
+                                not agent_info.get("config_agent_id")
+                                and config_data.get("agent_id")
+                                and config_data["agent_id"] != entity.entity_id
+                            ):
+                                agent_info["config_agent_id"] = config_data["agent_id"]
 
                             if config_data.get("system_prompt"):
                                 agent_info["system_prompt"] = config_data["system_prompt"]
                             if config_data.get("tools"):
                                 agent_info["tools"] = config_data["tools"]
-                        except Exception as exc:
-                            logger.debug("Failed to read agent config for %s: %s", agent_id, exc)
-                except Exception as exc:
-                    logger.debug("Failed to parse agent_id %s for config lookup: %s", agent_id, exc)
-            else:
-                agent_info["has_api_key"] = False
-                # If no API key, try to read from config.yaml or use default True
-                inherit_perms = None
-                try:
-                    # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
-                    if "," in entity.entity_id:
-                        user_id, agent_name = entity.entity_id.split(",", 1)
-                        ctx = self._parse_context(_context)
-                        zone_id = self._extract_zone_id(_context) or "root"
-                        config_path = (
-                            f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
-                        )
-                        try:
-                            config_content = self.read(config_path, context=ctx)
-                            import yaml
+                    except Exception as exc:
+                        logger.debug("Failed to read agent config for %s: %s", agent_id, exc)
+            except Exception as exc:
+                logger.debug("Failed to parse agent_id %s for config lookup: %s", agent_id, exc)
+        else:
+            agent_info["has_api_key"] = False
+            # If no API key, try to read from config.yaml or use default True
+            inherit_perms = None
+            try:
+                # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
+                if "," in entity.entity_id:
+                    user_id, agent_name = entity.entity_id.split(",", 1)
+                    ctx = self._parse_context(_context)
+                    zone_id = self._extract_zone_id(_context) or "root"
+                    config_path = (
+                        f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
+                    )
+                    try:
+                        config_content = self.read(config_path, context=ctx)
+                        import yaml
 
-                            if isinstance(config_content, bytes):
-                                config_data = yaml.safe_load(config_content.decode("utf-8"))
-                                inherit_perms = config_data.get("inherit_permissions")
+                        if isinstance(config_content, bytes):
+                            config_data = yaml.safe_load(config_content.decode("utf-8"))
+                            inherit_perms = config_data.get("inherit_permissions")
 
-                                # Check metadata first, then top-level for config fields
-                                metadata = config_data.get("metadata", {})
-                                if isinstance(metadata, dict):
-                                    if metadata.get("platform"):
-                                        agent_info["platform"] = metadata["platform"]
-                                    if metadata.get("endpoint_url"):
-                                        agent_info["endpoint_url"] = metadata["endpoint_url"]
-                                    # agent_id in metadata is the LangGraph graph/assistant ID
-                                    if metadata.get("agent_id"):
-                                        agent_info["config_agent_id"] = metadata["agent_id"]
+                            # Check metadata first, then top-level for config fields
+                            metadata = config_data.get("metadata", {})
+                            if isinstance(metadata, dict):
+                                if metadata.get("platform"):
+                                    agent_info["platform"] = metadata["platform"]
+                                if metadata.get("endpoint_url"):
+                                    agent_info["endpoint_url"] = metadata["endpoint_url"]
+                                # agent_id in metadata is the LangGraph graph/assistant ID
+                                if metadata.get("agent_id"):
+                                    agent_info["config_agent_id"] = metadata["agent_id"]
 
-                                # Fall back to top-level if not in metadata
-                                if not agent_info.get("platform") and config_data.get("platform"):
-                                    agent_info["platform"] = config_data["platform"]
-                                if not agent_info.get("endpoint_url") and config_data.get(
-                                    "endpoint_url"
-                                ):
-                                    agent_info["endpoint_url"] = config_data["endpoint_url"]
-                                if (
-                                    not agent_info.get("config_agent_id")
-                                    and config_data.get("agent_id")
-                                    and config_data["agent_id"] != entity.entity_id
-                                ):
-                                    agent_info["config_agent_id"] = config_data["agent_id"]
+                            # Fall back to top-level if not in metadata
+                            if not agent_info.get("platform") and config_data.get("platform"):
+                                agent_info["platform"] = config_data["platform"]
+                            if not agent_info.get("endpoint_url") and config_data.get(
+                                "endpoint_url"
+                            ):
+                                agent_info["endpoint_url"] = config_data["endpoint_url"]
+                            if (
+                                not agent_info.get("config_agent_id")
+                                and config_data.get("agent_id")
+                                and config_data["agent_id"] != entity.entity_id
+                            ):
+                                agent_info["config_agent_id"] = config_data["agent_id"]
 
-                                if config_data.get("system_prompt"):
-                                    agent_info["system_prompt"] = config_data["system_prompt"]
-                                if config_data.get("tools"):
-                                    agent_info["tools"] = config_data["tools"]
-                        except Exception as exc:
-                            logger.debug("Failed to read agent config at %s: %s", config_path, exc)
-                except Exception as exc:
-                    logger.debug("Failed to parse agent entity_id for config lookup: %s", exc)
+                            if config_data.get("system_prompt"):
+                                agent_info["system_prompt"] = config_data["system_prompt"]
+                            if config_data.get("tools"):
+                                agent_info["tools"] = config_data["tools"]
+                    except Exception as exc:
+                        logger.debug("Failed to read agent config at %s: %s", config_path, exc)
+            except Exception as exc:
+                logger.debug("Failed to parse agent entity_id for config lookup: %s", exc)
 
-                # Default to True if not found (agents without API keys inherit by default)
-                agent_info["inherit_permissions"] = (
-                    bool(inherit_perms) if inherit_perms is not None else True
-                )
-        finally:
-            session.close()
+            # Default to True if not found (agents without API keys inherit by default)
+            agent_info["inherit_permissions"] = (
+                bool(inherit_perms) if inherit_perms is not None else True
+            )
 
         return agent_info
 
@@ -4484,34 +4409,15 @@ class NexusFS(  # type: ignore[misc]
                     logger.warning(f"Failed to delete agent directory {agent_dir}: {e}")
 
                 # Delete ALL API keys associated with this agent
-                session = self.SessionLocal()
-                try:
-                    from sqlalchemy import update
-
-                    from nexus.storage.models import APIKeyModel
-
-                    # Revoke (soft delete) all API keys for this agent
-                    stmt = (
-                        update(APIKeyModel)
-                        .where(
-                            APIKeyModel.subject_type == "agent",
-                            APIKeyModel.subject_id == agent_id,
-                            APIKeyModel.revoked == 0,  # Only active keys
-                        )
-                        .values(revoked=1)  # Mark as revoked
-                    )
-                    result = session.execute(stmt)
-                    session.commit()
-
-                    # Get rowcount from result (SQLAlchemy 2.0+)
-                    rowcount = result.rowcount if hasattr(result, "rowcount") else 0
-                    if rowcount > 0:
-                        logger.info(f"Revoked {rowcount} API key(s) for agent {agent_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to revoke API keys for agent {agent_id}: {e}")
-                    session.rollback()
-                finally:
-                    session.close()
+                if self._admin_store is not None:
+                    try:
+                        rowcount = self._admin_store.revoke_agent_api_keys(agent_id)
+                        if rowcount > 0:
+                            logger.info(f"Revoked {rowcount} API key(s) for agent {agent_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to revoke API keys for agent {agent_id}: {e}")
+                else:
+                    logger.warning("AdminStoreService not available — cannot revoke agent API keys")
 
                 # Delete ALL ReBAC permissions for this agent
                 if self._rebac_manager:
@@ -4767,7 +4673,6 @@ class NexusFS(  # type: ignore[misc]
             /zone/alice/user/alice/workspace/ws_personal_abc123
         """
         import logging
-        from datetime import UTC, datetime
 
         logger = logging.getLogger(__name__)
 
@@ -4806,29 +4711,19 @@ class NexusFS(  # type: ignore[misc]
         # Initialize entity registry
         self._ensure_entity_registry()
 
-        session = self.SessionLocal()
         api_key = None
         key_id = None
 
-        try:
-            # 1. Create/update ZoneModel (idempotent)
-            from sqlalchemy import select as sa_select
-
-            from nexus.storage.models import UserModel, ZoneModel
-
-            zone = (
-                session.execute(sa_select(ZoneModel).filter_by(zone_id=zone_id)).scalars().first()
+        if self._admin_store is None:
+            raise RuntimeError(
+                "AdminStoreService not injected — cannot provision user. "
+                "Use factory.create_nexus_services() to wire services."
             )
-            if not zone:
-                zone = ZoneModel(
-                    zone_id=zone_id,
-                    name=zone_name or f"{zone_id} Organization",
-                    is_active=1,
-                    created_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
-                )
-                session.add(zone)
-                session.commit()
+
+        try:
+            # 1. Create/update zone record (idempotent)
+            zone_created = self._admin_store.provision_zone(zone_id, zone_name)
+            if zone_created:
                 logger.info(f"Created zone: {zone_id}")
                 created_resources["zone"] = True
             else:
@@ -4839,36 +4734,18 @@ class NexusFS(  # type: ignore[misc]
                 self._entity_registry.register_entity("zone", zone_id)
                 logger.info(f"Registered zone in entity registry: {zone_id}")
 
-            # 3. Create/update UserModel (idempotent)
-            user = (
-                session.execute(sa_select(UserModel).filter_by(user_id=user_id)).scalars().first()
+            # 3. Create/update user record (idempotent)
+            user_created = self._admin_store.provision_user_record(
+                user_id=user_id,
+                email=email,
+                display_name=display_name,
+                zone_id=zone_id,
             )
-            if user:
-                logger.debug(f"User already exists: {user_id}")
-                # Reactivate if soft-deleted
-                if not user.is_active:
-                    user.is_active = 1
-                    user.deleted_at = None
-                    session.commit()
-                    logger.info(f"Reactivated soft-deleted user: {user_id}")
-            else:
-                user = UserModel(
-                    user_id=user_id,
-                    email=email,
-                    username=user_id,
-                    display_name=display_name or user_id,
-                    zone_id=zone_id,
-                    primary_auth_method="api_key",
-                    is_active=1,
-                    is_global_admin=0,
-                    email_verified=1,
-                    created_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
-                )
-                session.add(user)
-                session.commit()
+            if user_created:
                 logger.info(f"Created user: {user_id}")
                 created_resources["user"] = True
+            else:
+                logger.debug(f"User already exists: {user_id}")
 
             # 4. Register user in entity registry (idempotent)
             if not self._entity_registry.get_entity("user", user_id):
@@ -4880,61 +4757,28 @@ class NexusFS(  # type: ignore[misc]
             admin_context.user_id = user_id
             # 5. Create API key (if requested and doesn't exist)
             if create_api_key:
-                from sqlalchemy import select
-
-                from nexus.storage.models import APIKeyModel
-
                 if self._api_key_creator is None:
                     raise RuntimeError(
                         "API key creator not injected. "
                         "Use factory.create_nexus_services() to wire auth services."
                     )
 
-                # Lock the user row to prevent race conditions during concurrent provisioning
-                # This ensures only one thread can check and create API keys at a time
-                user_row = session.execute(
-                    select(UserModel).where(UserModel.user_id == user_id).with_for_update()
-                ).scalar_one_or_none()
-
-                if not user_row:
-                    raise ValueError(f"User not found: {user_id}")
-
-                # Check if user already has an API key
-                existing_key_stmt = (
-                    select(APIKeyModel)
-                    .where(
-                        APIKeyModel.user_id == user_id,
-                        APIKeyModel.subject_type == "user",
-                        APIKeyModel.revoked == 0,
-                    )
-                    .limit(1)
+                key_name = api_key_name or f"Primary key for {email}"
+                key_id, api_key = self._admin_store.lock_user_and_provision_key(
+                    user_id=user_id,
+                    zone_id=zone_id,
+                    api_key_creator=self._api_key_creator,
+                    api_key_name=key_name,
+                    expires_at=api_key_expires_at,
                 )
-                existing_key = session.scalar(existing_key_stmt)
-
-                if not existing_key:
-                    # Use custom key name if provided, otherwise default
-                    key_name = api_key_name or f"Primary key for {email}"
-
-                    # Issue #1519, 3A: uses injected protocol
-                    key_id, api_key = self._api_key_creator.create_key(
-                        session,
-                        user_id=user_id,
-                        name=key_name,
-                        zone_id=zone_id,
-                        is_admin=False,
-                        expires_at=api_key_expires_at,  # Use provided expiry or None
-                    )
-                    session.commit()
+                if key_id is not None:
                     logger.info(f"Created API key for user: {user_id}")
                 else:
                     logger.debug(f"User already has an API key: {user_id}")
 
         except Exception as e:
             logger.error(f"Database operation failed during provisioning: {e}")
-            session.rollback()
             raise
-        finally:
-            session.close()
 
         # 6. Create user directories
         try:
@@ -5113,7 +4957,6 @@ class NexusFS(  # type: ignore[misc]
             ['/zone/example/user/alice/workspace', ...]
         """
         import logging
-        from datetime import UTC, datetime
 
         logger = logging.getLogger(__name__)
 
@@ -5144,47 +4987,42 @@ class NexusFS(  # type: ignore[misc]
             "user_record_deleted": False,
         }
 
-        # Look up user in database
-        session = self.SessionLocal()
-        try:
-            from sqlalchemy import select as sa_select
+        # Look up user in database via AdminStoreService
+        user_record: dict[str, Any] | None = None
+        if self._admin_store is not None:
+            user_record = self._admin_store.get_user_record(user_id)
 
-            from nexus.storage.models import UserModel
+        if not user_record:
+            logger.warning(f"User not found in database: {user_id}")
+            # Continue with cleanup even if user doesn't exist
+        else:
+            # Get zone_id from user if not provided
+            if not zone_id:
+                zone_id = user_record["zone_id"]
+            result["zone_id"] = zone_id
 
-            user = (
-                session.execute(sa_select(UserModel).filter_by(user_id=user_id)).scalars().first()
+            # Safety check: prevent deprovisioning global admin
+            if user_record.get("is_global_admin") and not force:
+                raise ValueError(
+                    f"Cannot deprovision global admin user {user_id}. "
+                    "Use force=True to override."
+                )
+
+            logger.info(
+                f"Found user {user_id} (email={user_record.get('email')}, zone={zone_id}, "
+                f"is_admin={user_record.get('is_global_admin')})"
             )
 
-            if not user:
-                logger.warning(f"User not found in database: {user_id}")
-                # Continue with cleanup even if user doesn't exist
-            else:
-                # Get zone_id from user if not provided
-                if not zone_id:
-                    zone_id = user.zone_id
-                result["zone_id"] = zone_id
+        # Update context with proper zone_id
+        if zone_id:
+            admin_context = OperationContext(
+                user="system",
+                groups=[],
+                zone_id=zone_id,
+                is_admin=True,
+            )
 
-                # Safety check: prevent deprovisioning global admin
-                if user.is_global_admin and not force:
-                    raise ValueError(
-                        f"Cannot deprovision global admin user {user_id}. "
-                        "Use force=True to override."
-                    )
-
-                logger.info(
-                    f"Found user {user_id} (email={user.email}, zone={zone_id}, "
-                    f"is_admin={user.is_global_admin})"
-                )
-
-            # Update context with proper zone_id
-            if zone_id:
-                admin_context = OperationContext(
-                    user="system",
-                    groups=[],
-                    zone_id=zone_id,
-                    is_admin=True,
-                )
-
+        try:
             # 1. Delete user directories
             if zone_id:
                 user_base_path = f"/zone/{zone_id}/user/{user_id}"
@@ -5202,8 +5040,6 @@ class NexusFS(  # type: ignore[misc]
                 for resource_type in ALL_RESOURCE_TYPES:
                     dir_path = f"{user_base_path}/{resource_type}"
                     try:
-                        # Try to delete even if exists() returns False
-                        # (subdirectories may exist even if parent has no metadata)
                         was_deleted = self._delete_directory_recursive(dir_path, admin_context)
                         if was_deleted:
                             result["deleted_directories"].append(dir_path)
@@ -5212,67 +5048,32 @@ class NexusFS(  # type: ignore[misc]
                         logger.warning(f"Failed to delete directory {dir_path}: {e}")
 
             # 2. Delete API keys (both user and agent keys)
-            try:
-                # Delete ALL API keys for this user (subject_type="user" and "agent")
-                # Agent keys have subject_type="agent" and belong to user's agents
-                from sqlalchemy import delete as sa_delete
-
-                from nexus.storage.models import APIKeyModel
-
-                del_result: Any = session.execute(sa_delete(APIKeyModel).filter_by(user_id=user_id))
-                deleted_keys = del_result.rowcount
-                session.commit()
-                result["deleted_api_keys"] = deleted_keys
-                logger.info(f"Deleted {deleted_keys} API keys for user {user_id}")
-            except Exception as e:
-                logger.warning(f"Failed to delete API keys: {e}")
-                session.rollback()
+            if self._admin_store is not None:
+                try:
+                    deleted_keys = self._admin_store.delete_api_keys_for_user(user_id)
+                    result["deleted_api_keys"] = deleted_keys
+                    logger.info(f"Deleted {deleted_keys} API keys for user {user_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete API keys: {e}")
 
             # 3. Delete OAuth-specific records (for OAuth authenticated users)
-            try:
-                from sqlalchemy import inspect
-
-                from nexus.storage.models import OAuthAPIKeyModel, UserOAuthAccountModel
-
-                # Check if OAuth tables exist (they may not in test environments)
-                has_oauth_tables = False
-                if session.bind is not None:
-                    inspector = inspect(session.bind)
-                    table_names = inspector.get_table_names()
-                    has_oauth_tables = (
-                        "oauth_api_keys" in table_names and "user_oauth_accounts" in table_names
+            if self._admin_store is not None:
+                try:
+                    deleted_oauth_keys, deleted_oauth_accounts = (
+                        self._admin_store.delete_oauth_records(user_id)
                     )
-
-                if has_oauth_tables:
-                    # Delete OAuth API keys (encrypted keys for OAuth users)
-                    from sqlalchemy import delete as sa_delete
-
-                    oauth_key_result: Any = session.execute(
-                        sa_delete(OAuthAPIKeyModel).filter_by(user_id=user_id)
-                    )
-                    deleted_oauth_keys = oauth_key_result.rowcount
                     result["deleted_oauth_api_keys"] = deleted_oauth_keys
-                    logger.info(f"Deleted {deleted_oauth_keys} OAuth API keys for user {user_id}")
-
-                    # Delete OAuth account linkages (Google, GitHub, etc.)
-                    oauth_acct_result: Any = session.execute(
-                        sa_delete(UserOAuthAccountModel).filter_by(user_id=user_id)
-                    )
-                    deleted_oauth_accounts = oauth_acct_result.rowcount
-                    session.commit()
                     result["deleted_oauth_accounts"] = deleted_oauth_accounts
-                    logger.info(
-                        f"Deleted {deleted_oauth_accounts} OAuth accounts for user {user_id}"
-                    )
-                else:
-                    logger.debug("OAuth tables not present in database, skipping OAuth cleanup")
-            except Exception as e:
-                logger.warning(f"Failed to delete OAuth records: {e}")
-                session.rollback()
+                    if deleted_oauth_keys or deleted_oauth_accounts:
+                        logger.info(
+                            f"Deleted {deleted_oauth_keys} OAuth API keys and "
+                            f"{deleted_oauth_accounts} OAuth accounts for user {user_id}"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to delete OAuth records: {e}")
 
             # 4. Delete ReBAC permissions
             try:
-                # Query all permissions where user is subject
                 if hasattr(self, "rebac_manager") and self.rebac_manager:
                     tuples = self.rebac_manager.query_tuples_by_subject(("user", user_id))
                     deleted_count = 0
@@ -5294,13 +5095,11 @@ class NexusFS(  # type: ignore[misc]
             # 5. Delete entity registry entries
             try:
                 if self._entity_registry:
-                    # Delete user entity (cascade will delete children)
                     user_entity = self._entity_registry.get_entity("user", user_id)
                     if user_entity:
-                        # Delete with cascade to remove all child entities (agents, etc.)
                         deleted = self._entity_registry.delete_entity("user", user_id, cascade=True)
                         if deleted:
-                            result["deleted_entities"] = 1  # At least the user entity
+                            result["deleted_entities"] = 1
                             logger.info(
                                 f"Deleted user entity and children from registry: {user_id}"
                             )
@@ -5312,23 +5111,18 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(f"Failed to delete entity registry entries: {e}")
 
             # 6. Soft-delete user record (if requested)
-            if delete_user_record and user:
+            if delete_user_record and user_record and self._admin_store is not None:
                 try:
-                    user.is_active = 0
-                    user.deleted_at = datetime.now(UTC)
-                    session.commit()
-                    result["user_record_deleted"] = True
-                    logger.info(f"Soft-deleted user record: {user_id}")
+                    soft_deleted = self._admin_store.soft_delete_user(user_id)
+                    if soft_deleted:
+                        result["user_record_deleted"] = True
+                        logger.info(f"Soft-deleted user record: {user_id}")
                 except Exception as e:
                     logger.warning(f"Failed to soft-delete user record: {e}")
-                    session.rollback()
 
         except Exception as e:
             logger.error(f"Error during user deprovisioning: {e}")
-            session.rollback()
             raise
-        finally:
-            session.close()
 
         logger.info(
             f"Successfully deprovisioned user {user_id}: "
@@ -5375,49 +5169,18 @@ class NexusFS(  # type: ignore[misc]
         # If physical deletion worked, still need to clean up metadata and permissions
         if directory_removed:
             # Clean up metadata for the directory and all children
-            if hasattr(self, "metadata"):
+            if hasattr(self, "metadata") and self._admin_store is not None:
                 try:
-                    session = self.SessionLocal()
-                    try:
-                        from sqlalchemy import delete as sa_delete
-
-                        from nexus.storage.models import FilePathModel
-
-                        # Delete file paths for directory and all children (paths starting with dir_path)
-                        fp_result: Any = session.execute(
-                            sa_delete(FilePathModel).where(
-                                FilePathModel.virtual_path.like(f"{dir_path}%")
-                            )
-                        )
-                        deleted_count = fp_result.rowcount
-                        session.commit()
-                        logger.debug(f"Deleted {deleted_count} file path entries for {dir_path}")
-                    finally:
-                        session.close()
+                    deleted_count = self._admin_store.delete_file_paths_by_prefix(dir_path)
+                    logger.debug(f"Deleted {deleted_count} file path entries for {dir_path}")
                 except Exception as e:
                     logger.warning(f"Failed to clean up file paths for {dir_path}: {e}")
 
             # Clean up ReBAC permission tuples for directory and all children
-            if hasattr(self, "rebac_manager") and self.rebac_manager:
+            if hasattr(self, "rebac_manager") and self.rebac_manager and self._admin_store is not None:
                 try:
-                    # Query tuples where resource path starts with dir_path
-                    from nexus.storage.models import ReBACTupleModel
-
-                    session = self.SessionLocal()
-                    try:
-                        from sqlalchemy import delete as sa_delete
-
-                        rebac_result: Any = session.execute(
-                            sa_delete(ReBACTupleModel).where(
-                                ReBACTupleModel.object_type == "file",
-                                ReBACTupleModel.object_id.like(f"{dir_path}%"),
-                            )
-                        )
-                        deleted_tuples = rebac_result.rowcount
-                        session.commit()
-                        logger.debug(f"Deleted {deleted_tuples} ReBAC tuples for {dir_path}")
-                    finally:
-                        session.close()
+                    deleted_tuples = self._admin_store.delete_rebac_tuples_by_path(dir_path)
+                    logger.debug(f"Deleted {deleted_tuples} ReBAC tuples for {dir_path}")
                 except Exception as e:
                     logger.warning(f"Failed to clean up ReBAC tuples for {dir_path}: {e}")
 

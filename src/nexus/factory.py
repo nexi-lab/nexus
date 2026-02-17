@@ -898,6 +898,16 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except ImportError:
         pass  # Server auth not available (e.g. embedded mode)
 
+    # --- AdminStoreService (violationfix #129: kernel must not import ORM models) ---
+    admin_store: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.services.admin_store import AdminStoreService
+
+            admin_store = AdminStoreService(session_factory=ctx.session_factory)
+        except ImportError as _admin_exc:
+            logger.debug("[BOOT:BRICK] AdminStoreService unavailable: %s", _admin_exc)
+
     # --- TransactionalSnapshotService (Issue #1752) ---
     snapshot_service: Any = None
     try:
@@ -932,6 +942,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "lock_manager": lock_manager,
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
+        "admin_store": admin_store,
         "snapshot_service": snapshot_service,
         "task_queue_service": task_queue_service,
     }
@@ -1093,6 +1104,7 @@ def create_nexus_services(
         tool_namespace_middleware=brick["tool_namespace_middleware"],
         delivery_worker=system["delivery_worker"],
         api_key_creator=brick["api_key_creator"],
+        admin_store=brick["admin_store"],
         snapshot_service=brick["snapshot_service"],
         task_queue_service=brick["task_queue_service"],
     )

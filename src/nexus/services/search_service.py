@@ -114,7 +114,7 @@ def _filter_ignored_paths(
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.services.permissions.enforcer import PermissionEnforcer
@@ -134,7 +134,7 @@ class SearchService(SemanticSearchMixin):
 
     def __init__(
         self,
-        metadata_store: FileMetadataProtocol,
+        metadata_store: MetastoreABC,
         permission_enforcer: PermissionEnforcer | None = None,
         router: PathRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
@@ -758,7 +758,7 @@ class SearchService(SemanticSearchMixin):
         _rebac_manager: Any,
     ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
         """Non-recursive list using sparse directory index + Tiger bitmap."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         _preapproved_dirs: set[str] = set()
         _revision_before: int | None = None
@@ -1207,7 +1207,7 @@ class SearchService(SemanticSearchMixin):
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
-        from nexus.core._metadata_generated import PaginatedResult
+        from nexus.core.metadata import PaginatedResult
         from nexus.core.pagination import encode_cursor
 
         context = context or self._default_context

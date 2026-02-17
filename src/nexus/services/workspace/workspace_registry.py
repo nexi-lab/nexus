@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
 
 
 @dataclass
@@ -121,7 +121,7 @@ class WorkspaceRegistry:
 
     def __init__(
         self,
-        metadata: FileMetadataProtocol,
+        metadata: MetastoreABC,
         rebac_manager: Any | None = None,  # v0.5.0: For auto-granting ownership
         session_factory: Any | None = None,  # SQLAlchemy session factory
     ):

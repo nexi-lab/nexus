@@ -16,6 +16,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 # Project root for src/nexus/
 NEXUS_ROOT = Path(__file__).resolve().parents[3] / "src" / "nexus"
 
@@ -178,6 +180,73 @@ class TestRPCTypesInCore:
         from nexus.server.protocol import RPCErrorCode as ServerCode
 
         assert CoreCode is ServerCode
+
+
+class TestFourStoragePillars:
+    """Verify all Four Storage Pillars are importable ABCs (Issue #1525).
+
+    The NEXUS-LEGO-ARCHITECTURE defines exactly four storage pillars:
+    1. MetastoreABC   — inode/path metadata (Raft, redb)
+    2. Backend         — object/blob storage (ObjectStoreABC: Local, GCS, S3)
+    3. RecordStoreABC — relational data (PostgreSQL, SQLite)
+    4. CacheStoreABC  — ephemeral KV + PubSub (Dragonfly, in-memory)
+    """
+
+    PILLARS = [
+        ("nexus.core.metastore", "MetastoreABC"),
+        ("nexus.backends.backend", "Backend"),
+        ("nexus.storage.record_store", "RecordStoreABC"),
+        ("nexus.core.cache_store", "CacheStoreABC"),
+    ]
+
+    @pytest.mark.parametrize(
+        ("module_path", "class_name"),
+        PILLARS,
+        ids=["MetastoreABC", "Backend", "RecordStoreABC", "CacheStoreABC"],
+    )
+    def test_pillar_is_importable_abc(self, module_path: str, class_name: str):
+        """Each storage pillar must be importable and be an ABC."""
+        import importlib
+        from abc import ABC
+
+        mod = importlib.import_module(module_path)
+        cls = getattr(mod, class_name)
+        assert isinstance(cls, type), f"{class_name} is not a class"
+        assert issubclass(cls, ABC), f"{class_name} is not an ABC"
+
+    def test_metastore_has_required_abstract_methods(self):
+        """MetastoreABC must declare the 6 required abstract methods."""
+        from nexus.core.metastore import MetastoreABC
+
+        required = {"get", "put", "delete", "exists", "list", "close"}
+        abstract = getattr(MetastoreABC, "__abstractmethods__", frozenset())
+        missing = required - abstract
+        assert not missing, f"MetastoreABC missing abstract methods: {missing}"
+
+    def test_metastore_implementations_exist(self):
+        """At least RaftMetadataStore and FederatedMetadataProxy implement MetastoreABC."""
+        from nexus.core.metastore import MetastoreABC
+        from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
+        from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+        assert issubclass(RaftMetadataStore, MetastoreABC)
+        assert issubclass(FederatedMetadataProxy, MetastoreABC)
+
+    def test_no_old_name_in_codebase(self):
+        """FileMetadataProtocol should not appear in src/ (clean rename)."""
+        import ast
+
+        for py_file in sorted((NEXUS_ROOT).rglob("*.py")):
+            source = py_file.read_text(encoding="utf-8")
+            if "FileMetadataProtocol" in source:
+                # Verify it's not in a string/comment — check ast
+                tree = ast.parse(source, filename=str(py_file))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Name) and node.id == "FileMetadataProtocol":
+                        rel = py_file.relative_to(NEXUS_ROOT)
+                        raise AssertionError(
+                            f"Old name 'FileMetadataProtocol' found in {rel}:{node.lineno}"
+                        )
 
 
 class TestZoneHelpersInCore:

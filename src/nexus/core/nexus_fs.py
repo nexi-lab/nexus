@@ -20,7 +20,6 @@ from nexus.raft.zone_manager import ROOT_ZONE_ID
 if TYPE_CHECKING:
     from nexus.services.memory.memory_api import Memory
     from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     CacheConfig,
@@ -37,6 +36,8 @@ from nexus.core.export_import import (
     ImportResult,
 )
 from nexus.core.filesystem import NexusFilesystem
+from nexus.core.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.nexus_fs_events import NexusFSEventsMixin
 
@@ -95,7 +96,7 @@ class NexusFS(  # type: ignore[misc]
     def __init__(
         self,
         backend: Backend,
-        metadata_store: FileMetadataProtocol,
+        metadata_store: MetastoreABC,
         record_store: RecordStoreABC | None = None,
         cache_store: CacheStoreABC | None = None,
         *,
@@ -113,7 +114,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             backend: Backend instance for file storage (LocalBackend, GCSBackend, etc.)
-            metadata_store: FileMetadataProtocol instance (RaftMetadataStore or custom)
+            metadata_store: MetastoreABC instance (RaftMetadataStore or custom)
             record_store: Optional RecordStoreABC for Services layer (ReBAC, Audit, etc.)
             cache_store: Optional CacheStoreABC for ephemeral KV+PubSub. Defaults to NullCacheStore.
             is_admin: Whether this instance has admin privileges (default: False)
@@ -166,7 +167,7 @@ class NexusFS(  # type: ignore[misc]
         self.backend = backend
 
         # Initialize metadata store (Task #14: Dependency Injection)
-        self.metadata: FileMetadataProtocol = metadata_store
+        self.metadata: MetastoreABC = metadata_store
 
         # Initialize record store (Task #14: Four Pillars)
         self._record_store = record_store

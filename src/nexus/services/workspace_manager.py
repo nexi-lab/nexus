@@ -18,7 +18,7 @@ from nexus.storage.models import WorkspaceSnapshotModel
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: FileMetadataProtocol,
+        metadata: MetastoreABC,
         backend: Backend,
         rebac_manager: ReBACManager | None = None,
         zone_id: str | None = None,
@@ -303,7 +303,7 @@ class WorkspaceManager:
 
             from datetime import UTC, datetime
 
-            from nexus.core._metadata_generated import FileMetadata
+            from nexus.core.metadata import FileMetadata
 
             for rel_path in manifest_paths:
                 entry = manifest.get(rel_path)

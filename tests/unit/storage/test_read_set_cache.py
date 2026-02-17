@@ -38,7 +38,7 @@ class TestReadSetAwareCachePutAndGet:
 
     def test_put_without_read_set(self):
         """Cache works normally without read sets — backward compatible."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         meta = FileMetadata(
             path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123"
@@ -51,7 +51,7 @@ class TestReadSetAwareCachePutAndGet:
 
     def test_put_with_read_set(self):
         """Cache stores read set mapping when provided."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         meta = FileMetadata(
             path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123"
@@ -73,7 +73,7 @@ class TestReadSetAwareCachePutAndGet:
 
     def test_stale_revision_at_insert_rejected(self):
         """Zookie pattern: skip caching if revision already advanced."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         meta = FileMetadata(
             path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123"
@@ -114,7 +114,7 @@ class TestReadSetAwareCacheInvalidation:
 
     def _put_file(self, path: str, query_id: str, revision: int = 5):
         """Helper to cache a file with a read set."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         meta = FileMetadata(
             path=path,
@@ -159,7 +159,7 @@ class TestReadSetAwareCacheInvalidation:
 
     def test_invalidate_for_write_directory_containment(self):
         """Directory read sets catch writes to files within the directory."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         # Cache a directory listing result
         meta = FileMetadata(
@@ -182,7 +182,7 @@ class TestReadSetAwareCacheInvalidation:
 
     def test_fallback_to_path_invalidation(self):
         """Entries without read sets use path-based invalidation."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         # Cache without read set (legacy behavior)
         meta = FileMetadata(
@@ -221,7 +221,7 @@ class TestReadSetAwareCacheEviction:
             registry=registry,
         )
 
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         # Fill cache to capacity
         for i in range(3):
@@ -272,7 +272,7 @@ class TestReadSetAwareCacheEviction:
             registry=registry,
         )
 
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         # Insert many more than capacity
         for i in range(20):

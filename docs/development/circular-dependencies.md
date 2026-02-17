@@ -82,7 +82,7 @@ Analyzed with: `grep -r "TYPE_CHECKING" src/nexus --include="*.py" -l`
 ```python
 # File: nexus_fs.py
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import MetadataStore
+    from nexus.core.metastore import MetastoreABC
 
 class NexusFS:
     def __init__(self, metadata: 'MetadataStore'):

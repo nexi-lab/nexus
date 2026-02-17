@@ -481,9 +481,8 @@ Names explain the **"What"** and **"Why"**, not the **"How"**.
 | **ObjectStore** | `ObjectStoreABC` (= current `Backend`) | "The Content" — raw file bytes, immutable objects | S3, GCS, Local Disk | **Mounted** dynamically (like Linux `mount`) |
 | **CacheStore** | `CacheStoreABC` (future) | "The Reflexes" — sessions, signals, ephemeral data | Dragonfly (prod), In-Memory (dev) | **Future** — optional |
 
-**Naming Note**: The existing proto-generated `MetadataStore` (specific to `FileMetadata` typed operations)
-will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC` (the underlying ordered KV primitive).
-`MetastoreABC` is the lower-level KV store; `FileMetadataProtocol` is a typed wrapper that sits on top of it.
+**Naming Note**: The Metastore pillar class is `MetastoreABC` (in `core/metastore.py`), providing typed FileMetadata CRUD.
+Data classes (`FileMetadata`, `PaginatedResult`) live in `core/metadata.py`. Issue #1525 completed the rename.
 
 ### Complete Data Type → Pillar Mapping
 
@@ -573,7 +572,7 @@ will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC`
 
 Completed items removed. See SUMMARY "REMAINING GAPS" for open tasks, REDUNDANCY ANALYSIS for merge decisions.
 
-1. 📋 **PLANNED**: Rename proto-generated `MetadataStore` → `FileMetadataProtocol` (avoid confusion with MetastoreABC)
+1. ✅ **DONE**: Renamed `FileMetadataProtocol` → `MetastoreABC`, extracted to `core/metastore.py` (Issue #1525)
 2. ❓ **DECISION**: Version history (VersionHistoryGC, TimeTravelReader) — kernel or services? (Related: Task #3, #11)
 
 ---

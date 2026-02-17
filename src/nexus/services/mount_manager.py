@@ -60,6 +60,7 @@ class MountManager:
             record_store: A RecordStoreABC providing session_factory for database access.
         """
         self._session_factory = record_store.session_factory
+        self.zone_id: str | None = None
 
     def save_mount(
         self,
@@ -108,6 +109,10 @@ class MountManager:
         with self._session_factory() as session:
             # Check if mount already exists
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
+            if zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == zone_id)
+            elif self.zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
             existing = session.execute(stmt).scalar_one_or_none()
 
             if existing:
@@ -166,6 +171,8 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
+            if self.zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:
@@ -208,6 +215,8 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
+            if self.zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:
@@ -257,6 +266,8 @@ class MountManager:
                 stmt = stmt.where(MountConfigModel.owner_user_id == owner_user_id)
             if zone_id:
                 stmt = stmt.where(MountConfigModel.zone_id == zone_id)
+            elif self.zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
 
             # Order by priority (desc) then mount_point
             stmt = stmt.order_by(MountConfigModel.priority.desc(), MountConfigModel.mount_point)
@@ -295,6 +306,8 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
+            if self.zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:

@@ -20,10 +20,10 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
 
 if TYPE_CHECKING:
+    from nexus.rebac.cache.boundary import PermissionBoundaryCache
     from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.hotspot_detector import HotspotDetector
     from nexus.services.permissions.namespace_manager import NamespaceManager
-    from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
     from nexus.services.permissions.permissions_enhanced import AuditStore
 
 logger = logging.getLogger(__name__)

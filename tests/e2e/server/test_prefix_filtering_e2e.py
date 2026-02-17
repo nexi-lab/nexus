@@ -268,6 +268,4 @@ class TestPrefixFilteringE2E:
             )
             # Accept 200/201 or skip if ReBAC API not available
             if resp.status_code not in (200, 201):
-                pytest.skip(
-                    f"ReBAC tuple API not available: {resp.status_code} {resp.text}"
-                )
+                pytest.skip(f"ReBAC tuple API not available: {resp.status_code} {resp.text}")

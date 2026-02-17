@@ -24,8 +24,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from nexus.core.rebac import Entity
+from nexus.rebac.types import ConsistencyLevel
 from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.types import ConsistencyLevel
 
 if TYPE_CHECKING:
     from collections.abc import Callable

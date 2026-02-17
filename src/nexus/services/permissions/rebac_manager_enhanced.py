@@ -39,6 +39,15 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.rebac import Entity, NamespaceConfig
+from nexus.rebac.types import (
+    CheckResult,
+    ConsistencyLevel,
+    ConsistencyRequirement,
+    GraphLimitExceeded,
+    GraphLimits,
+    TraversalStats,
+    WriteResult,
+)
 from nexus.services.permissions.batch.bulk_checker import BulkPermissionChecker
 from nexus.services.permissions.cache.tiger.facade import TigerFacade
 from nexus.services.permissions.consistency.revision import (
@@ -68,15 +77,6 @@ from nexus.services.permissions.rebac_tracing import (
     record_traversal_result,
     start_check_span,
     start_graph_traversal_span,
-)
-from nexus.services.permissions.types import (
-    CheckResult,
-    ConsistencyLevel,
-    ConsistencyRequirement,
-    GraphLimitExceeded,
-    GraphLimits,
-    TraversalStats,
-    WriteResult,
 )
 from nexus.services.permissions.utils.changelog import insert_changelog_entry
 from nexus.services.permissions.utils.zone import normalize_zone_id

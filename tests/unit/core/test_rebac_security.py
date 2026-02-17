@@ -22,6 +22,7 @@ from nexus.core.permissions import (
     OperationContext,
     Permission,
 )
+from nexus.rebac.types import ConsistencyMode
 from nexus.services.permissions.enforcer import PermissionEnforcer
 from nexus.services.permissions.rebac_manager_enhanced import (
     CheckResult,
@@ -32,7 +33,6 @@ from nexus.services.permissions.rebac_manager_enhanced import (
     TraversalStats,
     WriteResult,
 )
-from nexus.services.permissions.types import ConsistencyMode
 
 # ---------------------------------------------------------------------------
 # Helpers

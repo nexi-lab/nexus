@@ -22,13 +22,15 @@ class FeedbackManager:
     - Long-term metrics
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, zone_id: str | None = None):
         """Initialize feedback manager.
 
         Args:
             session: Database session
+            zone_id: Zone ID for multi-tenancy isolation
         """
         self.session = session
+        self.zone_id = zone_id
 
     def add_feedback(
         self,
@@ -146,11 +148,10 @@ class FeedbackManager:
             >>> score = feedback_mgr.get_effective_score(traj_id, strategy="weighted")
             >>> print(f"Effective score: {score:.2f}")
         """
-        trajectory = (
-            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
-            .scalars()
-            .first()
-        )
+        stmt = select(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
+        if self.zone_id is not None:
+            stmt = stmt.where(TrajectoryModel.zone_id == self.zone_id)
+        trajectory = self.session.execute(stmt).scalars().first()
         if not trajectory:
             raise ValueError(f"Trajectory {trajectory_id} not found")
 
@@ -215,11 +216,10 @@ class FeedbackManager:
             ...     priority=9
             ... )
         """
-        trajectory = (
-            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
-            .scalars()
-            .first()
-        )
+        stmt = select(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
+        if self.zone_id is not None:
+            stmt = stmt.where(TrajectoryModel.zone_id == self.zone_id)
+        trajectory = self.session.execute(stmt).scalars().first()
         if not trajectory:
             raise ValueError(f"Trajectory {trajectory_id} not found")
 
@@ -293,19 +293,18 @@ class FeedbackManager:
             >>> for item in queue:
             ...     print(f"Priority {item['priority']}: {item['task_description']}")
         """
-        trajectories = (
-            self.session.execute(
-                select(TrajectoryModel)
-                .where(TrajectoryModel.needs_relearning == True)  # noqa: E712
-                .order_by(
-                    TrajectoryModel.relearning_priority.desc(),
-                    TrajectoryModel.last_feedback_at.desc(),
-                )
-                .limit(limit)
+        stmt = (
+            select(TrajectoryModel)
+            .where(TrajectoryModel.needs_relearning == True)  # noqa: E712
+            .order_by(
+                TrajectoryModel.relearning_priority.desc(),
+                TrajectoryModel.last_feedback_at.desc(),
             )
-            .scalars()
-            .all()
+            .limit(limit)
         )
+        if self.zone_id is not None:
+            stmt = stmt.where(TrajectoryModel.zone_id == self.zone_id)
+        trajectories = self.session.execute(stmt).scalars().all()
 
         return [
             {
@@ -329,11 +328,10 @@ class FeedbackManager:
             >>> # After re-reflecting
             >>> feedback_mgr.clear_relearning_flag(traj_id)
         """
-        trajectory = (
-            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
-            .scalars()
-            .first()
-        )
+        stmt = select(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
+        if self.zone_id is not None:
+            stmt = stmt.where(TrajectoryModel.zone_id == self.zone_id)
+        trajectory = self.session.execute(stmt).scalars().first()
         if trajectory:
             trajectory.needs_relearning = False  # PostgreSQL boolean
             trajectory.relearning_priority = 0
@@ -350,11 +348,10 @@ class FeedbackManager:
             trajectory_id: Trajectory ID
             score: New score (or None)
         """
-        trajectory = (
-            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
-            .scalars()
-            .first()
-        )
+        stmt = select(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
+        if self.zone_id is not None:
+            stmt = stmt.where(TrajectoryModel.zone_id == self.zone_id)
+        trajectory = self.session.execute(stmt).scalars().first()
         if not trajectory:
             return
 

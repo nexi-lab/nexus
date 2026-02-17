@@ -169,6 +169,7 @@ class SearchService(SemanticSearchMixin):
         # Semantic search (initialized later, types declared in SemanticSearchMixin)
         self._semantic_search = None
         self._async_search = None
+        self._search_zone_id: str | None = None
 
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None

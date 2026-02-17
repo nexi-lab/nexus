@@ -64,6 +64,7 @@ class SemanticSearchMixin:
     metadata: Any  # MetastoreABC, provided by SearchService
     _read: Any  # Callable, provided by SearchService
     list: Any  # Callable, provided by SearchService
+    _search_zone_id: str | None  # Zone ID for DB query isolation
 
     # =========================================================================
     # Semantic Search Initialization (Issue #1287, moved from NexusFS)
@@ -514,6 +515,9 @@ class SemanticSearchMixin:
                             FilePathModel.virtual_path == fp,
                             FilePathModel.deleted_at.is_(None),
                         )
+                        zone_id = getattr(self, '_search_zone_id', None)
+                        if zone_id is not None:
+                            stmt = stmt.where(FilePathModel.zone_id == zone_id)
                         result = session.execute(stmt)
                         file_model = result.scalar_one_or_none()
                         if file_model and content:

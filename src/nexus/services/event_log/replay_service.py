@@ -233,9 +233,14 @@ class EventReplayService:
 
             # Apply operation_id cursor (composite: created_at + operation_id)
             if cursor:
-                cursor_op = session.execute(
-                    select(OperationLogModel).where(OperationLogModel.operation_id == cursor)
-                ).scalar_one_or_none()
+                cursor_stmt = select(OperationLogModel).where(
+                    OperationLogModel.operation_id == cursor
+                )
+                if zone_id is not None:
+                    cursor_stmt = cursor_stmt.where(
+                        OperationLogModel.zone_id == zone_id
+                    )
+                cursor_op = session.execute(cursor_stmt).scalar_one_or_none()
                 if cursor_op:
                     stmt = stmt.where(
                         (OperationLogModel.created_at < cursor_op.created_at)

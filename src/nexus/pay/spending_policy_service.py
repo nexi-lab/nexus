@@ -217,7 +217,7 @@ class SpendingPolicyService:
         }
     )
 
-    async def update_policy(self, policy_id: str, **updates: Any) -> SpendingPolicy | None:
+    async def update_policy(self, policy_id: str, zone_id: str | None = None, **updates: Any) -> SpendingPolicy | None:
         """Update a spending policy by ID. Returns updated policy or None if not found."""
         from sqlalchemy import select
 
@@ -225,6 +225,8 @@ class SpendingPolicyService:
 
         async with self._session_factory() as session, session.begin():
             stmt = select(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
+            if zone_id is not None:
+                stmt = stmt.where(SpendingPolicyModel.zone_id == zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:
@@ -247,7 +249,7 @@ class SpendingPolicyService:
             await session.flush()
             return _model_to_policy(model)
 
-    async def delete_policy(self, policy_id: str) -> bool:
+    async def delete_policy(self, policy_id: str, zone_id: str | None = None) -> bool:
         """Delete a spending policy by ID. Returns True if deleted."""
         from sqlalchemy import delete, select
 
@@ -256,6 +258,8 @@ class SpendingPolicyService:
         async with self._session_factory() as session, session.begin():
             # Fetch first to invalidate cache
             stmt = select(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
+            if zone_id is not None:
+                stmt = stmt.where(SpendingPolicyModel.zone_id == zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:
@@ -265,6 +269,8 @@ class SpendingPolicyService:
             self._cache.pop(cache_key, None)
 
             del_stmt = delete(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
+            if zone_id is not None:
+                del_stmt = del_stmt.where(SpendingPolicyModel.zone_id == zone_id)
             await session.execute(del_stmt)
 
         return True

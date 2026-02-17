@@ -621,7 +621,7 @@ async def delete_policy(
         raise HTTPException(status_code=403, detail="Admin access required")
 
     policy_service = _get_policy_service(request)
-    deleted = await policy_service.delete_policy(policy_id)
+    deleted = await policy_service.delete_policy(policy_id, zone_id=auth_result.get("zone_id"))
     if not deleted:
         raise HTTPException(status_code=404, detail="Policy not found")
 

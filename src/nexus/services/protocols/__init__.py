@@ -25,6 +25,7 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from nexus.rebac.namespace_manager import NamespaceMount
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
@@ -47,11 +48,11 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
-from nexus.services.protocols.llm import LLMProtocol
+from nexus.services.protocols.llm import LLMProtocol, LLMServiceProtocol
 from nexus.services.protocols.lock import LockProtocol
 from nexus.services.protocols.mcp import MCPProtocol
 from nexus.services.protocols.mount import MountProtocol, ProgressCallback
-from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.services.protocols.oauth import OAuthProtocol
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
@@ -87,6 +88,7 @@ __all__ = [
     "HookSpec",
     "LLMProtocol",
     "LLMProviderProtocol",
+    "LLMServiceProtocol",
     "LockProtocol",
     "MCPProtocol",
     "MetadataStoreProtocol",

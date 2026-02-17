@@ -22,13 +22,13 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.orm import Session
 
 from nexus.llm.message import Message, MessageRole
-from nexus.llm.provider import LLMProvider
 from nexus.services.ace.affinity import (
     AffinityConfig,
     MemoryVector,
     cluster_by_affinity,
     get_cluster_statistics,
 )
+from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ class ConsolidationEngine:
         self,
         session: Session,
         backend: Any,
-        llm_provider: LLMProvider,
+        llm_provider: LLMProviderProtocol,
         user_id: str,
         agent_id: str | None = None,
         zone_id: str | None = None,

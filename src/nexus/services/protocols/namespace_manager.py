@@ -17,28 +17,9 @@ References:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-
-@dataclass(frozen=True, slots=True)
-class NamespaceMount:
-    """A namespace mount visible to a subject.
-
-    Distinct from the existing ``MountEntry`` (which only has ``virtual_path``).
-    Includes subject identity so mount tables can be compared across subjects.
-
-    Attributes:
-        virtual_path: Virtual path visible to the subject.
-        subject_type: Subject type (e.g. "user", "agent").
-        subject_id: Subject identifier.
-        zone_id: Zone/organization ID for multi-zone isolation.
-    """
-
-    virtual_path: str
-    subject_type: str
-    subject_id: str
-    zone_id: str | None
+from nexus.rebac.namespace_manager import NamespaceMount
 
 
 @runtime_checkable

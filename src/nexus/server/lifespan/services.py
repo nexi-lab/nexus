@@ -34,6 +34,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     _startup_reputation_service(app)
     _startup_delegation_service(app)
     _startup_sandbox_auth(app)
+    _startup_transactional_snapshot(app)
 
     # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app)
@@ -332,6 +333,16 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         logger.warning(
             "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
         )
+
+
+def _startup_transactional_snapshot(app: FastAPI) -> None:
+    """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
+    svc = getattr(app.state.nexus_fs, "_transactional_snapshot_service", None) if app.state.nexus_fs else None
+    app.state.transactional_snapshot_service = svc
+    if svc is not None:
+        logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
+    else:
+        logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
 
 
 def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:

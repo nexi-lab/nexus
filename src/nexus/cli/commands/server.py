@@ -1299,10 +1299,10 @@ def serve(
 
                     # Grant admin user ownership
                     from nexus.rebac.manager import (
-                        EnhancedReBACManager,
+                        ReBACManager,
                     )
 
-                    rebac = EnhancedReBACManager(engine)
+                    rebac = ReBACManager(engine)
                     rebac.rebac_write(
                         subject=("user", admin_user),
                         relation="direct_owner",

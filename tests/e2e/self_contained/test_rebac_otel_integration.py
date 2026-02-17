@@ -21,7 +21,7 @@ from sqlalchemy import create_engine, text
 import nexus.rebac.rebac_tracing as _rebac_tracing_mod
 from nexus.rebac.manager import (
     ConsistencyLevel,
-    EnhancedReBACManager,
+    ReBACManager,
 )
 from nexus.rebac.rebac_tracing import (
     ATTR_CONSISTENCY,
@@ -106,8 +106,8 @@ def engine():
 
 @pytest.fixture
 def manager(engine):
-    """Create EnhancedReBACManager for testing."""
-    mgr = EnhancedReBACManager(
+    """Create ReBACManager for testing."""
+    mgr = ReBACManager(
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=50,
@@ -210,7 +210,7 @@ class TestRealPermissionCheckSpans:
         rebac.graph_traversal span.
         """
         # Need zone-isolation enabled to reach _fresh_compute() path
-        mgr = EnhancedReBACManager(
+        mgr = ReBACManager(
             engine=engine,
             cache_ttl_seconds=300,
             max_depth=50,

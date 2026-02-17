@@ -455,7 +455,7 @@ class ReBACService:
             # Issue #1081: Build consistency requirement from API params
             consistency = None
             if consistency_mode or min_revision is not None:
-                from nexus.rebac.manager import (
+                from nexus.rebac.types import (
                     ConsistencyMode,
                     ConsistencyRequirement,
                 )

@@ -338,6 +338,7 @@ class DelegationService:
         limit: int = 50,
         offset: int = 0,
         status_filter: DelegationStatus | None = None,
+        zone_id: str | None = None,
     ) -> tuple[list[DelegationRecord], int]:
         """List delegations created by a coordinator agent with pagination.
 
@@ -346,6 +347,7 @@ class DelegationService:
             limit: Maximum records to return (default 50).
             offset: Number of records to skip (default 0).
             status_filter: Optional filter by status (default: all statuses).
+            zone_id: Zone ID for federation isolation (recommended).
 
         Returns:
             Tuple of (records, total_count).
@@ -356,6 +358,8 @@ class DelegationService:
             query = session.query(DelegationRecordModel).filter(
                 DelegationRecordModel.parent_agent_id == parent_agent_id
             )
+            if zone_id is not None:
+                query = query.filter(DelegationRecordModel.zone_id == zone_id)
             if status_filter is not None:
                 query = query.filter(DelegationRecordModel.status == status_filter.value)
 
@@ -368,33 +372,47 @@ class DelegationService:
             )
             return [self._model_to_record(row) for row in rows], total
 
-    def get_delegation_by_id(self, delegation_id: str) -> DelegationRecord | None:
-        """Get delegation record by delegation_id."""
+    def get_delegation_by_id(
+        self, delegation_id: str, zone_id: str | None = None
+    ) -> DelegationRecord | None:
+        """Get delegation record by delegation_id.
+
+        Args:
+            delegation_id: Delegation identifier.
+            zone_id: Zone ID for federation isolation (recommended).
+        """
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
-            row = (
-                session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.delegation_id == delegation_id)
-                .first()
+            query = session.query(DelegationRecordModel).filter(
+                DelegationRecordModel.delegation_id == delegation_id
             )
+            if zone_id is not None:
+                query = query.filter(DelegationRecordModel.zone_id == zone_id)
+            row = query.first()
             if row is None:
                 return None
             return self._model_to_record(row)
 
-    def get_delegation(self, agent_id: str) -> DelegationRecord | None:
-        """Get active delegation record for a worker agent."""
+    def get_delegation(
+        self, agent_id: str, zone_id: str | None = None
+    ) -> DelegationRecord | None:
+        """Get active delegation record for a worker agent.
+
+        Args:
+            agent_id: Worker agent identifier.
+            zone_id: Zone ID for federation isolation (recommended).
+        """
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
-            row = (
-                session.query(DelegationRecordModel)
-                .filter(
-                    DelegationRecordModel.agent_id == agent_id,
-                    DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
-                )
-                .first()
+            query = session.query(DelegationRecordModel).filter(
+                DelegationRecordModel.agent_id == agent_id,
+                DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
             )
+            if zone_id is not None:
+                query = query.filter(DelegationRecordModel.zone_id == zone_id)
+            row = query.first()
             if row is None:
                 return None
             return self._model_to_record(row)

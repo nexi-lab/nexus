@@ -1172,14 +1172,19 @@ def serve(
             ]
 
             deleted_counts = {}
+            allowed_tables = frozenset(tables_to_clear)
             console.print("[yellow]Clearing database tables...[/yellow]")
 
             for table_name in tables_to_clear:
+                if table_name not in allowed_tables:
+                    continue  # safety guard
                 try:
                     with engine.connect() as conn:
                         trans = conn.begin()
                         try:
-                            cursor_result = conn.execute(text(f"DELETE FROM {table_name}"))
+                            cursor_result = conn.execute(
+                                text("DELETE FROM " + table_name)
+                            )
                             count = cursor_result.rowcount
                             trans.commit()
                             deleted_counts[table_name] = count

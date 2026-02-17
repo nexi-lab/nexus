@@ -967,8 +967,8 @@ class TigerCache:
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-        # Delete from database
-        query = text(f"DELETE FROM tiger_cache WHERE {where_clause}")
+        # Delete from database — where_clause is built from hardcoded column names only
+        query = text("DELETE FROM tiger_cache WHERE " + where_clause)
 
         def execute(connection: Connection) -> int:
             result = connection.execute(query, params)

@@ -6,6 +6,7 @@ entries incrementally via a queue-based approach.
 
 import logging
 import sqlite3
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
@@ -75,12 +76,11 @@ class TigerCacheUpdater:
             Queue entry ID
         """
 
-        now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
-        query = text(f"""
+        query = text("""
             INSERT INTO tiger_cache_queue
                 (subject_type, subject_id, permission, resource_type, zone_id, priority, status, created_at)
             VALUES
-                (:subject_type, :subject_id, :permission, :resource_type, :zone_id, :priority, 'pending', {now_sql})
+                (:subject_type, :subject_id, :permission, :resource_type, :zone_id, :priority, 'pending', :now_ts)
         """)
 
         params = {
@@ -90,6 +90,7 @@ class TigerCacheUpdater:
             "resource_type": resource_type,
             "zone_id": zone_id,
             "priority": priority,
+            "now_ts": datetime.now(UTC),
         }
 
         def execute(connection: Connection) -> int:
@@ -176,8 +177,6 @@ class TigerCacheUpdater:
         except Exception as e:
             logger.debug(f"[TIGER] Could not reset stuck entries: {e}")
 
-        now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
-
         # Helper to check if error is a database lock/deadlock error
         def is_lock_error(e: Exception) -> bool:
             err_str = str(e).lower()
@@ -253,9 +252,9 @@ class TigerCacheUpdater:
                     # Mark as completed
                     connection.execute(
                         text(
-                            f"UPDATE tiger_cache_queue SET status = 'completed', processed_at = {now_sql} WHERE queue_id = :qid"
+                            "UPDATE tiger_cache_queue SET status = 'completed', processed_at = :now_ts WHERE queue_id = :qid"
                         ),
-                        {"qid": entry.queue_id},
+                        {"qid": entry.queue_id, "now_ts": datetime.now(UTC)},
                     )
                     processed += 1
 
@@ -271,9 +270,9 @@ class TigerCacheUpdater:
                         try:
                             connection.execute(
                                 text(
-                                    f"UPDATE tiger_cache_queue SET status = 'failed', error_message = :err, processed_at = {now_sql} WHERE queue_id = :qid"
+                                    "UPDATE tiger_cache_queue SET status = 'failed', error_message = :err, processed_at = :now_ts WHERE queue_id = :qid"
                                 ),
-                                {"qid": entry.queue_id, "err": str(e)[:1000]},
+                                {"qid": entry.queue_id, "err": str(e)[:1000], "now_ts": datetime.now(UTC)},
                             )
                         except Exception as update_err:
                             # If we can't update the status, just log and continue

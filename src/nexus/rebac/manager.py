@@ -88,7 +88,7 @@ from nexus.rebac.utils.zone import normalize_zone_id
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.rebac.leopard import LeopardIndex
+    from nexus.rebac.cache.leopard import LeopardIndex
     from nexus.rebac.rebac_iterator_cache import IteratorCache
     from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 
@@ -200,7 +200,7 @@ class ReBACManager:
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
         if enable_leopard:
-            from nexus.rebac.leopard import LeopardIndex
+            from nexus.rebac.cache.leopard import LeopardIndex
 
             self._leopard = LeopardIndex(
                 engine=engine,

@@ -121,11 +121,12 @@ class ReputationService(SessionMixin):
                 raise ValueError(msg)
 
         with self._get_session() as session:
-            # Check for duplicate feedback
+            # Check for duplicate feedback (zone-scoped)
             existing = session.execute(
                 select(ReputationEventModel).where(
                     ReputationEventModel.exchange_id == exchange_id,
                     ReputationEventModel.rater_agent_id == rater_agent_id,
+                    ReputationEventModel.zone_id == zone_id,
                 )
             ).scalar_one_or_none()
 
@@ -187,6 +188,7 @@ class ReputationService(SessionMixin):
         agent_id: str,
         context: str = "general",
         window: str = "all_time",
+        zone_id: str | None = None,
     ) -> ReputationScore | None:
         """Get materialized reputation score for an agent.
 
@@ -194,11 +196,12 @@ class ReputationService(SessionMixin):
             agent_id: Agent to look up.
             context: Reputation context (default "general").
             window: Time window (default "all_time").
+            zone_id: Optional zone scope for federation isolation.
 
         Returns:
             ReputationScore record or None if not found.
         """
-        cache_key = f"{agent_id}:{context}:{window}"
+        cache_key = f"{agent_id}:{context}:{window}:{zone_id or ''}"
 
         with self._cache_lock:
             cached = self._score_cache.get(cache_key)
@@ -206,13 +209,14 @@ class ReputationService(SessionMixin):
                 return cached
 
         with self._get_session() as session:
-            model = session.execute(
-                select(ReputationScoreModel).where(
-                    ReputationScoreModel.agent_id == agent_id,
-                    ReputationScoreModel.context == context,
-                    ReputationScoreModel.window == window,
-                )
-            ).scalar_one_or_none()
+            stmt = select(ReputationScoreModel).where(
+                ReputationScoreModel.agent_id == agent_id,
+                ReputationScoreModel.context == context,
+                ReputationScoreModel.window == window,
+            )
+            if zone_id is not None:
+                stmt = stmt.where(ReputationScoreModel.zone_id == zone_id)
+            model = session.execute(stmt).scalar_one_or_none()
 
             if model is None:
                 return None
@@ -261,22 +265,27 @@ class ReputationService(SessionMixin):
     def get_feedback_for_exchange(
         self,
         exchange_id: str,
+        zone_id: str | None = None,
     ) -> list[ReputationEvent]:
         """Get all feedback events for an exchange.
 
         Args:
             exchange_id: Exchange to look up.
+            zone_id: Optional zone scope for federation isolation.
 
         Returns:
             List of ReputationEvent records.
         """
         with self._get_session() as session:
+            stmt = (
+                select(ReputationEventModel)
+                .where(ReputationEventModel.exchange_id == exchange_id)
+                .order_by(ReputationEventModel.created_at.desc())
+            )
+            if zone_id is not None:
+                stmt = stmt.where(ReputationEventModel.zone_id == zone_id)
             models = list(
-                session.execute(
-                    select(ReputationEventModel)
-                    .where(ReputationEventModel.exchange_id == exchange_id)
-                    .order_by(ReputationEventModel.created_at.desc())
-                )
+                session.execute(stmt)
                 .scalars()
                 .all()
             )
@@ -348,12 +357,13 @@ class ReputationService(SessionMixin):
         context: str,
     ) -> None:
         """Incrementally update the materialized reputation score."""
-        # Get or create score record (all_time window)
+        # Get or create score record (all_time window, zone-scoped)
         model = session.execute(
             select(ReputationScoreModel).where(
                 ReputationScoreModel.agent_id == rated_agent_id,
                 ReputationScoreModel.context == context,
                 ReputationScoreModel.window == "all_time",
+                ReputationScoreModel.zone_id == zone_id,
             )
         ).scalar_one_or_none()
 

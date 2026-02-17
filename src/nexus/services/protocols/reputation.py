@@ -50,6 +50,7 @@ class ReputationProtocol(Protocol):
         agent_id: str,
         context: str = "general",
         window: str = "all_time",
+        zone_id: str | None = None,
     ) -> Any | None:
         """Get materialized reputation score for an agent.
 
@@ -74,6 +75,7 @@ class ReputationProtocol(Protocol):
     def get_feedback_for_exchange(
         self,
         exchange_id: str,
+        zone_id: str | None = None,
     ) -> list[Any]:
         """Get all feedback events for an exchange.
 

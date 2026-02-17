@@ -230,7 +230,9 @@ def get_agent_reputation(
     """Get reputation score for an agent."""
     reputation_service, _dispute_service, _auth_ctx = deps
 
-    score = reputation_service.get_reputation(agent_id, context=context, window=window)
+    score = reputation_service.get_reputation(
+        agent_id, context=context, window=window, zone_id=_auth_ctx.get("zone_id"),
+    )
     if score is None:
         raise HTTPException(status_code=404, detail="Reputation score not found")
 
@@ -254,7 +256,9 @@ def get_trust_score(
 
     reputation_service, _dispute_service, _auth_ctx = deps
 
-    score = reputation_service.get_reputation(agent_id)
+    score = reputation_service.get_reputation(
+        agent_id, zone_id=_auth_ctx.get("zone_id"),
+    )
     if score is None:
         raise HTTPException(
             status_code=404, detail=f"No reputation score found for agent {agent_id}"
@@ -336,7 +340,9 @@ def get_exchange_feedback(
     """Get all feedback for an exchange."""
     reputation_service, _dispute_service, _auth_ctx = deps
 
-    events = reputation_service.get_feedback_for_exchange(exchange_id)
+    events = reputation_service.get_feedback_for_exchange(
+        exchange_id, zone_id=_auth_ctx.get("zone_id"),
+    )
     return FeedbackListResponse(feedback=[_event_to_response(e) for e in events])
 
 @router.post("/api/v2/exchanges/{exchange_id}/dispute")

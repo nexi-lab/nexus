@@ -4812,9 +4812,13 @@ class NexusFS(  # type: ignore[misc]
 
         try:
             # 1. Create/update ZoneModel (idempotent)
+            from sqlalchemy import select as sa_select
+
             from nexus.storage.models import UserModel, ZoneModel
 
-            zone = session.query(ZoneModel).filter_by(zone_id=zone_id).first()
+            zone = (
+                session.execute(sa_select(ZoneModel).filter_by(zone_id=zone_id)).scalars().first()
+            )
             if not zone:
                 zone = ZoneModel(
                     zone_id=zone_id,
@@ -4836,7 +4840,9 @@ class NexusFS(  # type: ignore[misc]
                 logger.info(f"Registered zone in entity registry: {zone_id}")
 
             # 3. Create/update UserModel (idempotent)
-            user = session.query(UserModel).filter_by(user_id=user_id).first()
+            user = (
+                session.execute(sa_select(UserModel).filter_by(user_id=user_id)).scalars().first()
+            )
             if user:
                 logger.debug(f"User already exists: {user_id}")
                 # Reactivate if soft-deleted
@@ -5141,9 +5147,13 @@ class NexusFS(  # type: ignore[misc]
         # Look up user in database
         session = self.SessionLocal()
         try:
+            from sqlalchemy import select as sa_select
+
             from nexus.storage.models import UserModel
 
-            user = session.query(UserModel).filter_by(user_id=user_id).first()
+            user = (
+                session.execute(sa_select(UserModel).filter_by(user_id=user_id)).scalars().first()
+            )
 
             if not user:
                 logger.warning(f"User not found in database: {user_id}")
@@ -5203,15 +5213,14 @@ class NexusFS(  # type: ignore[misc]
 
             # 2. Delete API keys (both user and agent keys)
             try:
-                from nexus.storage.models import APIKeyModel
-
                 # Delete ALL API keys for this user (subject_type="user" and "agent")
                 # Agent keys have subject_type="agent" and belong to user's agents
-                deleted_keys = (
-                    session.query(APIKeyModel)
-                    .filter_by(user_id=user_id)  # Remove subject_type filter to delete all keys
-                    .delete()
-                )
+                from sqlalchemy import delete as sa_delete
+
+                from nexus.storage.models import APIKeyModel
+
+                del_result: Any = session.execute(sa_delete(APIKeyModel).filter_by(user_id=user_id))
+                deleted_keys = del_result.rowcount
                 session.commit()
                 result["deleted_api_keys"] = deleted_keys
                 logger.info(f"Deleted {deleted_keys} API keys for user {user_id}")
@@ -5236,16 +5245,20 @@ class NexusFS(  # type: ignore[misc]
 
                 if has_oauth_tables:
                     # Delete OAuth API keys (encrypted keys for OAuth users)
-                    deleted_oauth_keys = (
-                        session.query(OAuthAPIKeyModel).filter_by(user_id=user_id).delete()
+                    from sqlalchemy import delete as sa_delete
+
+                    oauth_key_result: Any = session.execute(
+                        sa_delete(OAuthAPIKeyModel).filter_by(user_id=user_id)
                     )
+                    deleted_oauth_keys = oauth_key_result.rowcount
                     result["deleted_oauth_api_keys"] = deleted_oauth_keys
                     logger.info(f"Deleted {deleted_oauth_keys} OAuth API keys for user {user_id}")
 
                     # Delete OAuth account linkages (Google, GitHub, etc.)
-                    deleted_oauth_accounts = (
-                        session.query(UserOAuthAccountModel).filter_by(user_id=user_id).delete()
+                    oauth_acct_result: Any = session.execute(
+                        sa_delete(UserOAuthAccountModel).filter_by(user_id=user_id)
                     )
+                    deleted_oauth_accounts = oauth_acct_result.rowcount
                     session.commit()
                     result["deleted_oauth_accounts"] = deleted_oauth_accounts
                     logger.info(
@@ -5366,14 +5379,17 @@ class NexusFS(  # type: ignore[misc]
                 try:
                     session = self.SessionLocal()
                     try:
+                        from sqlalchemy import delete as sa_delete
+
                         from nexus.storage.models import FilePathModel
 
                         # Delete file paths for directory and all children (paths starting with dir_path)
-                        deleted_count = (
-                            session.query(FilePathModel)
-                            .filter(FilePathModel.virtual_path.like(f"{dir_path}%"))
-                            .delete(synchronize_session=False)
+                        fp_result: Any = session.execute(
+                            sa_delete(FilePathModel).where(
+                                FilePathModel.virtual_path.like(f"{dir_path}%")
+                            )
                         )
+                        deleted_count = fp_result.rowcount
                         session.commit()
                         logger.debug(f"Deleted {deleted_count} file path entries for {dir_path}")
                     finally:
@@ -5389,14 +5405,15 @@ class NexusFS(  # type: ignore[misc]
 
                     session = self.SessionLocal()
                     try:
-                        deleted_tuples = (
-                            session.query(ReBACTupleModel)
-                            .filter(
+                        from sqlalchemy import delete as sa_delete
+
+                        rebac_result: Any = session.execute(
+                            sa_delete(ReBACTupleModel).where(
                                 ReBACTupleModel.object_type == "file",
                                 ReBACTupleModel.object_id.like(f"{dir_path}%"),
                             )
-                            .delete(synchronize_session=False)
                         )
+                        deleted_tuples = rebac_result.rowcount
                         session.commit()
                         logger.debug(f"Deleted {deleted_tuples} ReBAC tuples for {dir_path}")
                     finally:

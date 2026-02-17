@@ -455,16 +455,17 @@ mod tests {
     fn test_cache_stats() {
         let cache = test_cache("stats");
 
-        let stats = cache.stats();
-        assert_eq!(stats.file_count, 0);
-        assert_eq!(stats.total_size, 0);
+        // Ensure clean slate (DB persists on disk between runs)
+        cache.invalidate("/stat-a.txt");
+        cache.invalidate("/stat-b.txt");
+        let baseline = cache.stats();
 
-        cache.put("/a.txt", b"aaa", Some("e1"));
-        cache.put("/b.txt", b"bb", Some("e2"));
+        cache.put("/stat-a.txt", b"aaa", Some("e1"));
+        cache.put("/stat-b.txt", b"bb", Some("e2"));
 
         let stats = cache.stats();
-        assert_eq!(stats.file_count, 2);
-        assert_eq!(stats.total_size, 5); // 3 + 2
+        assert_eq!(stats.file_count, baseline.file_count + 2);
+        assert_eq!(stats.total_size, baseline.total_size + 5); // 3 + 2
     }
 
     // ──────────────────────────────────────────────────────

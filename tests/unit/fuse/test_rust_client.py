@@ -21,15 +21,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.fuse.rust_client import (
-    FileEntry,
-    FileMetadata,
-    RustFUSEClient,
     _INITIAL_BACKOFF_SECS,
     _MAX_BACKOFF_SECS,
     _MAX_RESTART_ATTEMPTS,
     _RECV_BUFFER_SIZE,
+    FileEntry,
+    FileMetadata,
+    RustFUSEClient,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────
 
@@ -220,29 +219,23 @@ class TestOtherOps:
 
 class TestErrorHandling:
     def test_rpc_error_raises_oserror(self, mock_client: RustFUSEClient) -> None:
-        mock_client.sock.recv.return_value = _mock_rpc_error(
-            -32000, "File not found", errno.ENOENT
-        )
+        mock_client.sock.recv.return_value = _mock_rpc_error(-32000, "File not found", errno.ENOENT)
         with pytest.raises(OSError) as exc_info:
             mock_client.read("/missing.txt")
         assert exc_info.value.errno == errno.ENOENT
 
     def test_rpc_error_default_errno(self, mock_client: RustFUSEClient) -> None:
-        mock_client.sock.recv.return_value = _mock_rpc_error(
-            -32603, "Internal error"
-        )
+        mock_client.sock.recv.return_value = _mock_rpc_error(-32603, "Internal error")
         with pytest.raises(OSError) as exc_info:
             mock_client.read("/broken.txt")
         assert exc_info.value.errno == 5  # EIO default
 
-    def test_connection_closed_triggers_reconnect(
-        self, mock_client: RustFUSEClient
-    ) -> None:
+    def test_connection_closed_triggers_reconnect(self, mock_client: RustFUSEClient) -> None:
         # First recv returns empty bytes (connection closed)
         mock_client.sock.recv.return_value = b""
 
         with (
-            patch.object(mock_client, "_reconnect") as mock_reconnect,
+            patch.object(mock_client, "_reconnect"),
             pytest.raises(RuntimeError, match="Connection closed"),
         ):
             mock_client._send_request("read", {"path": "/test.txt"})
@@ -251,9 +244,7 @@ class TestErrorHandling:
         # but since it's not a ConnectionError it won't trigger reconnect.
         # Let's test with a real connection error instead.
 
-    def test_broken_pipe_triggers_reconnect(
-        self, mock_client: RustFUSEClient
-    ) -> None:
+    def test_broken_pipe_triggers_reconnect(self, mock_client: RustFUSEClient) -> None:
         # sendall raises BrokenPipeError
         mock_client.sock.sendall.side_effect = BrokenPipeError("broken")
 
@@ -287,9 +278,7 @@ class TestAutoRestart:
         with pytest.raises(RuntimeError, match="failed.*times"):
             mock_client._reconnect()
 
-    def test_successful_request_resets_restart_count(
-        self, mock_client: RustFUSEClient
-    ) -> None:
+    def test_successful_request_resets_restart_count(self, mock_client: RustFUSEClient) -> None:
         mock_client._restart_count = 2
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
 

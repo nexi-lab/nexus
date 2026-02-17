@@ -5,6 +5,7 @@ Rust daemon, enabling 10-100x speedup on hot path operations.
 """
 
 import base64
+import contextlib
 import json
 import socket
 import subprocess
@@ -191,7 +192,7 @@ class RustFUSEClient:
             )
 
         backoff = min(
-            _INITIAL_BACKOFF_SECS * (2 ** self._restart_count),
+            _INITIAL_BACKOFF_SECS * (2**self._restart_count),
             _MAX_BACKOFF_SECS,
         )
         self._restart_count += 1
@@ -205,10 +206,8 @@ class RustFUSEClient:
 
         # Cleanup old connection
         if self.sock:
-            try:
+            with contextlib.suppress(OSError):
                 self.sock.close()
-            except OSError:
-                pass
             self.sock = None
 
         if self.daemon_process:
@@ -220,10 +219,8 @@ class RustFUSEClient:
             self.daemon_process = None
 
         if self.socket_path and self.socket_path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 self.socket_path.unlink()
-            except OSError:
-                pass
 
         time.sleep(backoff)
 
@@ -289,7 +286,7 @@ class RustFUSEClient:
             while True:
                 chunk = self.sock.recv(_RECV_BUFFER_SIZE)
                 if not chunk:
-                    raise RuntimeError("Connection closed after reconnect")
+                    raise RuntimeError("Connection closed after reconnect") from None
                 response_data += chunk
                 if b"\n" in response_data:
                     break

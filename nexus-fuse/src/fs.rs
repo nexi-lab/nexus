@@ -168,7 +168,7 @@ impl NexusFs {
         FileAttr {
             ino: inode,
             size,
-            blocks: (size + BLOCK_SIZE as u64 - 1) / BLOCK_SIZE as u64,
+            blocks: size.div_ceil(BLOCK_SIZE as u64),
             atime,
             mtime,
             ctime,

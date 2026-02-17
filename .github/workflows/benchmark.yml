@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  merge_group:
 
 permissions:
   contents: write

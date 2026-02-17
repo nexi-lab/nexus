@@ -748,6 +748,28 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             self._memory_api = _MemoryClient(lambda *a, **kw: self._call_rpc(*a, **kw))
         return self._memory_api
 
+    # --- Transactional Snapshot Operations (Issue #1752) ---
+
+    def snapshot_begin(
+        self,
+        paths: list[str],
+        agent_id: str | None = None,
+        zone_id: str = "root",
+    ) -> dict[str, Any]:
+        """Begin a transactional snapshot for the specified paths."""
+        params: dict[str, Any] = {"paths": paths, "zone_id": zone_id}
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+        return self._call_rpc("snapshot_begin", params)
+
+    def snapshot_commit(self, snapshot_id: str) -> dict[str, str]:
+        """Commit a snapshot — changes become permanent."""
+        return self._call_rpc("snapshot_commit", {"snapshot_id": snapshot_id})
+
+    def snapshot_rollback(self, snapshot_id: str) -> dict[str, Any]:
+        """Rollback a snapshot — restore paths to pre-snapshot state."""
+        return self._call_rpc("snapshot_rollback", {"snapshot_id": snapshot_id})
+
     def __enter__(self) -> RemoteNexusFS:
         return self
 

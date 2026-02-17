@@ -10550,6 +10550,9 @@ class NexusFS(  # type: ignore[misc]
         )
         # Keep backward-compat reference on NexusFS
         self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]
+        # Wire search engine into LLMService (Issue #684: DI instead of kernel access)
+        if hasattr(self, "llm_service") and self._semantic_search is not None:
+            self.llm_service._semantic_search_engine = self._semantic_search
 
     # Non-prefixed aliases (backward compat — remove in v0.8.0)
     # Issue #1519, 8A: emit DeprecationWarning so callers get advance notice.

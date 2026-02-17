@@ -82,14 +82,19 @@ class LLMService:
     def __init__(
         self,
         nexus_fs: Any | None = None,
+        *,
+        semantic_search_engine: Any | None = None,
     ):
         """Initialize LLM service.
 
         Args:
             nexus_fs: NexusFS instance for filesystem operations and search
+            semantic_search_engine: Injected search engine via DI (Issue #684).
+                Set after construction when search is initialized lazily.
         """
         self.nexus_fs = nexus_fs
         self._provider_cache: dict[str, Any] = {}
+        self._semantic_search_engine = semantic_search_engine
 
         logger.info("[LLMService] Initialized")
 
@@ -477,10 +482,8 @@ class LLMService:
                 provider = LiteLLMProvider(config)
                 self._provider_cache[cache_key] = provider
 
-        # Get semantic search if available
-        search = None
-        if self.nexus_fs and hasattr(self.nexus_fs, "semantic_search_engine"):
-            search = self.nexus_fs.semantic_search_engine
+        # Get semantic search if available (Issue #684: prefer DI over kernel access)
+        search = self._semantic_search_engine
 
         # Create document reader
         if self.nexus_fs is None:

@@ -383,7 +383,6 @@ class NexusFUSEOperations(Operations):
         self._io_profile_cache[path] = profile
         return profile
 
-
     @property
     def _rust_available(self) -> bool:
         """Check if Rust daemon is available for delegation (Issue 8B DRY).

@@ -116,9 +116,9 @@ class SchedulerService:
         task = await self.submit_task(submission)
         return task.id
 
-    async def next(self, *, executor_id: str | None = None) -> AgentRequest | None:  # noqa: ARG002
+    async def next(self, *, executor_id: str | None = None) -> AgentRequest | None:
         """Dequeue the next task and return as AgentRequest."""
-        task = await self.dequeue_next()
+        task = await self.dequeue_next(executor_id=executor_id)
         if task is None:
             return None
 
@@ -184,10 +184,10 @@ class SchedulerService:
 
         return classify_request(tier, req_state)
 
-    async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:  # noqa: ARG002
+    async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         """Get scheduler metrics including queue stats and fair-share."""
         async with self._pool.acquire() as conn:
-            queue_metrics = await self._queue.get_queue_metrics(conn)
+            queue_metrics = await self._queue.get_queue_metrics(conn, zone_id=zone_id)
 
         return {
             "queue_by_class": queue_metrics,
@@ -317,17 +317,20 @@ class SchedulerService:
 
             return cancelled
 
-    async def dequeue_next(self) -> ScheduledTask | None:
+    async def dequeue_next(self, *, executor_id: str | None = None) -> ScheduledTask | None:
         """Dequeue the highest-priority task for execution.
 
         Uses HRRN dequeue when enabled, falls back to classic ordering.
         Updates fair-share counter on successful dequeue.
+
+        Args:
+            executor_id: If provided, only dequeue tasks assigned to this executor.
         """
         async with self._pool.acquire() as conn:
             if self._use_hrrn:
-                task = await self._queue.dequeue_hrrn(conn)
+                task = await self._queue.dequeue_hrrn(conn, executor_id=executor_id)
             else:
-                task = await self._queue.dequeue(conn)
+                task = await self._queue.dequeue(conn, executor_id=executor_id)
 
         if task is not None:
             self._fair_share.record_start(task.agent_id)

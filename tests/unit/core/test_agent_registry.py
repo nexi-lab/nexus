@@ -67,10 +67,10 @@ class TestRegistration:
 
     def test_register_new_agent(self, registry):
         """Registering a new agent returns AgentRecord with UNKNOWN state and generation 0."""
-        record = registry.register("agent-1", "alice", zone_id="default", name="Test Agent")
+        record = registry.register("agent-1", "alice", zone_id="root", name="Test Agent")
         assert record.agent_id == "agent-1"
         assert record.owner_id == "alice"
-        assert record.zone_id == "default"
+        assert record.zone_id == "root"
         assert record.name == "Test Agent"
         assert record.state is AgentState.UNKNOWN
         assert record.generation == 0
@@ -360,7 +360,7 @@ class TestFullLifecycle:
     def test_full_lifecycle(self, registry):
         """UNKNOWN -> CONNECTED (gen 0->1) -> IDLE -> CONNECTED (gen 1->2) -> SUSPENDED -> CONNECTED (gen 2->3)."""
         # Register
-        record = registry.register("agent-1", "alice", zone_id="default")
+        record = registry.register("agent-1", "alice", zone_id="root")
         assert record.state is AgentState.UNKNOWN
         assert record.generation == 0
 
@@ -498,12 +498,12 @@ class TestToDict:
 
     def test_basic_keys(self, registry):
         """to_dict() returns all expected keys with correct values."""
-        record = registry.register("agent-1", "alice", zone_id="default", name="Test")
+        record = registry.register("agent-1", "alice", zone_id="root", name="Test")
         d = record.to_dict()
         assert d["agent_id"] == "agent-1"
         assert d["user_id"] == "alice"  # alias for owner_id
         assert d["name"] == "Test"
-        assert d["zone_id"] == "default"
+        assert d["zone_id"] == "root"
         assert d["state"] == "UNKNOWN"
         assert d["generation"] == 0
         assert isinstance(d["created_at"], str)
@@ -724,7 +724,7 @@ class TestAgentLifecycleIntegration:
 
     def test_complete_lifecycle(self, registry):
         """Register → validate ownership → unregister → verify gone."""
-        registry.register("agent_lifecycle", "alice", zone_id="default")
+        registry.register("agent_lifecycle", "alice", zone_id="root")
         assert registry.validate_ownership("agent_lifecycle", "alice") is True
 
         registry.unregister("agent_lifecycle")

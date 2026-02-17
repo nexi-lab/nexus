@@ -31,7 +31,7 @@ def _make_metadata(
     size: int = 1024,
     mime_type: str | None = "text/plain",
     version: int = 1,
-    zone_id: str | None = "default",
+    zone_id: str | None = "root",
     created_by: str | None = "user-1",
     owner_id: str | None = "owner-1",
     is_directory: bool = False,
@@ -159,7 +159,7 @@ class TestBatchWriteErrorHandling:
         with contextlib.suppress(Exception):
             write_observer.on_write_batch(
                 [(_make_metadata(), True)],
-                zone_id="default",
+                zone_id="root",
             )
 
         # Error was silently suppressed — this is the bug

@@ -74,7 +74,7 @@ class TestZoneExportService:
         )
 
         service = ZoneExportService(nexus_fs)
-        manifest = service.export_zone("default", options)
+        manifest = service.export_zone("root", options)
 
         # Verify bundle was created
         assert output_path.exists()
@@ -84,7 +84,7 @@ class TestZoneExportService:
         assert manifest.file_count == 4
         assert manifest.total_size_bytes > 0
         assert manifest.content_blob_count > 0
-        assert manifest.source_zone_id == "default"
+        assert manifest.source_zone_id == "root"
 
     def test_export_with_path_prefix_filter(self, nexus_fs, temp_dir):
         """Test export with path prefix filtering."""
@@ -97,7 +97,7 @@ class TestZoneExportService:
         )
 
         service = ZoneExportService(nexus_fs)
-        manifest = service.export_zone("default", options)
+        manifest = service.export_zone("root", options)
 
         # Should only export workspace files (3 files)
         assert manifest.file_count == 3
@@ -114,7 +114,7 @@ class TestZoneExportService:
         )
 
         service = ZoneExportService(nexus_fs)
-        manifest = service.export_zone("default", options)
+        manifest = service.export_zone("root", options)
 
         # Verify no content was exported
         assert manifest.file_count == 4
@@ -135,7 +135,7 @@ class TestBundleReader:
         # Create bundle
         manifest = export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="default",
+            zone_id="root",
             output_path=output_path,
         )
 
@@ -145,7 +145,7 @@ class TestBundleReader:
 
             assert read_manifest.bundle_id == manifest.bundle_id
             assert read_manifest.file_count == manifest.file_count
-            assert read_manifest.source_zone_id == "default"
+            assert read_manifest.source_zone_id == "root"
 
     def test_iter_file_records(self, nexus_fs, temp_dir):
         """Test iterating over file records."""
@@ -153,7 +153,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="default",
+            zone_id="root",
             output_path=output_path,
         )
 
@@ -173,7 +173,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="default",
+            zone_id="root",
             output_path=output_path,
         )
 
@@ -193,7 +193,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="default",
+            zone_id="root",
             output_path=output_path,
         )
 
@@ -213,7 +213,7 @@ class TestValidateBundle:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="default",
+            zone_id="root",
             output_path=output_path,
         )
 
@@ -254,14 +254,14 @@ class TestInspectBundle:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="default",
+            zone_id="root",
             output_path=output_path,
         )
 
         info = inspect_bundle(output_path)
 
         assert info["file_count"] == 4
-        assert info["source_zone_id"] == "default"
+        assert info["source_zone_id"] == "root"
         assert info["include_content"] is True
         assert "bundle_id" in info
         assert "export_timestamp" in info
@@ -276,7 +276,7 @@ class TestExportConvenienceFunction:
 
         manifest = export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="default",
+            zone_id="root",
             output_path=output_path,
             include_content=True,
             include_permissions=True,
@@ -297,7 +297,7 @@ class TestExportConvenienceFunction:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="default",
+            zone_id="root",
             output_path=output_path,
             progress_callback=on_progress,
         )

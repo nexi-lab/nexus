@@ -52,8 +52,10 @@ from tenacity import (
 )
 
 from nexus.core.exceptions import (
-    NexusError,
     NexusFileNotFoundError,
+    RemoteConnectionError,
+    RemoteFilesystemError,
+    RemoteTimeoutError,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
@@ -62,47 +64,6 @@ from nexus.remote.rpc_proxy import RPCProxyBase
 from nexus.server.protocol import RPCRequest, RPCResponse
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================
-# Error Classes
-# ============================================================
-
-
-class RemoteFilesystemError(NexusError):
-    """Enhanced remote filesystem error with detailed information."""
-
-    def __init__(
-        self,
-        message: str,
-        status_code: int | None = None,
-        details: dict[str, Any] | None = None,
-        method: str | None = None,
-    ):
-        self.message = message
-        self.status_code = status_code
-        self.details = details or {}
-        self.method = method
-
-        error_parts = [message]
-        if method:
-            error_parts.append(f"(method: {method})")
-        if status_code:
-            error_parts.append(f"[HTTP {status_code}]")
-
-        super().__init__(" ".join(error_parts))
-
-
-class RemoteConnectionError(RemoteFilesystemError):
-    """Error connecting to remote Nexus server."""
-
-    pass
-
-
-class RemoteTimeoutError(RemoteFilesystemError):
-    """Timeout while communicating with remote server."""
-
-    pass
 
 
 # ============================================================

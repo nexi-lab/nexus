@@ -195,7 +195,7 @@ class TestSystemBypassAuditLogging:
             groups=[],
             is_system=True,
             request_id="sys-req-456",
-            zone_id="default",
+            zone_id="root",
         )
 
         enforcer.check("/workspace/file.txt", Permission.READ, ctx)

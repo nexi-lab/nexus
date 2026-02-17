@@ -19,7 +19,7 @@ Usage:
     buffer.start()
 
     # Hot path — returns immediately
-    buffer.enqueue_write(metadata, is_new=True, path="/file.txt", zone_id="default")
+    buffer.enqueue_write(metadata, is_new=True, path="/file.txt", zone_id="root")
 
     # Graceful shutdown — drains remaining events
     buffer.stop()
@@ -286,7 +286,7 @@ class WriteBuffer:
                 recorder = VersionRecorder(session)
 
                 for event in events:
-                    zone = event.zone_id or "default"
+                    zone = event.zone_id or "root"
 
                     if event.event_type == EventType.WRITE:
                         op_logger.log_operation(

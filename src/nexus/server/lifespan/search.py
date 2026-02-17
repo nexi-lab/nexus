@@ -6,6 +6,7 @@ Extracted from fastapi_server.py (#1602).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -53,13 +54,22 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
             entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
         )
 
-        app.state.search_daemon = SearchDaemon(config)
+        # Inject async_session_factory from RecordStoreABC when available
+        _record_store = getattr(app.state.nexus_fs, "_record_store", None)
+        _async_sf = None
+        if _record_store is not None:
+            with contextlib.suppress(Exception):
+                _async_sf = _record_store.async_session_factory
+
+        app.state.search_daemon = SearchDaemon(config, async_session_factory=_async_sf)
         await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True
         set_search_daemon(app.state.search_daemon)
 
-        # Set NexusFS reference for index refresh (Issue #1024)
-        app.state.search_daemon._nexus_fs = app.state.nexus_fs
+        # Issue #1520: Set FileReaderProtocol for index refresh (replaces _nexus_fs)
+        from nexus.factory import _NexusFSFileReader
+
+        app.state.search_daemon._file_reader = _NexusFSFileReader(app.state.nexus_fs)
 
         stats = app.state.search_daemon.get_stats()
         logger.info(

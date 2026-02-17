@@ -182,7 +182,7 @@ class MetadataMapper:
             "file_type": metadata.mime_type,
             "created_at": _to_naive(metadata.created_at) or _utcnow_naive(),
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
-            "zone_id": metadata.zone_id or "default",
+            "zone_id": metadata.zone_id or "root",
             "posix_uid": metadata.owner_id,
         }
         if include_version:

@@ -6,7 +6,8 @@ Hierarchy:
     ├── TooManyGrantsError     - Exceeds MAX_DELEGATABLE_GRANTS
     ├── InvalidDelegationModeError - Unknown mode value
     ├── DelegationNotFoundError   - Delegation ID not found
-    └── DelegationChainError      - Delegated agent tries to delegate
+    ├── DelegationChainError      - Delegated agent tries to delegate
+    └── InsufficientTrustError    - Agent trust score below threshold (#1619)
 """
 
 from __future__ import annotations
@@ -39,4 +40,32 @@ class DelegationChainError(DelegationError):
     """Raised when a delegated agent attempts to delegate.
 
     v1 constraint: no delegation chains (A -> B -> C is forbidden).
+    With #1618: chains allowed when can_sub_delegate=True and depth < max_depth.
     """
+
+
+class DepthExceededError(DelegationError):
+    """Raised when sub-delegation would exceed the max_depth limit."""
+
+
+class InvalidPrefixError(DelegationError):
+    """Raised when scope_prefix fails validation (empty, relative, malformed)."""
+
+
+class InsufficientTrustError(DelegationError):
+    """Raised when agent trust score is below the required threshold (#1619).
+
+    Attributes:
+        agent_id: The agent whose trust score was checked.
+        score: The agent's current trust score (None if no score exists).
+        threshold: The minimum required trust score.
+    """
+
+    def __init__(self, agent_id: str, score: float | None, threshold: float) -> None:
+        self.agent_id = agent_id
+        self.score = score
+        self.threshold = threshold
+        score_str = f"{score:.3f}" if score is not None else "None"
+        super().__init__(
+            f"Agent {agent_id} trust score {score_str} is below threshold {threshold:.3f}"
+        )

@@ -29,7 +29,7 @@ import zipfile
 # Open access mode: identity via X-Nexus-Subject header
 HEADERS = {
     "X-Nexus-Subject": "user:admin",
-    "X-Nexus-Zone-Id": "default",
+    "X-Nexus-Zone-Id": "root",
 }
 
 

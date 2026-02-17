@@ -206,13 +206,13 @@ class TupleRepository:
         Used for revision-based cache key generation (Issue #909).
 
         Args:
-            zone_id: Zone ID (defaults to "default")
+            zone_id: Zone ID (defaults to "root")
             conn: Optional database connection to reuse
 
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         should_close = conn is None
         if conn is None:
             conn = self.get_connection()
@@ -237,13 +237,13 @@ class TupleRepository:
         for distributed consistency (Issue #909).
 
         Args:
-            zone_id: Zone ID (defaults to "default")
+            zone_id: Zone ID (defaults to "root")
             conn: Database connection (reuse existing transaction)
 
         Returns:
             New revision number after increment
         """
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         cursor = self.create_cursor(conn)
 
         if self.engine.dialect.name == "postgresql":

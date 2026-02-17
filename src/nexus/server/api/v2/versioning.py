@@ -127,6 +127,16 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import ACE v2 routes: %s", e)
 
+    # ---- Events replay router (Issue #1139) ----
+    try:
+        from nexus.server.api.v2.routers.events_replay import router as events_replay_router
+
+        registry.add(
+            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=2)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Events replay routes: %s", e)
+
     # ---- Pay router ----
     try:
         from nexus.server.api.v2.routers.pay import router as pay_router
@@ -198,9 +208,17 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.delegation import router as delegation_router
 
-        registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=3))
+        registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=5))
     except ImportError as e:
         logger.warning("Failed to import Delegation routes: %s", e)
+
+    # ---- RLM inference router (Issue #1306) ----
+    try:
+        from nexus.server.api.v2.routers.rlm import router as rlm_router
+
+        registry.add(RouterEntry(router=rlm_router, name="rlm", endpoint_count=1))
+    except ImportError as e:
+        logger.warning("Failed to import RLM routes: %s", e)
 
     # ---- Workflows router (Issue #1522) ----
     try:

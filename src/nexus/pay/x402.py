@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from starlette.responses import Response
 
 if TYPE_CHECKING:
@@ -204,6 +205,8 @@ class X402Client:
         network: str = "base",
         webhook_secret: str | None = None,
         cache_ttl: float = DEFAULT_CACHE_TTL_SECONDS,
+        *,
+        max_cache_entries: int = 10000,
     ):
         """Initialize X402Client.
 
@@ -213,15 +216,17 @@ class X402Client:
             network: Network name (base, ethereum, solana, etc.).
             webhook_secret: Secret for webhook signature verification.
             cache_ttl: TTL for payment verification cache in seconds.
+            max_cache_entries: Maximum cached verification entries (default: 10000).
         """
         self.facilitator_url = facilitator_url
         self.wallet_address = wallet_address
         self.network = network
         self._webhook_secret = webhook_secret
-        self._cache_ttl = cache_ttl
 
-        # Payment verification cache: {cache_key: (verification, timestamp)}
-        self._verification_cache: dict[str, tuple[X402PaymentVerification, float]] = {}
+        # Payment verification cache — bounded TTLCache replaces manual dict + prune
+        self._verification_cache: TTLCache[str, X402PaymentVerification] = TTLCache(
+            maxsize=max_cache_entries, ttl=cache_ttl
+        )
 
         # Lazy-initialized persistent HTTP client with connection pooling
         self._http_client: httpx.AsyncClient | None = None
@@ -257,34 +262,15 @@ class X402Client:
             self._http_client = None
 
     def _get_cached_verification(self, cache_key: str) -> X402PaymentVerification | None:
-        """Get cached verification if still valid."""
+        """Get cached verification if still valid (TTLCache handles expiration)."""
         cached = self._verification_cache.get(cache_key)
-        if cached:
-            verification, timestamp = cached
-            if (datetime.now(UTC).timestamp() - timestamp) < self._cache_ttl:
-                logger.debug(f"Cache hit for payment verification: {cache_key[:20]}...")
-                return verification
-        return None
+        if cached is not None:
+            logger.debug(f"Cache hit for payment verification: {cache_key[:20]}...")
+        return cached
 
     def _cache_verification(self, cache_key: str, verification: X402PaymentVerification) -> None:
-        """Cache a verification result."""
-        self._verification_cache[cache_key] = (
-            verification,
-            datetime.now(UTC).timestamp(),
-        )
-        # Prune cache if too large
-        if len(self._verification_cache) > 10000:
-            self._prune_cache()
-
-    def _prune_cache(self) -> None:
-        """Remove expired cache entries."""
-        now = datetime.now(UTC).timestamp()
-        expired = [
-            k for k, (_, ts) in self._verification_cache.items() if (now - ts) > self._cache_ttl
-        ]
-        for k in expired:
-            del self._verification_cache[k]
-        logger.debug(f"Pruned {len(expired)} expired cache entries")
+        """Cache a verification result (TTLCache handles eviction and expiration)."""
+        self._verification_cache[cache_key] = verification
 
     # =========================================================================
     # Incoming Payments (Accept x402 for Nexus APIs)

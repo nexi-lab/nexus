@@ -260,7 +260,7 @@ class TestAuthCallback:
             "a2a.tasks.send",
             {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
         )
-        # Should succeed despite auth_fn failure (defaults to zone="default")
+        # Should succeed despite auth_fn failure (defaults to zone="root")
         response = client.post("/a2a", json=body)
         assert response.status_code == 200
         data = response.json()
@@ -329,7 +329,8 @@ class TestAuthProgrammingErrorPropagation:
 
         async def buggy_auth_fn(request: Any) -> dict[str, Any] | None:
             # Simulate a programming error (wrong argument type)
-            return len(None)  # type: ignore[arg-type,return-value]
+            bad_arg: Any = None
+            return len(bad_arg)
 
         app = FastAPI()
         router = build_router(
@@ -352,7 +353,8 @@ class TestAuthProgrammingErrorPropagation:
         """AttributeError in auth_fn should propagate, not be swallowed."""
 
         async def buggy_auth_fn(request: Any) -> dict[str, Any] | None:
-            return request.nonexistent_attribute  # type: ignore[no-any-return]
+            result: Any = request.nonexistent_attribute
+            return result
 
         app = FastAPI()
         router = build_router(

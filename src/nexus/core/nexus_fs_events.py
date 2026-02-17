@@ -88,7 +88,7 @@ class NexusFSEventsMixin:
         """Check if distributed event bus is available.
 
         Returns:
-            True if GlobalEventBus is initialized, False otherwise
+            True if RedisEventBus is initialized, False otherwise
         """
         return hasattr(self, "_event_bus") and self._event_bus is not None
 
@@ -112,7 +112,7 @@ class NexusFSEventsMixin:
         if not self._is_same_box():
             raise NotImplementedError(
                 "File watching is only available with PassthroughBackend (same-box mode). "
-                "For distributed scenarios, configure Redis for GlobalEventBus."
+                "For distributed scenarios, configure Redis for RedisEventBus."
             )
 
         if not hasattr(self, "_file_watcher") or self._file_watcher is None:
@@ -129,13 +129,13 @@ class NexusFSEventsMixin:
             context: Operation context
 
         Returns:
-            Zone ID string (defaults to "default")
+            Zone ID string (defaults to "root")
         """
         if context and hasattr(context, "zone_id") and context.zone_id:
             return context.zone_id
         if hasattr(self, "zone_id") and self.zone_id:
             return self.zone_id
-        return "default"
+        return "root"
 
     def _should_auto__start_cache_invalidation(self) -> bool:
         """Check if cache invalidation should be auto-started.
@@ -198,7 +198,7 @@ class NexusFSEventsMixin:
         """Wait for file system changes on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses GlobalEventBus (Redis Pub/Sub) for distributed events
+        - Layer 2 (preferred): Uses RedisEventBus (Redis Pub/Sub) for distributed events
         - Layer 1 (fallback): Uses OS-native file watching (same-box only)
 
         Semantics:
@@ -665,7 +665,7 @@ class NexusFSEventsMixin:
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
             revision = self._get_zone_revision()
-            zone_id = getattr(self, "zone_id", None) or "default"
+            zone_id = getattr(self, "zone_id", None) or "root"
             cache_observer.on_write(virtual_path, revision, zone_id)
             logger.debug(f"Cache invalidated (observer): {virtual_path}")
         else:

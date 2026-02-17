@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from nexus.ipc.conventions import (
+    AGENT_SUBDIRS,
     AGENTS_ROOT,
     agent_card_path,
     agent_dir,
@@ -17,6 +18,9 @@ from nexus.ipc.conventions import (
     message_path_in_processed,
     outbox_path,
     processed_path,
+    task_dead_letter_path,
+    task_file_path,
+    tasks_path,
 )
 
 
@@ -89,3 +93,28 @@ class TestFullPaths:
         ts = datetime(2026, 2, 12, 10, 0, 0, tzinfo=UTC)
         path = message_path_in_dead_letter("reviewer", "msg_abc", ts)
         assert path == "/agents/reviewer/dead_letter/20260212T100000_msg_abc.json"
+
+
+class TestTaskPaths:
+    """Tests for A2A task path builders (§17.6 convergence)."""
+
+    def test_tasks_path(self) -> None:
+        assert tasks_path("reviewer") == "/agents/reviewer/tasks"
+
+    def test_task_file_path(self) -> None:
+        ts = datetime(2026, 2, 14, 10, 30, 45, tzinfo=UTC)
+        path = task_file_path("reviewer", "task-001", ts)
+        assert path == "/agents/reviewer/tasks/20260214T103045000000Z_task-001.json"
+
+    def test_task_file_sortable_by_timestamp(self) -> None:
+        ts1 = datetime(2026, 2, 14, 10, 0, 0, tzinfo=UTC)
+        ts2 = datetime(2026, 2, 14, 10, 0, 1, tzinfo=UTC)
+        path1 = task_file_path("a", "task-1", ts1)
+        path2 = task_file_path("a", "task-2", ts2)
+        assert path1 < path2  # Lexicographic sort = chronological
+
+    def test_task_dead_letter_path(self) -> None:
+        assert task_dead_letter_path("reviewer") == "/agents/reviewer/tasks/_dead_letter"
+
+    def test_tasks_dir_in_agent_subdirs(self) -> None:
+        assert "tasks" in AGENT_SUBDIRS

@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 from nexus.core._metadata_generated import DT_DIR, DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
@@ -43,8 +44,7 @@ class ZoneManager:
     """Manage multiple Raft zones and their metadata stores.
 
     Usage:
-        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones",
-                          bind_addr="0.0.0.0:2126")
+        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr defaults or NEXUS_BIND_ADDR env
         store = mgr.create_zone("alpha", peers=["2@peer:2126"])
         store.put(metadata)
 
@@ -65,7 +65,7 @@ class ZoneManager:
         self,
         node_id: int,
         base_path: str,
-        bind_addr: str = "0.0.0.0:2126",
+        bind_addr: str = DEFAULT_GRPC_BIND_ADDR,
         *,
         tls_cert_path: str | None = None,
         tls_key_path: str | None = None,
@@ -260,6 +260,27 @@ class ZoneManager:
     @property
     def node_id(self) -> int:
         return self._node_id
+
+    @property
+    def advertise_addr(self) -> str:
+        """Public address this node advertises to peers."""
+        addr: str = self._py_mgr.advertise_addr()
+        return addr
+
+    @property
+    def tls_cert_path(self) -> str | None:
+        """TLS certificate path (if configured)."""
+        return self._tls_cert_path
+
+    @property
+    def tls_key_path(self) -> str | None:
+        """TLS key path (if configured)."""
+        return self._tls_key_path
+
+    @property
+    def tls_ca_path(self) -> str | None:
+        """TLS CA certificate path (if configured)."""
+        return self._tls_ca_path
 
     def mount(
         self,
@@ -701,8 +722,7 @@ class ZoneManager:
         """
         # Standard Raft: only leader can propose
         try:
-            engine = root_store._engine  # noqa: SLF001
-            if engine is None or not hasattr(engine, "is_leader") or not engine.is_leader():
+            if not root_store.is_leader():
                 return False
         except Exception:
             return False

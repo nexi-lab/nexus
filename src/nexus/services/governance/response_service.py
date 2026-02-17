@@ -358,6 +358,8 @@ class ResponseService:
             stmt = select(SuspensionModel).where(
                 SuspensionModel.id == record.suspension_id,
             )
+            if record.zone_id is not None:
+                stmt = stmt.where(SuspensionModel.zone_id == record.zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:

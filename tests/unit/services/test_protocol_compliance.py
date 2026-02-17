@@ -215,6 +215,19 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # lock/extend_lock/unlock methods match
     ),
+    # ── Reputation ISP split (Issue #553) ────────────────────────────
+    (
+        "ReputationProtocol",
+        "nexus.services.protocols.reputation",
+        "nexus.services.reputation.reputation_service.ReputationService",
+        True,  # 4/4 method match: submit_feedback, get_reputation, etc.
+    ),
+    (
+        "DisputeProtocol",
+        "nexus.services.protocols.dispute",
+        "nexus.services.reputation.dispute_service.DisputeService",
+        True,  # 6/6 method match: file_dispute, resolve, dismiss, etc.
+    ),
 ]
 
 

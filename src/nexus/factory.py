@@ -619,6 +619,22 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
+    # --- Context Branch Service (Issue #1315) ---
+    context_branch_service: Any = None
+    try:
+        from nexus.services.context_branch import ContextBranchService
+
+        context_branch_service = ContextBranchService(
+            workspace_manager=kernel["workspace_manager"],
+            session_factory=ctx.session_factory,
+            rebac_manager=kernel["rebac_manager"],
+            default_zone_id=ctx.zone_id,
+            default_agent_id=ctx.agent_id,
+        )
+        logger.debug("[BOOT:SYSTEM] ContextBranchService created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
+
     # TODO: EventLog, Hook, Scheduler services (not yet implemented)
 
     result = {
@@ -630,6 +646,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "delivery_worker": delivery_worker,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
+        "context_branch_service": context_branch_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -658,15 +675,6 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         logger.debug("[BOOT:BRICK] Search brick imports: %s", _search_status)
     except ImportError:
         logger.debug("[BOOT:BRICK] Search brick manifest not available")
-
-    # --- LLM Brick Import Validation (Issue #1521) ---
-    try:
-        from nexus.llm.manifest import verify_imports as _verify_llm
-
-        _llm_status = _verify_llm()
-        logger.debug("[BOOT:BRICK] LLM brick imports: %s", _llm_status)
-    except ImportError:
-        logger.debug("[BOOT:BRICK] LLM brick manifest not available")
 
     # Wire zoekt callbacks into backends (Issue #1520)
     try:
@@ -978,6 +986,7 @@ def create_nexus_services(
         workspace_registry=kernel["workspace_registry"],
         mount_manager=kernel["mount_manager"],
         workspace_manager=kernel["workspace_manager"],
+        context_branch_service=system.get("context_branch_service"),
         write_observer=kernel["write_observer"],
         version_service=kernel["version_service"],
         # System tier

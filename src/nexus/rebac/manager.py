@@ -1630,6 +1630,11 @@ class ReBACManager:
         # Issue #919: Notify directory visibility cache invalidators
         self._notify_dir_visibility_invalidators(effective_zone, object)
 
+        # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
+        self._cache_coordinator.notify_namespace_invalidators(
+            effective_zone, subject[0], subject[1]
+        )
+
         # Invalidate L1 permission cache for affected subject and object
         # This ensures subsequent rebac_check_bulk calls see the new permission
         if self._l1_cache is not None:
@@ -2318,6 +2323,13 @@ class ReBACManager:
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
             self._notify_dir_visibility_invalidators(normalize_zone_id(zone_id), object_tuple)
+
+            # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
+            self._cache_coordinator.notify_namespace_invalidators(
+                normalize_zone_id(zone_id),
+                tuple_info["subject_type"],
+                tuple_info["subject_id"],
+            )
 
             # Invalidate L1 permission cache for affected subject and object
             if self._l1_cache is not None:

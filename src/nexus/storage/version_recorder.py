@@ -41,8 +41,9 @@ class VersionRecorder:
             session.commit()
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, *, zone_id: str | None = None) -> None:
         self.session = session
+        self.zone_id = zone_id
 
     def record_write(self, metadata: FileMetadata, *, is_new: bool) -> None:
         """Record a file write (create or update).
@@ -62,12 +63,13 @@ class VersionRecorder:
         Args:
             path: Virtual path that was deleted from Metastore.
         """
-        existing = self.session.execute(
-            select(FilePathModel).where(
-                FilePathModel.virtual_path == path,
-                FilePathModel.deleted_at.is_(None),
-            )
-        ).scalar_one_or_none()
+        stmt = select(FilePathModel).where(
+            FilePathModel.virtual_path == path,
+            FilePathModel.deleted_at.is_(None),
+        )
+        if self.zone_id is not None:
+            stmt = stmt.where(FilePathModel.zone_id == self.zone_id)
+        existing = self.session.execute(stmt).scalar_one_or_none()
 
         if existing:
             self.session.execute(
@@ -79,12 +81,14 @@ class VersionRecorder:
     def _record_create(self, metadata: FileMetadata) -> None:
         """Insert new FilePathModel + initial VersionHistoryModel."""
         # Remove any soft-deleted entries at this path (single statement, no SELECT)
-        self.session.execute(
-            delete(FilePathModel).where(
-                FilePathModel.virtual_path == metadata.path,
-                FilePathModel.deleted_at.is_not(None),
-            )
+        zone = metadata.zone_id or self.zone_id
+        del_stmt = delete(FilePathModel).where(
+            FilePathModel.virtual_path == metadata.path,
+            FilePathModel.deleted_at.is_not(None),
         )
+        if zone is not None:
+            del_stmt = del_stmt.where(FilePathModel.zone_id == zone)
+        self.session.execute(del_stmt)
 
         from nexus.storage._metadata_mapper_generated import MetadataMapper
 
@@ -114,12 +118,14 @@ class VersionRecorder:
 
     def _record_update(self, metadata: FileMetadata) -> None:
         """Update existing FilePathModel + append VersionHistoryModel."""
-        existing = self.session.execute(
-            select(FilePathModel).where(
-                FilePathModel.virtual_path == metadata.path,
-                FilePathModel.deleted_at.is_(None),
-            )
-        ).scalar_one_or_none()
+        zone = metadata.zone_id or self.zone_id
+        stmt = select(FilePathModel).where(
+            FilePathModel.virtual_path == metadata.path,
+            FilePathModel.deleted_at.is_(None),
+        )
+        if zone is not None:
+            stmt = stmt.where(FilePathModel.zone_id == zone)
+        existing = self.session.execute(stmt).scalar_one_or_none()
 
         if not existing:
             # File not in RecordStore yet — create it

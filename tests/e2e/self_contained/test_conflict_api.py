@@ -6,7 +6,6 @@ endpoints using a real ConflictLogStore backed by in-memory SQLite.
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -78,9 +77,7 @@ def store() -> ConflictLogStore:
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    gw = MagicMock()
-    gw.session_factory = sessionmaker(bind=engine)
-    return ConflictLogStore(gw)
+    return ConflictLogStore(sessionmaker(bind=engine))
 
 @pytest.fixture
 def client(store: ConflictLogStore) -> TestClient:

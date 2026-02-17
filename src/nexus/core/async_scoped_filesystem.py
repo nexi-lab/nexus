@@ -375,11 +375,18 @@ class AsyncScopedFilesystem:
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
         context: Any = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem (async)."""
         return await self._fs.add_mount(
-            self._scope_path(mount_point), backend_type, backend_config, priority, readonly, context
+            mount_point=self._scope_path(mount_point),
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            io_profile=io_profile,
+            context=context,
         )
 
     async def remove_mount(

@@ -18,6 +18,7 @@ class MountConfig:
     priority: int = 0  # For tie-breaking (higher = preferred)
     readonly: bool = False
     conflict_strategy: str | None = None  # Per-mount override (Issue #1130)
+    io_profile: str = "balanced"  # I/O tuning profile (Issue #1413)
 
 @dataclass
 class RouteResult:
@@ -27,6 +28,7 @@ class RouteResult:
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
+    io_profile: str = "balanced"  # I/O tuning profile (Issue #1413)
 
 @dataclass
 class PathInfo:
@@ -76,6 +78,7 @@ class PathRouter:
         priority: int = 0,
         readonly: bool = False,
         replace: bool = False,
+        io_profile: str = "balanced",
     ) -> None:
         """
         Add a mount to the router.
@@ -86,6 +89,7 @@ class PathRouter:
             priority: Priority for overlapping mounts (higher = preferred)
             readonly: Whether mount is readonly
             replace: If True, remove any existing mount at this mount_point first (default: False)
+            io_profile: I/O tuning profile (Issue #1413)
 
         Raises:
             ValueError: If mount_point is invalid
@@ -97,7 +101,11 @@ class PathRouter:
             self._mounts = [m for m in self._mounts if m.mount_point != mount_point]
 
         mount = MountConfig(
-            mount_point=mount_point, backend=backend, priority=priority, readonly=readonly
+            mount_point=mount_point,
+            backend=backend,
+            priority=priority,
+            readonly=readonly,
+            io_profile=io_profile,
         )
 
         self._mounts.append(mount)
@@ -171,6 +179,7 @@ class PathRouter:
             backend_path=backend_path,
             mount_point=matched_mount.mount_point,
             readonly=readonly,
+            io_profile=matched_mount.io_profile,
         )
 
     def _check_access(

@@ -280,6 +280,7 @@ class AddMountParams:
     backend_config: dict[str, Any]
     priority: int = 0
     readonly: bool = False
+    io_profile: str = "balanced"
 
 
 @dataclass

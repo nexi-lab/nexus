@@ -10076,6 +10076,7 @@ class NexusFS(  # type: ignore[misc]
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
         context: OperationContext | None = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem."""
@@ -10085,6 +10086,7 @@ class NexusFS(  # type: ignore[misc]
             backend_config=backend_config,
             priority=priority,
             readonly=readonly,
+            io_profile=io_profile,
             context=context,
         )
 
@@ -10326,6 +10328,7 @@ class NexusFS(  # type: ignore[misc]
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -10338,6 +10341,7 @@ class NexusFS(  # type: ignore[misc]
             backend_config=backend_config,
             priority=priority,
             readonly=readonly,
+            io_profile=io_profile,
             owner_user_id=owner_user_id,
             zone_id=zone_id,
             description=description,

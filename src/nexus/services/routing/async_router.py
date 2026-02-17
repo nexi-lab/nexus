@@ -72,12 +72,14 @@ class AsyncVFSRouter:
         *,
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
     ) -> None:
         self._inner.add_mount(
             mount_point,
             backend,
             priority=priority,
             readonly=readonly,
+            io_profile=io_profile,
         )
 
     async def remove_mount(self, mount_point: str) -> bool:

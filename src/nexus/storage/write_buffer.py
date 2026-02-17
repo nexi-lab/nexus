@@ -278,10 +278,10 @@ class WriteBuffer:
         try:
             with self._session_factory() as session:
                 op_logger = OperationLogger(session)
-                recorder = VersionRecorder(session)
 
                 for event in events:
                     zone = event.zone_id or "root"
+                    recorder = VersionRecorder(session, zone_id=event.zone_id)
 
                     if event.event_type == EventType.WRITE:
                         op_logger.log_operation(

@@ -130,6 +130,7 @@ class TestAddMount:
             backend,
             priority=5,
             readonly=True,
+            io_profile="balanced",
         )
 
 class TestRemoveMount:

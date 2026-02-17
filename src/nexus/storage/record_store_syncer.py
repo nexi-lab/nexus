@@ -68,7 +68,7 @@ class RecordStoreSyncer:
                 metadata_snapshot=metadata_snapshot,
                 status="success",
             )
-            VersionRecorder(session).record_write(metadata, is_new=is_new)
+            VersionRecorder(session, zone_id=zone_id).record_write(metadata, is_new=is_new)
             session.commit()
 
     def on_write_batch(
@@ -88,7 +88,7 @@ class RecordStoreSyncer:
 
         with self._session_factory() as session:
             op_logger = OperationLogger(session)
-            recorder = VersionRecorder(session)
+            recorder = VersionRecorder(session, zone_id=zone_id)
             for metadata, is_new in items:
                 op_logger.log_operation(
                     operation_type="write",
@@ -158,7 +158,7 @@ class RecordStoreSyncer:
                 metadata_snapshot=metadata_snapshot,
                 status="success",
             )
-            VersionRecorder(session).record_delete(path)
+            VersionRecorder(session, zone_id=zone_id).record_delete(path)
             session.commit()
 
 

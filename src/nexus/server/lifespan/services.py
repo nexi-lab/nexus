@@ -14,7 +14,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-async def startup_services(app: "FastAPI") -> list[asyncio.Task]:
+
+async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     """Initialize application services and return background tasks.
 
     Covers:
@@ -31,6 +32,7 @@ async def startup_services(app: "FastAPI") -> list[asyncio.Task]:
     _startup_reputation_service(app)
     _startup_delegation_service(app)
     _startup_sandbox_auth(app)
+    _startup_rlm_service(app)
 
     # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app)
@@ -45,7 +47,8 @@ async def startup_services(app: "FastAPI") -> list[asyncio.Task]:
 
     return bg_tasks
 
-async def shutdown_services(app: "FastAPI") -> None:
+
+async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
     # Stop Task Queue runner (Issue #574)
     task_runner = getattr(app.state, "task_runner", None)
@@ -83,6 +86,15 @@ async def shutdown_services(app: "FastAPI") -> None:
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
+
+    # Shutdown RLM thread pool (Issue #1306)
+    rlm_service = getattr(app.state, "rlm_service", None)
+    if rlm_service is not None:
+        try:
+            rlm_service.shutdown()
+            logger.info("[RLM] Thread pool shut down")
+        except Exception as e:
+            logger.warning("[RLM] Error shutting down thread pool: %s", e, exc_info=True)
 
     # SandboxManager cleanup
     if app.state.sandbox_auth_service:
@@ -124,11 +136,13 @@ async def shutdown_services(app: "FastAPI") -> None:
                 await asyncio.gather(*event_tasks, return_exceptions=True)
             logger.info(f"Cancelled {len(event_tasks)} pending event tasks")
 
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _startup_agent_registry(app: "FastAPI") -> None:
+
+def _startup_agent_registry(app: FastAPI) -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
@@ -161,7 +175,8 @@ def _startup_agent_registry(app: "FastAPI") -> None:
         app.state.agent_registry = None
         app.state.async_agent_registry = None
 
-def _startup_key_service(app: "FastAPI") -> None:
+
+def _startup_key_service(app: FastAPI) -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
@@ -199,7 +214,8 @@ def _startup_key_service(app: "FastAPI") -> None:
     else:
         app.state.key_service = None
 
-def _startup_reputation_service(app: "FastAPI") -> None:
+
+def _startup_reputation_service(app: FastAPI) -> None:
     """Initialize ReputationService singleton for trust routing (#1619)."""
     if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
         app.state.reputation_service = None
@@ -218,7 +234,8 @@ def _startup_reputation_service(app: "FastAPI") -> None:
         logger.warning("[REPUTATION] Failed to initialize: %s", e, exc_info=True)
         app.state.reputation_service = None
 
-def _startup_delegation_service(app: "FastAPI") -> None:
+
+def _startup_delegation_service(app: FastAPI) -> None:
     """Initialize DelegationService for agent delegation (Issue #1618)."""
     if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
         app.state.delegation_service = None
@@ -250,7 +267,8 @@ def _startup_delegation_service(app: "FastAPI") -> None:
         logger.warning("[DELEGATION] Failed to initialize DelegationService: %s", e, exc_info=True)
         app.state.delegation_service = None
 
-def _startup_sandbox_auth(app: "FastAPI") -> None:
+
+def _startup_sandbox_auth(app: FastAPI) -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
     if app.state.nexus_fs and not app.state.agent_registry:
         logger.info(
@@ -323,7 +341,44 @@ def _startup_sandbox_auth(app: "FastAPI") -> None:
             "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
         )
 
-def _startup_agent_tasks(app: "FastAPI") -> list[asyncio.Task]:
+
+def _startup_rlm_service(app: FastAPI) -> None:
+    """Initialize RLM inference service (Issue #1306).
+
+    Requires SandboxAuthService (for SandboxManager) and an LLM provider.
+    Falls back gracefully if either is unavailable — the /api/v2/rlm/infer
+    endpoint will return 503.
+    """
+    sandbox_auth = getattr(app.state, "sandbox_auth_service", None)
+    if sandbox_auth is None:
+        logger.debug("[RLM] SandboxAuthService not available, RLM service skipped")
+        return
+
+    sandbox_mgr = getattr(sandbox_auth, "_sandbox_manager", None)
+    if sandbox_mgr is None:
+        logger.debug("[RLM] SandboxManager not available, RLM service skipped")
+        return
+
+    llm_provider = getattr(app.state.nexus_fs, "_llm_provider", None)
+
+    try:
+        from nexus.rlm.service import RLMInferenceService
+
+        nexus_api_url = os.environ.get("NEXUS_API_URL", "http://localhost:2026")
+        max_concurrent = int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8"))
+
+        app.state.rlm_service = RLMInferenceService(
+            sandbox_manager=sandbox_mgr,
+            llm_provider=llm_provider,
+            nexus_api_url=nexus_api_url,
+            max_concurrent=max_concurrent,
+        )
+        logger.info("[RLM] RLMInferenceService initialized (max_concurrent=%d)", max_concurrent)
+    except Exception as e:
+        logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
+
+
+def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
     if not app.state.agent_registry:
         return []
@@ -343,7 +398,8 @@ def _startup_agent_tasks(app: "FastAPI") -> list[asyncio.Task]:
 
     return [app.state._heartbeat_task, app.state._stale_detection_task]
 
-async def _startup_scheduler(app: "FastAPI") -> None:
+
+async def _startup_scheduler(app: FastAPI) -> None:
     """Initialize SchedulerService if PostgreSQL database is available (Issue #1212)."""
     if not (app.state.database_url and "postgresql" in app.state.database_url):
         return
@@ -435,7 +491,8 @@ async def _startup_scheduler(app: "FastAPI") -> None:
     except Exception as e:
         logger.warning("Failed to initialize Scheduler service: %s", e, exc_info=True)
 
-def _startup_task_queue(app: "FastAPI") -> asyncio.Task | None:
+
+def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
     """Start Task Queue Engine background worker (Issue #574)."""
     if not app.state.nexus_fs:
         return None
@@ -462,7 +519,8 @@ def _startup_task_queue(app: "FastAPI") -> asyncio.Task | None:
 
     return None
 
-async def _startup_workflow_engine(app: "FastAPI") -> None:
+
+async def _startup_workflow_engine(app: FastAPI) -> None:
     """Load workflows from persistent storage (Issue #1522)."""
     if not app.state.nexus_fs:
         return

@@ -394,11 +394,12 @@ class TestMountOperations:
         mock_fs.add_mount.return_value = "mount-123"
         result = scoped_fs.add_mount("/external/gcs", "gcs", {"bucket": "my-bucket"})
         mock_fs.add_mount.assert_called_once_with(
-            "/zones/team_12/users/user_1/external/gcs",
-            "gcs",
-            {"bucket": "my-bucket"},
-            0,
-            False,
+            mount_point="/zones/team_12/users/user_1/external/gcs",
+            backend_type="gcs",
+            backend_config={"bucket": "my-bucket"},
+            priority=0,
+            readonly=False,
+            io_profile="balanced",
         )
         assert result == "mount-123"
 

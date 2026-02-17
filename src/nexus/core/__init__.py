@@ -83,10 +83,10 @@ def setup_uvloop() -> bool:
 # LAZY IMPORTS for performance optimization
 # =============================================================================
 if TYPE_CHECKING:
+    from nexus.contracts.registry import BaseRegistry, BrickInfo, BrickRegistry
     from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
     from nexus.core.filesystem import NexusFilesystem
     from nexus.core.nexus_fs import NexusFS
-    from nexus.contracts.registry import BaseRegistry, BrickInfo, BrickRegistry
     from nexus.core.scoped_filesystem import ScopedFilesystem
 
 # Module-level cache for lazy imports

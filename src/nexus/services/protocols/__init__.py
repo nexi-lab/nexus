@@ -30,7 +30,6 @@ from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
-from nexus.services.protocols.context_manifest import ContextManifestProtocol
 from nexus.services.protocols.governance import GovernanceProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
@@ -85,7 +84,6 @@ __all__ = [
     "AgentRequest",
     "AnomalyDetectorProtocol",
     "ChunkedUploadProtocol",
-    "ContextManifestProtocol",
     "EventLogConfig",
     "EventLogProtocol",
     "GovernanceProtocol",

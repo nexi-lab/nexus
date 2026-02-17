@@ -60,10 +60,6 @@ from nexus.rebac.graph.expand import ExpandEngine
 from nexus.rebac.graph.traversal import PermissionComputer
 from nexus.rebac.graph.zone_traversal import ZoneAwareTraversal
 from nexus.rebac.rebac_cache import ReBACPermissionCache
-from nexus.rebac.rebac_fast import (
-    check_permissions_bulk_with_fallback,
-    is_rust_available,
-)
 from nexus.rebac.rebac_tracing import (
     record_check_result,
     record_graph_limit_exceeded,
@@ -83,6 +79,10 @@ from nexus.rebac.types import (
     WriteResult,
 )
 from nexus.rebac.utils.changelog import insert_changelog_entry
+from nexus.rebac.utils.fast import (
+    check_permissions_bulk_with_fallback,
+    is_rust_available,
+)
 from nexus.rebac.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
@@ -900,7 +900,7 @@ class ReBACManager:
 
         # Try Rust acceleration first (has proper memoization, prevents timeout)
         try:
-            from nexus.rebac.rebac_fast import (
+            from nexus.rebac.utils.fast import (
                 check_permission_single_rust,
                 is_rust_available,
             )
@@ -2883,7 +2883,7 @@ class ReBACManager:
         """
         import time as time_module
 
-        from nexus.rebac.rebac_fast import (
+        from nexus.rebac.utils.fast import (
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )

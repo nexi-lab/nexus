@@ -168,7 +168,7 @@ async def fire_rpc_event(
         return
 
     try:
-        zone_id = getattr(context, "zone_id", None) or "default"
+        zone_id = getattr(context, "zone_id", None) or "root"
         data: dict[str, Any] = {"file_path": path}
         if old_path:
             data["old_path"] = old_path

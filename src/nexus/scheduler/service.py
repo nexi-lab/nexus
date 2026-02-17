@@ -184,10 +184,10 @@ class SchedulerService:
 
         return classify_request(tier, req_state)
 
-    async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:  # noqa: ARG002
+    async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         """Get scheduler metrics including queue stats and fair-share."""
         async with self._pool.acquire() as conn:
-            queue_metrics = await self._queue.get_queue_metrics(conn)
+            queue_metrics = await self._queue.get_queue_metrics(conn, zone_id=zone_id)
 
         return {
             "queue_by_class": queue_metrics,

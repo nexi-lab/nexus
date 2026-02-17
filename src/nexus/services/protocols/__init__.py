@@ -30,6 +30,7 @@ from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
 from nexus.services.protocols.events import EventsProtocol
+from nexus.services.protocols.governance import GovernanceProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -56,6 +57,7 @@ from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
+from nexus.services.protocols.reputation import ReputationProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
@@ -76,6 +78,7 @@ __all__ = [
     "EventLogConfig",
     "EventLogProtocol",
     "EventsProtocol",
+    "GovernanceProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
@@ -105,6 +108,7 @@ __all__ = [
     "PermissionProtocol",
     "ProgressCallback",
     "ReBACBrickProtocol",
+    "ReputationProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
     "ShareLinkProtocol",

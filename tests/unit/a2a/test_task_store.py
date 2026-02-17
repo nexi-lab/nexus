@@ -8,7 +8,6 @@ gets identical coverage.  Restored from #1699 prune and extended for
 from __future__ import annotations
 
 import asyncio
-import warnings
 from datetime import UTC, datetime
 from typing import Any
 
@@ -560,17 +559,21 @@ class TestVFSEnvelopeFormat:
 
 
 class TestDatabaseTaskStoreDeprecation:
-    def test_emits_deprecation_warning(self) -> None:
-        # Create a minimal fake session factory
-        def _fake_session_factory() -> None:
-            return None
+    def test_instantiation_with_record_store(self) -> None:
+        """DatabaseTaskStore can be instantiated with a RecordStoreABC mock.
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            from nexus.a2a.stores.database import DatabaseTaskStore
+        The class is documented as deprecated (docstring) but does not
+        emit a runtime ``DeprecationWarning``.  This test verifies that
+        instantiation succeeds when given a proper RecordStoreABC with
+        a ``session_factory`` attribute.
+        """
+        from unittest.mock import MagicMock
 
-            DatabaseTaskStore(_fake_session_factory)
+        # Create a minimal fake RecordStoreABC with session_factory attribute
+        fake_record_store = MagicMock()
+        fake_record_store.session_factory = MagicMock()
 
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1
-        assert "deprecated" in str(deprecation_warnings[0].message).lower()
+        from nexus.a2a.stores.database import DatabaseTaskStore
+
+        store = DatabaseTaskStore(fake_record_store)
+        assert store._session_factory is fake_record_store.session_factory

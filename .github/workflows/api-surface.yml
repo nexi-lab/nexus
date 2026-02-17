@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
     paths:
       - 'src/nexus/**/*.py'
+  merge_group:
 
 permissions:
   contents: read

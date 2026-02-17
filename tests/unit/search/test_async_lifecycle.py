@@ -70,10 +70,11 @@ class TestSearchDaemonLifecycle:
 
     @pytest.mark.asyncio
     async def test_shutdown_disposes_engine(self) -> None:
-        """shutdown() should dispose of the async engine if present."""
+        """shutdown() should dispose of the async engine if present and owned."""
         daemon = SearchDaemon()
         mock_engine = AsyncMock()
         daemon._async_engine = mock_engine
+        daemon._owns_engine = True  # dispose only runs when we own the engine
 
         await daemon.shutdown()
 

@@ -59,7 +59,7 @@ class DatabaseTaskStore:
             finally:
                 session.close()
 
-        return await loop.run_in_executor(self._executor, _wrapper)
+        return await loop.run_in_executor(None, _wrapper)
 
     async def save(
         self,

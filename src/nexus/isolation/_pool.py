@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import threading
 from concurrent.futures import Executor, Future
@@ -220,5 +219,7 @@ class IsolatedPool:
             except Exception:
                 break
         for f in futures:
-            with contextlib.suppress(Exception):
+            try:
                 f.result(timeout=5.0)
+            except Exception as e:
+                logger.debug("Worker cleanup failed: %s", e)

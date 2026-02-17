@@ -729,6 +729,14 @@ class RedisEventBus(EventBusBase):
         self._started = False
         self._lock = asyncio.Lock()
 
+    def set_event_log(self, event_log: Any) -> None:
+        """Wire an event log for WAL-first durability (Issue #1397).
+
+        Called during server startup after the event log is initialized,
+        since the event bus may be constructed before the event log is available.
+        """
+        self._event_log = event_log
+
     def _channel_name(self, zone_id: str) -> str:
         """Get Redis channel name for a zone."""
         return f"{self.CHANNEL_PREFIX}:{zone_id}"

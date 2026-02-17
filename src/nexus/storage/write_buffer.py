@@ -19,7 +19,7 @@ Usage:
     buffer.start()
 
     # Hot path — returns immediately
-    buffer.enqueue_write(metadata, is_new=True, path="/file.txt", zone_id="default")
+    buffer.enqueue_write(metadata, is_new=True, path="/file.txt", zone_id="root")
 
     # Graceful shutdown — drains remaining events
     buffer.stop()

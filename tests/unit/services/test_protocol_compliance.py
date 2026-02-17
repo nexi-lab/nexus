@@ -152,7 +152,7 @@ def assert_protocol_compliance(
 _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     # ── Fully extracted (expect pass) ──────────────────────────────────
     (
-        "LLMProtocol",
+        "LLMServiceProtocol",
         "nexus.services.protocols.llm",
         "nexus.services.llm_service.LLMService",
         True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat

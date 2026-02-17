@@ -1252,7 +1252,7 @@ class NexusFS(  # type: ignore[misc]
             modified_at=now,
             version=1,
             created_by=self._get_created_by(context),  # Track who created this directory
-            zone_id=ctx.zone_id or "default",  # P0 SECURITY: Set zone_id
+            zone_id=ctx.zone_id or "root",  # P0 SECURITY: Set zone_id
         )
 
         self.metadata.put(metadata)
@@ -1363,7 +1363,7 @@ class NexusFS(  # type: ignore[misc]
                             f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                         )
                         self._hierarchy_manager.ensure_parent_tuples(
-                            parent_dir, zone_id=ctx.zone_id or "default"
+                            parent_dir, zone_id=ctx.zone_id or "root"
                         )
                     except Exception as e:
                         # Don't fail mkdir if parent tuple creation fails
@@ -1393,7 +1393,7 @@ class NexusFS(  # type: ignore[misc]
                     f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, zone_id=ctx.zone_id or "default"
+                    path, zone_id=ctx.zone_id or "root"
                 )
                 logger.debug(f"mkdir: Created {created_count} parent tuples for {path}")
                 if created_count > 0:
@@ -1418,7 +1418,7 @@ class NexusFS(  # type: ignore[misc]
                     subject=("user", ctx.user),
                     relation="direct_owner",
                     object=("file", path),
-                    zone_id=ctx.zone_id or "default",
+                    zone_id=ctx.zone_id or "root",
                 )
                 logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user} for {path}")
             except Exception as e:
@@ -1655,7 +1655,7 @@ class NexusFS(  # type: ignore[misc]
             Permission.TRAVERSE: "traverse",
         }
         rebac_permission = permission_map.get(permission, "read")
-        zone_id = context.zone_id or "default"
+        zone_id = context.zone_id or "root"
 
         # =============================================================
         # Issue #919 OPTIMIZATION 1: Check DirectoryVisibilityCache (O(1))
@@ -1793,7 +1793,7 @@ class NexusFS(  # type: ignore[misc]
             try:
                 # Perform bulk permission check
                 results = self._rebac_manager.rebac_check_bulk(
-                    checks, zone_id=context.zone_id or "default"
+                    checks, zone_id=context.zone_id or "root"
                 )
 
                 # OPTIMIZATION 5: Early exit on first accessible descendant
@@ -2014,7 +2014,7 @@ class NexusFS(  # type: ignore[misc]
         # PHASE 2: Perform ONE bulk permission check for everything
         try:
             results = self._rebac_manager.rebac_check_bulk(
-                all_checks, zone_id=context.zone_id or "default"
+                all_checks, zone_id=context.zone_id or "root"
             )
         except Exception as e:
             logger.warning(f"_has_descendant_access_bulk: Bulk check failed, falling back: {e}")
@@ -3583,7 +3583,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Grant ReBAC permissions
             if self._rebac_manager:
-                zone_id = self._extract_zone_id(context) or "default"
+                zone_id = self._extract_zone_id(context) or "root"
 
                 # Grant direct_owner to the agent itself
                 try:
@@ -3769,7 +3769,7 @@ class NexusFS(  # type: ignore[misc]
         if not user_id:
             raise ValueError("user_id required in context to register agent")
 
-        zone_id = self._extract_zone_id(context) or "default"
+        zone_id = self._extract_zone_id(context) or "root"
 
         # Derive agent namespace paths
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
@@ -4052,7 +4052,7 @@ class NexusFS(  # type: ignore[misc]
         if not user_id:
             raise ValueError("user_id required in context to update agent")
 
-        zone_id = self._extract_zone_id(context) or "default"
+        zone_id = self._extract_zone_id(context) or "root"
 
         # Extract agent name from agent_id (format: user_id,agent_name)
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
@@ -4298,7 +4298,7 @@ class NexusFS(  # type: ignore[misc]
                         user_id, agent_name = entity.entity_id.split(",", 1)
                         # Get zone_id from context
                         ctx = self._parse_context(_context)
-                        zone_id = self._extract_zone_id(_context) or "default"
+                        zone_id = self._extract_zone_id(_context) or "root"
                         config_path = (
                             f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
                         )
@@ -4358,7 +4358,7 @@ class NexusFS(  # type: ignore[misc]
                     if "," in entity.entity_id:
                         user_id, agent_name = entity.entity_id.split(",", 1)
                         ctx = self._parse_context(_context)
-                        zone_id = self._extract_zone_id(_context) or "default"
+                        zone_id = self._extract_zone_id(_context) or "root"
                         config_path = (
                             f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
                         )
@@ -4438,7 +4438,7 @@ class NexusFS(  # type: ignore[misc]
             if "," in agent_id:
                 user_id, agent_name_part = agent_id.split(",", 1)
                 # Get zone_id from context or use default
-                zone_id = self._extract_zone_id(_context) or "default"
+                zone_id = self._extract_zone_id(_context) or "root"
                 # Use new namespace convention: /zone/{zone_id}/user/{user_id}/agent/{agent_id}
                 agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
 
@@ -4530,7 +4530,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Issue #1210: Wallet cleanup warning on agent deletion
         if self._wallet_provisioner is not None:
-            zone_id_for_wallet = self._extract_zone_id(_context) or "default"
+            zone_id_for_wallet = self._extract_zone_id(_context) or "root"
             try:
                 # Check if wallet provisioner supports cleanup (duck-typed)
                 cleanup_fn = getattr(self._wallet_provisioner, "cleanup", None)
@@ -6017,7 +6017,7 @@ class NexusFS(  # type: ignore[misc]
         result: dict[Any, Any] = await self._sandbox_manager.create_sandbox(
             name=name,
             user_id=ctx.user or "system",
-            zone_id=ctx.zone_id or self._default_context.zone_id or "default",
+            zone_id=ctx.zone_id or self._default_context.zone_id or "root",
             agent_id=ctx.agent_id,
             ttl_minutes=ttl_minutes,
             provider=provider,
@@ -6295,7 +6295,7 @@ class NexusFS(  # type: ignore[misc]
         result: dict[Any, Any] = await self._sandbox_manager.get_or_create_sandbox(
             name=name,
             user_id=ctx.user or "system",
-            zone_id=ctx.zone_id or self._default_context.zone_id or "default",
+            zone_id=ctx.zone_id or self._default_context.zone_id or "root",
             agent_id=ctx.agent_id,
             ttl_minutes=ttl_minutes,
             provider=provider,
@@ -7387,7 +7387,7 @@ class NexusFS(  # type: ignore[misc]
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
-            zone_id: Optional zone ID for multi-zone isolation (defaults to "default")
+            zone_id: Optional zone ID for multi-zone isolation (defaults to "root")
 
         Returns:
             True if permission is granted, False otherwise
@@ -7446,7 +7446,7 @@ class NexusFS(  # type: ignore[misc]
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
                 effective_zone_id = context.zone_id
-        # BUGFIX: Don't default to "default" - let ReBAC manager handle None
+        # BUGFIX: Don't default to "root" - let ReBAC manager handle None
         # This allows proper zone isolation testing
 
         # Check permission with optional context
@@ -8702,7 +8702,7 @@ class NexusFS(  # type: ignore[misc]
             return _transform_tuples(all_tuples)
 
         # Get current zone ID for cache isolation
-        current_zone = getattr(self, "_current_zone_id", "default")
+        current_zone = getattr(self, "_current_zone_id", "root")
 
         # Try to use cursor-based pagination
         if cursor:
@@ -8831,7 +8831,7 @@ class NexusFS(  # type: ignore[misc]
             return _transform_tuples(all_tuples)
 
         # Get current zone ID for cache isolation
-        current_zone = getattr(self, "_current_zone_id", "default")
+        current_zone = getattr(self, "_current_zone_id", "root")
 
         # Try to use cursor-based pagination
         if cursor:
@@ -9219,7 +9219,7 @@ class NexusFS(  # type: ignore[misc]
         checks instead of expensive O(n) descendant access checks.
 
         Args:
-            zone_id: Zone ID for the permissions (default: "default")
+            zone_id: Zone ID for the permissions (default: "root")
             subject: Subject to grant TRAVERSE to (default: ("group", "authenticated"))
                      Use ("group", "authenticated") for all authenticated users.
 
@@ -9341,7 +9341,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             subjects: List of subjects to warm cache for (default: all subjects with tuples)
-            zone_id: Zone ID to scope warming (default: "default")
+            zone_id: Zone ID to scope warming (default: "root")
 
         Returns:
             Number of cache entries created

@@ -30,6 +30,7 @@ from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
 from nexus.services.protocols.events import EventsProtocol
+from nexus.services.protocols.governance import GovernanceProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -77,6 +78,7 @@ __all__ = [
     "EventLogConfig",
     "EventLogProtocol",
     "EventsProtocol",
+    "GovernanceProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",

@@ -1651,8 +1651,8 @@ def skills_mcp_mount(
 
                 # Register OAuth provider for automatic token refresh
                 if oauth_provider == "google":
-                    from nexus.server.auth import GoogleOAuthProvider
-                    from nexus.server.auth.oauth_provider import OAuthProvider
+                    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+                    from nexus.auth.oauth.base_provider import BaseOAuthProvider as OAuthProvider
 
                     client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                     client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1696,7 +1696,7 @@ def skills_mcp_mount(
 
                     # Get OAuth provider credentials from environment
                     if oauth_provider == "google":
-                        from nexus.server.auth import GoogleOAuthProvider
+                        from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1721,7 +1721,7 @@ def skills_mcp_mount(
                             provider_name="google",
                         )
                     elif oauth_provider in ("twitter", "x"):
-                        from nexus.server.auth.x_oauth import XOAuthProvider
+                        from nexus.auth.oauth.providers.x import XOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")

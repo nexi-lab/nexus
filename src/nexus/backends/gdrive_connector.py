@@ -215,7 +215,7 @@ class GoogleDriveConnectorBackend(Backend):
         logger = logging.getLogger(__name__)
 
         try:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth.factory import OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()

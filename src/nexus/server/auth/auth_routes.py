@@ -11,7 +11,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.raft.zone_manager import ROOT_ZONE_ID
-from nexus.server.auth.oauth_user_auth import OAuthUserAuth
+from nexus.auth.oauth.user_auth import OAuthUserAuth
 
 logger = logging.getLogger(__name__)
 
@@ -909,7 +909,7 @@ async def oauth_check(
 
     try:
         # Exchange code for tokens to get user info
-        from nexus.server.auth.pending_oauth import get_pending_oauth_manager
+        from nexus.auth.oauth.pending import get_pending_oauth_manager
 
         oauth_credential = await oauth_provider.google_provider.exchange_code(
             request.code, redirect_uri=request.redirect_uri
@@ -1205,7 +1205,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
     try:
         # Validate and consume pending token (one-time use)
-        from nexus.server.auth.pending_oauth import get_pending_oauth_manager
+        from nexus.auth.oauth.pending import get_pending_oauth_manager
 
         pending_manager = get_pending_oauth_manager()
         registration = pending_manager.consume(request.pending_token)

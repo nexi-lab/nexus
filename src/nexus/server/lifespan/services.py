@@ -174,7 +174,7 @@ def _startup_key_service(app: FastAPI) -> None:
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-            from nexus.server.auth.oauth_crypto import OAuthCrypto
+            from nexus.auth.oauth.crypto import OAuthCrypto
             from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists

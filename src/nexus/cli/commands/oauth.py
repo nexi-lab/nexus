@@ -32,12 +32,10 @@ from rich.console import Console
 from rich.table import Table
 
 from nexus.cli.utils import console
-from nexus.server.auth import (
-    GoogleOAuthProvider,
-    MicrosoftOAuthProvider,
-    TokenManager,
-)
-from nexus.server.auth.x_oauth import XOAuthProvider
+from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+from nexus.auth.oauth.providers.microsoft import MicrosoftOAuthProvider
+from nexus.auth.oauth.providers.x import XOAuthProvider
+from nexus.server.auth.token_manager import TokenManager
 
 # Rich console for output
 _console = Console()

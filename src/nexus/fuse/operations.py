@@ -2,6 +2,32 @@
 
 This module implements the low-level FUSE operations that map filesystem
 calls to Nexus filesystem operations.
+
+Hybrid Python/Rust mode (--use-rust):
+    When enabled, hot-path I/O (read, write, readdir, stat, mkdir, unlink,
+    rename) is delegated to a Rust daemon via Unix-socket JSON-RPC IPC.
+    Python retains orchestration duties: permissions, events, namespace
+    resolution, and virtual views.
+
+    Issue 4C — IPC latency tradeoff:
+        The Unix-socket hop adds ~8-10% latency per call compared to a pure
+        Rust FUSE mount.  This is acceptable because:
+        1. Under concurrency (>4 threads), Rust's parallel I/O more than
+           compensates for the per-call overhead.
+        2. Python-only mode is single-threaded due to the GIL; even a small
+           Rust speedup becomes large at scale.
+        3. The IPC path is only used for data-plane ops; control-plane
+           (permissions, hooks) stays in Python at zero extra cost.
+
+    Issue 15C — Base64 encoding overhead:
+        File content is transmitted as base64 over the JSON-RPC channel,
+        adding ~33% wire-size overhead.  This is acceptable because:
+        1. Network RTT to the Nexus server dominates end-to-end latency
+           (typically 5-50ms vs <0.1ms for encoding).
+        2. Base64 avoids binary-framing complexity in the JSON protocol,
+           keeping the IPC layer simple and debuggable.
+        3. For local reads the Rust daemon's SQLite cache bypasses the
+           network entirely, making the encoding overhead irrelevant.
 """
 
 from __future__ import annotations

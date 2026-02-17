@@ -79,16 +79,18 @@ class TupleRepository:
         Args:
             conn: DBAPI connection to close
         """
-        import contextlib as _contextlib
-
         conn_id = id(conn)
         if conn_id in self._conn_map:
-            with _contextlib.suppress(Exception):
+            try:
                 self._conn_map[conn_id].close()
+            except Exception as e:
+                logger.debug("Failed to close pooled connection %s: %s", conn_id, e)
             self._conn_map.pop(conn_id, None)
         else:
-            with _contextlib.suppress(Exception):
+            try:
                 conn.close()
+            except Exception as e:
+                logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
     def connection(self) -> Generator[Any, None, None]:

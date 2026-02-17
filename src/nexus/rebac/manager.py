@@ -88,8 +88,8 @@ from nexus.rebac.utils.zone import normalize_zone_id
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from nexus.rebac.cache.iterator import IteratorCache
     from nexus.rebac.leopard import LeopardIndex
-    from nexus.rebac.rebac_iterator_cache import IteratorCache
     from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
@@ -271,7 +271,7 @@ class ReBACManager:
         )
 
         # Iterator cache for paginated list operations (Issue #722)
-        from nexus.rebac.rebac_iterator_cache import IteratorCache
+        from nexus.rebac.cache.iterator import IteratorCache
 
         self._iterator_cache: IteratorCache = IteratorCache(
             max_size=1000,

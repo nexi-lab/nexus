@@ -193,14 +193,14 @@ class FeedbackManager:
     def mark_for_relearning(
         self,
         trajectory_id: str,
-        _reason: str,
+        reason: str,  # noqa: ARG002 — protocol-required; model field pending
         priority: int = 5,
     ) -> None:
         """Flag trajectory for re-reflection.
 
         Args:
             trajectory_id: Trajectory to re-learn from
-            _reason: Why re-learning is needed (currently not stored, but available for future use)
+            reason: Why re-learning is needed (currently not stored, but available for future use)
             priority: Urgency (1=low, 10=critical)
 
         Example:

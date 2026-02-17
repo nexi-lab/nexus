@@ -215,6 +215,37 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # lock/extend_lock/unlock methods match
     ),
+    # ── Trajectory ISP split (Issue #549) ────────────────────────────
+    (
+        "TrajectoryLifecycleProtocol",
+        "nexus.services.protocols.trajectory",
+        "nexus.services.ace.trajectory.TrajectoryManager",
+        True,  # 5/5 method match: start/log/complete/get/query trajectories
+    ),
+    (
+        "FeedbackProtocol",
+        "nexus.services.protocols.feedback",
+        "nexus.services.ace.feedback.FeedbackManager",
+        True,  # 6/6 method match: add/get/score/mark/queue/clear feedback
+    ),
+    (
+        "PlaybookProtocol",
+        "nexus.services.protocols.playbook",
+        "nexus.services.ace.playbook.PlaybookManager",
+        True,  # 7/7 method match: create/get/update/record/query/delete/strategies
+    ),
+    (
+        "ReflectionProtocol",
+        "nexus.services.protocols.reflection",
+        "nexus.services.ace.reflection.Reflector",
+        True,  # 1/1 method match: reflect_async (async)
+    ),
+    (
+        "CurationProtocol",
+        "nexus.services.protocols.curation",
+        "nexus.services.ace.curation.Curator",
+        True,  # 2/2 method match: curate_playbook, curate_from_trajectory
+    ),
 ]
 
 
@@ -282,6 +313,11 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("content_service", "nexus/core/protocols/content_service.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
+    ("trajectory", "nexus/services/protocols/trajectory.py"),
+    ("feedback", "nexus/services/protocols/feedback.py"),
+    ("playbook", "nexus/services/protocols/playbook.py"),
+    ("reflection", "nexus/services/protocols/reflection.py"),
+    ("curation", "nexus/services/protocols/curation.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

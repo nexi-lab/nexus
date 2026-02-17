@@ -1,12 +1,18 @@
-"""Trajectory / ACE service protocol (ops-scenario-matrix S22: ACE).
+"""Trajectory lifecycle protocol (ops-scenario-matrix S22: ACE).
 
-Defines the contract for Agentic Continuous Evaluation — tracking task
-executions as trajectories, reflecting on outcomes, curating playbooks,
-and managing feedback loops for agent learning.
+Defines the contract for trajectory lifecycle management — starting,
+logging steps, completing, querying, and retrieving individual trajectories.
 
-Storage Affinity: **RecordStore** (trajectory / playbook / feedback records) +
-                  **ObjectStore** (CAS trace blobs) +
-                  **CacheStore** (LLM reflection cache).
+Maps 1:1 to ``services/ace/trajectory.TrajectoryManager``.
+
+Related ISP siblings (Issue #549):
+    - ``FeedbackProtocol``    → ``services/ace/feedback.FeedbackManager``
+    - ``PlaybookProtocol``    → ``services/ace/playbook.PlaybookManager``
+    - ``ReflectionProtocol``  → ``services/ace/reflection.Reflector``
+    - ``CurationProtocol``    → ``services/ace/curation.Curator``
+
+Storage Affinity: **RecordStore** (trajectory records) +
+                  **ObjectStore** (CAS trace blobs).
 
 References:
     - docs/architecture/ops-scenario-matrix.md  (S22)
@@ -16,21 +22,16 @@ References:
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
-class TrajectoryProtocol(Protocol):
-    """Service contract for ACE (Agentic Continuous Evaluation).
+class TrajectoryLifecycleProtocol(Protocol):
+    """Service contract for trajectory lifecycle (TrajectoryManager).
 
-    Covers trajectory lifecycle, feedback, playbook management, reflection,
-    and curation.  Each method group maps to one of the concrete managers
-    in ``services/ace/`` (TrajectoryManager, FeedbackManager,
-    PlaybookManager, Reflector, Curator).
+    Covers starting a trajectory, logging steps, completing it,
+    retrieving a single trajectory, and querying across trajectories.
     """
-
-    # ── Trajectory lifecycle ──────────────────────────────────────────
 
     def start_trajectory(
         self,
@@ -72,121 +73,3 @@ class TrajectoryProtocol(Protocol):
         limit: int = 50,
         path: str | None = None,
     ) -> list[dict[str, Any]]: ...
-
-    # ── Feedback ──────────────────────────────────────────────────────
-
-    def add_feedback(
-        self,
-        trajectory_id: str,
-        feedback_type: str,
-        score: float | None = None,
-        source: str | None = None,
-        message: str | None = None,
-        metrics: dict[str, Any] | None = None,
-        timestamp: datetime | None = None,
-    ) -> str: ...
-
-    def get_trajectory_feedback(
-        self,
-        trajectory_id: str,
-    ) -> list[dict[str, Any]]: ...
-
-    def get_effective_score(
-        self,
-        trajectory_id: str,
-        strategy: Literal["latest", "average", "weighted"] = "latest",
-    ) -> float: ...
-
-    def mark_for_relearning(
-        self,
-        trajectory_id: str,
-        reason: str,
-        priority: int = 5,
-    ) -> None: ...
-
-    def get_relearning_queue(
-        self,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]: ...
-
-    def clear_relearning_flag(
-        self,
-        trajectory_id: str,
-    ) -> None: ...
-
-    # ── Playbook management ───────────────────────────────────────────
-
-    def create_playbook(
-        self,
-        name: str,
-        description: str | None = None,
-        scope: Literal["agent", "user", "zone", "global"] = "agent",
-        visibility: Literal["private", "shared", "public"] = "private",
-        initial_strategies: list[dict[str, Any]] | None = None,
-    ) -> str: ...
-
-    def get_playbook(
-        self,
-        playbook_id: str,
-    ) -> dict[str, Any] | None: ...
-
-    def update_playbook(
-        self,
-        playbook_id: str,
-        strategies: list[dict[str, Any]] | None = None,
-        metadata: dict[str, Any] | None = None,
-        increment_version: bool = True,
-    ) -> None: ...
-
-    def record_usage(
-        self,
-        playbook_id: str,
-        success: bool,
-        improvement_score: float | None = None,
-    ) -> None: ...
-
-    def query_playbooks(
-        self,
-        agent_id: str | None = None,
-        scope: str | None = None,
-        name_pattern: str | None = None,
-        limit: int = 50,
-        path: str | None = None,
-    ) -> list[dict[str, Any]]: ...
-
-    def delete_playbook(
-        self,
-        playbook_id: str,
-    ) -> bool: ...
-
-    def get_relevant_strategies(
-        self,
-        playbook_id: str,
-        task_description: str,
-        strategy_type: Literal["helpful", "harmful", "neutral"] | None = None,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]: ...
-
-    # ── Reflection ────────────────────────────────────────────────────
-
-    async def reflect_async(
-        self,
-        trajectory_id: str,
-        context: str | None = None,
-        reflection_prompt: str | None = None,
-    ) -> dict[str, Any]: ...
-
-    # ── Curation ──────────────────────────────────────────────────────
-
-    def curate_playbook(
-        self,
-        playbook_id: str,
-        reflection_memory_ids: list[str],
-        merge_threshold: float = 0.7,
-    ) -> dict[str, Any]: ...
-
-    def curate_from_trajectory(
-        self,
-        playbook_id: str,
-        trajectory_id: str,
-    ) -> dict[str, Any] | None: ...

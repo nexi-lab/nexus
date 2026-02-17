@@ -26,4 +26,10 @@ __all__ = [
     "HMAC_SALT",
     "PERSONAL_EMAIL_DOMAINS",
     "RESERVED_ZONE_IDS",
+    # OAuth (lazy-loaded via submodules)
+    # nexus.auth.oauth_provider — OAuthProvider, OAuthCredential, OAuthError
+    # nexus.auth.oauth_config — OAuthConfig, OAuthProviderConfig
+    # nexus.auth.oauth_crypto — OAuthCrypto
+    # nexus.auth.oauth_factory — OAuthProviderFactory
+    # nexus.auth.token_manager — TokenManager
 ]

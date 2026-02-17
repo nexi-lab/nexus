@@ -1566,7 +1566,7 @@ def skills_mcp_mount(
                 # Register OAuth provider for automatic token refresh
                 if oauth_provider == "google":
                     from nexus.server.auth import GoogleOAuthProvider
-                    from nexus.server.auth.oauth_provider import OAuthProvider
+                    from nexus.auth.oauth_provider import OAuthProvider
 
                     client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                     client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")

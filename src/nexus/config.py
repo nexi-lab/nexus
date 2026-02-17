@@ -8,7 +8,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Import OAuthConfig - required for OAuth configuration
-from nexus.server.auth.oauth_config import OAuthConfig
+from nexus.auth.oauth_config import OAuthConfig
 
 class DockerImageTemplate(BaseModel):
     """Configuration for a single Docker image template."""
@@ -397,7 +397,7 @@ def _load_from_dict(config_dict: dict[str, Any]) -> "NexusConfig":
 
     # Convert oauth dict to OAuthConfig if present
     if "oauth" in merged_dict and isinstance(merged_dict["oauth"], dict):
-        from nexus.server.auth.oauth_config import OAuthConfig as OAuthConfigType
+        from nexus.auth.oauth_config import OAuthConfig as OAuthConfigType
 
         merged_dict["oauth"] = OAuthConfigType(**merged_dict["oauth"])
 

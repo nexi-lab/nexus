@@ -37,7 +37,7 @@ class OAuthConnectorMixin:
             user_email: Optional user email for OAuth lookup. None = use context.
             provider: OAuth provider name from config
         """
-        from nexus.server.auth.token_manager import TokenManager
+        from nexus.auth.token_manager import TokenManager
 
         self.token_manager_db = token_manager_db
         self.user_email = user_email

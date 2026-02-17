@@ -1,7 +1,7 @@
 """Authentication providers for Nexus server.
 
-Backward-compatibility shim: Auth providers now live in nexus.auth brick.
-OAuth credential management stays here (Phase 2 extraction).
+Backward-compatibility shim: Auth providers and OAuth services now
+live in the nexus.auth brick. This module re-exports for backward compat.
 """
 
 import warnings
@@ -18,18 +18,18 @@ from nexus.auth.providers.static_key import StaticAPIKeyAuth  # noqa: F401
 # Factory function — stays here but delegates to brick providers
 from nexus.server.auth.factory import create_auth_provider  # noqa: F401
 
-# OAuth components — stay in server/auth (Phase 2 extraction)
-from nexus.server.auth.google_oauth import GoogleOAuthProvider  # noqa: F401
-from nexus.server.auth.microsoft_oauth import MicrosoftOAuthProvider  # noqa: F401
-from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
-from nexus.server.auth.oauth_crypto import OAuthCrypto  # noqa: F401
-from nexus.server.auth.oauth_factory import OAuthProviderFactory  # noqa: F401
-from nexus.server.auth.oauth_provider import (  # noqa: F401
+# OAuth components — canonical: nexus.auth (moved in Issue #1526)
+from nexus.auth.oauth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
+from nexus.auth.oauth_crypto import OAuthCrypto  # noqa: F401
+from nexus.auth.oauth_factory import OAuthProviderFactory  # noqa: F401
+from nexus.auth.oauth_provider import (  # noqa: F401
     OAuthCredential,
     OAuthError,
     OAuthProvider,
 )
-from nexus.server.auth.token_manager import TokenManager  # noqa: F401
+from nexus.auth.token_manager import TokenManager  # noqa: F401
+from nexus.server.auth.google_oauth import GoogleOAuthProvider  # noqa: F401
+from nexus.server.auth.microsoft_oauth import MicrosoftOAuthProvider  # noqa: F401
 
 __all__ = [
     # Auth brick (canonical: nexus.auth)

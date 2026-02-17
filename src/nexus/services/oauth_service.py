@@ -1169,7 +1169,7 @@ class OAuthService:
             OAuthProviderFactory instance
         """
         if self._oauth_factory is None:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth_factory import OAuthProviderFactory
 
             # Get config if available
             oauth_config = None
@@ -1190,7 +1190,7 @@ class OAuthService:
         """
         if self._token_manager is None:
             from nexus.core.context_utils import get_database_url
-            from nexus.server.auth.token_manager import TokenManager
+            from nexus.auth.token_manager import TokenManager
 
             # Use centralized database URL resolution
             db_path = get_database_url(self.nexus_fs) if self.nexus_fs else None

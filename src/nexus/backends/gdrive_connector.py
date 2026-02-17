@@ -182,7 +182,7 @@ class GoogleDriveConnectorBackend(Backend):
         # Support both file paths and database URLs
         # Resolve database URL (checks TOKEN_MANAGER_DB env var)
         from nexus.backends.connector_utils import resolve_database_url
-        from nexus.server.auth.token_manager import TokenManager
+        from nexus.auth.token_manager import TokenManager
 
         resolved_db = resolve_database_url(token_manager_db)
 
@@ -213,7 +213,7 @@ class GoogleDriveConnectorBackend(Backend):
         logger = logging.getLogger(__name__)
 
         try:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth_factory import OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()

@@ -304,7 +304,6 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_id: str,
-        _zone_id: str = "",  # Deprecated: kept for API compatibility, ignored
         conn: Connection | None = None,
     ) -> bool | None:
         """Check if subject has permission on resource using cached bitmap.
@@ -315,7 +314,6 @@ class TigerCache:
             permission: Permission to check
             resource_type: Type of resource
             resource_id: String ID of resource
-            _zone_id: Zone ID (used for resource lookup, not cache key)
             conn: Optional database connection
 
         Returns:
@@ -1135,9 +1133,7 @@ class TigerCache:
 
         try:
             # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
-            resource_int_id = self._resource_map.get_or_create_int_id(
-                resource_type, resource_id, zone_id
-            )
+            resource_int_id = self._resource_map.get_or_create_int_id(resource_type, resource_id)
 
             with self._engine.begin() as conn:
                 # Step 2: Load existing bitmap from DB (if exists)

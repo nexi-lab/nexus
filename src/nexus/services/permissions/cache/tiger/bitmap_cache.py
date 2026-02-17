@@ -317,7 +317,6 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_id: str,
-        _zone_id: str = "",  # Deprecated: kept for API compatibility, ignored
         conn: Connection | None = None,
     ) -> bool | None:
         """Check if subject has permission on resource using cached bitmap.
@@ -328,7 +327,6 @@ class TigerCache:
             permission: Permission to check
             resource_type: Type of resource
             resource_id: String ID of resource
-            _zone_id: Zone ID (used for resource lookup, not cache key)
             conn: Optional database connection
 
         Returns:

@@ -123,13 +123,9 @@ class CompressedStorageConfig:
 
     def __post_init__(self) -> None:
         if not 1 <= self.level <= 22:
-            raise ValueError(
-                f"CompressedStorageConfig level must be 1-22, got {self.level}"
-            )
+            raise ValueError(f"CompressedStorageConfig level must be 1-22, got {self.level}")
         if self.min_size < 0:
-            raise ValueError(
-                f"CompressedStorageConfig min_size must be >= 0, got {self.min_size}"
-            )
+            raise ValueError(f"CompressedStorageConfig min_size must be >= 0, got {self.min_size}")
 
 
 # ---------------------------------------------------------------------------

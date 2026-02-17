@@ -242,7 +242,10 @@ class TestEncryptedErrors:
         read_resp = wrapper.read_content(content_hash)
         assert not read_resp.success
         assert read_resp.error_message is not None
-        assert "decrypt" in read_resp.error_message.lower() or "error" in read_resp.error_message.lower()
+        assert (
+            "decrypt" in read_resp.error_message.lower()
+            or "error" in read_resp.error_message.lower()
+        )
 
     def test_wrong_key_fails(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig

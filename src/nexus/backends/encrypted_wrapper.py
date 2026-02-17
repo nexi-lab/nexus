@@ -83,8 +83,7 @@ class EncryptedStorageConfig:
     def __post_init__(self) -> None:
         if len(self.key) != 32:
             raise ValueError(
-                f"EncryptedStorageConfig key must be 32 bytes (AES-256), "
-                f"got {len(self.key)} bytes"
+                f"EncryptedStorageConfig key must be 32 bytes (AES-256), got {len(self.key)} bytes"
             )
 
 

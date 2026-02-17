@@ -72,7 +72,7 @@ def _set_env(monkeypatch):
 @pytest.fixture
 def api_keys(pg_session_factory):
     """Create admin + normal API keys via DatabaseAPIKeyAuth."""
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
     with pg_session_factory() as session:
         admin_key_id, admin_raw = DatabaseAPIKeyAuth.create_key(
@@ -110,11 +110,11 @@ def api_keys(pg_session_factory):
 @pytest.fixture
 def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     """FastAPI app with PostgreSQL, permissions enabled, database auth."""
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.backends.local import LocalBackend
     from nexus.core.config import MemoryConfig, PermissionConfig
     from nexus.core.nexus_fs import NexusFS
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-    from nexus.server.auth.factory import DiscriminatingAuthProvider
     from nexus.server.fastapi_server import create_app
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-pg-paging-")
@@ -371,7 +371,7 @@ class TestPostgresPermissionsPaging:
 
     def test_revoked_key_rejected(self, client, api_keys, pg_session_factory):
         """Revoked key -> 401 on PostgreSQL."""
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         with pg_session_factory() as session:
             DatabaseAPIKeyAuth.revoke_key(session, api_keys["normal_key_id"])

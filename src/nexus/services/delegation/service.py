@@ -12,7 +12,7 @@ Uses ordered steps for safety without requiring cross-system transactions:
 On failure at step 2+: unregister agent (no key exists, safe to retry).
 
 #1618 additions:
-    - DelegationStatus lifecycle (ACTIVE → REVOKED/EXPIRED/COMPLETED)
+    - DelegationStatus lifecycle (ACTIVE -> REVOKED/EXPIRED/COMPLETED)
     - Soft-delete revocation (status=REVOKED first, then cleanup)
     - Fail-loud on grant deletion during revocation
     - Session context manager (DRY)
@@ -51,9 +51,9 @@ from nexus.services.delegation.models import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
+    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.rebac.namespace_manager import NamespaceManager
     from nexus.services.agents.agent_registry import AgentRegistry
-    from nexus.services.permissions.entity_registry import EntityRegistry
-    from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.services.reputation.reputation_service import ReputationService
 
@@ -289,7 +289,7 @@ class DelegationService:
         """Revoke a delegation using soft-delete-first pattern (Issue 8A).
 
         Steps:
-            0. Set status=REVOKED (contract with callers — immediate)
+            0. Set status=REVOKED (contract with callers -- immediate)
             1. Delete ReBAC tuples (fail-loud, Issue 7A)
             2. Revoke API key
             3. Unregister agent
@@ -313,10 +313,10 @@ class DelegationService:
                 f"Delegation {delegation_id} is not active (status={record.status.value})"
             )
 
-        # Step 0: Soft-delete — mark as REVOKED immediately
+        # Step 0: Soft-delete -- mark as REVOKED immediately
         self._update_delegation_status(delegation_id, DelegationStatus.REVOKED)
 
-        # Step 1: Delete ReBAC tuples — fail-loud (Issue 7A)
+        # Step 1: Delete ReBAC tuples -- fail-loud (Issue 7A)
         self._delete_worker_tuples(record.agent_id, record.zone_id)
 
         # Step 2: Revoke API key
@@ -723,7 +723,7 @@ class DelegationService:
         worker_id: str,
         zone_id: str | None,
     ) -> list[str]:
-        """Get mount table for the worker agent (fail-soft — informational)."""
+        """Get mount table for the worker agent (fail-soft -- informational)."""
         if self._namespace_manager is None:
             return []
         try:

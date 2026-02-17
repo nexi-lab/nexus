@@ -21,8 +21,7 @@ from fastapi.testclient import TestClient
 
 from nexus.server.api.v2.routers.bricks import _get_lifecycle_manager, router
 from nexus.services.brick_lifecycle import BrickLifecycleManager
-from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol, BrickState
-
+from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
 
 # ---------------------------------------------------------------------------
 # Helpers

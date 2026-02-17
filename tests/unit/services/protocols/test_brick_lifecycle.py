@@ -24,7 +24,6 @@ from nexus.services.protocols.brick_lifecycle import (
     BrickStatus,
 )
 
-
 # ---------------------------------------------------------------------------
 # BrickState enum tests
 # ---------------------------------------------------------------------------
@@ -212,7 +211,14 @@ class TestLifecyclePhaseConstants:
         assert BRICK_STOPPED == "brick_stopped"
 
     def test_phases_are_strings(self) -> None:
-        for phase in (PRE_MOUNT, POST_MOUNT, PRE_UNMOUNT, POST_UNMOUNT, BRICK_STARTED, BRICK_STOPPED):
+        for phase in (
+            PRE_MOUNT,
+            POST_MOUNT,
+            PRE_UNMOUNT,
+            POST_UNMOUNT,
+            BRICK_STARTED,
+            BRICK_STOPPED,
+        ):
             assert isinstance(phase, str)
 
     def test_phases_are_unique(self) -> None:

@@ -75,9 +75,7 @@ def _get_tracer() -> Any:
 
 
 @contextmanager
-def _lifecycle_span(
-    operation: str, brick_name: str, **attrs: Any
-) -> Generator[Any, None, None]:
+def _lifecycle_span(operation: str, brick_name: str, **attrs: Any) -> Generator[Any, None, None]:
     """Context manager for a brick lifecycle OTel span.
 
     Zero-overhead: if no tracer, yields None immediately.
@@ -410,7 +408,9 @@ class BrickLifecycleManager:
         for entry in self._bricks.values():
             for dep in entry.depends_on:
                 if dep not in self._bricks:
-                    raise KeyError(f"Brick {entry.name!r} depends on {dep!r} which is not registered")
+                    raise KeyError(
+                        f"Brick {entry.name!r} depends on {dep!r} which is not registered"
+                    )
 
         # Build the graph for TopologicalSorter
         graph: dict[str, set[str]] = {}
@@ -589,7 +589,8 @@ class BrickLifecycleManager:
         for level in levels:
             # Filter to only REGISTERED bricks (skip already-mounted or failed)
             to_mount = [
-                name for name in level
+                name
+                for name in level
                 if name in self._bricks and self._bricks[name].state == BrickState.REGISTERED
             ]
             if not to_mount:
@@ -610,7 +611,10 @@ class BrickLifecycleManager:
             logger.warning("[LIFECYCLE] Brick %r failed during mount_all: %s", name, exc)
             # Ensure the brick is in FAILED state
             entry = self._bricks.get(name)
-            if entry is not None and entry.state not in (BrickState.FAILED, BrickState.UNREGISTERED):
+            if entry is not None and entry.state not in (
+                BrickState.FAILED,
+                BrickState.UNREGISTERED,
+            ):
                 entry.state = BrickState.FAILED
                 entry.error = str(exc)
 
@@ -622,7 +626,8 @@ class BrickLifecycleManager:
         levels = self.compute_shutdown_order()
         for level in levels:
             to_unmount = [
-                name for name in level
+                name
+                for name in level
                 if name in self._bricks and self._bricks[name].state == BrickState.ACTIVE
             ]
             if not to_unmount:
@@ -641,6 +646,9 @@ class BrickLifecycleManager:
         except Exception as exc:
             logger.warning("[LIFECYCLE] Brick %r failed during unmount_all: %s", name, exc)
             entry = self._bricks.get(name)
-            if entry is not None and entry.state not in (BrickState.FAILED, BrickState.UNREGISTERED):
+            if entry is not None and entry.state not in (
+                BrickState.FAILED,
+                BrickState.UNREGISTERED,
+            ):
                 entry.state = BrickState.FAILED
                 entry.error = str(exc)

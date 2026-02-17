@@ -6,14 +6,12 @@ Phase 3 TDD: hook firing, veto support, event barrier concurrency tests.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nexus.services.brick_lifecycle import BrickLifecycleManager
 from nexus.services.protocols.brick_lifecycle import (
-    BRICK_STARTED,
-    BRICK_STOPPED,
     POST_MOUNT,
     POST_UNMOUNT,
     PRE_MOUNT,
@@ -26,7 +24,6 @@ from nexus.services.protocols.hook_engine import (
     HookEngineProtocol,
     HookResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test helpers

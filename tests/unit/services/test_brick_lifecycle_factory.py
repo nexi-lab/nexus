@@ -12,7 +12,6 @@ import pytest
 from nexus.services.brick_lifecycle import BrickLifecycleManager
 from nexus.services.protocols.brick_lifecycle import BrickState
 
-
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
@@ -104,12 +103,8 @@ class TestBootIntegration:
         rag = _make_lifecycle_brick("rag")
 
         manager.register("infra", infra, protocol_name="InfraProtocol")
-        manager.register(
-            "search", search, protocol_name="SearchProtocol", depends_on=("infra",)
-        )
-        manager.register(
-            "rag", rag, protocol_name="RAGProtocol", depends_on=("search",)
-        )
+        manager.register("search", search, protocol_name="SearchProtocol", depends_on=("infra",))
+        manager.register("rag", rag, protocol_name="RAGProtocol", depends_on=("search",))
 
         report = await manager.mount_all()
         assert report.active == 3

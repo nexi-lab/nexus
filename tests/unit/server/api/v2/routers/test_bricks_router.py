@@ -35,9 +35,7 @@ def _make_mock_manager() -> MagicMock:
     manager = MagicMock()
 
     # Default health report: empty
-    manager.health.return_value = BrickHealthReport(
-        total=0, active=0, failed=0, bricks=()
-    )
+    manager.health.return_value = BrickHealthReport(total=0, active=0, failed=0, bricks=())
     # Default get_status: None (brick not found)
     manager.get_status.return_value = None
     # mount/unmount are async in the real manager
@@ -68,9 +66,7 @@ client = TestClient(_test_app)
 def _reset_mock() -> None:
     """Reset mock between tests."""
     _mock_manager.reset_mock()
-    _mock_manager.health.return_value = BrickHealthReport(
-        total=0, active=0, failed=0, bricks=()
-    )
+    _mock_manager.health.return_value = BrickHealthReport(total=0, active=0, failed=0, bricks=())
     _mock_manager.get_status.return_value = None
     _mock_manager.get_status.side_effect = None
     _mock_manager.mount = AsyncMock()
@@ -173,9 +169,7 @@ class TestBrickStatus:
         assert data["started_at"] == 100.0
 
     def test_brick_with_error(self) -> None:
-        status = _make_status(
-            "broken", BrickState.FAILED, "BrokenProtocol", error="db down"
-        )
+        status = _make_status("broken", BrickState.FAILED, "BrokenProtocol", error="db down")
         _mock_manager.get_status.return_value = status
 
         resp = client.get("/api/v2/bricks/broken")

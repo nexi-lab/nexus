@@ -29,7 +29,6 @@ from nexus.server.api.v2.versioning import (
 )
 from nexus.services.brick_lifecycle import BrickLifecycleManager
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -9,17 +9,8 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
+from hypothesis import settings
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule
-
-from nexus.services.protocols.brick_lifecycle import (
-    BrickDependency,
-    BrickHealthReport,
-    BrickLifecycleProtocol,
-    BrickState,
-    BrickStatus,
-)
 
 # ---------------------------------------------------------------------------
 # Import the implementation (will exist after RED phase)
@@ -29,7 +20,10 @@ from nexus.services.brick_lifecycle import (
     CyclicDependencyError,
     InvalidTransitionError,
 )
-
+from nexus.services.protocols.brick_lifecycle import (
+    BrickLifecycleProtocol,
+    BrickState,
+)
 
 # ---------------------------------------------------------------------------
 # Test helpers — mock bricks
@@ -247,9 +241,7 @@ class TestDependencyDAG:
         manager.register("a", _make_lifecycle_brick("a"), protocol_name="AP")
         manager.register("b", _make_lifecycle_brick("b"), protocol_name="BP", depends_on=("a",))
         manager.register("c", _make_lifecycle_brick("c"), protocol_name="CP", depends_on=("a",))
-        manager.register(
-            "d", _make_lifecycle_brick("d"), protocol_name="DP", depends_on=("b", "c")
-        )
+        manager.register("d", _make_lifecycle_brick("d"), protocol_name="DP", depends_on=("b", "c"))
         levels = manager.compute_startup_order()
         assert len(levels) == 3
         assert levels[0] == ["a"]
@@ -269,7 +261,7 @@ class TestDependencyDAG:
         manager.register("a", _make_lifecycle_brick("a"), protocol_name="AP")
         manager.register("b", _make_lifecycle_brick("b"), protocol_name="BP", depends_on=("a",))
         manager.register("c", _make_lifecycle_brick("c"), protocol_name="CP", depends_on=("b",))
-        startup = manager.compute_startup_order()
+        manager.compute_startup_order()  # ensure no cycle
         shutdown = manager.compute_shutdown_order()
         # Reverse: C first, then B, then A
         assert len(shutdown) == 3
@@ -409,9 +401,7 @@ class TestHealthReport:
         assert report.failed == 1
 
     @pytest.mark.asyncio
-    async def test_health_report_includes_all_bricks(
-        self, manager: BrickLifecycleManager
-    ) -> None:
+    async def test_health_report_includes_all_bricks(self, manager: BrickLifecycleManager) -> None:
         manager.register("a", _make_lifecycle_brick("a"), protocol_name="AP")
         manager.register("b", _make_lifecycle_brick("b"), protocol_name="BP")
         await manager.mount("a")

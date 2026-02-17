@@ -1,6 +1,7 @@
 """Centralized structured logging configuration.
 
 Issue #1002: Structured JSON logging with request correlation.
+Issue #86: Secret redaction in log output.
 
 Provides a single ``configure_logging()`` function that sets up structlog
 with a processor pipeline and routes ALL loggers (stdlib, uvicorn, sqlalchemy,
@@ -8,6 +9,9 @@ etc.) through structlog's ``ProcessorFormatter``.
 
 - **Dev mode**: Pretty, colored console output via ``ConsoleRenderer``
 - **Prod mode**: Machine-readable JSON via ``JSONRenderer`` + ``orjson``
+- **Secret redaction**: Enabled by default (``NEXUS_LOG_REDACTION_ENABLED``).
+  Masks API keys, tokens, passwords, and connection strings via
+  ``secret_redaction_processor`` in the structlog pipeline.
 
 **Relationship to ObservabilitySubsystem (#1301):**
 This module handles *log formatting and routing* — it is server-level
@@ -25,6 +29,7 @@ Usage::
     configure_logging(env="prod")              # JSON output
     configure_logging(env="dev")               # Pretty console
     configure_logging(env="prod", log_level="DEBUG")  # Override level
+    configure_logging(env="prod", redaction_enabled=False)  # Disable redaction
 """
 
 from __future__ import annotations
@@ -41,6 +46,7 @@ import structlog
 from nexus.server.logging_processors import (
     add_service_name,
     error_classification_processor,
+    make_secret_redaction_processor,
     otel_trace_processor,
 )
 
@@ -62,6 +68,7 @@ def _orjson_serializer(data: dict[str, Any], **_kw: Any) -> str:
 def configure_logging(
     env: str = "dev",
     log_level: str | None = None,
+    redaction_enabled: bool | None = None,
     _handler_override: logging.Handler | None = None,
 ) -> None:
     """Configure structured logging for the entire application.
@@ -73,6 +80,9 @@ def configure_logging(
         env: Environment mode. ``"dev"`` for pretty console, ``"prod"`` for JSON.
         log_level: Override log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
             If ``None``, reads ``LOG_LEVEL`` env var, defaulting to ``"INFO"``.
+        redaction_enabled: Whether to enable secret redaction in log output.
+            If ``None``, reads ``NEXUS_LOG_REDACTION_ENABLED`` env var,
+            defaulting to ``True`` (secure by default).
         _handler_override: Internal testing parameter. When set, this handler
             is used instead of the default ``StreamHandler(sys.stderr)``.
     """
@@ -90,7 +100,18 @@ def configure_logging(
             "Valid levels: DEBUG, INFO, WARNING, ERROR, CRITICAL"
         )
 
+    # Resolve redaction setting (Issue #86)
+    if redaction_enabled is None:
+        _redact_env = os.environ.get("NEXUS_LOG_REDACTION_ENABLED", "true").lower()
+        redaction_enabled = _redact_env in ("true", "1", "yes", "on")
+
+    # Create the redaction processor with captured enabled state (immutable closure).
+    redaction_processor = make_secret_redaction_processor(enabled=redaction_enabled)
+
     # Shared processors run for BOTH structlog-native and stdlib-bridged logs.
+    # redaction_processor runs AFTER format_exc_info so tracebacks
+    # containing secrets (e.g., connection strings in error messages) are
+    # also redacted.
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
@@ -102,6 +123,7 @@ def configure_logging(
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
+        redaction_processor,
     ]
 
     # Renderer: JSON for prod, pretty console for dev

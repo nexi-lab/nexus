@@ -370,7 +370,7 @@ def _mount_fuse(
             assert log_file is not None, "log_file must be set in daemon mode"
 
             # Configure logging to file with secret redaction (Issue #86)
-            from nexus.core.logging_utils import RedactingFormatter
+            from nexus.server.logging_processors import RedactingFormatter
 
             _fuse_formatter = RedactingFormatter(
                 "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -590,17 +590,14 @@ def serve(
         from nexus.fuse import mount_nexus
         mount_nexus(nx, "/mnt/nexus")
     """
-    import logging
     import os
     import subprocess
 
-    from nexus.core.logging_utils import setup_logging
+    from nexus.server.logging_config import configure_logging
 
-    # Set up logging with secret redaction (Issue #86)
-    # Read redaction setting from env var (config hasn't loaded yet at this point)
-    _redaction_env = os.getenv("NEXUS_LOG_REDACTION_ENABLED", "true").lower()
-    _redaction_enabled = _redaction_env in ("true", "1", "yes", "on")
-    setup_logging(level=logging.INFO, redaction_enabled=_redaction_enabled)
+    # Set up structured logging with secret redaction (Issue #86 + #1002)
+    # configure_logging() reads NEXUS_LOG_REDACTION_ENABLED env var internally
+    configure_logging(env=os.getenv("NEXUS_ENV", "dev"), log_level="INFO")
 
     try:
         # ============================================

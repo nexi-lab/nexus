@@ -480,8 +480,14 @@ class ChunkedUploadService:
 
         await asyncio.to_thread(_write, session)
 
-    async def _load_session(self, upload_id: str) -> UploadSession:
+    async def _load_session(
+        self, upload_id: str, zone_id: str | None = None
+    ) -> UploadSession:
         """Load a session from the database.
+
+        Args:
+            upload_id: Upload session ID.
+            zone_id: Zone ID for federation isolation (recommended).
 
         Raises:
             UploadNotFoundError: If session doesn't exist.
@@ -490,7 +496,10 @@ class ChunkedUploadService:
         def _read(uid: str) -> dict[str, Any] | None:
             db = self._session_factory()
             try:
-                model = db.query(UploadSessionModel).filter_by(upload_id=uid).first()
+                query = db.query(UploadSessionModel).filter_by(upload_id=uid)
+                if zone_id is not None:
+                    query = query.filter(UploadSessionModel.zone_id == zone_id)
+                model = query.first()
                 if model is None:
                     return None
                 return model.to_session_dict()
@@ -508,7 +517,10 @@ class ChunkedUploadService:
         def _write(s: UploadSession) -> None:
             db = self._session_factory()
             try:
-                model = db.query(UploadSessionModel).filter_by(upload_id=s.upload_id).first()
+                query = db.query(UploadSessionModel).filter_by(upload_id=s.upload_id)
+                if s.zone_id is not None:
+                    query = query.filter(UploadSessionModel.zone_id == s.zone_id)
+                model = query.first()
                 if model is None:
                     raise UploadNotFoundError(s.upload_id)
                 model.upload_offset = s.upload_offset
@@ -525,13 +537,23 @@ class ChunkedUploadService:
 
         await asyncio.to_thread(_write, session)
 
-    async def _delete_session(self, upload_id: str) -> None:
-        """Delete a session from the database."""
+    async def _delete_session(
+        self, upload_id: str, zone_id: str | None = None
+    ) -> None:
+        """Delete a session from the database.
+
+        Args:
+            upload_id: Upload session ID.
+            zone_id: Zone ID for federation isolation (recommended).
+        """
 
         def _delete(uid: str) -> None:
             db = self._session_factory()
             try:
-                db.query(UploadSessionModel).filter_by(upload_id=uid).delete()
+                query = db.query(UploadSessionModel).filter_by(upload_id=uid)
+                if zone_id is not None:
+                    query = query.filter(UploadSessionModel.zone_id == zone_id)
+                query.delete()
                 db.commit()
             except Exception:
                 db.rollback()

@@ -220,6 +220,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Workflows routes: %s", e)
 
+    # ---- Snapshots router (Issue #1752) ----
+    try:
+        from nexus.server.api.v2.routers.snapshots import router as snapshots_router
+
+        registry.add(RouterEntry(router=snapshots_router, name="snapshots", endpoint_count=6))
+    except ImportError as e:
+        logger.warning("Failed to import Snapshots routes: %s", e)
+
     return registry
 
 

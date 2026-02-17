@@ -2117,6 +2117,15 @@ class NexusFSCoreMixin:
         if self.auto_parse:
             self._auto_parse_file(path)
 
+        # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
+        _snapshot_svc = getattr(self, "_snapshot_service", None)
+        if _snapshot_svc is not None:
+            _txn_id = _snapshot_svc.is_tracked(path)
+            if _txn_id is not None:
+                _snapshot_svc.track_write(
+                    _txn_id, path, snapshot_hash, metadata_snapshot, content_hash
+                )
+
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
         # Observer is optional — injected by factory.py, not created by kernel.
         # Issue #1246: Unified error handling via _notify_observer.
@@ -3022,6 +3031,13 @@ class NexusFSCoreMixin:
 
         # Check write permission for delete        # This comes AFTER zone isolation check so AccessDeniedError takes precedence
         self._check_permission(path, Permission.WRITE, context)
+
+        # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
+        _snapshot_svc = getattr(self, "_snapshot_service", None)
+        if _snapshot_svc is not None:
+            _txn_id = _snapshot_svc.is_tracked(path)
+            if _txn_id is not None:
+                _snapshot_svc.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
         # Issue #1246: Unified error handling via _notify_observer.

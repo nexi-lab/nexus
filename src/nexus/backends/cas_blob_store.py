@@ -156,16 +156,30 @@ class _StripeLock:
     without any disk I/O. Much cheaper than FileLock (~μs vs ~ms).
     """
 
-    __slots__ = ("_locks",)
+    __slots__ = ("_contention_count", "_locks")
 
     def __init__(self, num_stripes: int = _NUM_STRIPES) -> None:
         self._locks = [threading.Lock() for _ in range(num_stripes)]
+        self._contention_count = 0
 
     def acquire_for(self, content_hash: str) -> threading.Lock:
         """Return the stripe lock for a given content hash (not acquired)."""
         # Use last 4 hex chars for even distribution
         idx = int(content_hash[-4:], 16) % len(self._locks)
         return self._locks[idx]
+
+    @property
+    def contention_count(self) -> int:
+        """Number of times a stripe lock was already held on acquire attempt."""
+        return self._contention_count
+
+    def acquire_with_contention_tracking(self, content_hash: str) -> threading.Lock:
+        """Acquire stripe lock and track contention (Issue #1752)."""
+        lock = self.acquire_for(content_hash)
+        if not lock.acquire(blocking=False):
+            self._contention_count += 1
+            lock.acquire()
+        return lock
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +498,33 @@ class CASBlobStore:
             if tmp_path is not None and tmp_path.exists():
                 with contextlib.suppress(OSError):
                     tmp_path.unlink()
+
+    def hold_reference(self, content_hash: str) -> bool:
+        """Increment ref_count for existing blob to prevent GC (Issue #1752).
+
+        Used by transactional snapshots to hold a reference to the
+        pre-modification content so it cannot be garbage collected
+        during the transaction window.
+
+        Args:
+            content_hash: Hash of the content to hold.
+
+        Returns:
+            True if hold was acquired (blob exists and ref_count incremented),
+            False if blob does not exist.
+        """
+        lock = self._meta_locks.acquire_for(content_hash)
+        with lock:
+            if not self.blob_exists(content_hash):
+                return False
+            meta = self.read_meta(content_hash)
+            self.write_meta(content_hash, meta.inc_ref())
+            return True
+
+    @property
+    def stripe_lock_contention(self) -> int:
+        """Contention metric for stripe locks (Issue #1752)."""
+        return self._meta_locks.contention_count
 
     def release(self, content_hash: str) -> bool:
         """Decrement ref_count; delete blob + meta when it reaches zero.

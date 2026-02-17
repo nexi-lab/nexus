@@ -248,6 +248,7 @@ class TestBootBrickServices:
             "lock_manager",
             "workflow_engine",
             "api_key_creator",
+            "snapshot_service",
         }
         assert expected_keys == set(result.keys())
 

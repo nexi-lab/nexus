@@ -45,9 +45,7 @@ class TestWritePathTracking:
         if _snapshot_svc is not None:
             _txn_id = _snapshot_svc.is_tracked(path)
             if _txn_id is not None:
-                _snapshot_svc.track_write(
-                    _txn_id, path, "hash", {}, "new-hash"
-                )
+                _snapshot_svc.track_write(_txn_id, path, "hash", {}, "new-hash")
 
         mock_svc.track_write.assert_not_called()
 
@@ -75,9 +73,7 @@ class TestDeletePathTracking:
         if _snapshot_svc is not None:
             _txn_id = _snapshot_svc.is_tracked(path)
             if _txn_id is not None:
-                _snapshot_svc.track_delete(
-                    _txn_id, path, snapshot_hash, metadata_snapshot
-                )
+                _snapshot_svc.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
 
         mock_svc.track_delete.assert_called_once_with(
             "txn-1", "/file.txt", "old-hash", {"size": 100, "version": 1}

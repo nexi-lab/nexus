@@ -66,10 +66,7 @@ class TestCASHoldConcurrent:
         num_threads = 20
 
         with ThreadPoolExecutor(max_workers=num_threads) as pool:
-            futures = [
-                pool.submit(mock_hold_reference, "abc123def456")
-                for _ in range(num_threads)
-            ]
+            futures = [pool.submit(mock_hold_reference, "abc123def456") for _ in range(num_threads)]
             results = [f.result() for f in futures]
 
         assert all(results)

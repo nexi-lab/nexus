@@ -395,9 +395,7 @@ class TransactionalSnapshotService:
         return _model_to_info(updated)
 
     @staticmethod
-    def _restore_metadata_from_snapshot(
-        path: str, original_hash: str, metadata_json: str
-    ) -> Any:
+    def _restore_metadata_from_snapshot(path: str, original_hash: str, metadata_json: str) -> Any:
         """Build a FileMetadata from a JSON snapshot (used during rollback)."""
         from nexus.core._metadata_generated import FileMetadata
 
@@ -469,7 +467,9 @@ class TransactionalSnapshotService:
                             entry.original_hash,
                         )
             except Exception:
-                logger.exception("Failed to rollback entry: path=%s txn=%s", entry.path, transaction_id)
+                logger.exception(
+                    "Failed to rollback entry: path=%s txn=%s", entry.path, transaction_id
+                )
 
         # Release CAS holds (original content no longer needs protection)
         for entry in entries:
@@ -591,6 +591,7 @@ class TransactionalSnapshotService:
         for txn_id in expired_ids:
             try:
                 await self.rollback(txn_id)
+
                 # Mark as expired (not just rolled_back)
                 def _mark_expired(tid: str = txn_id) -> None:
                     from nexus.storage.models.transaction_snapshot import TransactionSnapshotModel

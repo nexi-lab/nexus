@@ -137,8 +137,12 @@ def _to_response(info: Any) -> TransactionResponse:
         agent_id=info.agent_id,
         status=info.status,
         description=info.description,
-        created_at=info.created_at.isoformat() if isinstance(info.created_at, datetime) else str(info.created_at),
-        expires_at=info.expires_at.isoformat() if isinstance(info.expires_at, datetime) else str(info.expires_at),
+        created_at=info.created_at.isoformat()
+        if isinstance(info.created_at, datetime)
+        else str(info.created_at),
+        expires_at=info.expires_at.isoformat()
+        if isinstance(info.expires_at, datetime)
+        else str(info.expires_at),
         entry_count=info.entry_count,
     )
 
@@ -152,7 +156,9 @@ def _entry_to_response(entry: Any) -> SnapshotEntryResponse:
         operation=entry.operation,
         original_hash=entry.original_hash,
         new_hash=entry.new_hash,
-        created_at=entry.created_at.isoformat() if isinstance(entry.created_at, datetime) else str(entry.created_at),
+        created_at=entry.created_at.isoformat()
+        if isinstance(entry.created_at, datetime)
+        else str(entry.created_at),
     )
 
 
@@ -204,9 +210,7 @@ async def list_transactions(
         raise HTTPException(status_code=500, detail="Failed to list transactions") from e
 
 
-async def _verify_zone_ownership(
-    snapshot_service: Any, txn_id: str, zone_id: str
-) -> Any:
+async def _verify_zone_ownership(snapshot_service: Any, txn_id: str, zone_id: str) -> Any:
     """Verify transaction exists and belongs to the caller's zone.
 
     Returns the TransactionInfo if valid, raises 404 otherwise.

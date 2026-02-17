@@ -31,9 +31,7 @@ class TestInit:
         assert not worker.is_running
 
     def test_custom_config(self, mock_snapshot_service: MagicMock) -> None:
-        worker = SnapshotCleanupWorker(
-            mock_snapshot_service, sweep_interval=60.0, batch_limit=50
-        )
+        worker = SnapshotCleanupWorker(mock_snapshot_service, sweep_interval=60.0, batch_limit=50)
         assert worker._sweep_interval == 60.0
         assert worker._batch_limit == 50
 
@@ -69,13 +67,9 @@ class TestSweep:
     """Tests for cleanup sweep behavior."""
 
     @pytest.mark.asyncio
-    async def test_sweep_calls_cleanup_expired(
-        self, mock_snapshot_service: MagicMock
-    ) -> None:
+    async def test_sweep_calls_cleanup_expired(self, mock_snapshot_service: MagicMock) -> None:
         mock_snapshot_service.cleanup_expired = AsyncMock(return_value=3)
-        worker = SnapshotCleanupWorker(
-            mock_snapshot_service, sweep_interval=0.01, batch_limit=50
-        )
+        worker = SnapshotCleanupWorker(mock_snapshot_service, sweep_interval=0.01, batch_limit=50)
         await worker.start()
         # Wait for at least one sweep
         await asyncio.sleep(0.05)
@@ -88,9 +82,7 @@ class TestErrors:
     """Tests for error handling during sweep."""
 
     @pytest.mark.asyncio
-    async def test_sweep_error_does_not_stop_worker(
-        self, mock_snapshot_service: MagicMock
-    ) -> None:
+    async def test_sweep_error_does_not_stop_worker(self, mock_snapshot_service: MagicMock) -> None:
         """Worker should continue running even if a sweep fails."""
         call_count = 0
 
@@ -102,9 +94,7 @@ class TestErrors:
             return 0
 
         mock_snapshot_service.cleanup_expired = failing_cleanup
-        worker = SnapshotCleanupWorker(
-            mock_snapshot_service, sweep_interval=0.01
-        )
+        worker = SnapshotCleanupWorker(mock_snapshot_service, sweep_interval=0.01)
         await worker.start()
         await asyncio.sleep(0.05)
         assert worker.is_running

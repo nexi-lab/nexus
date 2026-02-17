@@ -97,9 +97,7 @@ class TestBegin:
     async def test_begin_with_description(
         self, snapshot_service: TransactionalSnapshotService
     ) -> None:
-        info = await snapshot_service.begin(
-            zone_id="zone-1", description="Test transaction"
-        )
+        info = await snapshot_service.begin(zone_id="zone-1", description="Test transaction")
         assert info.description == "Test transaction"
 
     @pytest.mark.asyncio
@@ -226,16 +224,12 @@ class TestCommit:
     """Tests for commit()."""
 
     @pytest.mark.asyncio
-    async def test_commit_not_found(
-        self, snapshot_service: TransactionalSnapshotService
-    ) -> None:
+    async def test_commit_not_found(self, snapshot_service: TransactionalSnapshotService) -> None:
         with pytest.raises(TransactionNotFoundError):
             await snapshot_service.commit("nonexistent")
 
     @pytest.mark.asyncio
-    async def test_commit_not_active(
-        self, snapshot_service: TransactionalSnapshotService
-    ) -> None:
+    async def test_commit_not_active(self, snapshot_service: TransactionalSnapshotService) -> None:
         """Commit on a non-active transaction should raise."""
         # We need to set up a committed transaction in the mock store
         from nexus.storage.models.transaction_snapshot import TransactionSnapshotModel
@@ -362,9 +356,7 @@ class TestRollback:
     """Tests for rollback()."""
 
     @pytest.mark.asyncio
-    async def test_rollback_not_found(
-        self, snapshot_service: TransactionalSnapshotService
-    ) -> None:
+    async def test_rollback_not_found(self, snapshot_service: TransactionalSnapshotService) -> None:
         with pytest.raises(TransactionNotFoundError):
             await snapshot_service.rollback("nonexistent")
 
@@ -396,13 +388,15 @@ class TestRollback:
             path="/file.txt",
             operation="write",
             original_hash="original-hash",
-            original_metadata=json.dumps({
-                "size": 100,
-                "version": 1,
-                "created_at": now.isoformat(),
-                "modified_at": now.isoformat(),
-                "zone_id": "root",
-            }),
+            original_metadata=json.dumps(
+                {
+                    "size": 100,
+                    "version": 1,
+                    "created_at": now.isoformat(),
+                    "modified_at": now.isoformat(),
+                    "zone_id": "root",
+                }
+            ),
             new_hash="new-hash",
             created_at=now,
         )
@@ -524,9 +518,7 @@ class TestListTransactions:
     """Tests for list_transactions()."""
 
     @pytest.mark.asyncio
-    async def test_list_empty(
-        self, snapshot_service: TransactionalSnapshotService
-    ) -> None:
+    async def test_list_empty(self, snapshot_service: TransactionalSnapshotService) -> None:
         session = MagicMock()
         session.__enter__ = MagicMock(return_value=session)
         session.__exit__ = MagicMock(return_value=False)
@@ -541,9 +533,7 @@ class TestCleanup:
     """Tests for cleanup_expired()."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_no_expired(
-        self, snapshot_service: TransactionalSnapshotService
-    ) -> None:
+    async def test_cleanup_no_expired(self, snapshot_service: TransactionalSnapshotService) -> None:
         session = MagicMock()
         session.__enter__ = MagicMock(return_value=session)
         session.__exit__ = MagicMock(return_value=False)

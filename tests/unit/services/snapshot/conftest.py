@@ -32,7 +32,13 @@ class FakeSession:
 
     def commit(self) -> None:
         for obj in self._pending:
-            pk_attr = "transaction_id" if hasattr(obj, "transaction_id") and hasattr(obj, "status") and not hasattr(obj, "entry_id") else "entry_id"
+            pk_attr = (
+                "transaction_id"
+                if hasattr(obj, "transaction_id")
+                and hasattr(obj, "status")
+                and not hasattr(obj, "entry_id")
+                else "entry_id"
+            )
             pk = getattr(obj, pk_attr, None)
             if pk:
                 self._store[pk] = obj

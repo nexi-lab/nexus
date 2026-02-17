@@ -33,6 +33,12 @@ from nexus.services.protocols.transactional_snapshot import (
     TransactionResult,
     TransactionState,
 )
+from nexus.services.snapshot_tracing import (
+    record_begin_result,
+    record_cleanup_result,
+    record_rollback_result,
+    start_snapshot_span,
+)
 from nexus.storage.models.transactional_snapshot import TransactionSnapshotModel
 
 if TYPE_CHECKING:
@@ -77,74 +83,79 @@ class TransactionalSnapshotService:
         context: OperationContext | None = None,  # noqa: ARG002
     ) -> SnapshotId:
         """Create COW snapshot of specified paths."""
-        # Validate inputs
-        if not paths:
-            raise ValueError("paths must not be empty")
-        if len(paths) > self._config.max_paths_per_transaction:
-            raise ValueError(
-                f"paths exceeds max ({len(paths)} > {self._config.max_paths_per_transaction})"
-            )
+        with start_snapshot_span(
+            "begin", agent_id=agent_id, zone_id=zone_id, path_count=len(paths)
+        ) as _span:
+            # Validate inputs
+            if not paths:
+                raise ValueError("paths must not be empty")
+            if len(paths) > self._config.max_paths_per_transaction:
+                raise ValueError(
+                    f"paths exceeds max ({len(paths)} > {self._config.max_paths_per_transaction})"
+                )
 
-        # Check for overlapping active transactions on same agent
-        await self._check_overlap(agent_id, paths, zone_id)
+            # Check for overlapping active transactions on same agent
+            await self._check_overlap(agent_id, paths, zone_id)
 
-        # Materialize current metadata (short scope: batch read then release)
-        current_metadata = self._metadata.get_batch(paths)
+            # Materialize current metadata (short scope: batch read then release)
+            current_metadata = self._metadata.get_batch(paths)
 
-        # Build snapshot data
-        snapshot_data: dict[str, dict[str, Any]] = {}
-        for path in paths:
-            meta = current_metadata.get(path)
-            if meta is not None and meta.etag is not None:
-                snapshot_data[path] = {
-                    "content_hash": meta.etag,
-                    "size": meta.size,
-                    "metadata_json": _serialize_metadata(meta),
-                    "existed": True,
-                }
-            else:
-                snapshot_data[path] = {
-                    "content_hash": None,
-                    "size": 0,
-                    "metadata_json": None,
-                    "existed": False,
-                }
+            # Build snapshot data
+            snapshot_data: dict[str, dict[str, Any]] = {}
+            for path in paths:
+                meta = current_metadata.get(path)
+                if meta is not None and meta.etag is not None:
+                    snapshot_data[path] = {
+                        "content_hash": meta.etag,
+                        "size": meta.size,
+                        "metadata_json": _serialize_metadata(meta),
+                        "existed": True,
+                    }
+                else:
+                    snapshot_data[path] = {
+                        "content_hash": None,
+                        "size": 0,
+                        "metadata_json": None,
+                        "existed": False,
+                    }
 
-        # Create DB record (short session)
-        now = datetime.now(UTC)
-        model = TransactionSnapshotModel(
-            agent_id=agent_id,
-            zone_id=zone_id,
-            status=TransactionState.ACTIVE,
-            paths_json=json.dumps(paths),
-            snapshot_data_json=json.dumps(snapshot_data),
-            path_count=len(paths),
-            created_at=now,
-            expires_at=now + timedelta(seconds=self._config.ttl_seconds),
-        )
-
-        with self._session_factory() as session:
-            session.add(model)
-            session.commit()
-            snapshot_id = model.snapshot_id
-
-        logger.info(
-            "[TransactionalSnapshot] begin: agent=%s paths=%d zone=%s id=%s",
-            agent_id,
-            len(paths),
-            zone_id,
-            snapshot_id,
-        )
-
-        if self._event_log is not None:
-            await self._event_log.append(
-                event_type="SNAPSHOT_BEGIN",
+            # Create DB record (short session)
+            now = datetime.now(UTC)
+            model = TransactionSnapshotModel(
                 agent_id=agent_id,
                 zone_id=zone_id,
-                payload={"snapshot_id": snapshot_id, "paths": paths},
+                status=TransactionState.ACTIVE,
+                paths_json=json.dumps(paths),
+                snapshot_data_json=json.dumps(snapshot_data),
+                path_count=len(paths),
+                created_at=now,
+                expires_at=now + timedelta(seconds=self._config.ttl_seconds),
             )
 
-        return SnapshotId(id=snapshot_id)
+            with self._session_factory() as session:
+                session.add(model)
+                session.commit()
+                snapshot_id = model.snapshot_id
+
+            logger.info(
+                "[TransactionalSnapshot] begin: agent=%s paths=%d zone=%s id=%s",
+                agent_id,
+                len(paths),
+                zone_id,
+                snapshot_id,
+            )
+
+            record_begin_result(_span, snapshot_id=snapshot_id)
+
+            if self._event_log is not None:
+                await self._event_log.append(
+                    event_type="SNAPSHOT_BEGIN",
+                    agent_id=agent_id,
+                    zone_id=zone_id,
+                    payload={"snapshot_id": snapshot_id, "paths": paths},
+                )
+
+            return SnapshotId(id=snapshot_id)
 
     # -----------------------------------------------------------------------
     # commit()
@@ -157,27 +168,28 @@ class TransactionalSnapshotService:
         context: OperationContext | None = None,  # noqa: ARG002
     ) -> None:
         """Release snapshot — changes are permanent."""
-        with self._session_factory() as session:
-            model = session.get(TransactionSnapshotModel, snapshot_id.id)
-            if model is None:
-                raise TransactionNotFoundError(snapshot_id.id)
+        with start_snapshot_span("commit", snapshot_id=snapshot_id.id):
+            with self._session_factory() as session:
+                model = session.get(TransactionSnapshotModel, snapshot_id.id)
+                if model is None:
+                    raise TransactionNotFoundError(snapshot_id.id)
 
-            if model.status != TransactionState.ACTIVE:
-                raise InvalidTransactionStateError(
-                    snapshot_id.id, TransactionState(model.status), "commit"
+                if model.status != TransactionState.ACTIVE:
+                    raise InvalidTransactionStateError(
+                        snapshot_id.id, TransactionState(model.status), "commit"
+                    )
+
+                model.status = TransactionState.COMMITTED
+                model.committed_at = datetime.now(UTC)
+                session.commit()
+
+            logger.info("[TransactionalSnapshot] commit: id=%s", snapshot_id.id)
+
+            if self._event_log is not None:
+                await self._event_log.append(
+                    event_type="SNAPSHOT_COMMITTED",
+                    payload={"snapshot_id": snapshot_id.id},
                 )
-
-            model.status = TransactionState.COMMITTED
-            model.committed_at = datetime.now(UTC)
-            session.commit()
-
-        logger.info("[TransactionalSnapshot] commit: id=%s", snapshot_id.id)
-
-        if self._event_log is not None:
-            await self._event_log.append(
-                event_type="SNAPSHOT_COMMITTED",
-                payload={"snapshot_id": snapshot_id.id},
-            )
 
     # -----------------------------------------------------------------------
     # rollback()
@@ -190,6 +202,12 @@ class TransactionalSnapshotService:
         context: OperationContext | None = None,  # noqa: ARG002
     ) -> TransactionResult:
         """Restore all paths to pre-snapshot state with conflict detection."""
+        with start_snapshot_span("rollback", snapshot_id=snapshot_id.id) as _span:
+            return await self._rollback_inner(snapshot_id, _span)
+
+    async def _rollback_inner(
+        self, snapshot_id: SnapshotId, span: Any
+    ) -> TransactionResult:
         # Session 1: Read snapshot + validate state
         with self._session_factory() as session:
             model = session.get(TransactionSnapshotModel, snapshot_id.id)
@@ -304,6 +322,13 @@ class TransactionalSnapshotService:
             len(deleted),
         )
 
+        record_rollback_result(
+            span,
+            reverted=len(reverted),
+            conflicts=len(conflicts),
+            deleted=len(deleted),
+        )
+
         if self._event_log is not None:
             await self._event_log.append(
                 event_type="SNAPSHOT_ROLLED_BACK",
@@ -364,21 +389,23 @@ class TransactionalSnapshotService:
 
     async def cleanup_expired(self) -> int:
         """Expire ACTIVE transactions past their TTL."""
-        now = datetime.now(UTC)
-        with self._session_factory() as session:
-            stmt = select(TransactionSnapshotModel).where(
-                TransactionSnapshotModel.status == TransactionState.ACTIVE,
-                TransactionSnapshotModel.expires_at < now,
-            )
-            expired_models = list(session.execute(stmt).scalars())
-            for model in expired_models:
-                model.status = TransactionState.EXPIRED
-            session.commit()
+        with start_snapshot_span("cleanup") as _span:
+            now = datetime.now(UTC)
+            with self._session_factory() as session:
+                stmt = select(TransactionSnapshotModel).where(
+                    TransactionSnapshotModel.status == TransactionState.ACTIVE,
+                    TransactionSnapshotModel.expires_at < now,
+                )
+                expired_models = list(session.execute(stmt).scalars())
+                for model in expired_models:
+                    model.status = TransactionState.EXPIRED
+                session.commit()
 
-        if expired_models:
-            logger.info("[TransactionalSnapshot] expired %d transactions", len(expired_models))
+            if expired_models:
+                logger.info("[TransactionalSnapshot] expired %d transactions", len(expired_models))
 
-        return len(expired_models)
+            record_cleanup_result(_span, expired_count=len(expired_models))
+            return len(expired_models)
 
     # -----------------------------------------------------------------------
     # Internal helpers

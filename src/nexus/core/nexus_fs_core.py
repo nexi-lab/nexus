@@ -621,7 +621,7 @@ class NexusFSCoreMixin:
             # There's a running event loop - write(lock=True) won't work properly
             raise RuntimeError(
                 "write(lock=True) cannot be used from async context (event loop detected). "
-                "Use `async with nx.locked(path):` and `write(lock=False)` instead."
+                "Use `async with nx.events_service.locked(path):` and `write(lock=False)` instead."
             )
         except RuntimeError as e:
             if "event loop detected" in str(e):
@@ -2248,8 +2248,7 @@ class NexusFSCoreMixin:
                 "or pass coordination_url to NexusFS constructor."
             )
 
-        # self.locked() is from NexusFSEventsMixin
-        async with self.locked(path, timeout=timeout, ttl=ttl, _context=context):  # type: ignore[attr-defined]  # allowed
+        async with self.events_service.locked(path, timeout=timeout, ttl=ttl, _context=context):
             # Read current content (return_metadata=False ensures bytes return)
             content = self.read(path, context=context, return_metadata=False)
             assert isinstance(content, bytes), "Expected bytes from read()"

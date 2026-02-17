@@ -567,13 +567,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
             )
 
-            _app.state.search_daemon = SearchDaemon(config)
+            # Inject async_session_factory from RecordStoreABC (Issue #615)
+            _record_store = getattr(_app.state.nexus_fs, "_record_store", None)
+            _async_sf = None
+            if _record_store is not None:
+                with suppress(Exception):
+                    _async_sf = _record_store.async_session_factory
+
+            _app.state.search_daemon = SearchDaemon(config, async_session_factory=_async_sf)
             await _app.state.search_daemon.startup()
             _app.state.search_daemon_enabled = True
             set_search_daemon(_app.state.search_daemon)
 
-            # Set NexusFS reference for index refresh (Issue #1024)
-            _app.state.search_daemon._nexus_fs = _app.state.nexus_fs
+            # Issue #1520: Set FileReaderProtocol for index refresh
+            from nexus.factory import _NexusFSFileReader
+
+            _app.state.search_daemon._file_reader = _NexusFSFileReader(_app.state.nexus_fs)
 
             stats = _app.state.search_daemon.get_stats()
             logger.info(
@@ -1260,6 +1269,34 @@ def create_app(
             app.state.async_session_factory = None
     else:
         app.state.async_session_factory = None
+
+    # Expose sync session_factory from RecordStoreABC (Issue #1519).
+    # This is the canonical way for sync endpoints to get database sessions
+    # without reaching into NexusFS.SessionLocal internals.
+    if _record_store is not None:
+        app.state.session_factory = _record_store.session_factory
+    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+        app.state.session_factory = nexus_fs.SessionLocal
+    else:
+        app.state.session_factory = None
+
+    # Expose read replica factories (Issue #725).
+    # Read-only routes (graph, search) use these for read replica routing.
+    if _record_store is not None:
+        app.state.read_session_factory = _record_store.read_session_factory
+        try:
+            app.state.async_read_session_factory = _record_store.async_read_session_factory
+        except NotImplementedError:
+            app.state.async_read_session_factory = None
+    else:
+        app.state.read_session_factory = None
+        app.state.async_read_session_factory = None
+
+    # Expose kernel services on app.state so routers never reach into
+    # NexusFS private attributes (Issue #701).
+    app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
+    app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
+    app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
 
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(

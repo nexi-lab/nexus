@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.types import OperationContext, Permission  # noqa: F401
+from nexus.contracts.types import OperationContext, Permission  # noqa: F401
 
 if TYPE_CHECKING:
     from nexus.services.permissions.enforcer import PermissionEnforcer as PermissionEnforcer

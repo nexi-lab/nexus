@@ -111,6 +111,22 @@ def get_async_session_factory(request: Request) -> Any:
     return factory
 
 
+def get_async_read_session_factory(request: Request) -> Any:
+    """Get async read session factory for read-only operations (Issue #725).
+
+    Returns the read replica async session factory if configured,
+    otherwise falls back to the primary async session factory.
+
+    This is the correct dependency for read-only async endpoints
+    (graph queries, search queries) to leverage read replicas.
+    """
+    factory = getattr(request.app.state, "async_read_session_factory", None)
+    if factory is not None:
+        return factory
+    # Fall back to primary async session factory
+    return get_async_session_factory(request)
+
+
 def get_operation_timeout(request: Request) -> float:
     """Get operation timeout from app.state (default: 30.0s)."""
     return getattr(request.app.state, "operation_timeout", 30.0)

@@ -198,13 +198,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "WatchProtocol",
         "nexus.services.protocols.watch",
-        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
+        "nexus.services.events_service.EventsService",
         True,  # wait_for_changes method match
     ),
     (
         "LockProtocol",
         "nexus.services.protocols.lock",
-        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
+        "nexus.services.events_service.EventsService",
         True,  # lock/extend_lock/unlock methods match
     ),
     # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
@@ -263,7 +263,6 @@ def test_service_protocol_compliance(
 
 _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
-    ("context_manifest", "nexus/services/protocols/context_manifest.py"),
     ("event_log", "nexus/services/protocols/event_log.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),

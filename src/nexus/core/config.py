@@ -144,6 +144,9 @@ class KernelServices:
     # Cache invalidation (Issue #1169 / #1519)
     cache_observer: CacheInvalidationObserver | None = None
 
+    # --- Tier 1.5: SYSTEM SERVICE — Brick Lifecycle Manager (Issue #1704) ---
+    brick_lifecycle_manager: Any = None
+
     # --- Tier 2: BRICK — infrastructure ---
     event_bus: Any = None
     lock_manager: Any = None
@@ -175,6 +178,14 @@ class KernelServices:
     rebac_service: Any = None
     search_service: Any = None
     events_service: Any = None
+
+    # Mount/sync/task-queue services (Issue #655)
+    # When set, NexusFS uses these instead of creating via @cached_property.
+    mount_core_service: Any = None
+    sync_service: Any = None
+    sync_job_service: Any = None
+    mount_persist_service: Any = None
+    task_queue_service: Any = None
 
 
 # ---------------------------------------------------------------------------

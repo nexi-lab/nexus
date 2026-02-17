@@ -129,11 +129,6 @@ def _is_federation_syntax(source: str, target: str | None) -> bool:
     default=None,
     help="[FUSE] Agent ID for version attribution",
 )
-@click.option(
-    "--use-rust",
-    is_flag=True,
-    help="[FUSE] Use high-performance Rust FUSE daemon (10-100x faster)",
-)
 # --- Federation options ---
 @click.option(
     "--node-id",
@@ -189,7 +184,6 @@ def mount(
     allow_other: bool,
     debug: bool,
     agent_id: str | None,
-    use_rust: bool,
     node_id: int,
     data_dir: str,
     bind: str,
@@ -213,7 +207,7 @@ def mount(
     if _is_federation_syntax(source, target):
         _mount_federation(source, target, node_id, data_dir, bind, tls_cert, tls_key, tls_ca)
     else:
-        _mount_fuse(source, mode, daemon, allow_other, debug, agent_id, use_rust, backend_config)
+        _mount_fuse(source, mode, daemon, allow_other, debug, agent_id, backend_config)
 
 
 def _mount_federation(
@@ -294,7 +288,6 @@ def _mount_fuse(
     allow_other: bool,
     debug: bool,
     agent_id: str | None,
-    use_rust: bool,
     backend_config: BackendConfig,
 ) -> None:
     """FUSE mount — lazy imports nexus.fuse to stay decoupled from federation."""
@@ -377,7 +370,7 @@ def _mount_fuse(
             assert log_file is not None, "log_file must be set in daemon mode"
 
             # Configure logging to file with secret redaction (Issue #86)
-            from nexus.core.logging_utils import RedactingFormatter
+            from nexus.server.logging_processors import RedactingFormatter
 
             _fuse_formatter = RedactingFormatter(
                 "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -410,7 +403,6 @@ def _mount_fuse(
                     foreground=True,  # Run in foreground to keep daemon process alive
                     allow_other=allow_other,
                     debug=debug,
-                    use_rust=use_rust,
                 )
                 logging.info("Mount completed, waiting for unmount signal...")
             except Exception as e:
@@ -429,7 +421,6 @@ def _mount_fuse(
             foreground=False,  # Run in background thread
             allow_other=allow_other,
             debug=debug,
-            use_rust=use_rust,
         )
 
         console.print(f"[green]Mounted Nexus to [cyan]{mount_point}[/cyan][/green]")
@@ -599,17 +590,14 @@ def serve(
         from nexus.fuse import mount_nexus
         mount_nexus(nx, "/mnt/nexus")
     """
-    import logging
     import os
     import subprocess
 
-    from nexus.core.logging_utils import setup_logging
+    from nexus.server.logging_config import configure_logging
 
-    # Set up logging with secret redaction (Issue #86)
-    # Read redaction setting from env var (config hasn't loaded yet at this point)
-    _redaction_env = os.getenv("NEXUS_LOG_REDACTION_ENABLED", "true").lower()
-    _redaction_enabled = _redaction_env in ("true", "1", "yes", "on")
-    setup_logging(level=logging.INFO, redaction_enabled=_redaction_enabled)
+    # Set up structured logging with secret redaction (Issue #86 + #1002)
+    # configure_logging() reads NEXUS_LOG_REDACTION_ENABLED env var internally
+    configure_logging(env=os.getenv("NEXUS_ENV", "dev"), log_level="INFO")
 
     try:
         # ============================================
@@ -975,12 +963,10 @@ def serve(
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
-            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-            from nexus.auth.providers.database_local import DatabaseLocalAuth
-            from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.server.auth.factory import DiscriminatingAuthProvider
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1001,13 +987,8 @@ def serve(
                     "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
                 )
 
-            engine = create_engine(
-                db_url,
-                pool_pre_ping=True,
-                pool_recycle=1800,
-                pool_size=5,
-            )
-            session_factory = sessionmaker(bind=engine)
+            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            session_factory = _record_store.session_factory
 
             # Create composite provider that routes tokens to appropriate handler
             auth_provider = DiscriminatingAuthProvider(
@@ -1026,10 +1007,8 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
-            from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1048,13 +1027,8 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            engine = create_engine(
-                db_url,
-                pool_pre_ping=True,  # Test connections before use (fixes stale connection errors)
-                pool_recycle=1800,  # Recycle connections every 30 min
-                pool_size=5,  # Auth doesn't need many connections
-            )
-            session_factory = sessionmaker(bind=engine)
+            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            session_factory = _record_store.session_factory
             # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
             auth_provider = DatabaseLocalAuth(
                 session_factory=session_factory,
@@ -1154,9 +1128,12 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import create_engine, text
+            from sqlalchemy import text
 
-            engine = create_engine(db_url)
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            engine = _record_store.engine
 
             # List of tables to clear (in dependency order)
             tables_to_clear = [
@@ -1253,14 +1230,12 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
-            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.rebac.entity_registry import EntityRegistry
+            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            engine = create_engine(db_url)
-            Session = sessionmaker(bind=engine)
+            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            Session = _record_store.session_factory
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)

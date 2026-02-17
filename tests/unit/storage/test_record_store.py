@@ -83,23 +83,26 @@ class TestRecordStorePoolConfig:
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Use a PostgreSQL URL so pool config is applied
-        with patch("nexus.storage.record_store.SQLAlchemyRecordStore._resolve_db_url") as mock_url:
+        with (
+            patch("nexus.storage.record_store.SQLAlchemyRecordStore._resolve_db_url") as mock_url,
+            patch("sqlalchemy.create_engine") as mock_create,
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
             mock_url.return_value = "postgresql://test:test@localhost/test"
-            with patch("sqlalchemy.create_engine") as mock_create:
-                mock_create.return_value = MagicMock()
-                with patch("sqlalchemy.orm.sessionmaker") as mock_sm:
-                    mock_sm.return_value = MagicMock()
-                    SQLAlchemyRecordStore(
-                        db_url="postgresql://test:test@localhost/test",
-                        create_tables=False,
-                    )
+            mock_create.return_value = MagicMock()
+            mock_sm.return_value = MagicMock()
+            SQLAlchemyRecordStore(
+                db_url="postgresql://test:test@localhost/test",
+                create_tables=False,
+            )
 
-                    # Verify pool kwargs passed to create_engine
-                    call_kwargs = mock_create.call_args[1]
-                    assert call_kwargs["pool_size"] == 10
-                    assert call_kwargs["max_overflow"] == 15
-                    assert call_kwargs["pool_recycle"] == 900
-                    assert call_kwargs["pool_pre_ping"] is True
+            # Verify pool kwargs passed to create_engine
+            call_kwargs = mock_create.call_args[1]
+            assert call_kwargs["pool_size"] == 10
+            assert call_kwargs["max_overflow"] == 15
+            assert call_kwargs["pool_recycle"] == 900
+            assert call_kwargs["pool_pre_ping"] is True
 
     def test_pool_defaults_when_no_env_vars(self, monkeypatch):
         """Default pool_size=20, max_overflow=30 when env vars not set."""
@@ -109,19 +112,22 @@ class TestRecordStorePoolConfig:
 
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        with patch("sqlalchemy.create_engine") as mock_create:
+        with (
+            patch("sqlalchemy.create_engine") as mock_create,
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
             mock_create.return_value = MagicMock()
-            with patch("sqlalchemy.orm.sessionmaker") as mock_sm:
-                mock_sm.return_value = MagicMock()
-                SQLAlchemyRecordStore(
-                    db_url="postgresql://test:test@localhost/test",
-                    create_tables=False,
-                )
+            mock_sm.return_value = MagicMock()
+            SQLAlchemyRecordStore(
+                db_url="postgresql://test:test@localhost/test",
+                create_tables=False,
+            )
 
-                call_kwargs = mock_create.call_args[1]
-                assert call_kwargs["pool_size"] == 20
-                assert call_kwargs["max_overflow"] == 30
-                assert call_kwargs["pool_recycle"] == 1800
+            call_kwargs = mock_create.call_args[1]
+            assert call_kwargs["pool_size"] == 20
+            assert call_kwargs["max_overflow"] == 30
+            assert call_kwargs["pool_recycle"] == 1800
 
     def test_pool_pre_ping_enabled_for_postgresql(self, monkeypatch):
         """pool_pre_ping=True for PostgreSQL connections."""
@@ -131,17 +137,20 @@ class TestRecordStorePoolConfig:
 
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        with patch("sqlalchemy.create_engine") as mock_create:
+        with (
+            patch("sqlalchemy.create_engine") as mock_create,
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
             mock_create.return_value = MagicMock()
-            with patch("sqlalchemy.orm.sessionmaker") as mock_sm:
-                mock_sm.return_value = MagicMock()
-                SQLAlchemyRecordStore(
-                    db_url="postgresql://test:test@localhost/test",
-                    create_tables=False,
-                )
+            mock_sm.return_value = MagicMock()
+            SQLAlchemyRecordStore(
+                db_url="postgresql://test:test@localhost/test",
+                create_tables=False,
+            )
 
-                call_kwargs = mock_create.call_args[1]
-                assert call_kwargs["pool_pre_ping"] is True
+            call_kwargs = mock_create.call_args[1]
+            assert call_kwargs["pool_pre_ping"] is True
 
 
 class TestRecordStoreAsyncURLConversion:
@@ -161,12 +170,14 @@ class TestRecordStoreAsyncURLConversion:
         result = SQLAlchemyRecordStore._to_async_url("sqlite:///path/to/db")
         assert result == "sqlite+aiosqlite:///path/to/db"
 
-    def test_to_async_url_unknown_passthrough(self):
-        """Unknown URL schemes pass through unchanged."""
+    def test_to_async_url_unknown_raises_value_error(self):
+        """Unknown URL schemes raise ValueError (Issue #725 hardening)."""
+        import pytest
+
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        result = SQLAlchemyRecordStore._to_async_url("mysql://host/db")
-        assert result == "mysql://host/db"
+        with pytest.raises(ValueError, match="Unrecognized database URL scheme"):
+            SQLAlchemyRecordStore._to_async_url("mysql://host/db")
 
 
 class TestRecordStoreCreateTables:
@@ -204,18 +215,21 @@ class TestRecordStoreCreatorParams:
 
         mock_creator = MagicMock()
 
-        with patch("sqlalchemy.create_engine") as mock_create:
+        with (
+            patch("sqlalchemy.create_engine") as mock_create,
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
             mock_create.return_value = MagicMock()
-            with patch("sqlalchemy.orm.sessionmaker") as mock_sm:
-                mock_sm.return_value = MagicMock()
-                SQLAlchemyRecordStore(
-                    db_url="postgresql://placeholder",
-                    create_tables=False,
-                    creator=mock_creator,
-                )
+            mock_sm.return_value = MagicMock()
+            SQLAlchemyRecordStore(
+                db_url="postgresql://placeholder",
+                create_tables=False,
+                creator=mock_creator,
+            )
 
-                call_kwargs = mock_create.call_args[1]
-                assert call_kwargs["creator"] is mock_creator
+            call_kwargs = mock_create.call_args[1]
+            assert call_kwargs["creator"] is mock_creator
 
     def test_async_creator_param_stored_for_lazy_init(self, monkeypatch):
         """Async creator is stored and used when async_session_factory is accessed."""
@@ -227,17 +241,20 @@ class TestRecordStoreCreatorParams:
 
         mock_async_creator = MagicMock()
 
-        with patch("sqlalchemy.create_engine") as mock_create:
+        with (
+            patch("sqlalchemy.create_engine") as mock_create,
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
             mock_create.return_value = MagicMock()
-            with patch("sqlalchemy.orm.sessionmaker") as mock_sm:
-                mock_sm.return_value = MagicMock()
-                store = SQLAlchemyRecordStore(
-                    db_url="postgresql://placeholder",
-                    create_tables=False,
-                    async_creator=mock_async_creator,
-                )
+            mock_sm.return_value = MagicMock()
+            store = SQLAlchemyRecordStore(
+                db_url="postgresql://placeholder",
+                create_tables=False,
+                async_creator=mock_async_creator,
+            )
 
-                assert store._async_creator is mock_async_creator
+            assert store._async_creator is mock_async_creator
 
     def test_async_creator_param_passed_to_async_engine(self, monkeypatch):
         """Async creator passed to create_async_engine on first access."""
@@ -249,24 +266,30 @@ class TestRecordStoreCreatorParams:
 
         mock_async_creator = MagicMock()
 
-        with patch("sqlalchemy.create_engine") as mock_create:
+        with (
+            patch("sqlalchemy.create_engine") as mock_create,
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
             mock_create.return_value = MagicMock()
-            with patch("sqlalchemy.orm.sessionmaker") as mock_sm:
-                mock_sm.return_value = MagicMock()
-                store = SQLAlchemyRecordStore(
-                    db_url="postgresql://placeholder",
-                    create_tables=False,
-                    async_creator=mock_async_creator,
-                )
+            mock_sm.return_value = MagicMock()
+            store = SQLAlchemyRecordStore(
+                db_url="postgresql://placeholder",
+                create_tables=False,
+                async_creator=mock_async_creator,
+            )
 
-        with patch("sqlalchemy.ext.asyncio.create_async_engine") as mock_async_create:
+        with (
+            patch("sqlalchemy.ext.asyncio.create_async_engine") as mock_async_create,
+            patch("sqlalchemy.ext.asyncio.async_sessionmaker") as mock_asm,
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+        ):
             mock_async_create.return_value = MagicMock()
-            with patch("sqlalchemy.ext.asyncio.async_sessionmaker") as mock_asm:
-                mock_asm.return_value = MagicMock()
-                _ = store.async_session_factory
+            mock_asm.return_value = MagicMock()
+            _ = store.async_session_factory
 
-                call_kwargs = mock_async_create.call_args[1]
-                assert call_kwargs["async_creator"] is mock_async_creator
+            call_kwargs = mock_async_create.call_args[1]
+            assert call_kwargs["async_creator"] is mock_async_creator
 
 
 class TestRecordStoreAsyncSessionFactory:
@@ -327,3 +350,275 @@ class TestRecordStoreLifecycle:
         store = SQLAlchemyRecordStore(create_tables=False)
         assert store._async_engine is None
         store.close()  # Should not raise
+
+
+class TestReadReplicaConfiguration:
+    """Tests for read replica configuration (Issue #725)."""
+
+    def test_no_replica_returns_primary(self):
+        """When no read_replica_url, read properties return primary."""
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        assert store.read_engine is store.engine
+        assert store.read_session_factory is store.session_factory
+        assert store.has_read_replica is False
+        store.close()
+
+    def test_sqlite_ignores_read_replica_url(self):
+        """SQLite ignores read_replica_url (single-file DB has no replicas)."""
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(
+            db_url="sqlite:///:memory:",
+            read_replica_url="postgresql://fake@replica/db",
+            create_tables=False,
+        )
+        assert store.has_read_replica is False
+        assert store.read_engine is store.engine
+        store.close()
+
+    def test_postgresql_creates_separate_read_engine(self, monkeypatch):
+        """PostgreSQL with read_replica_url creates a separate read engine."""
+        monkeypatch.delenv("NEXUS_DB_POOL_SIZE", raising=False)
+        monkeypatch.delenv("NEXUS_DB_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("NEXUS_DB_POOL_RECYCLE", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_POOL_SIZE", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_POOL_RECYCLE", raising=False)
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        engines_created: list[tuple[str, MagicMock]] = []
+
+        def mock_create_engine(url, **kwargs):  # noqa: ARG001
+            mock_eng = MagicMock()
+            mock_eng.dialect.name = "postgresql"
+            engines_created.append((url, mock_eng))
+            return mock_eng
+
+        with (
+            patch("sqlalchemy.create_engine", side_effect=mock_create_engine),
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
+            mock_sm.return_value = MagicMock()
+            store = SQLAlchemyRecordStore(
+                db_url="postgresql://user:pass@primary/db",
+                read_replica_url="postgresql://user:pass@replica/db",
+                create_tables=False,
+            )
+
+            assert store.has_read_replica is True
+            assert len(engines_created) == 2
+            assert "primary" in engines_created[0][0]
+            assert "replica" in engines_created[1][0]
+            assert store.read_engine is not store.engine
+
+    def test_read_engine_pool_config_from_env(self, monkeypatch):
+        """Read replica pool config reads from NEXUS_READ_REPLICA_* env vars."""
+        monkeypatch.setenv("NEXUS_READ_REPLICA_POOL_SIZE", "15")
+        monkeypatch.setenv("NEXUS_READ_REPLICA_MAX_OVERFLOW", "20")
+        monkeypatch.setenv("NEXUS_READ_REPLICA_POOL_RECYCLE", "600")
+        monkeypatch.delenv("NEXUS_DB_POOL_SIZE", raising=False)
+        monkeypatch.delenv("NEXUS_DB_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("NEXUS_DB_POOL_RECYCLE", raising=False)
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        create_calls: list[tuple[str, dict]] = []
+
+        def mock_create_engine(url, **kwargs):
+            create_calls.append((url, kwargs))
+            mock_eng = MagicMock()
+            mock_eng.dialect.name = "postgresql"
+            return mock_eng
+
+        with (
+            patch("sqlalchemy.create_engine", side_effect=mock_create_engine),
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
+            mock_sm.return_value = MagicMock()
+            SQLAlchemyRecordStore(
+                db_url="postgresql://user:pass@primary/db",
+                read_replica_url="postgresql://user:pass@replica/db",
+                create_tables=False,
+            )
+
+            # Second create_engine call is for the replica
+            replica_kwargs = create_calls[1][1]
+            assert replica_kwargs["pool_size"] == 15
+            assert replica_kwargs["max_overflow"] == 20
+            assert replica_kwargs["pool_recycle"] == 600
+
+    def test_close_disposes_read_engine(self, monkeypatch):
+        """close() disposes read replica engines."""
+        monkeypatch.delenv("NEXUS_DB_POOL_SIZE", raising=False)
+        monkeypatch.delenv("NEXUS_DB_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("NEXUS_DB_POOL_RECYCLE", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_POOL_SIZE", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_POOL_RECYCLE", raising=False)
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        def mock_create_engine(_url, **_kwargs):
+            mock_eng = MagicMock()
+            mock_eng.dialect.name = "postgresql"
+            return mock_eng
+
+        with (
+            patch("sqlalchemy.create_engine", side_effect=mock_create_engine),
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
+            mock_sm.return_value = MagicMock()
+            store = SQLAlchemyRecordStore(
+                db_url="postgresql://user:pass@primary/db",
+                read_replica_url="postgresql://user:pass@replica/db",
+                create_tables=False,
+            )
+
+            assert store._read_engine is not None
+            read_engine = store._read_engine
+            store.close()
+            read_engine.dispose.assert_called_once()
+            assert store._read_engine is None
+            assert store._read_session_factory_instance is None
+
+    def test_has_read_replica_returns_correct_bool(self, monkeypatch):
+        """has_read_replica returns True only when replica is configured for PostgreSQL."""
+        monkeypatch.delenv("NEXUS_DB_POOL_SIZE", raising=False)
+        monkeypatch.delenv("NEXUS_DB_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("NEXUS_DB_POOL_RECYCLE", raising=False)
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        # Without replica
+        store_no_replica = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=False)
+        assert store_no_replica.has_read_replica is False
+        store_no_replica.close()
+
+        # With replica (PostgreSQL mock)
+        def mock_create_engine(_url, **_kwargs):
+            mock_eng = MagicMock()
+            mock_eng.dialect.name = "postgresql"
+            return mock_eng
+
+        with (
+            patch("sqlalchemy.create_engine", side_effect=mock_create_engine),
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
+            mock_sm.return_value = MagicMock()
+            store_with_replica = SQLAlchemyRecordStore(
+                db_url="postgresql://user:pass@primary/db",
+                read_replica_url="postgresql://user:pass@replica/db",
+                create_tables=False,
+            )
+            assert store_with_replica.has_read_replica is True
+
+    def test_build_pool_kwargs_helper(self, monkeypatch):
+        """_build_pool_kwargs reads env vars and applies defaults correctly."""
+        monkeypatch.setenv("TEST_PREFIX_POOL_SIZE", "5")
+        monkeypatch.setenv("TEST_PREFIX_MAX_OVERFLOW", "8")
+        monkeypatch.delenv("TEST_PREFIX_POOL_RECYCLE", raising=False)
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        # With env vars
+        kwargs = SQLAlchemyRecordStore._build_pool_kwargs(prefix="TEST_PREFIX", is_async=False)
+        assert kwargs["pool_size"] == 5
+        assert kwargs["max_overflow"] == 8
+        assert kwargs["pool_recycle"] == 1800  # default
+        assert kwargs["pool_pre_ping"] is True
+        assert "pool_use_lifo" not in kwargs
+
+        # With is_async=True
+        kwargs_async = SQLAlchemyRecordStore._build_pool_kwargs(prefix="TEST_PREFIX", is_async=True)
+        assert kwargs_async["pool_use_lifo"] is True
+
+        # With custom defaults
+        monkeypatch.delenv("TEST_PREFIX_POOL_SIZE", raising=False)
+        monkeypatch.delenv("TEST_PREFIX_MAX_OVERFLOW", raising=False)
+        kwargs_custom = SQLAlchemyRecordStore._build_pool_kwargs(
+            prefix="TEST_PREFIX",
+            is_async=False,
+            default_pool_size=42,
+            default_max_overflow=99,
+            default_pool_recycle=300,
+        )
+        assert kwargs_custom["pool_size"] == 42
+        assert kwargs_custom["max_overflow"] == 99
+        assert kwargs_custom["pool_recycle"] == 300
+
+    def test_to_async_url_all_drivers(self):
+        """_to_async_url handles postgresql+psycopg2, postgresql+pg8000, sqlite://."""
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        # postgresql+psycopg2
+        assert (
+            SQLAlchemyRecordStore._to_async_url("postgresql+psycopg2://h/db")
+            == "postgresql+asyncpg://h/db"
+        )
+        # postgresql+pg8000
+        assert (
+            SQLAlchemyRecordStore._to_async_url("postgresql+pg8000://h/db")
+            == "postgresql+asyncpg://h/db"
+        )
+        # sqlite:// (no extra slash)
+        assert (
+            SQLAlchemyRecordStore._to_async_url("sqlite://:memory:")
+            == "sqlite+aiosqlite://:memory:"
+        )
+        # sqlite:/// (three slashes)
+        assert (
+            SQLAlchemyRecordStore._to_async_url("sqlite:///path/to/db")
+            == "sqlite+aiosqlite:///path/to/db"
+        )
+        # Already async URLs pass through
+        assert (
+            SQLAlchemyRecordStore._to_async_url("postgresql+asyncpg://h/db")
+            == "postgresql+asyncpg://h/db"
+        )
+        assert (
+            SQLAlchemyRecordStore._to_async_url("sqlite+aiosqlite:///db")
+            == "sqlite+aiosqlite:///db"
+        )
+
+    def test_primary_pool_shrinks_with_replica(self, monkeypatch):
+        """Primary pool defaults shrink to 10/10 when replica is configured."""
+        monkeypatch.delenv("NEXUS_DB_POOL_SIZE", raising=False)
+        monkeypatch.delenv("NEXUS_DB_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("NEXUS_DB_POOL_RECYCLE", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_POOL_SIZE", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("NEXUS_READ_REPLICA_POOL_RECYCLE", raising=False)
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        create_calls = []
+
+        def mock_create_engine(url, **kwargs):
+            create_calls.append((url, kwargs))
+            mock_eng = MagicMock()
+            mock_eng.dialect.name = "postgresql"
+            return mock_eng
+
+        with (
+            patch("sqlalchemy.create_engine", side_effect=mock_create_engine),
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch("sqlalchemy.orm.sessionmaker") as mock_sm,
+        ):
+            mock_sm.return_value = MagicMock()
+            SQLAlchemyRecordStore(
+                db_url="postgresql://user:pass@primary/db",
+                read_replica_url="postgresql://user:pass@replica/db",
+                create_tables=False,
+            )
+
+            # First call = primary engine (shrunk pool)
+            primary_kwargs = create_calls[0][1]
+            assert primary_kwargs["pool_size"] == 10
+            assert primary_kwargs["max_overflow"] == 10

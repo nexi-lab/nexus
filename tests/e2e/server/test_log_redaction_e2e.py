@@ -82,7 +82,7 @@ def redaction_server(tmp_path, monkeypatch):
             (
                 f"from nexus.cli import main; "
                 f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
-                f"'--data-dir', '{tmp_path}'])"
+                f"'--data-dir', '{tmp_path}', '--init', '--auth-type', 'database'])"
             ),
         ],
         env=env,
@@ -234,7 +234,7 @@ def test_log_redaction_disabled_e2e(tmp_path, monkeypatch) -> None:
             (
                 f"from nexus.cli import main; "
                 f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
-                f"'--data-dir', '{tmp_path}'])"
+                f"'--data-dir', '{tmp_path}', '--init', '--auth-type', 'database'])"
             ),
         ],
         env=env,

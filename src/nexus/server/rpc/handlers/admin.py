@@ -26,8 +26,8 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     import uuid
     from datetime import timedelta
 
+    from nexus.rebac.entity_registry import EntityRegistry
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-    from nexus.services.permissions.entity_registry import EntityRegistry
 
     require_admin(context)
 

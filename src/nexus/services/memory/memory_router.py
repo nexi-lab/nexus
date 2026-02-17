@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from nexus.storage.models import MemoryModel, VersionHistoryModel
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.rebac.entity_registry import EntityRegistry
 
 
 class MemoryViewRouter:

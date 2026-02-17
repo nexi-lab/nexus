@@ -19,8 +19,8 @@ from nexus.core.hash_fast import hash_content
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
+    from nexus.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
-    from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
@@ -979,7 +979,7 @@ class NexusFS(  # type: ignore[misc]
         Consolidates 7 deferred import sites (Issue #1291).
         """
         if self._entity_registry is None:
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
         return self._entity_registry

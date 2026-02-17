@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)

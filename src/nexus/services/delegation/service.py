@@ -51,8 +51,8 @@ from nexus.services.delegation.models import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
+    from nexus.rebac.entity_registry import EntityRegistry
     from nexus.services.agents.agent_registry import AgentRegistry
-    from nexus.services.permissions.entity_registry import EntityRegistry
     from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.services.reputation.reputation_service import ReputationService

@@ -18,6 +18,7 @@ from nexus.core.context_utils import (
     resolve_skill_base_path,
 )
 
+
 class TestGetZoneId:
     """Tests for get_zone_id function."""
 

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base
 
+
 class DeadLetterModel(Base):
     """Dead letter queue entry for failed event stream exports."""
 

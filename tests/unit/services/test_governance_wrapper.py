@@ -15,6 +15,7 @@ from nexus.services.governance.governance_wrapper import (
     GovernanceEnforcedPayment,
 )
 
+
 @dataclass
 class _FakeConstraintCheck:
     """Minimal constraint check result for testing."""

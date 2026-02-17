@@ -20,6 +20,7 @@ from nexus.scheduler.constants import (
     RequestState,
 )
 
+
 @dataclass(frozen=True)
 class TaskSubmission:
     """Immutable task submission from an agent.

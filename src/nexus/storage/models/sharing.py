@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
 
+
 class ShareLinkModel(Base):
     """Capability URL-based share links for anonymous/external file access.
 

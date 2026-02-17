@@ -19,6 +19,7 @@ from nexus.services.permissions.consistency.zone_manager import (
     ZoneManager,
 )
 
+
 class TestZoneManagerDefaults:
     """Test zone_id default resolution."""
 

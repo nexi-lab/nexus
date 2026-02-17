@@ -14,6 +14,7 @@ from nexus.backends.local import LocalBackend
 from nexus.services.memory.memory_with_paging import MemoryWithPaging
 from nexus.storage.models import Base
 
+
 @pytest.fixture
 def engine():
     """Create in-memory test database engine."""

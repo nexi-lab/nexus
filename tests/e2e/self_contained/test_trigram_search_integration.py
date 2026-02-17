@@ -15,6 +15,7 @@ from nexus.search.strategies import (
     SearchStrategy,
 )
 
+
 @pytest.fixture
 def corpus_dir():
     """Path to test corpus."""

@@ -22,6 +22,7 @@ from sqlalchemy import create_engine, text
 from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
+
 def _check_postgres_available():
     """Check if PostgreSQL is available for testing."""
     db_url = os.getenv("NEXUS_DATABASE_URL", "postgresql://postgres:nexus@localhost:5432/nexus")

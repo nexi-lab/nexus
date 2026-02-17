@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 from nexus.core.filesystem import NexusFilesystem
 
+
 class ScopedFilesystem:
     """Filesystem wrapper that scopes all paths to a base directory.
 

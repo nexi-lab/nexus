@@ -21,6 +21,7 @@ from nexus.core.rebac import Entity, NamespaceConfig
 from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
+
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""

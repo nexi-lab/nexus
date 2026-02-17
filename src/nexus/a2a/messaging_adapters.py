@@ -12,6 +12,7 @@ from typing import Any, Literal
 from nexus.a2a.models import DataPart, Message
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 
+
 def a2a_message_to_envelope(
     message: Message,
     *,

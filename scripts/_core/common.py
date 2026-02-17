@@ -8,6 +8,7 @@ and consistent output formatting.
 from collections.abc import Callable
 from typing import Any
 
+
 def safe_operation(
     operation_name: str,
     operation_fn: Callable[..., Any],

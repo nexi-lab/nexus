@@ -15,6 +15,7 @@ Related: Issue #1202 - list('/') returns paths with /tenant: prefix
 
 from typing import overload
 
+
 @overload
 def unscope_result(r: dict) -> dict: ...
 @overload

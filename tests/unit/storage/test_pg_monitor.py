@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from nexus.storage.pg_monitor import PgMonitor
 
+
 @pytest.fixture()
 def sqlite_session():
     """In-memory SQLite session (not PostgreSQL)."""

@@ -15,6 +15,7 @@ Usage::
 import os
 from dataclasses import dataclass
 
+
 def get_env_bool(key: str, default: bool = False) -> bool:
     """Read a boolean from an environment variable.
 

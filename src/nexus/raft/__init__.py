@@ -108,6 +108,7 @@ from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
 from nexus.raft.zone_manager import ZoneManager
 from nexus.raft.zone_path_resolver import ZonePathResolver
 
+
 def require_metastore() -> None:
     """Require Metastore (sled driver) to be available.
 

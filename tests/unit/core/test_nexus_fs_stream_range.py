@@ -12,6 +12,7 @@ import pytest
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.core.permissions import OperationContext
 
+
 class _StubFS:
     """Lightweight stub that provides just enough for stream/range testing."""
 

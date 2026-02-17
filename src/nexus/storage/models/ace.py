@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from nexus.core.exceptions import ValidationError
 from nexus.storage.models._base import Base, uuid_pk
 
+
 class TrajectoryModel(Base):
     """Trajectory tracking for ACE (Agentic Context Engineering).
 

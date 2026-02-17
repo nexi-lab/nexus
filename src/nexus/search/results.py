@@ -10,6 +10,7 @@ ranking.py and bm25s_search.py (Issue #1092, #1499).
 
 from dataclasses import dataclass
 
+
 @dataclass
 class BaseSearchResult:
     """Common search result fields shared by all search types.

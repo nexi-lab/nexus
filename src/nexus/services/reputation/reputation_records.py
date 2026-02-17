@@ -8,6 +8,7 @@ Follows the same pattern as agent_key_record.py (Decision #6A).
 from dataclasses import dataclass
 from datetime import datetime
 
+
 @dataclass(frozen=True)
 class ReputationEvent:
     """Immutable snapshot of a reputation event (feedback, dispute outcome, etc.).

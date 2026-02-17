@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
+
 class InMemoryVFS:
     """In-memory VFS fake for testing.
 

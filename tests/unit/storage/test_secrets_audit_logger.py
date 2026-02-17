@@ -18,6 +18,7 @@ from nexus.storage.secrets_audit_logger import (
     compute_record_hash,
 )
 
+
 @pytest.fixture
 def session_factory():
     """In-memory SQLite session factory for testing."""

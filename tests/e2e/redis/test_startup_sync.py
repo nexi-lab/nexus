@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+
 def _utcnow_naive() -> datetime:
     """Get current UTC time as naive datetime for PostgreSQL compatibility."""
     return datetime.now(UTC).replace(tzinfo=None)

@@ -9,6 +9,7 @@ import pytest
 
 from nexus.services.permissions.object_type_mapper import ObjectTypeMapper
 
+
 @pytest.fixture
 def mapper() -> ObjectTypeMapper:
     return ObjectTypeMapper()

@@ -17,6 +17,7 @@ References:
 from datetime import datetime
 from typing import Any, Literal, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class TrajectoryProtocol(Protocol):
     """Service contract for ACE (Agentic Continuous Evaluation).

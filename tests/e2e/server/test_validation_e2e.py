@@ -24,6 +24,7 @@ from nexus.validation.script_builder import (
     parse_simple_script_output,
 )
 
+
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     """Create a FastAPI app with real NexusFS for testing."""
     from nexus.backends.local import LocalBackend

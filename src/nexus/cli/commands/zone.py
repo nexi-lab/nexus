@@ -33,6 +33,7 @@ from nexus.cli.utils import (
 )
 from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 
+
 @click.group()
 def zone() -> None:
     """Zone management — federation and portability.

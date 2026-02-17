@@ -6,6 +6,7 @@ from typing import Any
 
 from nexus.parsers.types import ParseResult
 
+
 @dataclass
 class ProviderConfig:
     """Configuration for a parse provider.

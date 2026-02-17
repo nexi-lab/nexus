@@ -11,6 +11,7 @@ No I/O, no side effects — suitable for Hypothesis property-based testing.
 
 from nexus.scheduler.constants import DEFAULT_EST_SERVICE_TIME_SECS
 
+
 def compute_hrrn_score(
     wait_seconds: float,
     estimated_service_time: float = DEFAULT_EST_SERVICE_TIME_SECS,

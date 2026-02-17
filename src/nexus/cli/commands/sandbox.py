@@ -12,6 +12,7 @@ import click
 from nexus import NexusFilesystem
 from nexus.cli.utils import get_default_filesystem
 
+
 @click.group(name="sandbox")
 def sandbox() -> None:
     """Manage code execution sandboxes.

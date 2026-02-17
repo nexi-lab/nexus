@@ -34,6 +34,7 @@ from nexus.pay.x402 import (
 )
 from nexus.server.middleware.x402 import X402PaymentMiddleware
 
+
 def benchmark(name: str, iterations: int = 10000):
     """Decorator to benchmark a function."""
 

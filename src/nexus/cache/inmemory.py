@@ -28,6 +28,7 @@ from fnmatch import fnmatch
 
 from nexus.core.cache_store import CacheStoreABC
 
+
 class InMemoryCacheStore(CacheStoreABC):
     """In-memory CacheStoreABC driver for dev/test.
 

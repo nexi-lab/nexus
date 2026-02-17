@@ -16,6 +16,7 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+
 class TestBackendWriteStreamDefault:
     """Test default write_stream implementation in Backend base class."""
 

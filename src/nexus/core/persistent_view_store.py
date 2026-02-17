@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+
 @dataclass(frozen=True)
 class PersistentView:
     """A persisted namespace view for a subject.

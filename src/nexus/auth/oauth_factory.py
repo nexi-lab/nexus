@@ -13,9 +13,10 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.auth.oauth_config import OAuthConfig, OAuthProviderConfig
 from nexus.auth.oauth_provider import OAuthProvider
+from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+
 
 class OAuthProviderFactory:
     """Factory for creating OAuth providers from configuration."""

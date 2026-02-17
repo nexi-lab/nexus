@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+
 class RPCErrorCode(Enum):
     """Standard JSON-RPC error codes + custom Nexus error codes."""
 

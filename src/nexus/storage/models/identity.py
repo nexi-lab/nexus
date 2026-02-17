@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid
 
+
 class AgentKeyModel(Base):
     """Ed25519 signing keys for agent identity (Issue #1355).
 

@@ -11,6 +11,7 @@ from nexus.core.async_bridge import (
     shutdown_async_rebac_bridge,
 )
 
+
 class TestAsyncReBACBridge:
     """Test AsyncReBACBridge functionality."""
 

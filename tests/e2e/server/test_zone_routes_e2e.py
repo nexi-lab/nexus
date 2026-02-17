@@ -10,6 +10,7 @@ Run with: PYTHONPATH=src python -m pytest tests/e2e/test_zone_routes_e2e.py -v
 
 import pytest
 
+
 class TestZoneRoutesAuthentication:
     """Test authentication requirements for zone routes."""
 

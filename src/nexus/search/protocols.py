@@ -12,6 +12,7 @@ This enables:
 
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class FileReaderProtocol(Protocol):
     """Narrow interface for file reading needed by search components.

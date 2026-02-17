@@ -18,6 +18,7 @@ from nexus.services.sessions import (
 )
 from nexus.storage.models import Base, MemoryModel, UserSessionModel
 
+
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""

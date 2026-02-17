@@ -20,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.services.permissions.entity_registry import EntityRegistry
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create Nexus API key")
     parser.add_argument("user_id", help="User ID (e.g., alice, bob)")

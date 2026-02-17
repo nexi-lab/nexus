@@ -90,6 +90,8 @@ jobs:
           maturin develop --release --features python
         if: matrix.os != 'windows-latest'
         shell: bash
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Build Rust extension (nexus_tasks)
         run: |
@@ -166,6 +168,8 @@ jobs:
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -221,6 +225,8 @@ jobs:
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"
@@ -274,6 +280,8 @@ jobs:
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -313,6 +321,8 @@ jobs:
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -359,6 +369,8 @@ jobs:
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"

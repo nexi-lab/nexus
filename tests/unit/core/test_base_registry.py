@@ -8,6 +8,7 @@ import pytest
 
 from nexus.contracts.registry import BaseRegistry
 
+
 class TestRegisterAndGet:
     """register / get / get_or_raise."""
 

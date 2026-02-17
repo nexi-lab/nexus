@@ -10,6 +10,7 @@ import pytest
 
 from nexus.a2a.stream_registry import StreamRegistry
 
+
 class TestRegister:
     def test_register_returns_queue(self) -> None:
         registry = StreamRegistry()

@@ -17,6 +17,7 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+
 def cleanup_windows_db():
     """Force cleanup of database connections on Windows."""
     gc.collect()

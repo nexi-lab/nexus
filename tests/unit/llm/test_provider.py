@@ -23,6 +23,7 @@ from nexus.llm.provider import (
     LLMProvider,
 )
 
+
 def _make_config(**overrides: Any) -> LLMConfig:
     """Create a test LLMConfig with sensible defaults."""
     defaults: dict[str, Any] = {

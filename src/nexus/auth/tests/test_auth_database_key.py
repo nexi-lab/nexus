@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel, Base
 
+
 @pytest.fixture
 def engine():
     engine = create_engine("sqlite:///:memory:")

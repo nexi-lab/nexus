@@ -8,6 +8,7 @@ import pytest
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, ResponseType, timed_response
 
+
 class TestResponseType:
     """Tests for ResponseType enum."""
 

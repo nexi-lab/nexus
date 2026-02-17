@@ -8,6 +8,7 @@ from nexus.sandbox.sandbox_provider import CodeExecutionResult
 from nexus.validation.models import ValidationPipelineConfig, ValidatorConfig
 from nexus.validation.runner import ValidationRunner
 
+
 def _make_provider(*responses: CodeExecutionResult) -> AsyncMock:
     provider = AsyncMock()
     provider.run_code = AsyncMock(side_effect=list(responses))

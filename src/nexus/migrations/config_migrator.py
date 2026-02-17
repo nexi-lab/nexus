@@ -13,6 +13,7 @@ Issue #165: Migration Tools & Upgrade Paths
 from dataclasses import dataclass, field
 from typing import Any
 
+
 @dataclass
 class ConfigMigrationResult:
     """Result of configuration migration.

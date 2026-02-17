@@ -9,6 +9,7 @@ from nexus.core.exceptions import NexusError, NexusFileNotFoundError, NexusPermi
 from nexus.remote.client import RemoteNexusFS
 from nexus.server.protocol import RPCErrorCode
 
+
 class TestRemoteNexusFS:
     """Tests for RemoteNexusFS client."""
 

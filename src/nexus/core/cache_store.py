@@ -31,6 +31,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+
 class CacheStoreABC(ABC):
     """Abstract base class for ephemeral KV + PubSub storage (the "Ephemeral" pillar).
 

@@ -7,6 +7,7 @@ formats (JSON, Markdown) to optimize for token usage and readability.
 import json
 from typing import Any
 
+
 def format_response(data: Any, response_format: str = "json") -> str:
     """Format data as JSON or Markdown.
 

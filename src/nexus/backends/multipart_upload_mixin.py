@@ -11,6 +11,7 @@ tus.io resumable uploads with optimal performance.
 from abc import ABC, abstractmethod
 from typing import Any
 
+
 class MultipartUploadMixin(ABC):
     """Opt-in mixin for backends that support multipart uploads.
 

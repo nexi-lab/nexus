@@ -14,6 +14,7 @@ from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import APIKeyModel, Base, OAuthAPIKeyModel, UserModel
 
+
 @pytest.fixture
 def db_engine():
     """Create an in-memory SQLite database for testing."""

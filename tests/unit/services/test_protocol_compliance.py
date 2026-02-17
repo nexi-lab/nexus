@@ -23,6 +23,7 @@ import inspect
 
 import pytest
 
+
 def _get_protocol_methods(protocol: type) -> dict[str, inspect.Signature]:
     """Extract public method names and signatures from a Protocol class.
 

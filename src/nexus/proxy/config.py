@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
 class ProxyBrickConfig:
     """Immutable configuration for ProxyBrick.

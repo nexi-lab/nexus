@@ -24,6 +24,7 @@ from nexus.cli.utils import (
     handle_error,
 )
 
+
 @click.group(name="mounts")
 def mounts_group() -> None:
     """Manage backend mounts.

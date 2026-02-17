@@ -18,6 +18,7 @@ from nexus.services.snapshot.service import (
     TransactionNotFoundError,
 )
 
+
 class TestInit:
     """Tests for service initialization."""
 

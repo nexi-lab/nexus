@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from nexus.core.event_bus import FileEvent
 
+
 @runtime_checkable
 class EventStreamExporterProtocol(Protocol):
     """Protocol for external event stream exporters.

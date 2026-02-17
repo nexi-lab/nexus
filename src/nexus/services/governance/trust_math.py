@@ -16,6 +16,7 @@ import numpy as np
 
 from nexus.services.governance.models import GovernanceEdge
 
+
 def eigentrust(
     local_trust: np.ndarray,
     seed_trust: np.ndarray | None = None,

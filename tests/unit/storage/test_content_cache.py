@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from nexus.storage.content_cache import ContentCache
 
+
 class TestContentCacheBasic:
     """Test basic ContentCache functionality."""
 

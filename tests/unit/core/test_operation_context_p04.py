@@ -13,6 +13,7 @@ import pytest
 
 from nexus.core.permissions import OperationContext
 
+
 class TestAdminCapabilitiesField:
     """Test the admin_capabilities field in OperationContext."""
 

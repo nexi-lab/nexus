@@ -24,6 +24,7 @@ from nexus.scheduler.constants import (
 )
 from nexus.scheduler.models import TaskSubmission
 
+
 def compute_boost_tiers(boost_amount: Decimal) -> int:
     """Compute tier boost from payment amount.
 

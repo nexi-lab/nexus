@@ -3,6 +3,7 @@
 import asyncio
 from typing import Any
 
+
 class MockWebSocket:
     """Mock WebSocket for testing.
 

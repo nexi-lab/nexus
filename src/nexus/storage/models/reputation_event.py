@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
+
 class ReputationEventModel(Base):
     """Immutable reputation event (feedback, dispute outcome, penalty, etc.).
 

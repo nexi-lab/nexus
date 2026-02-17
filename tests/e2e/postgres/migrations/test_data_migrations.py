@@ -33,6 +33,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+
 class TestPersistentNamespaceViewsMigration:
     """Test the add_persistent_namespace_views migration (Issue #1265).
 

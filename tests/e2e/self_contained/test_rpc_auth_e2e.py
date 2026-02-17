@@ -6,6 +6,7 @@ Tests _run_async_safe via sync_bridge with real auth_provider calls.
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import Base
 
+
 class TestRPCServerAuthQuickCheck:
     """Quick auth validation tests without full server startup."""
 

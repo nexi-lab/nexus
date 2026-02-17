@@ -25,6 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
 
+
 class SpendingPolicyModel(Base):
     """Declarative spending policy for an agent or zone.
 

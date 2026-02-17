@@ -20,6 +20,7 @@ import uuid
 import httpx
 import pytest
 
+
 def encode_bytes(content: bytes) -> dict:
     """Encode bytes for JSON-RPC transport."""
     return {"__type__": "bytes", "data": base64.b64encode(content).decode("utf-8")}

@@ -9,6 +9,7 @@ import pytest
 
 from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
 
+
 @pytest.fixture
 def mock_async_fs() -> MagicMock:
     """Create a mock async filesystem."""

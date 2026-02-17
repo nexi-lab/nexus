@@ -8,6 +8,7 @@ from uuid import UUID
 
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
+
 class WorkflowStatus(StrEnum):
     """Status of a workflow execution."""
 

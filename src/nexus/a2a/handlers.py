@@ -24,6 +24,7 @@ from nexus.a2a.models import (
 )
 from nexus.a2a.task_manager import TaskManager
 
+
 async def dispatch(
     *,
     method: str,

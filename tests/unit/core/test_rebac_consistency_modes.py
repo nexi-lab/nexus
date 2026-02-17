@@ -22,6 +22,7 @@ from nexus.rebac.types import (
     ConsistencyRequirement,
 )
 
+
 class TestConsistencyModeEnum:
     """Tests for ConsistencyMode enum."""
 

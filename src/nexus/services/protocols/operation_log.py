@@ -15,6 +15,7 @@ References:
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class OperationLogProtocol(Protocol):
     """Service contract for filesystem operation logging.

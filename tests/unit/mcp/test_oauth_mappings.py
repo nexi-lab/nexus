@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from nexus.mcp.oauth_mappings import OAuthKlavisMappings, OAuthProviderMapping
 
+
 class TestOAuthProviderMapping:
     """Test OAuthProviderMapping dataclass."""
 

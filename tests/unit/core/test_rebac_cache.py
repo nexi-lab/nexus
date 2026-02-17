@@ -6,6 +6,7 @@ import pytest
 
 from nexus.rebac.rebac_cache import ReBACPermissionCache
 
+
 class TestReBACPermissionCache:
     """Test suite for in-memory L1 permission cache."""
 

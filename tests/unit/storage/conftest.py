@@ -2,6 +2,7 @@
 
 import pytest
 
+
 @pytest.fixture(autouse=True)
 def isolate_storage_tests(monkeypatch):
     """Isolate storage tests from environment pollution.

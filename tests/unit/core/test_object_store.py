@@ -25,6 +25,7 @@ from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC, _validate_hash
 from nexus.core.response import HandlerResponse
 
+
 class MockBackend(Backend):
     """Minimal in-memory Backend for ObjectStoreABC conformance tests."""
 

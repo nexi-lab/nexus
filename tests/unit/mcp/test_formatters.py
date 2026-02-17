@@ -14,6 +14,7 @@ from nexus.mcp.formatters import (
     format_response,
 )
 
+
 class TestFormatResponse:
     """Test format_response function."""
 

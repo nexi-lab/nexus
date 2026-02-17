@@ -7,6 +7,7 @@ Coverage Target: 90%
 
 import pytest
 
+
 class TestUserAuthenticator:
     """Tests for UserAuthenticator class."""
 

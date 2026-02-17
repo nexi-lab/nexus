@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 from nexus.ipc.exceptions import EnvelopeValidationError
 
+
 class TestEnvelopeCreation:
     """Tests for creating valid envelopes."""
 

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid
 
+
 class PersistentNamespaceViewModel(Base):
     """Persistent namespace view for instant agent reconnection.
 

@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel
 
+
 def create_test_agent_key(
     database_url: str,
     api_key: str,

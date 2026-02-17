@@ -48,6 +48,7 @@ from nexus.server.logging_processors import (
     otel_trace_processor,
 )
 
+
 def _orjson_serializer(data: dict[str, Any], **_kw: Any) -> str:
     """Serialize log event dict to JSON string using orjson.
 

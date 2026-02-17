@@ -33,6 +33,7 @@ from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
 from nexus.services.permissions.entity_registry import EntityRegistry  # noqa: E402
 from nexus.storage.models import APIKeyModel  # noqa: E402
 
+
 def create_admin_key(
     database_url: str,
     admin_user: str,

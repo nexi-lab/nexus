@@ -8,6 +8,7 @@ names and counts.
 import inspect
 from typing import Any
 
+
 def assert_protocol_conformance(
     impl_class: type,
     protocol_class: type,

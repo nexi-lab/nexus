@@ -14,6 +14,7 @@ import pytest
 from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.local import LocalBackend
 
+
 class TestHandlerStatusResponse:
     """Tests for HandlerStatusResponse dataclass."""
 

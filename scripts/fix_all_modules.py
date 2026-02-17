@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def try_import(module_name: str) -> tuple[bool, str]:
     """Try to import a module and return (success, stderr)."""
     result = subprocess.run(

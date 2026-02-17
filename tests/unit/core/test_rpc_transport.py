@@ -7,6 +7,7 @@ import pytest
 
 from nexus.core.rpc_transport import NexusRPCTransport, RPCError, TransportError
 
+
 class TestNexusRPCTransport:
     """Tests for NexusRPCTransport."""
 

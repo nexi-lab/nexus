@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+
 @dataclass
 class Citation:
     """A citation reference in an LLM response."""

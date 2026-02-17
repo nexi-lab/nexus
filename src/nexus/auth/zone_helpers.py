@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.constants import PERSONAL_EMAIL_DOMAINS, RESERVED_ZONE_IDS
 from nexus.storage.models import ZoneModel
 
+
 def is_personal_email_domain(domain: str) -> bool:
     """Check if email domain is a personal/free email provider."""
     return domain.lower() in PERSONAL_EMAIL_DOMAINS

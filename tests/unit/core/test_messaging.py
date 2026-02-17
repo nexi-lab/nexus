@@ -8,6 +8,7 @@ from nexus.a2a.messaging import (
     TextPart,
 )
 
+
 class TestMessageMetadata:
     def test_defaults(self) -> None:
         meta = MessageMetadata()

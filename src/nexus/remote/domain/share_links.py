@@ -5,6 +5,7 @@ Issue #1603: Decompose remote/client.py into domain clients.
 
 from typing import Any
 
+
 class ShareLinksClient:
     """Share links domain client (sync)."""
 

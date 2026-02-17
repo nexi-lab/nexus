@@ -15,6 +15,7 @@ from nexus.core.exceptions import ValidationError
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import ContentChunkModel, FileMetadataModel, FilePathModel
 
+
 class TestFileMetadataValidation:
     """Test suite for FileMetadata validation."""
 

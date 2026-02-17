@@ -9,6 +9,7 @@ from nexus.skills.governance import (
     SkillGovernance,
 )
 
+
 @pytest.mark.asyncio
 async def test_submit_for_approval() -> None:
     """Test submitting a skill for approval."""

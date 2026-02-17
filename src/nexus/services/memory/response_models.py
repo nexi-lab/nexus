@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+
 class MemoryBaseResponse(BaseModel):
     """Base fields shared by all memory response shapes."""
 

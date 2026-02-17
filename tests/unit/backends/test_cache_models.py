@@ -15,6 +15,7 @@ from nexus.backends.cache_models import (
     SyncResult,
 )
 
+
 class TestConstants:
     """Test that constants have expected values."""
 

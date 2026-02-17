@@ -11,6 +11,7 @@ Run with:
 
 import pytest
 
+
 class TestGraphAPI:
     """End-to-end tests for Graph API endpoints."""
 

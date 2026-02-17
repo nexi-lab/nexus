@@ -20,6 +20,7 @@ from nexus.services.permissions.cache.visibility import (
     DirectoryVisibilityCache,
 )
 
+
 class TestInitialization:
     """Test DirectoryVisibilityCache initialization."""
 

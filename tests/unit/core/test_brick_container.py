@@ -6,6 +6,7 @@ import pytest
 
 from nexus.core.brick_container import BrickContainer
 
+
 @runtime_checkable
 class FakeProtocol(Protocol):
     """Test protocol for container tests."""

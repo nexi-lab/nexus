@@ -9,6 +9,7 @@ from typing import Any
 
 from nexus.core.filesystem import NexusFilesystem
 
+
 @dataclass
 class PluginMetadata:
     """Metadata for a Nexus plugin."""

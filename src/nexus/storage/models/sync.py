@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from nexus.core.exceptions import ValidationError
 from nexus.storage.models._base import Base, uuid_pk
 
+
 class SyncJobModel(Base):
     """Async sync job tracking for long-running mount synchronization."""
 

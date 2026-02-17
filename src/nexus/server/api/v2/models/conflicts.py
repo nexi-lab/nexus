@@ -6,6 +6,7 @@ from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
 
+
 class ConflictDetailResponse(ApiModel):
     """Full conflict record representation."""
 

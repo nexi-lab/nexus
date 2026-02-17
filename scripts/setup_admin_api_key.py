@@ -26,6 +26,7 @@ from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
 from nexus.services.permissions.entity_registry import EntityRegistry  # noqa: E402
 from nexus.storage.models import APIKeyModel  # noqa: E402
 
+
 def setup_admin_api_key(
     database_url: str, admin_api_key: str, zone_id: str = "system", user_id: str = "admin"
 ) -> bool:

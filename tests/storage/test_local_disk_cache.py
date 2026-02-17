@@ -24,6 +24,7 @@ from nexus.storage.local_disk_cache import (
     set_local_disk_cache,
 )
 
+
 @pytest.fixture
 def cache_dir():
     """Create a temporary cache directory."""

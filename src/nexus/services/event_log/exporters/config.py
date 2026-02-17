@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+
 class KafkaExporterConfig(BaseModel):
     """Configuration for the Kafka event stream exporter."""
 

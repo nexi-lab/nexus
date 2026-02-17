@@ -16,6 +16,7 @@ from decimal import Decimal
 
 import pytest
 
+
 class TestCreditsServiceE2E:
     """End-to-end tests for CreditsService (disabled mode)."""
 

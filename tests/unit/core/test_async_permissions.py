@@ -8,6 +8,7 @@ import pytest
 from nexus.core.permissions import OperationContext, Permission
 from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
+
 class TestAsyncPermissionEnforcer:
     """Test AsyncPermissionEnforcer functionality."""
 

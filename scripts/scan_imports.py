@@ -1,6 +1,6 @@
 """Scan all nexus modules for import errors."""
-import os
 import importlib
+import os
 import sys
 
 src = "src/nexus"

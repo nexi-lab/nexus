@@ -16,6 +16,7 @@ from nexus.llm.exceptions import (
     LLMTokenCountError,
 )
 
+
 class TestLLMExceptions:
     """Tests verifying the LLM exception hierarchy."""
 

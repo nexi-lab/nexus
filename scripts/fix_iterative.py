@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def try_import(import_stmt: str) -> tuple[bool, str]:
     """Try to run an import and return (success, stderr)."""
     result = subprocess.run(

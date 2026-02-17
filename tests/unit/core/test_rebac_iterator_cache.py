@@ -10,6 +10,7 @@ from nexus.rebac.rebac_iterator_cache import (
     IteratorCache,
 )
 
+
 class TestIteratorCache:
     """Test suite for iterator caching for paginated list operations."""
 

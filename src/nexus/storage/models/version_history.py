@@ -19,6 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
+
 class VersionHistoryModel(Base):
     """Version history tracking for files and memories.
 

@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+
 def _has_silent_swallower(source: str) -> tuple[bool, int]:
     """Check if source has any `except Exception: pass` patterns.
 

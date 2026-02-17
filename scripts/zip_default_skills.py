@@ -9,6 +9,7 @@ import os
 import zipfile
 from pathlib import Path
 
+
 def zip_skill_folder(skill_folder_path: Path, output_path: Path) -> None:
     """Zip a skill folder into a .skill package.
 

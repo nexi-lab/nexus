@@ -19,6 +19,7 @@ from nexus.services.governance.models import (
     TransactionSummary,
 )
 
+
 def compute_z_score(value: float, mean: float, std: float) -> float:
     """Compute the Z-score of a value relative to a distribution.
 

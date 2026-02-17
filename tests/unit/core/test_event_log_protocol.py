@@ -13,6 +13,7 @@ import pytest
 
 from nexus.services.event_log import EventLogConfig, EventLogProtocol
 
+
 class TestEventLogProtocol:
     """Verify protocol shape compliance."""
 

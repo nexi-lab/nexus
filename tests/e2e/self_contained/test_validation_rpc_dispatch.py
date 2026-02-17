@@ -20,6 +20,7 @@ from nexus.validation.script_builder import (
     parse_simple_script_output,
 )
 
+
 class TestSandboxValidateProtocol:
     """Verify sandbox_validate is properly wired into the RPC protocol."""
 

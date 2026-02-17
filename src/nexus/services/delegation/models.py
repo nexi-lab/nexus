@@ -13,6 +13,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
+
 class DelegationMode(Enum):
     """Delegation namespace mode.
 

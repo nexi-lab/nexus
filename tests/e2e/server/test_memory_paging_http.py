@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 import requests
 
+
 @pytest.fixture(scope="module")
 def server_process():
     """Start nexus server for testing."""

@@ -5,6 +5,7 @@ import pytest
 from nexus.backends.passthrough import POINTER_PREFIX, PassthroughBackend
 from nexus.core.hash_fast import hash_content
 
+
 @pytest.fixture
 def temp_backend(tmp_path):
     """Create a temporary passthrough backend for testing."""

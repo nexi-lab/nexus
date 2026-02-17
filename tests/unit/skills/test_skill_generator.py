@@ -15,6 +15,7 @@ from nexus.skills.skill_generator import (
     get_skill_generator,
 )
 
+
 @pytest.fixture
 def temp_templates_dir(tmp_path: Path) -> Path:
     """Create a temporary templates directory with sample templates."""

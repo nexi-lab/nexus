@@ -15,6 +15,7 @@ from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
+
 @pytest.fixture()
 def engine():
     """Create in-memory SQLite database with all tables."""

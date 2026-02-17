@@ -12,6 +12,7 @@ References:
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class LLMProviderProtocol(Protocol):
     """Brick-level contract for LLM provider operations.

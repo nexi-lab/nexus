@@ -10,6 +10,7 @@ from nexus.skills.analytics import (
     SkillUsageRecord,
 )
 
+
 @pytest.mark.asyncio
 async def test_track_usage() -> None:
     """Test tracking skill usage."""

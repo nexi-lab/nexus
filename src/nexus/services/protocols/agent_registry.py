@@ -14,6 +14,7 @@ References:
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+
 @dataclass(frozen=True, slots=True)
 class AgentInfo:
     """Lightweight snapshot of agent identity and state.

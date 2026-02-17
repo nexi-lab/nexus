@@ -23,6 +23,7 @@ from nexus.backends.local import LocalBackend
 from nexus.core.sync_bridge import shutdown_sync_bridge
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app with real NexusFS for testing.
 

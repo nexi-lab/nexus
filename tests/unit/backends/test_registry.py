@@ -15,6 +15,7 @@ from nexus.backends.registry import (
     register_connector,
 )
 
+
 class DummyBackend(Backend):
     """Dummy backend for testing."""
 

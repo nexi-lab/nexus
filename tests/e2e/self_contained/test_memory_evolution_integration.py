@@ -19,6 +19,7 @@ from nexus.services.memory.evolution_detector import (
 from nexus.storage.models._base import Base
 from nexus.storage.models.memory import MemoryModel
 
+
 @pytest.fixture
 def db_session():
     """Create an in-memory SQLite session with MemoryModel tables."""

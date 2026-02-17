@@ -26,6 +26,7 @@ from _core.constants import (
 import nexus
 from nexus.core.permissions import OperationContext
 
+
 def generate_resource_id(resource_type: str, name: str | None = None) -> str:
     """Generate resource ID with prefix and 12-character UUID for uniqueness."""
     prefixes = RESOURCE_PREFIXES

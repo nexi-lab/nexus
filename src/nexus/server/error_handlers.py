@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+
 def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Custom handler for Nexus exceptions.
 

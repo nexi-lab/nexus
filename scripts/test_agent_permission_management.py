@@ -43,6 +43,7 @@ from typing import Any
 
 import requests
 
+
 def make_rpc_call(
     base_url: str,
     method: str,

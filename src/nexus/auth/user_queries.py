@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from nexus.storage.models import UserModel
 
+
 def get_user_by_email(session: Session, email: str) -> UserModel | None:
     """Get active user by email."""
     return session.scalar(

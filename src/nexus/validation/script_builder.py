@@ -12,6 +12,7 @@ from nexus.validation.models import ValidationError, ValidatorConfig
 from nexus.validation.parsers import BUILTIN_VALIDATORS, Validator
 from nexus.validation.parsers.base import Validator as BaseValidator
 
+
 class _GenericValidator(BaseValidator):
     """Fallback validator for unknown tools — returns no parsed errors."""
 

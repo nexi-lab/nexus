@@ -19,6 +19,7 @@ from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+
 @pytest.fixture
 def record_store(tmp_path):
     """Create SQLAlchemyRecordStore for testing."""

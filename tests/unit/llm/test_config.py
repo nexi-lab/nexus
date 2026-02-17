@@ -5,6 +5,7 @@ from pydantic import SecretStr, ValidationError
 
 from nexus.llm.config import LLMConfig
 
+
 class TestLLMConfig:
     """Tests for LLMConfig dataclass defaults, validation, and field behavior."""
 

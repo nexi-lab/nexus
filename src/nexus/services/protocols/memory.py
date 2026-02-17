@@ -18,6 +18,7 @@ import builtins
 from datetime import datetime
 from typing import Any, Literal, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class MemoryProtocol(Protocol):
     """Service contract for AI agent memory management.

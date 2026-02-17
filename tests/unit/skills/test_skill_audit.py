@@ -6,6 +6,7 @@ import pytest
 
 from nexus.skills.audit import AuditAction, AuditLogEntry, SkillAuditLogger
 
+
 @pytest.mark.asyncio
 async def test_log_audit_entry() -> None:
     """Test logging an audit entry."""

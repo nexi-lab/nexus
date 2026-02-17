@@ -6,6 +6,7 @@ import pytest
 
 from nexus.core.permissions import OperationContext
 
+
 @pytest.fixture
 def operation_context():
     """Create a standard operation context for tests.

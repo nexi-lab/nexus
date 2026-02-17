@@ -24,6 +24,7 @@ import httpx
 
 from nexus.auth.oauth_provider import OAuthCredential, OAuthError, OAuthProvider
 
+
 class MicrosoftOAuthProvider(OAuthProvider):
     """Microsoft OAuth 2.0 provider (Microsoft Identity Platform).
 

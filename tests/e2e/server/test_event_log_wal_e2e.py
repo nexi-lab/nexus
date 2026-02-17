@@ -14,6 +14,7 @@ import sys
 import httpx
 import pytest
 
+
 def _encode_bytes(data: bytes) -> dict:
     """Encode bytes for JSON-RPC transport."""
     return {"__type__": "bytes", "data": base64.b64encode(data).decode()}

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
 
+
 class IPCMessageModel(Base):
     """IPC message or directory marker stored via RecordStoreABC.
 

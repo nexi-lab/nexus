@@ -20,6 +20,7 @@ from nexus.core.permissions import OperationContext
 from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
+
 @pytest.fixture
 def metadata_store(tmp_path):
     """Create a local RaftMetadataStore for benchmarks."""

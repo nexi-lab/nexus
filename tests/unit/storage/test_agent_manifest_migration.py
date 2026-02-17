@@ -16,6 +16,7 @@ from nexus.services.agents.agent_registry import AgentRegistry, _safe_json_loads
 from nexus.storage.models import Base
 from nexus.storage.models.agents import AgentRecordModel
 
+
 @pytest.fixture
 def engine():
     """In-memory SQLite for migration tests."""

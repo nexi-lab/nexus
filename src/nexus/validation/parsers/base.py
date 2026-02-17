@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 
 from nexus.validation.models import ValidationError, ValidatorConfig
 
+
 class Validator(ABC):
     """Abstract base for linter/checker output parsers."""
 

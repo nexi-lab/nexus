@@ -25,6 +25,7 @@ from nexus.a2a.stores.serialization import (
     task_to_dict,
 )
 
+
 def _make_task(
     task_id: str = "t-1",
     state: TaskState = TaskState.SUBMITTED,

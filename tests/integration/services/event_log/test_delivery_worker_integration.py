@@ -21,6 +21,7 @@ from nexus.services.event_log.exporter_registry import ExporterRegistry
 from nexus.storage.models import DeadLetterModel, OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:

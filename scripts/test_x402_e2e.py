@@ -25,6 +25,7 @@ from nexus.pay.x402 import X402Client, X402PaymentVerification
 from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.middleware.x402 import X402PaymentMiddleware
 
+
 def create_test_app():
     """Create a test FastAPI app with x402 integration."""
     app = FastAPI(title="x402 E2E Test Server")

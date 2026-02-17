@@ -18,6 +18,7 @@ from nexus.server.api.v1.models.locks import (
     LockStatusResponse,
 )
 
+
 class TestLockModels:
     """Test Pydantic models for lock API."""
 

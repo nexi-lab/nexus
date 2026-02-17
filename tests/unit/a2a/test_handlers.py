@@ -20,6 +20,7 @@ from nexus.a2a.models import Message, TaskState, TextPart
 from nexus.a2a.stores.in_memory import InMemoryTaskStore
 from nexus.a2a.task_manager import TaskManager
 
+
 @pytest.fixture
 def tm() -> TaskManager:
     return TaskManager(store=InMemoryTaskStore())

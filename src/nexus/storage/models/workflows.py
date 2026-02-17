@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from nexus.core.exceptions import ValidationError
 from nexus.storage.models._base import Base, TimestampMixin, uuid_pk
 
+
 class WorkflowModel(TimestampMixin, Base):
     """Workflow definitions.
 

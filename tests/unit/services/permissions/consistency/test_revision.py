@@ -20,6 +20,7 @@ from nexus.services.permissions.consistency.revision import (
     increment_version_token,
 )
 
+
 @pytest.fixture
 def sqlite_engine():
     """Create an in-memory SQLite engine with version sequences table."""

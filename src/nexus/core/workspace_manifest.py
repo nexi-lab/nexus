@@ -20,6 +20,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+
 @dataclass(slots=True)
 class ManifestEntry:
     """A single file entry in a workspace manifest.

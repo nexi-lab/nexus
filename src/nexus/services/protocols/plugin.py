@@ -14,6 +14,7 @@ References:
 
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class PluginProtocol(Protocol):
     """Service contract for plugin lifecycle and hook management.

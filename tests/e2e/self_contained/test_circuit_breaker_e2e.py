@@ -19,6 +19,7 @@ from nexus.rebac.circuit_breaker import (
     CircuitState,
 )
 
+
 class TestHealthDetailedShowsCircuitState:
     """Test 1: GET /health/detailed shows circuit_state."""
 

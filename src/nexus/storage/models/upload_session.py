@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
+
 class UploadSessionModel(Base):
     """Persistent storage for chunked upload sessions.
 

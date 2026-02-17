@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from nexus.a2a.models import Task, TaskState
 
+
 @dataclass(slots=True)
 class _TaskRecord:
     """Internal storage record wrapping a Task with metadata."""

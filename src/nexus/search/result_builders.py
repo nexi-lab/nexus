@@ -9,6 +9,7 @@ build_semantic_result() to eliminate the 5x duplication.
 
 from typing import Any
 
+
 def build_semantic_result(
     *,
     chunk_id: str | None,

@@ -9,6 +9,7 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+
 @pytest.fixture
 def benchmark_db(tmp_path, monkeypatch):
     """Create an isolated database path for benchmarks.

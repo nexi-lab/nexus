@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+
 class MessageRole(StrEnum):
     """Role of a message in a conversation."""
 

@@ -7,6 +7,7 @@ the server layer (dependencies.py) and downstream services.
 from dataclasses import dataclass, field
 from typing import Any
 
+
 @dataclass(frozen=True)
 class AuthResult:
     """Immutable result of an authentication attempt.

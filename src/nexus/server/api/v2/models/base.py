@@ -10,6 +10,7 @@ compatibility when clients send fields added in newer versions.
 
 from pydantic import BaseModel, ConfigDict
 
+
 class ApiModel(BaseModel):
     """Base model for all API v2 request and response types.
 

@@ -7,6 +7,7 @@ zone settings stored as JSON in ZoneModel.settings.
 
 from pydantic import BaseModel
 
+
 class ZoneSettings(BaseModel):
     """Extensible zone settings parsed from ZoneModel.settings JSON.
 

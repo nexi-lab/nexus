@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from nexus.services.snapshot.registry import TransactionRegistry
 
+
 class TestRegister:
     """Tests for register()."""
 

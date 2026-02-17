@@ -19,6 +19,7 @@ from nexus.cli.utils import (
     handle_error,
 )
 
+
 @click.group(name="rebac")
 def rebac() -> None:
     """Relationship-Based Access Control (ReBAC) commands.

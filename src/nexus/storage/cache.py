@@ -19,6 +19,7 @@ from nexus.core._compact_generated import CompactFileMetadata
 from nexus.core.adaptive_ttl import AdaptiveTTLMixin
 from nexus.core.metadata import FileMetadata
 
+
 class AdaptiveTTLCache(dict[str, tuple[Any, float]]):
     """LRU cache with per-entry adaptive TTL support.
 

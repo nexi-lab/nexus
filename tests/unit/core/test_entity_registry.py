@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
+
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database."""

@@ -8,6 +8,7 @@ from typing import Any
 
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 
+
 class OAuthClient:
     """OAuth management domain client (sync)."""
 

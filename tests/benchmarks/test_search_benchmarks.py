@@ -10,6 +10,7 @@ import re
 
 import pytest
 
+
 def generate_log_content(num_lines: int) -> bytes:
     """Generate realistic log file content for grep benchmarks."""
     lines = []

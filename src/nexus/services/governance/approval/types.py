@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+
 class ApprovalStatus(StrEnum):
     """Universal approval status (superset of all 3 existing workflows).
 

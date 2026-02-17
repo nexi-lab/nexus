@@ -9,6 +9,7 @@ Issue #1289: Protocol + RPC Proxy pattern.
 
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True, slots=True)
 class MethodSpec:
     """Configuration for how a proxy method dispatches and transforms RPC calls.

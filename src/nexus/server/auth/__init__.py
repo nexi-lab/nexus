@@ -6,17 +6,8 @@ live in the nexus.auth brick. This module re-exports for backward compat.
 
 import warnings
 
-# Auth brick re-exports (moved to nexus.auth in Issue #1399)
-from nexus.auth.providers.base import AuthProvider, AuthResult  # noqa: F401
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: F401
-from nexus.auth.providers.database_local import DatabaseLocalAuth  # noqa: F401
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
-from nexus.auth.providers.local import LocalAuth  # noqa: F401
-from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth  # noqa: F401
-from nexus.auth.providers.static_key import StaticAPIKeyAuth  # noqa: F401
-
-# Factory function — stays here but delegates to brick providers
-from nexus.server.auth.factory import create_auth_provider  # noqa: F401
+from nexus.auth.google_oauth import GoogleOAuthProvider  # noqa: F401
+from nexus.auth.microsoft_oauth import MicrosoftOAuthProvider  # noqa: F401
 
 # OAuth components — canonical: nexus.auth (moved in Issue #1526)
 from nexus.auth.oauth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
@@ -27,9 +18,19 @@ from nexus.auth.oauth_provider import (  # noqa: F401
     OAuthError,
     OAuthProvider,
 )
+
+# Auth brick re-exports (moved to nexus.auth in Issue #1399)
+from nexus.auth.providers.base import AuthProvider, AuthResult  # noqa: F401
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: F401
+from nexus.auth.providers.database_local import DatabaseLocalAuth  # noqa: F401
+from nexus.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
+from nexus.auth.providers.local import LocalAuth  # noqa: F401
+from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth  # noqa: F401
+from nexus.auth.providers.static_key import StaticAPIKeyAuth  # noqa: F401
 from nexus.auth.token_manager import TokenManager  # noqa: F401
-from nexus.auth.google_oauth import GoogleOAuthProvider  # noqa: F401
-from nexus.auth.microsoft_oauth import MicrosoftOAuthProvider  # noqa: F401
+
+# Factory function — stays here but delegates to brick providers
+from nexus.server.auth.factory import create_auth_provider  # noqa: F401
 
 __all__ = [
     # Auth brick (canonical: nexus.auth)

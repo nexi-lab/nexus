@@ -8,6 +8,7 @@ Related: Issue #1212
 from decimal import Decimal
 from enum import IntEnum, StrEnum
 
+
 class PriorityTier(IntEnum):
     """Fixed priority tiers (lower value = higher priority).
 

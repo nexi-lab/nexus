@@ -6,6 +6,7 @@ used by both authentication and rate limiting.
 
 from typing import NamedTuple
 
+
 class SKTokenFields(NamedTuple):
     """Parsed fields from an sk-<zone>_<user>_<id>_<random> token."""
 

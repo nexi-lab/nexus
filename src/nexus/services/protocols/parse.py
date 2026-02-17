@@ -12,6 +12,7 @@ References:
 
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class ParseProtocol(Protocol):
     """Service contract for document parsing.

@@ -18,6 +18,7 @@ from nexus.server.api.v2.routers.reputation import (
     get_trust_score,
 )
 
+
 @dataclass(frozen=True)
 class FakeReputationScore:
     """Minimal ReputationScore for endpoint testing."""

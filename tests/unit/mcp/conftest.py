@@ -2,6 +2,7 @@
 
 import pytest
 
+
 @pytest.fixture(autouse=True)
 def isolate_mcp_tests(monkeypatch):
     """Isolate MCP tests from environment pollution.

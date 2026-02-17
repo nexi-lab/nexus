@@ -155,6 +155,7 @@ from nexus.skills import (
     SkillRegistry,
 )
 
+
 def connect(
     config: str | Path | dict | Config | None = None,
 ) -> Filesystem:

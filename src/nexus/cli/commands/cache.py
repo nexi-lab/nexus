@@ -13,6 +13,7 @@ from nexus.cli.utils import (
     handle_error,
 )
 
+
 def register_commands(cli: click.Group) -> None:
     """Register all cache management commands."""
     cli.add_command(cache_group)

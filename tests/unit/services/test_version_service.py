@@ -11,6 +11,7 @@ import pytest
 
 from nexus.services.version_service import VersionService
 
+
 class TestVersionServiceInit:
     """Test VersionService initialization."""
 

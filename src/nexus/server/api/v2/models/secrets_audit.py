@@ -5,6 +5,7 @@ Issue #997: Response models for the secrets audit log endpoints.
 
 from nexus.server.api.v2.models.base import ApiModel
 
+
 class SecretsAuditEventResponse(ApiModel):
     """Single secrets audit log entry."""
 

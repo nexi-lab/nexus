@@ -7,6 +7,7 @@ from typing import Any
 
 from nexus.server.api.v2.models.base import ApiModel
 
+
 class AuditTransactionResponse(ApiModel):
     """Single exchange audit log entry."""
 

@@ -7,6 +7,7 @@ import pytest
 
 from nexus.server.rpc_server import NexusRPCServer, RPCRequestHandler
 
+
 class TestRPCRequestHandler:
     """Tests for RPCRequestHandler class."""
 

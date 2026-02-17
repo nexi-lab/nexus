@@ -13,6 +13,7 @@ import pytest
 from nexus.core.permissions import OperationContext, Permission
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
+
 class MockReBACManager:
     """Mock ReBAC manager."""
 

@@ -14,6 +14,7 @@ from nexus.backends.chunked_storage import (
 )
 from nexus.backends.local import LocalBackend
 
+
 class TestChunkInfo:
     """Tests for ChunkInfo dataclass."""
 

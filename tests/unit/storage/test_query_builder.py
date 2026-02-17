@@ -9,6 +9,7 @@ import pytest
 from nexus.core.exceptions import MetadataError
 from nexus.storage.query_builder import WorkQueryBuilder
 
+
 class TestGetReadyWork:
     """Test get_ready_work method."""
 

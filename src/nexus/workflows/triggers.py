@@ -13,6 +13,7 @@ from typing import Any, Protocol, runtime_checkable
 from nexus.workflows.protocol import GlobMatchFn
 from nexus.workflows.types import TriggerType, WorkflowContext
 
+
 @runtime_checkable
 class TriggerFactory(Protocol):
     """Callable that creates a concrete BaseTrigger (used for registry typing)."""

@@ -7,6 +7,7 @@ import pytest
 
 from nexus.core.types import ContextIdentity, extract_context_identity
 
+
 class TestContextIdentity:
     """Tests for ContextIdentity dataclass."""
 

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+
 class UploadStatus(StrEnum):
     """Status of a chunked upload session."""
 

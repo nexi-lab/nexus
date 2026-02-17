@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from nexus.auth.types import AuthResult
 
+
 @runtime_checkable
 class AuthBrickProtocol(Protocol):
     """Public contract for the Auth brick.

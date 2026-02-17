@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+
 def _rpc_body(
     method: str,
     params: dict[str, Any] | None = None,

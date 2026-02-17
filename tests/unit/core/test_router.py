@@ -7,6 +7,7 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.core.router import PathNotMountedError, PathRouter
 
+
 @pytest.fixture
 def router() -> PathRouter:
     """Create a PathRouter instance."""

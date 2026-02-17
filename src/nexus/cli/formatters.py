@@ -6,6 +6,7 @@ from rich.table import Table
 
 from nexus.cli.utils import console
 
+
 def format_permissions(mode: int | None) -> str:
     """Format file mode as permission string.
 

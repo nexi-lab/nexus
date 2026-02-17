@@ -18,6 +18,7 @@ from nexus.services.delegation.errors import InsufficientTrustError
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService
 
+
 @dataclass(frozen=True)
 class FakeReputationScore:
     """Minimal ReputationScore for testing."""

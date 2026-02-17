@@ -10,6 +10,7 @@ import pytest
 from nexus.backends.backend import Backend
 from nexus.backends.factory import BackendFactory
 
+
 class TestBackendFactory:
     """Tests for BackendFactory.create()."""
 

@@ -25,6 +25,7 @@ from nexus.identity.crypto import IdentityCrypto
 from nexus.identity.did import create_did_key
 from nexus.storage.models import AgentKeyModel
 
+
 def _utcnow_naive() -> datetime:
     """Return current UTC time as a naive datetime.
 

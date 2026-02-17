@@ -7,6 +7,7 @@ gain ReBAC permission checks, EventLog auditing, and caching.
 
 from nexus.ipc.protocols import VFSOperations
 
+
 class VFSStorageDriver:
     """Delegates IPC storage to the Nexus VFS layer.
 

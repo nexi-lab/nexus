@@ -4,6 +4,7 @@ import pytest
 
 from nexus.auth.providers.static_key import StaticAPIKeyAuth
 
+
 @pytest.fixture
 def sample_api_keys():
     return {

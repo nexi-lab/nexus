@@ -9,6 +9,7 @@ from hypothesis import strategies as st
 
 from nexus.scheduler.policies.hrrn import compute_hrrn_score, rank_by_hrrn
 
+
 class TestComputeHrrnScore:
     """Test HRRN score computation."""
 

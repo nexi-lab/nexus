@@ -7,6 +7,7 @@ Issue #1603: Decompose remote/client.py into domain clients.
 
 from typing import Any
 
+
 class AsyncLLMClient:
     """Async LLM client — delegates to LLMService.
 

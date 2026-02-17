@@ -15,6 +15,7 @@ import pytest
 from nexus.core.nexus_fs import NexusFS
 from nexus.remote.client import RemoteNexusFS
 
+
 def get_rpc_exposed_methods(cls):
     """Get all methods marked with @rpc_expose decorator.
 

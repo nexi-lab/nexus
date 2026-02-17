@@ -29,6 +29,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.permissions.entity_registry import EntityRegistry
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Register Nexus agent (v0.5.0 ACE - Auth-agnostic)",

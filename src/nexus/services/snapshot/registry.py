@@ -11,6 +11,7 @@ skips all snapshot logic entirely.
 
 import threading
 
+
 class TransactionRegistry:
     """Thread-safe in-memory registry mapping paths to active transactions.
 

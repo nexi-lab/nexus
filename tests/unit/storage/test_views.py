@@ -11,6 +11,7 @@ from nexus.storage.views import (
     get_work_by_priority_view,
 )
 
+
 class TestHelperFunctions:
     """Test helper functions for SQL generation."""
 

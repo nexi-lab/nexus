@@ -12,6 +12,7 @@ Implementations:
 
 from typing import Protocol, runtime_checkable
 
+
 @runtime_checkable
 class IPCStorageDriver(Protocol):
     """Pluggable storage backend for IPC messages.

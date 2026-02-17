@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base
 
+
 class ReBACTupleModel(Base):
     """Relationship tuple for ReBAC system.
 

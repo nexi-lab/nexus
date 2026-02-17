@@ -32,6 +32,7 @@ from nexus.search.models import (
     RelationshipModel,
 )
 
+
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime for asyncpg compatibility."""
     return datetime.now(UTC).replace(tzinfo=None)

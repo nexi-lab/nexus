@@ -10,6 +10,7 @@ import os
 
 import pytest
 
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register the evaluation marker."""
     config.addinivalue_line(

@@ -6,6 +6,7 @@ import pytest
 
 from nexus.core.registry import BrickInfo, BrickRegistry
 
+
 @runtime_checkable
 class Greetable(Protocol):
     def greet(self) -> str: ...

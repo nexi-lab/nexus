@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+
 class OAuthProviderConfig(BaseModel):
     """Configuration for a single OAuth provider.
 

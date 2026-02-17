@@ -12,6 +12,7 @@ Convention (Issue #1291):
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class APIKeyCreatorProtocol(Protocol):
     """Protocol for creating API keys.

@@ -25,6 +25,7 @@ from nexus.core.nexus_fs import NexusFS
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+
 @pytest.fixture
 def nexus_fs_local(tmp_path: Path):
     """Create a real NexusFS with RaftMetadataStore."""

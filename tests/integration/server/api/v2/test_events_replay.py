@@ -20,6 +20,7 @@ from nexus.server.api.v2.routers.events_replay import router
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+
 @pytest.fixture
 def temp_dir(tmp_path: Path) -> Path:
     return tmp_path

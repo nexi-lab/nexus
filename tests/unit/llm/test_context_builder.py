@@ -10,6 +10,7 @@ import pytest
 
 from nexus.services.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
 
+
 @dataclass
 class MockSearchResult:
     """Mock search result for testing."""

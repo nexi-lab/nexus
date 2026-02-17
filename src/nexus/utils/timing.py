@@ -21,6 +21,7 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
+
 class Timer:
     """Lightweight timing context manager.
 

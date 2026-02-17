@@ -16,6 +16,7 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
+
 @pytest.fixture
 def nexus_fs(isolated_db, tmp_path):
     """Create a NexusFS instance for testing."""

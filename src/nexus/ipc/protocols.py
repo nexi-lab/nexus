@@ -17,6 +17,7 @@ in-memory fakes that satisfy these Protocols.
 from collections.abc import AsyncIterator
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class VFSOperations(Protocol):
     """Minimal VFS interface required by the IPC brick.

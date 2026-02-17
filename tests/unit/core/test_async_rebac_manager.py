@@ -9,6 +9,7 @@ import pytest
 
 from nexus.rebac.async_manager import AsyncReBACManager
 
+
 class TestAsyncReBACManager:
     """Test AsyncReBACManager functionality."""
 

@@ -8,6 +8,7 @@ from nexus.backends.service_map import (
     _sync_from_connector_registry,
 )
 
+
 class TestServiceInfo:
     """Test ServiceInfo dataclass."""
 

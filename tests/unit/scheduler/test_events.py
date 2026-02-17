@@ -7,6 +7,7 @@ import pytest
 
 from nexus.scheduler.events import AgentStateEmitter, AgentStateEvent
 
+
 def _make_event(**kwargs) -> AgentStateEvent:
     defaults = {
         "agent_id": "agent-1",

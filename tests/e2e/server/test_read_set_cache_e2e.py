@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+
 def _rpc(method: str, params: dict[str, Any]) -> dict[str, Any]:
     """Build a JSON-RPC request body."""
     return {

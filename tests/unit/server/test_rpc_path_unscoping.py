@@ -12,6 +12,7 @@ import pytest
 
 from nexus.server.rpc_server import RPCRequestHandler
 
+
 @pytest.fixture
 def mock_filesystem():
     """Create mock filesystem returning internal-prefixed paths."""

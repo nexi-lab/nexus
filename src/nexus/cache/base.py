@@ -7,6 +7,7 @@ Using Protocol allows for structural subtyping without requiring inheritance.
 from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 
+
 @runtime_checkable
 class PermissionCacheProtocol(Protocol):
     """Protocol for permission cache backends.

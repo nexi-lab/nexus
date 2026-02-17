@@ -27,6 +27,7 @@ from nexus.core.exceptions import (
     ValidationError,
 )
 
+
 def test_nexus_error() -> None:
     """Test base NexusError."""
     # Without path

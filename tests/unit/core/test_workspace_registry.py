@@ -14,6 +14,7 @@ from nexus.services.workspace.workspace_registry import (
     WorkspaceRegistry,
 )
 
+
 class TestWorkspaceConfig:
     """Test WorkspaceConfig dataclass."""
 

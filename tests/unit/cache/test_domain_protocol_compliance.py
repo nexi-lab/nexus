@@ -23,6 +23,7 @@ from nexus.cache.domain import (
 )
 from nexus.cache.inmemory import InMemoryCacheStore
 
+
 @pytest.fixture
 def cache_store():
     """Create a fresh InMemoryCacheStore for each test."""

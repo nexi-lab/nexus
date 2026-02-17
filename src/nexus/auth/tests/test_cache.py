@@ -4,6 +4,7 @@ import time
 
 from nexus.auth.cache import AuthCache
 
+
 def test_cache_set_and_get():
     """Set then get returns the cached value."""
     cache = AuthCache(ttl=60, max_size=100)

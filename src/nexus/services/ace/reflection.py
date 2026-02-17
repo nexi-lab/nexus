@@ -12,6 +12,7 @@ from nexus.services.ace.trajectory import TrajectoryManager
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel
 
+
 class Reflector:
     """Analyze execution trajectories to extract learnings.
 

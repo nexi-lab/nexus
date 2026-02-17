@@ -14,6 +14,7 @@ from nexus.cli.utils import (
     handle_error,
 )
 
+
 def register_commands(cli: click.Group) -> None:
     """Register all directory operation commands."""
     cli.add_command(list_files)

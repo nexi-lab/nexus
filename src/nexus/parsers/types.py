@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+
 @dataclass
 class TextChunk:
     """Represents a semantic chunk of text from a document."""

@@ -11,6 +11,7 @@ from rich.table import Table
 
 from nexus.cli.utils import console, handle_error
 
+
 def _run_async(coro: Any) -> Any:
     """Run an async coroutine from sync Click command context."""
     try:

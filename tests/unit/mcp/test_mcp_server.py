@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 from nexus.mcp.server import create_mcp_server
 
+
 class TestCreateMCPServer:
     """Test create_mcp_server function."""
 

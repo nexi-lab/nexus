@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 
+
 class _TestOAuthBackend(OAuthConnectorMixin):
     """Concrete class for testing the mixin."""
 

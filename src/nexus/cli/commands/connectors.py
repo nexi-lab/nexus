@@ -22,6 +22,7 @@ from nexus.cli.utils import (
     handle_error,
 )
 
+
 @click.group(name="connectors")
 def connectors_group() -> None:
     """Discover and inspect available connectors.

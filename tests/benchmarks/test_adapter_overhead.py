@@ -14,6 +14,7 @@ from nexus.backends.backend import Backend
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
 from nexus.core.response import HandlerResponse, timed_response
 
+
 class _BenchBackend(Backend):
     """Minimal zero-overhead backend for isolating adapter cost."""
 

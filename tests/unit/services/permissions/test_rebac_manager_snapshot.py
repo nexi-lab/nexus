@@ -32,6 +32,7 @@ from nexus.services.permissions.rebac_manager_enhanced import (
 from nexus.services.permissions.types import ConsistencyMode
 from nexus.storage.models import Base
 
+
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database."""

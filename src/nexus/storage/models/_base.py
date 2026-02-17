@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, String, Text, TextClause, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+
 def _generate_uuid() -> str:
     """Generate a UUID string (UUIDv4).
 

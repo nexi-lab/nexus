@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+
 @dataclass
 class MCPToolExample:
     """Example usage for an MCP tool."""

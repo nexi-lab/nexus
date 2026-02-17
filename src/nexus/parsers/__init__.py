@@ -28,6 +28,7 @@ from nexus.parsers.markitdown_parser import MarkItDownParser
 from nexus.parsers.registry import ParserRegistry
 from nexus.parsers.types import ImageData, ParseResult, TextChunk
 
+
 def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
     """Create a parse callback using MarkItDownParser.
 

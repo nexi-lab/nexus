@@ -6,6 +6,7 @@ from typing import Any
 
 from nexus.mcp.models import MCPToolConfig
 
+
 @dataclass
 class SkillMetadata:
     """Metadata for a skill (lightweight, loaded during discovery).

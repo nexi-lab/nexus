@@ -7,6 +7,7 @@ import asyncio
 import time
 from enum import Enum
 
+
 class CircuitState(Enum):
     CLOSED = "closed"
     OPEN = "open"

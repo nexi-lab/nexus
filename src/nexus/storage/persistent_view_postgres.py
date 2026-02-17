@@ -16,7 +16,6 @@ from sqlalchemy import text
 
 from nexus.core.persistent_view_store import PersistentView
 from nexus.storage.models._base import _generate_uuid
-
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)

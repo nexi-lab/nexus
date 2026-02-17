@@ -29,11 +29,11 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import console
 from nexus.auth.google_oauth import GoogleOAuthProvider
 from nexus.auth.microsoft_oauth import MicrosoftOAuthProvider
 from nexus.auth.token_manager import TokenManager
 from nexus.auth.x_oauth import XOAuthProvider
+from nexus.cli.utils import console
 
 # Rich console for output
 _console = Console()

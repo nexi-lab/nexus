@@ -20,6 +20,7 @@ The fix:
 from nexus.core.permissions import OperationContext, Permission
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
+
 class MockRoute:
     """Mock route object returned by router."""
 

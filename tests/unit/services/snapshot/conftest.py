@@ -8,6 +8,7 @@ import pytest
 from nexus.services.snapshot.registry import TransactionRegistry
 from nexus.services.snapshot.service import TransactionalSnapshotService
 
+
 class FakeSession:
     """Minimal session mock that supports context manager and basic operations."""
 

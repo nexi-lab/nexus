@@ -24,6 +24,7 @@ import time
 
 import pytest
 
+
 # Skip all tests if Redis is not available
 def is_redis_available():
     """Check if Redis/Dragonfly is available."""

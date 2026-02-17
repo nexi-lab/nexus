@@ -19,11 +19,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from nexus.search.fusion import normalize_scores_minmax
-from nexus.search.results import BaseSearchResult
-
 from nexus.search.embeddings import EmbeddingProvider
+from nexus.search.fusion import normalize_scores_minmax
 from nexus.search.graph_store import Entity, GraphStore, Relationship
+from nexus.search.results import BaseSearchResult
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 
 # Type alias for HierarchicalMemoryManager (Issue #1520: avoid nexus.services import)

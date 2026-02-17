@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.storage.models import Base, ContentChunkModel, FileMetadataModel, FilePathModel
 
+
 @pytest.fixture
 def engine():
     """Create an in-memory SQLite engine for testing."""

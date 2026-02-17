@@ -12,6 +12,7 @@ Run with:
 
 import pytest
 
+
 class TestCacheWarmupAPI:
     """End-to-end tests for Cache Warmup API endpoints."""
 

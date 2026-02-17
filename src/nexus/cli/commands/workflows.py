@@ -9,6 +9,7 @@ from rich.table import Table
 
 from nexus.cli.utils import console, handle_error
 
+
 def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     """Get workflow engine from NexusFS (factory-created, no private access).
 

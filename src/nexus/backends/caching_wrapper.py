@@ -32,11 +32,10 @@ from typing import Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.delegating import DelegatingBackend
-from nexus.core.response import HandlerResponse, timed_response
-from nexus.storage.content_cache import ContentCache
-
 from nexus.core.cache_store import CacheStoreABC
 from nexus.core.permissions import OperationContext
+from nexus.core.response import HandlerResponse, timed_response
+from nexus.storage.content_cache import ContentCache
 
 logger = logging.getLogger(__name__)
 

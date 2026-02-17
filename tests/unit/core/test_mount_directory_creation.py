@@ -18,6 +18,7 @@ import pytest
 from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
+
 @pytest.fixture
 def nx_with_mount():
     """Create NexusFS instance with mount manager support."""

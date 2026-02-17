@@ -16,6 +16,7 @@ from nexus.workflows.types import (
     WorkflowTrigger,
 )
 
+
 @pytest.fixture
 async def async_engine():
     """Create in-memory async SQLite database."""

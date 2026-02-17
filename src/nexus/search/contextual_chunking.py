@@ -21,6 +21,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 
 from nexus.search.chunking import DocumentChunk, DocumentChunker

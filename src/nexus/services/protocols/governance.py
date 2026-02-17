@@ -22,6 +22,7 @@ References:
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class GovernanceProtocol(Protocol):
     """Service contract for governance: anomaly, collusion, constraints, response.

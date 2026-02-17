@@ -16,6 +16,7 @@ from nexus.a2a.models import (
     TaskStatus,
 )
 
+
 def task_to_dict(task: Task) -> dict[str, Any]:
     """Serialize a Task to a plain dict (JSON-safe)."""
     return task.model_dump(mode="json")

@@ -4,6 +4,7 @@ import pytest
 
 from nexus.auth.providers.base import AuthProvider, AuthResult
 
+
 def test_auth_result_basic():
     """Create AuthResult with all fields, assert values."""
     result = AuthResult(

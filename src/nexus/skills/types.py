@@ -8,6 +8,7 @@ for independent evolution of internal and external representations.
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class SkillOperationContext(Protocol):
     """Narrow protocol for operation context used by skills module.

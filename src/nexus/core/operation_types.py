@@ -8,6 +8,7 @@ Issue #1138, #1139: Event Stream Export + Event Replay foundation.
 
 from enum import StrEnum
 
+
 class OperationType(StrEnum):
     """Filesystem operation types recorded in operation_log."""
 

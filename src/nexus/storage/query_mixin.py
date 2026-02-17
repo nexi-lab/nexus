@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import Select, desc, func, select
 from sqlalchemy.orm import Session
 
+
 class AppendOnlyQueryMixin:
     """Reusable query helpers for append-only log tables.
 

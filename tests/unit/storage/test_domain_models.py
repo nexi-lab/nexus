@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+
 class TestMemoryModelValidate:
     """Tests for MemoryModel.validate()."""
 

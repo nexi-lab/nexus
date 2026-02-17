@@ -32,6 +32,7 @@ from nexus.core.exceptions import (
 )
 from nexus.server.error_handlers import nexus_error_handler
 
+
 def _call_handler(exc: Exception) -> tuple[int, dict]:
     """Helper to call nexus_error_handler and return (status_code, content)."""
     request = MagicMock()

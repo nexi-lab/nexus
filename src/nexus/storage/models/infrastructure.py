@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from nexus.core.exceptions import ValidationError
 from nexus.storage.models._base import Base, ResourceConfigMixin, TimestampMixin, uuid_pk
 
+
 class SandboxMetadataModel(Base):
     """Sandbox metadata for Nexus-managed sandboxes (E2B, etc.)."""
 

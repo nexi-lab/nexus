@@ -22,6 +22,7 @@ from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_syncer import RecordStoreSyncer
 
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:

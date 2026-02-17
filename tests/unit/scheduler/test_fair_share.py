@@ -7,6 +7,7 @@ import pytest
 
 from nexus.scheduler.policies.fair_share import FairShareCounter, FairShareSnapshot
 
+
 class TestFairShareSnapshot:
     """Test FairShareSnapshot properties."""
 

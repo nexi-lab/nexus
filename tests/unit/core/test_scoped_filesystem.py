@@ -9,6 +9,7 @@ import pytest
 
 from nexus.core.scoped_filesystem import ScopedFilesystem
 
+
 @pytest.fixture
 def mock_fs() -> MagicMock:
     """Create a mock filesystem."""

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+
 @dataclass
 class OAuthCredential:
     """OAuth 2.0 credential data structure.

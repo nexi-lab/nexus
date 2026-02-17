@@ -46,6 +46,7 @@ from nexus.storage.models import (
     UserOAuthAccountModel,
 )
 
+
 def get_user_by_external_id(
     session: Session,
     external_user_id: str,

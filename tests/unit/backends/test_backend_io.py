@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from nexus.backends.backend_io import BackendIOService
 
+
 class MockSimpleConnector:
     """Connector with no blob support."""
 

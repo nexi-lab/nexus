@@ -26,6 +26,7 @@ import threading
 import time
 from typing import Any
 
+
 class AdaptiveTTLMixin:
     """Mixin providing adaptive TTL based on write frequency.
 

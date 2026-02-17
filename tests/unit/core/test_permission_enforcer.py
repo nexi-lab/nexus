@@ -8,6 +8,7 @@ from nexus.core.permissions import (
 )
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
+
 class TestOperationContext:
     """Tests for OperationContext dataclass."""
 

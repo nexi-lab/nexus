@@ -32,6 +32,7 @@ from nexus.core.permissions import OperationContext
 from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import Base, FilePathModel
 
+
 class MockConnector(CacheConnectorMixin):
     """Mock connector for testing cache mixin."""
 

@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
+
 class TokenEncryptor(Protocol):
     """Protocol for Fernet token encryption/decryption.
 

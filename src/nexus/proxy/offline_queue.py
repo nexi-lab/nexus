@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 from nexus.storage.models._base import Base
 from nexus.storage.models.sync import PendingOperationModel as PO
 
+
 @dataclass(frozen=True, slots=True)
 class QueuedOperation:
     """A single queued operation awaiting replay."""

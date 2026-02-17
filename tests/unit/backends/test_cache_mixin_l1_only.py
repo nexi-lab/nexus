@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from nexus.backends.cache_mixin import CacheConnectorMixin
 
+
 class MockL1OnlyBackend(CacheConnectorMixin):
     """Mock backend with l1_only=True for testing."""
 

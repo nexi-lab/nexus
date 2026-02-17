@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import pytest
 
+
 def _is_tigerbeetle_available() -> tuple[bool, str]:
     """Check if TigerBeetle is available (module + server)."""
     # Check module

@@ -13,6 +13,7 @@ import uuid
 import httpx
 import pytest
 
+
 def _rpc_call(client: httpx.Client, method: str, params: dict | None = None) -> dict:
     """Make a real HTTP RPC call and return the result."""
     body = json.dumps(

@@ -13,6 +13,7 @@ Verification:
 
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class NexusFilesystem(Protocol):
     """Narrow filesystem protocol for the skills module.

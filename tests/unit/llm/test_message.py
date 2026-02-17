@@ -11,6 +11,7 @@ from nexus.llm.message import (
     ToolFunction,
 )
 
+
 class TestMessageRole:
     """Tests for the MessageRole enum."""
 

@@ -6,6 +6,7 @@ when a transaction is active.
 
 from unittest.mock import MagicMock
 
+
 class TestWritePathTracking:
     """Tests for auto-tracking in _write_internal()."""
 

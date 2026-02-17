@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+
 def check_semantic_search_enabled(config_file: str) -> bool:
     """
     Check if semantic search is enabled in config file.

@@ -13,6 +13,7 @@ from nexus.a2a.models import (
 )
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 
+
 class TestA2AToEnvelope:
     def test_text_parts(self) -> None:
         msg = Message(role="user", parts=[TextPart(text="hello")])

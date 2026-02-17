@@ -14,6 +14,7 @@ from nexus.services.permissions.deferred_permission_buffer import (
     set_default_buffer,
 )
 
+
 class TestInitialization:
     """Tests for DeferredPermissionBuffer initialization."""
 

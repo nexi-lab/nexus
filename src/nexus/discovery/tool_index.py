@@ -13,6 +13,7 @@ from typing import Any
 
 import bm25s
 
+
 @dataclass
 class ToolInfo:
     """Information about an MCP tool."""

@@ -17,10 +17,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 import nexus
 from nexus.config import NexusConfig
 from nexus.migrations.registry import MigrationPath, get_registry
-from sqlalchemy.orm import Session
+
 
 @dataclass
 class MigrationContext:

@@ -4,6 +4,7 @@ import os
 
 from nexus.backends.chunked_storage import CDC_THRESHOLD_BYTES
 
+
 class TestChunkedStorageE2E:
     """End-to-end tests for chunked storage through NexusFS."""
 

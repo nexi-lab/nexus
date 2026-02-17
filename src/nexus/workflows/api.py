@@ -15,6 +15,7 @@ from nexus.workflows.types import (
     WorkflowExecution,
 )
 
+
 class WorkflowAPI:
     """High-level API for workflow management.
 

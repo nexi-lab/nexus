@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from cachetools import LRUCache
 
+
 @dataclass(frozen=True, slots=True)
 class FairShareSnapshot:
     """Immutable snapshot of an agent's fair-share state."""

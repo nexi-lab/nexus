@@ -13,6 +13,7 @@ from nexus.core.protocols.connector import (
 )
 from nexus.core.response import HandlerResponse
 
+
 class _MockBackend(Backend):
     """In-memory Backend for contract testing."""
 

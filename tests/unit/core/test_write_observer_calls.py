@@ -23,6 +23,7 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.config import KernelServices, ParseConfig, PermissionConfig
 from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from nexus.storage.file_cache import FileContentCache, get_file_cache
 
+
 class TestFileContentCache:
     """Test suite for FileContentCache functionality."""
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+
 class SubscriptionCreate(BaseModel):
     """Request model for creating a subscription."""
 

@@ -6,6 +6,7 @@ creator/async_creator pass-through, async URL conversion, and lifecycle.
 
 from unittest.mock import MagicMock, patch
 
+
 class TestRecordStoreURLResolution:
     """Tests for database URL resolution logic."""
 

@@ -26,6 +26,7 @@ import uuid
 import httpx
 import pytest
 
+
 def make_rpc_request(
     client: httpx.Client,
     method: str,

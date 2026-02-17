@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+
 class LLMConfig(BaseModel):
     """Configuration for an LLM provider."""
 

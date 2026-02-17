@@ -16,6 +16,7 @@ References:
 
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class VersionProtocol(Protocol):
     """Service contract for file version management and workspace snapshots.

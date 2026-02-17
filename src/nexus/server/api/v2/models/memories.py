@@ -6,6 +6,7 @@ from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
 
+
 class MemoryStoreRequest(ApiModel):
     """Request model for POST /api/v2/memories."""
 

@@ -3,6 +3,7 @@
 from nexus.workflows.engine import WorkflowEngine
 from nexus.workflows.protocol import WorkflowProtocol, WorkflowServices
 
+
 class TestWorkflowProtocol:
     """Test WorkflowProtocol conformance."""
 

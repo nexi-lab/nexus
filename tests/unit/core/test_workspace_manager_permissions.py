@@ -13,6 +13,7 @@ from nexus.core.response import HandlerResponse
 from nexus.services.workspace_manager import WorkspaceManager
 from nexus.storage.models import WorkspaceSnapshotModel
 
+
 @pytest.fixture
 def mock_metadata():
     """Mock metadata store."""

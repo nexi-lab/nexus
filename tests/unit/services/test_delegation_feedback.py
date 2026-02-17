@@ -22,6 +22,7 @@ from nexus.services.delegation.models import (
 )
 from nexus.services.delegation.service import DelegationService
 
+
 def _make_record(
     delegation_id: str = "del-1",
     agent_id: str = "worker-1",

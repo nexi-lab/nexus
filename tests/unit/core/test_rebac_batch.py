@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
+
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""

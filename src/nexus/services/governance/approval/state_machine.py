@@ -6,6 +6,7 @@ Reusable for any workflow with enumerated states and valid transitions.
 
 from typing import Any
 
+
 class InvalidTransitionError(Exception):
     """Raised when a state transition is not allowed."""
 

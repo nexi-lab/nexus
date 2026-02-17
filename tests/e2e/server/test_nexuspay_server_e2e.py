@@ -50,6 +50,7 @@ from nexus.storage.models import (
 )
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
+
 def _pg_available() -> bool:
     """Check if PostgreSQL is reachable at localhost:5432."""
     try:

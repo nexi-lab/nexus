@@ -12,6 +12,7 @@ import uuid
 import httpx
 import pytest
 
+
 def _is_sklearn_error(response: httpx.Response) -> bool:
     """Check if a 500 error is due to missing sklearn."""
     if response.status_code != 500:

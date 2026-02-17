@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
 
+
 class AgentWalletMeta(Base):
     """Wallet metadata for Nexus Pay. Balances in TigerBeetle, settings here.
 

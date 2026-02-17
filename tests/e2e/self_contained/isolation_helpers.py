@@ -10,6 +10,7 @@ import json
 import tempfile
 from pathlib import Path
 
+
 class MockBackend:
     """Filesystem-backed mock backend for isolation integration tests.
 

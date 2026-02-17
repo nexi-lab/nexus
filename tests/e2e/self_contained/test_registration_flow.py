@@ -23,6 +23,7 @@ from nexus.identity.did import resolve_did_key
 from nexus.identity.key_service import KeyService
 from nexus.storage.models import Base
 
+
 def _utcnow_naive() -> datetime:
     """UTC naive datetime for tests — matches key_service._utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)

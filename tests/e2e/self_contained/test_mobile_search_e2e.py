@@ -21,6 +21,7 @@ from nexus.search.mobile_config import (
     list_available_models,
 )
 
+
 class TestDeviceDetectionE2E:
     """E2E tests for device tier detection on real hardware."""
 

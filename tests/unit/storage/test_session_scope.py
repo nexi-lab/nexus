@@ -18,6 +18,7 @@ from nexus.core.exceptions import (
 )
 from nexus.storage.session_scope import session_scope
 
+
 def _make_session_factory():
     """Create a mock session factory that returns a mock session."""
     session = MagicMock()

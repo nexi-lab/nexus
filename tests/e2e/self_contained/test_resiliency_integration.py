@@ -20,6 +20,7 @@ from nexus.core.resiliency import (
     with_resiliency,
 )
 
+
 @pytest.fixture()
 def fast_manager() -> ResiliencyManager:
     """Manager with fast CB (threshold=2, timeout=0.1s) for integration testing."""

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+
 @dataclass
 class TemporalResult:
     """Result of temporal expression resolution."""

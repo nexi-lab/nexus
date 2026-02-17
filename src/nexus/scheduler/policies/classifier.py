@@ -18,6 +18,7 @@ from nexus.scheduler.constants import (
     RequestState,
 )
 
+
 def classify_request(
     tier: PriorityTier,
     request_state: RequestState | str = RequestState.PENDING,

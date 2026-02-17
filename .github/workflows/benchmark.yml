@@ -49,6 +49,8 @@ jobs:
         run: |
           cd rust/nexus_raft
           maturin develop --release --features python
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Build Rust extension (nexus_tasks)
         run: |
@@ -139,6 +141,8 @@ jobs:
         run: |
           cd rust/nexus_raft
           maturin develop --release --features python
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Build Rust extension (nexus_tasks)
         run: |

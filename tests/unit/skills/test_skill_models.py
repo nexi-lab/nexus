@@ -7,6 +7,7 @@ import pytest
 from nexus.skills.exceptions import SkillValidationError
 from nexus.skills.models import Skill, SkillMetadata
 
+
 def test_skill_metadata_initialization() -> None:
     """Test SkillMetadata initialization with required fields."""
     metadata = SkillMetadata(

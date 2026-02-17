@@ -17,6 +17,7 @@ import builtins
 from collections.abc import AsyncIterator
 from typing import Any
 
+
 class AsyncScopedFilesystem:
     """Async filesystem wrapper that scopes all paths to a base directory.
 

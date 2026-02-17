@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from nexus.storage.models import OperationLogModel
 
+
 class OperationLogger:
     """Logs filesystem operations for audit, undo, and debugging."""
 

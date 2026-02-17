@@ -18,6 +18,7 @@ from nexus.cli.utils import (
     handle_error,
 )
 
+
 @click.command()
 @click.argument("path", type=str)
 @add_backend_options

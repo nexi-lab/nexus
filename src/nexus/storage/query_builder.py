@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.core.exceptions import MetadataError
 
+
 class WorkQueryBuilder:
     """
     Query builder for work detection using SQL views.

@@ -19,6 +19,7 @@ from nexus.core.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 
+
 class VersionManager:
     """
     Version management for file metadata.

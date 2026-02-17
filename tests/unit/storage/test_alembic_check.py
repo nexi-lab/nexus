@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+
 @pytest.mark.skipif(
     subprocess.run(
         [sys.executable, "-m", "alembic", "--help"],

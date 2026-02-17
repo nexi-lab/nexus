@@ -16,6 +16,7 @@ from nexus.core.read_set import (
     set_global_registry,
 )
 
+
 class TestReadSetEntry:
     """Tests for ReadSetEntry dataclass."""
 

@@ -27,6 +27,7 @@ from nexus.core.exceptions import AuthenticationError
 from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.server.auth.token_manager import TokenManager, _hash_token
 
+
 class TestTokenRotation:
     """Token rotation tests — TDD (Issue #997)."""
 

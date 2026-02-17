@@ -11,6 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from nexus.rebac.types import WriteResult
 
+
 @runtime_checkable
 class ReBACBrickProtocol(Protocol):
     """Brick contract for ReBAC operations (Issue #1385).

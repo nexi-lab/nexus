@@ -14,6 +14,7 @@ from typing import Any
 
 from starlette.responses import Response, StreamingResponse
 
+
 class RangeNotSatisfiableError(Exception):
     """Raised when a Range header specifies an unsatisfiable range."""
 

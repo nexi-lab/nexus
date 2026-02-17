@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+
 @dataclass(frozen=True)
 class IsolationConfig:
     """Immutable configuration for IsolatedBackend.

@@ -21,6 +21,7 @@ from nexus.ipc.conventions import (
     tasks_path,
 )
 
+
 class TestPathConventions:
     """Tests for path generation helpers."""
 

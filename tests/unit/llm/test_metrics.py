@@ -2,6 +2,7 @@
 
 from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 
+
 class TestTokenUsage:
     """Test TokenUsage dataclass."""
 

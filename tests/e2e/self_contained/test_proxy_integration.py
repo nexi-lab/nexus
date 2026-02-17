@@ -17,6 +17,7 @@ from nexus.proxy.config import ProxyBrickConfig
 from nexus.proxy.errors import OfflineQueuedError
 from nexus.proxy.transport import HttpTransport
 
+
 def _make_rpc_response(result: Any) -> httpx.Response:
     """Build a successful JSON-RPC response."""
     return httpx.Response(

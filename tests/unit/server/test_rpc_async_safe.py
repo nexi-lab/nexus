@@ -12,6 +12,7 @@ import pytest
 
 from nexus.server.rpc_server import RPCRequestHandler
 
+
 class TestRunAsyncSafe:
     """Tests for the _run_async_safe method."""
 

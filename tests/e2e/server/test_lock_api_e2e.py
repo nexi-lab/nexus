@@ -10,6 +10,7 @@ import time
 import httpx
 import pytest
 
+
 @pytest.fixture
 def auth_headers():
     """Provide authentication headers for e2e tests.

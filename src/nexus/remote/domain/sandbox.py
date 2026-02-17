@@ -5,6 +5,7 @@ Issue #1603: Decompose remote/client.py into domain clients.
 
 from typing import Any, cast
 
+
 class SandboxClient:
     """Sandbox management domain client (sync)."""
 

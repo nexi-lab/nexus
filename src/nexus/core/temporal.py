@@ -11,6 +11,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
+
 class TemporalRange(NamedTuple):
     """A temporal range with start and end datetimes."""
 

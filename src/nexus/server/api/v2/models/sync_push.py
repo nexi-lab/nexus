@@ -6,6 +6,7 @@ from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
 
+
 class SyncPushResponse(ApiModel):
     """Response for POST /api/v2/sync/mounts/{mount_point}/push."""
 

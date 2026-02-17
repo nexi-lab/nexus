@@ -11,6 +11,7 @@ import pytest
 
 from nexus.services.workspace.workspace_registry import WorkspaceConfig
 
+
 def _make_workspace(path: str, created_by: str | None = None) -> WorkspaceConfig:
     """Create a WorkspaceConfig for testing."""
     return WorkspaceConfig(

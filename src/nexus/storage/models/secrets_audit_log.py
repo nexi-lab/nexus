@@ -14,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
+
 class SecretsAuditEventType(StrEnum):
     """Types of auditable secrets/credential events."""
 

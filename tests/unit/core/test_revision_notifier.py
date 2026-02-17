@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from nexus.core.revision_notifier import NullRevisionNotifier, RevisionNotifier
 
+
 class TestRevisionNotifier:
     """Tests for RevisionNotifier."""
 

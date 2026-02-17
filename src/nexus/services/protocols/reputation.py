@@ -14,6 +14,7 @@ References:
 
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class ReputationProtocol(Protocol):
     """Service contract for agent reputation and dispute resolution.

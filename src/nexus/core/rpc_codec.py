@@ -15,6 +15,7 @@ import json
 from datetime import date, datetime, timedelta
 from typing import Any
 
+
 class RPCEncoder(json.JSONEncoder):
     """Custom JSON encoder for RPC messages.
 

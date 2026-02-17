@@ -15,6 +15,7 @@ from nexus.server.protocol import (
     parse_method_params,
 )
 
+
 class TestRPCRequest:
     """Tests for RPCRequest class."""
 

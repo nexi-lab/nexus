@@ -11,6 +11,7 @@ import pytest
 
 from nexus.core.nexus_fs import NexusFS
 
+
 class MockNexusFS:
     """Test fixture class that provides mock attributes for ReBAC methods on NexusFS.
 

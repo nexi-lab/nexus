@@ -24,6 +24,7 @@ from nexus.services.overlay_resolver import (
     OverlayResolver,
 )
 
+
 class InMemoryMetadata:
     """Simple in-memory metadata store for integration testing.
 

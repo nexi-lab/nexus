@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid
 
+
 class A2ATaskModel(Base):
     """Persistent storage for A2A tasks."""
 

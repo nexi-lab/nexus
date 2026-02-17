@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from starlette.testclient import TestClient
 
+
 class TestWebSocketHealthIntegration:
     """Tests for WebSocket integration with health endpoint."""
 

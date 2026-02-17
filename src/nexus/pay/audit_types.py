@@ -6,6 +6,7 @@ Stored as String columns (not PG ENUM) for forward-compatible schema evolution.
 
 from enum import StrEnum
 
+
 class TransactionProtocol(StrEnum):
     """Payment protocol used for the transaction."""
 

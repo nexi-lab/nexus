@@ -10,6 +10,7 @@ import pytest
 
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 
+
 class TestManifestEntry:
     """Tests for ManifestEntry dataclass."""
 

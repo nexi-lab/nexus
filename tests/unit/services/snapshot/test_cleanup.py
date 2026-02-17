@@ -10,6 +10,7 @@ import pytest
 
 from nexus.services.snapshot.cleanup import SnapshotCleanupWorker
 
+
 @pytest.fixture
 def mock_snapshot_service() -> MagicMock:
     """Mock TransactionalSnapshotService."""

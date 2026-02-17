@@ -14,6 +14,7 @@ import ast
 import sys
 from pathlib import Path
 
+
 def get_tc_block_ranges(tree: ast.Module) -> list[tuple[int, int]]:
     """Get line ranges of TYPE_CHECKING if-blocks."""
     ranges = []

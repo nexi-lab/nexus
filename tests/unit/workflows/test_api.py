@@ -18,6 +18,7 @@ from nexus.workflows.types import (
     WorkflowTrigger,
 )
 
+
 @pytest.fixture
 def mock_engine():
     """Create a mock workflow engine."""

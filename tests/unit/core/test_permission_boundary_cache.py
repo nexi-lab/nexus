@@ -6,6 +6,7 @@ by caching the nearest ancestor with an explicit permission grant.
 
 from nexus.rebac.permission_boundary_cache import PermissionBoundaryCache
 
+
 class TestPermissionBoundaryCache:
     """Tests for PermissionBoundaryCache class."""
 

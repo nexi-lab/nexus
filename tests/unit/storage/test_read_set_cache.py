@@ -12,6 +12,7 @@ from nexus.core.read_set import AccessType, ReadSet, ReadSetRegistry
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.read_set_cache import ReadSetAwareCache
 
+
 def _is_cached(cache: MetadataCache, path: str) -> bool:
     """Check if a path has a cache entry (not evicted/invalidated)."""
     result = cache.get_path(path)

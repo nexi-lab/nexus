@@ -16,6 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+
 @dataclass(frozen=True, slots=True)
 class AgentRequest:
     """A work request submitted to the scheduler.

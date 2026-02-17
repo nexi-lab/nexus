@@ -8,6 +8,7 @@ from nexus.llm.cancellation import (
     should_continue,
 )
 
+
 class TestShutdownFlag:
     """Tests for the global shutdown flag functions."""
 

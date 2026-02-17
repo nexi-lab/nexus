@@ -59,9 +59,7 @@ def _get_tracer() -> Any:
         return _tracer
     with _tracer_lock:
         if not _tracer_resolved:
-            # Lazy import to break circular dependency:
-            # rebac_tracing -> server.telemetry -> server.__init__ -> NexusFS -> rebac_service -> rebac_tracing
-            from nexus.server.telemetry import get_tracer
+            from nexus.utils.telemetry import get_tracer
 
             _tracer = get_tracer("nexus.rebac")
             _tracer_resolved = True

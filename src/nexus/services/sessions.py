@@ -92,8 +92,12 @@ def get_session(session: Session, session_id: str) -> UserSessionModel | None:
     Returns:
         UserSessionModel or None if not found/expired
     """
+    from sqlalchemy import select
+
     user_session = (
-        session.query(UserSessionModel).filter(UserSessionModel.session_id == session_id).first()
+        session.execute(select(UserSessionModel).where(UserSessionModel.session_id == session_id))
+        .scalars()
+        .first()
     )
 
     if not user_session:
@@ -118,8 +122,12 @@ def update_session_activity(session: Session, session_id: str) -> bool:
     Returns:
         True if updated, False if session not found
     """
+    from sqlalchemy import select
+
     user_session = (
-        session.query(UserSessionModel).filter(UserSessionModel.session_id == session_id).first()
+        session.execute(select(UserSessionModel).where(UserSessionModel.session_id == session_id))
+        .scalars()
+        .first()
     )
 
     if not user_session:
@@ -144,24 +152,29 @@ def delete_session_resources(session: Session, session_id: str) -> dict[str, int
     Returns:
         Dict with counts: {"workspaces": N, "memories": N, "memory_configs": N}
     """
-    counts = {}
+    from typing import Any
+
+    from sqlalchemy import delete
+
+    counts: dict[str, int] = {}
 
     # Delete session-scoped workspace configs
-    counts["workspace_configs"] = (
-        session.query(WorkspaceConfigModel)
-        .filter(WorkspaceConfigModel.session_id == session_id)
-        .delete()
+    ws_result: Any = session.execute(
+        delete(WorkspaceConfigModel).where(WorkspaceConfigModel.session_id == session_id)
     )
+    counts["workspace_configs"] = ws_result.rowcount
 
     # Delete session-scoped memory configs
-    counts["memory_configs"] = (
-        session.query(MemoryConfigModel).filter(MemoryConfigModel.session_id == session_id).delete()
+    mc_result: Any = session.execute(
+        delete(MemoryConfigModel).where(MemoryConfigModel.session_id == session_id)
     )
+    counts["memory_configs"] = mc_result.rowcount
 
     # Delete session-scoped memories
-    counts["memories"] = (
-        session.query(MemoryModel).filter(MemoryModel.session_id == session_id).delete()
+    mem_result: Any = session.execute(
+        delete(MemoryModel).where(MemoryModel.session_id == session_id)
     )
+    counts["memories"] = mem_result.rowcount
 
     session.flush()
     return counts
@@ -177,16 +190,20 @@ def delete_session(session: Session, session_id: str) -> bool:
     Returns:
         True if deleted, False if not found
     """
+    from typing import Any
+
+    from sqlalchemy import delete
+
     # 1. Delete session-scoped resources
     delete_session_resources(session, session_id)
 
     # 2. Delete session
-    result = (
-        session.query(UserSessionModel).filter(UserSessionModel.session_id == session_id).delete()
+    del_result: Any = session.execute(
+        delete(UserSessionModel).where(UserSessionModel.session_id == session_id)
     )
 
     session.flush()
-    return result > 0
+    return bool(del_result.rowcount > 0)
 
 
 def cleanup_expired_sessions(session: Session) -> dict[str, int | dict[str, int]]:
@@ -208,10 +225,14 @@ def cleanup_expired_sessions(session: Session) -> dict[str, int | dict[str, int]
         ...     db.commit()
         ...     print(f"Cleaned up {result['sessions']} sessions")
     """
+    from sqlalchemy import select
+
     # Find expired sessions
-    expired = (
-        session.query(UserSessionModel)
-        .filter(UserSessionModel.expires_at < datetime.now(UTC))
+    expired = list(
+        session.execute(
+            select(UserSessionModel).where(UserSessionModel.expires_at < datetime.now(UTC))
+        )
+        .scalars()
         .all()
     )
 
@@ -244,16 +265,18 @@ def list_user_sessions(
     Returns:
         List of UserSessionModel
     """
-    query = session.query(UserSessionModel).filter(UserSessionModel.user_id == user_id)
+    from sqlalchemy import select
+
+    stmt = select(UserSessionModel).where(UserSessionModel.user_id == user_id)
 
     if not include_expired:
         # Filter out expired sessions
-        query = query.filter(
+        stmt = stmt.where(
             (UserSessionModel.expires_at.is_(None))
             | (UserSessionModel.expires_at > datetime.now(UTC))
         )
 
-    return list(query.all())
+    return list(session.execute(stmt).scalars().all())
 
 
 def cleanup_inactive_sessions(
@@ -271,35 +294,31 @@ def cleanup_inactive_sessions(
     Returns:
         Number of sessions deleted
     """
+    from sqlalchemy import delete, select
+
     cutoff = datetime.now(UTC) - inactive_threshold
 
     # Collect all inactive session IDs in a single query
     inactive_ids = [
         row[0]
-        for row in session.query(UserSessionModel.session_id)
-        .filter(UserSessionModel.last_activity < cutoff)
-        .all()
+        for row in session.execute(
+            select(UserSessionModel.session_id).where(UserSessionModel.last_activity < cutoff)
+        ).all()
     ]
 
     if not inactive_ids:
         return 0
 
     # Bulk-delete related resources (avoids N+1 per-session queries)
-    session.query(WorkspaceConfigModel).filter(
-        WorkspaceConfigModel.session_id.in_(inactive_ids)
-    ).delete(synchronize_session=False)
-
-    session.query(MemoryConfigModel).filter(MemoryConfigModel.session_id.in_(inactive_ids)).delete(
-        synchronize_session=False
+    session.execute(
+        delete(WorkspaceConfigModel).where(WorkspaceConfigModel.session_id.in_(inactive_ids))
     )
 
-    session.query(MemoryModel).filter(MemoryModel.session_id.in_(inactive_ids)).delete(
-        synchronize_session=False
-    )
+    session.execute(delete(MemoryConfigModel).where(MemoryConfigModel.session_id.in_(inactive_ids)))
 
-    session.query(UserSessionModel).filter(UserSessionModel.session_id.in_(inactive_ids)).delete(
-        synchronize_session=False
-    )
+    session.execute(delete(MemoryModel).where(MemoryModel.session_id.in_(inactive_ids)))
+
+    session.execute(delete(UserSessionModel).where(UserSessionModel.session_id.in_(inactive_ids)))
 
     session.flush()
     return len(inactive_ids)

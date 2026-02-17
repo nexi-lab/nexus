@@ -13,11 +13,9 @@ Extracted from: nexus_fs_oauth.py (1,116 lines)
 
 from __future__ import annotations
 
-import asyncio
 import builtins
+import json
 import logging
-import time
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
@@ -26,62 +24,59 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
     from nexus.core.permissions import OperationContext
 
 
-@dataclass(frozen=True)
-class _PKCEEntry:
-    """Immutable PKCE state entry with creation timestamp."""
-
-    pkce_data: dict[str, str]
-    created_at: float = field(default_factory=time.monotonic)
-
-
 class PKCEStateStore:
-    """Async-safe, instance-level PKCE state store with TTL and max size.
+    """PKCE state store backed by CacheStoreABC.
 
-    Replaces the previous module-level ``_pkce_cache`` dict (Issue #1597).
-    Thread-safe for concurrent FastAPI requests via ``asyncio.Lock``.
-    Entries auto-expire after ``ttl`` seconds and abandoned flows are
-    evicted lazily on each ``save()`` call.
+    Uses CacheStoreABC for TTL-based ephemeral storage per
+    KERNEL-ARCHITECTURE.md §2 (CacheStore pillar: ephemeral KV with TTL).
+
+    PKCE state entries are JSON-serialized and stored with a TTL so that
+    abandoned OAuth flows are automatically evicted. When no cache_store
+    is provided, a NullCacheStore is used and PKCE state is effectively
+    discarded (graceful degradation).
     """
 
-    def __init__(self, ttl: float = 600.0, max_size: int = 10_000) -> None:
-        self._store: dict[str, _PKCEEntry] = {}
-        self._lock = asyncio.Lock()
+    def __init__(
+        self,
+        cache_store: CacheStoreABC | None = None,
+        ttl: int = 600,
+    ) -> None:
+        self._cache_store = cache_store
         self._ttl = ttl
-        self._max_size = max_size
+
+    def _key(self, state: str) -> str:
+        """Cache key for PKCE state token."""
+        return f"oauth:pkce:{state}"
 
     async def save(self, state: str, pkce_data: dict[str, str]) -> None:
         """Store PKCE data keyed by state token."""
-        entry = _PKCEEntry(pkce_data=pkce_data)
-        async with self._lock:
-            self._evict_expired()
-            if len(self._store) >= self._max_size:
-                raise RuntimeError(
-                    f"PKCE state store capacity exceeded (max_size={self._max_size})"
-                )
-            self._store[state] = entry
+        if self._cache_store is None:
+            return
+        await self._cache_store.set(self._key(state), json.dumps(pkce_data).encode(), ttl=self._ttl)
 
     async def pop(self, state: str) -> dict[str, str] | None:
         """Retrieve and delete PKCE data (single-use). Returns None if missing/expired."""
-        async with self._lock:
-            entry = self._store.pop(state, None)
-            if entry is None:
-                return None
-            if (time.monotonic() - entry.created_at) > self._ttl:
-                return None  # Expired — already popped from store
-            return entry.pkce_data
-
-    def _evict_expired(self) -> None:
-        """Remove expired entries. Must be called under lock."""
-        now = time.monotonic()
-        self._store = {k: v for k, v in self._store.items() if (now - v.created_at) <= self._ttl}
+        if self._cache_store is None:
+            return None
+        key = self._key(state)
+        raw = await self._cache_store.get(key)
+        if raw is None:
+            return None
+        await self._cache_store.delete(key)
+        result: dict[str, str] = json.loads(raw)
+        return result
 
     @property
     def size(self) -> int:
-        """Current number of entries (for monitoring/testing)."""
-        return len(self._store)
+        """Current number of entries (for monitoring/testing).
+
+        Not available with CacheStoreABC — returns -1 when backed by external store.
+        """
+        return -1
 
 
 class OAuthService:

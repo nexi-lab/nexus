@@ -668,7 +668,6 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except ImportError:
         logger.debug("[BOOT:BRICK] LLM brick manifest not available")
 
-
     # Wire zoekt callbacks into backends (Issue #1520)
     try:
         from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
@@ -846,7 +845,6 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
             logger.debug("[BOOT:BRICK] RLM skipped: sandbox_manager not available")
     except ImportError as _e:
         logger.debug("[BOOT:BRICK] RLM brick not available: %s", _e)
-
 
     result = {
         "wallet_provisioner": wallet_provisioner,

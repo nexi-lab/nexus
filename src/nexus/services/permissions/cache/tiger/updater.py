@@ -26,8 +26,8 @@ from nexus.storage.models.permissions import (
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
-    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
     from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
 

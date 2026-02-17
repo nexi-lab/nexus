@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from nexus.fuse.rust_client import RustFUSEClient  # noqa: E402
 
@@ -20,9 +20,7 @@ def test_rust_client():
     # Initialize Rust client (spawns daemon)
     print("\n1. Initializing Rust FUSE client...")
     client = RustFUSEClient(
-        nexus_url="http://localhost:2026",
-        api_key="sk-test-key-123",
-        agent_id=None
+        nexus_url="http://localhost:2026", api_key="sk-test-key-123", agent_id=None
     )
     print(f"✓ Daemon started, socket: {client.socket_path}")
     time.sleep(0.5)  # Give daemon time to initialize
@@ -59,7 +57,9 @@ def test_rust_client():
     print("\n5. Testing stat operation...")
     metadata = client.stat("/rust-test.txt")
     print(f"✓ Stat succeeded: size={metadata.size}, is_dir={metadata.is_directory}")
-    assert metadata.size == len(test_content), f"Size mismatch: {metadata.size} != {len(test_content)}"
+    assert metadata.size == len(test_content), (
+        f"Size mismatch: {metadata.size} != {len(test_content)}"
+    )
 
     # Test mkdir
     print("\n6. Testing mkdir operation...")

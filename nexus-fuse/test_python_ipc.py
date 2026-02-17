@@ -44,7 +44,9 @@ def main():
         print("4. Getting file metadata...")
         metadata = client.stat("/python-rust-test.txt")
         print(f"   ✓ Stat successful: size={metadata.size}, is_dir={metadata.is_directory}\n")
-        assert metadata.size == len(test_content), f"Size mismatch: {metadata.size} != {len(test_content)}"
+        assert metadata.size == len(test_content), (
+            f"Size mismatch: {metadata.size} != {len(test_content)}"
+        )
         assert not metadata.is_directory, "File should not be a directory"
 
         # Test 4: List directory

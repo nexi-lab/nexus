@@ -31,10 +31,16 @@ def test_thread_safety():
     print("\nStarting Nexus server with permissions enabled...")
     server_proc = subprocess.Popen(
         [
-            "uv", "run", "nexus", "serve",
-            "--port", "2027",
-            "--api-key", "sk-test-key-comprehensive",
-            "--auth-type", "static",
+            "uv",
+            "run",
+            "nexus",
+            "serve",
+            "--port",
+            "2027",
+            "--api-key",
+            "sk-test-key-comprehensive",
+            "--auth-type",
+            "static",
             "--enforce-permissions",  # Enable permissions
         ],
         stdout=subprocess.DEVNULL,
@@ -46,11 +52,13 @@ def test_thread_safety():
 
     try:
         # Connect to server
-        nx = connect(config={
-            "mode": "remote",
-            "url": "http://localhost:2027",
-            "api_key": "sk-test-key-comprehensive",
-        })
+        nx = connect(
+            config={
+                "mode": "remote",
+                "url": "http://localhost:2027",
+                "api_key": "sk-test-key-comprehensive",
+            }
+        )
 
         # Create test files
         print("Creating test files...")
@@ -142,10 +150,16 @@ def test_rust_integration():
     print("\nStarting Nexus server...")
     server_proc = subprocess.Popen(
         [
-            "uv", "run", "nexus", "serve",
-            "--port", "2028",
-            "--api-key", "sk-test-key-rust",
-            "--auth-type", "static",
+            "uv",
+            "run",
+            "nexus",
+            "serve",
+            "--port",
+            "2028",
+            "--api-key",
+            "sk-test-key-rust",
+            "--auth-type",
+            "static",
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -157,11 +171,13 @@ def test_rust_integration():
     try:
         # Test Python-only mode
         print("\nTesting Python-only mode...")
-        nx = connect(config={
-            "mode": "remote",
-            "url": "http://localhost:2028",
-            "api_key": "sk-test-key-rust",
-        })
+        nx = connect(
+            config={
+                "mode": "remote",
+                "url": "http://localhost:2028",
+                "api_key": "sk-test-key-rust",
+            }
+        )
 
         nx.write("/rust_test.txt", b"Test content")
         content = nx.read("/rust_test.txt")
@@ -189,10 +205,16 @@ def test_permissions():
     print("\nStarting Nexus server with permissions...")
     server_proc = subprocess.Popen(
         [
-            "uv", "run", "nexus", "serve",
-            "--port", "2029",
-            "--api-key", "sk-test-key-perms",
-            "--auth-type", "static",
+            "uv",
+            "run",
+            "nexus",
+            "serve",
+            "--port",
+            "2029",
+            "--api-key",
+            "sk-test-key-perms",
+            "--auth-type",
+            "static",
             "--enforce-permissions",
         ],
         stdout=subprocess.DEVNULL,
@@ -203,11 +225,13 @@ def test_permissions():
     time.sleep(2)
 
     try:
-        nx = connect(config={
-            "mode": "remote",
-            "url": "http://localhost:2029",
-            "api_key": "sk-test-key-perms",
-        })
+        nx = connect(
+            config={
+                "mode": "remote",
+                "url": "http://localhost:2029",
+                "api_key": "sk-test-key-perms",
+            }
+        )
 
         # Test basic read/write with permissions enabled
         print("\nTesting basic operations with permissions...")

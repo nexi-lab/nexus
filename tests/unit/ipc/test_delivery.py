@@ -501,8 +501,14 @@ class TestHotColdDelivery:
             nonlocal call_count
             call_count += 1
 
+        cache_store = InMemoryCacheStore()
         processor = MessageProcessor(
-            vfs, "agent:bob", handler, zone_id=ZONE, hot_subscriber=hot_sub
+            vfs,
+            "agent:bob",
+            handler,
+            zone_id=ZONE,
+            hot_subscriber=hot_sub,
+            cache_store=cache_store,
         )
         await processor.start()
 

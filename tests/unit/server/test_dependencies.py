@@ -284,8 +284,12 @@ class TestGetAuthResultAuthProvider:
     """Tests for external auth provider authentication."""
 
     def _make_auth_result_obj(self, **overrides):
-        """Build a minimal AuthResult mock."""
-        result = MagicMock()
+        """Build a minimal AuthResult mock.
+
+        Uses spec=[] to prevent MagicMock from auto-creating attributes
+        (which are not JSON-serializable and break CacheStoreABC round-trip).
+        """
+        result = MagicMock(spec=[])
         result.authenticated = overrides.get("authenticated", True)
         result.is_admin = overrides.get("is_admin", False)
         result.subject_type = overrides.get("subject_type", "user")
@@ -293,6 +297,7 @@ class TestGetAuthResultAuthProvider:
         result.zone_id = overrides.get("zone_id", "root")
         result.inherit_permissions = overrides.get("inherit_permissions", True)
         result.metadata = overrides.get("metadata", {})
+        result.agent_generation = overrides.get("agent_generation", None)
         return result
 
     async def test_provider_success_returns_result(self):

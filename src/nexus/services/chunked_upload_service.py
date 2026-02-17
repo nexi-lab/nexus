@@ -102,6 +102,7 @@ class ChunkedUploadService:
         self._backend = backend
         self._metadata_store = metadata_store
         self._config = config or ChunkedUploadConfig()
+        self.zone_id: str | None = None
 
         self._semaphore = asyncio.Semaphore(self._config.max_concurrent_uploads)
         self._session_locks: dict[str, asyncio.Lock] = {}
@@ -406,21 +407,20 @@ class ChunkedUploadService:
         now = datetime.now(UTC)
         cleaned = 0
 
+        zone_id = self.zone_id
+
         def _query_expired() -> list[dict[str, Any]]:
             db = self._session_factory()
             try:
                 from sqlalchemy import select
 
-                rows = (
-                    db.execute(
-                        select(UploadSessionModel).where(
-                            UploadSessionModel.expires_at < now,
-                            UploadSessionModel.status.in_(["created", "in_progress"]),
-                        )
-                    )
-                    .scalars()
-                    .all()
+                stmt = select(UploadSessionModel).where(
+                    UploadSessionModel.expires_at < now,
+                    UploadSessionModel.status.in_(["created", "in_progress"]),
                 )
+                if zone_id is not None:
+                    stmt = stmt.where(UploadSessionModel.zone_id == zone_id)
+                rows = db.execute(stmt).scalars().all()
                 return [row.to_session_dict() for row in rows]
             finally:
                 db.close()
@@ -494,16 +494,17 @@ class ChunkedUploadService:
             UploadNotFoundError: If session doesn't exist.
         """
 
+        zone_id = self.zone_id
+
         def _read(uid: str) -> dict[str, Any] | None:
             db = self._session_factory()
             try:
                 from sqlalchemy import select
 
-                model = (
-                    db.execute(select(UploadSessionModel).filter_by(upload_id=uid))
-                    .scalars()
-                    .first()
-                )
+                stmt = select(UploadSessionModel).filter_by(upload_id=uid)
+                if zone_id is not None:
+                    stmt = stmt.where(UploadSessionModel.zone_id == zone_id)
+                model = db.execute(stmt).scalars().first()
                 if model is None:
                     return None
                 return model.to_session_dict()
@@ -517,17 +518,17 @@ class ChunkedUploadService:
 
     async def _update_session(self, session: UploadSession) -> None:
         """Update an existing session in the database."""
+        zone_id = self.zone_id
 
         def _write(s: UploadSession) -> None:
             db = self._session_factory()
             try:
                 from sqlalchemy import select
 
-                model = (
-                    db.execute(select(UploadSessionModel).filter_by(upload_id=s.upload_id))
-                    .scalars()
-                    .first()
-                )
+                stmt = select(UploadSessionModel).filter_by(upload_id=s.upload_id)
+                if zone_id is not None:
+                    stmt = stmt.where(UploadSessionModel.zone_id == zone_id)
+                model = db.execute(stmt).scalars().first()
                 if model is None:
                     raise UploadNotFoundError(s.upload_id)
                 model.upload_offset = s.upload_offset
@@ -546,13 +547,17 @@ class ChunkedUploadService:
 
     async def _delete_session(self, upload_id: str) -> None:
         """Delete a session from the database."""
+        zone_id = self.zone_id
 
         def _delete(uid: str) -> None:
             db = self._session_factory()
             try:
                 from sqlalchemy import delete
 
-                db.execute(delete(UploadSessionModel).filter_by(upload_id=uid))
+                stmt = delete(UploadSessionModel).filter_by(upload_id=uid)
+                if zone_id is not None:
+                    stmt = stmt.where(UploadSessionModel.zone_id == zone_id)
+                db.execute(stmt)
                 db.commit()
             except Exception:
                 db.rollback()

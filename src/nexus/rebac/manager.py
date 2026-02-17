@@ -88,9 +88,9 @@ from nexus.rebac.utils.zone import normalize_zone_id
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from nexus.rebac.cache.tiger import TigerCache, TigerCacheUpdater
     from nexus.rebac.leopard import LeopardIndex
     from nexus.rebac.rebac_iterator_cache import IteratorCache
-    from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +213,7 @@ class ReBACManager:
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
         if enable_tiger_cache and engine.dialect.name == "postgresql":
-            from nexus.rebac.tiger_cache import (
+            from nexus.rebac.cache.tiger import (
                 TigerCache,
                 TigerCacheUpdater,
                 TigerResourceMap,

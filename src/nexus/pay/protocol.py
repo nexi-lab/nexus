@@ -24,12 +24,11 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from nexus.pay.audit_types import TransactionProtocol
-from nexus.pay.credits import CreditsError
-from nexus.pay.x402 import validate_wallet_address
-from nexus.services.protocols.payment import PaymentProtocol
 
 if TYPE_CHECKING:
-    from nexus.pay.x402 import X402Client
+    from nexus.pay.credits import CreditsError
+    from nexus.pay.x402 import X402Client, validate_wallet_address
+    from nexus.services.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +219,8 @@ class X402PaymentProtocol:
         to: str,
         metadata: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> bool:
+        from nexus.pay.x402 import validate_wallet_address
+
         return validate_wallet_address(to)
 
     async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult:
@@ -267,9 +268,13 @@ class CreditsPaymentProtocol:
         to: str,
         metadata: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> bool:
+        from nexus.pay.x402 import validate_wallet_address
+
         return not validate_wallet_address(to)
 
     async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult:
+        from nexus.pay.credits import CreditsError
+
         try:
             tx_id = await self._service.transfer(
                 from_id=request.from_agent,

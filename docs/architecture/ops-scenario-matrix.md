@@ -748,7 +748,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 
 | Issue | Protocols | Problem | Recommendation |
 |-------|-----------|---------|----------------|
-| **BUNDLE** | P9 (Events) | Bundles file watching + advisory locking (different properties: read/pub-sub vs write/mutex) | **SPLIT** into WatchProtocol + LockProtocol |
+| ~~**BUNDLE**~~ | ~~P9 (Events)~~ | ~~Bundles file watching + advisory locking~~ | **DONE (#546)** — split into WatchProtocol + LockProtocol |
 | **TWO LEVELS** | P6 (Search) + P7 (SearchBrick) | Both cover Content Discovery; P7 is per-brick, P6 is aggregate | Keep both — P7 is driver-level, P6 is service-level |
 | **COMPOSITION** | P2 (ContentStore) + P3 (DirOps) → P4 (Connector) | P4 is the union of P2 + P3 + lifecycle | Keep all three — ISP compliance (callers needing only read don't depend on mkdir) |
 | **OVERLAP** | P19 (EventLog service) ↔ P17 (HookEngine) | Both fire on operations; hooks are sync pre/post, event log is async durable append | Keep both — different timing (inline vs async) and durability (ephemeral vs durable) |
@@ -818,8 +818,8 @@ Map each surviving scenario (S1-S28) to its canonical Ops ABC (existing or propo
 | **S5** Content Sharing | **P11** ShareLinkProtocol | EXISTS | Service | EXACT | Capability URL CRUD + access logs |
 | **S6** Credential Management | **P12** OAuthProtocol | EXISTS | Service | EXACT | OAuth flow + credential CRUD + MCP connect |
 | **S7** Permission (ReBAC) | **P8** PermissionProtocol | EXISTS | Service | EXACT | 6 core Zanzibar APIs |
-| **S8** File Watching | *(split from P9)* **WatchProtocol** | NEEDS SPLIT | Service | — | Extract `wait_for_changes` from EventsProtocol |
-| **S9** Advisory Locking | *(split from P9)* **LockProtocol** | NEEDS SPLIT | Service | — | Extract `lock/extend_lock/unlock` from EventsProtocol |
+| **S8** File Watching | *(split from P9)* **WatchProtocol** | DONE (#546) | Service | — | `wait_for_changes` extracted; federation needs User Space messaging tier (EventBus fan-out) |
+| **S9** Advisory Locking | *(split from P9)* **LockProtocol** | DONE (#546) | Service | — | `lock/extend_lock/unlock` extracted; federation needs distributed lock manager (#161) |
 | **S10** Agent Lifecycle | **P14** AgentRegistryProtocol | EXISTS | Service | EXACT | 6 methods: register/get/transition/heartbeat/list/unregister |
 | **S11** Agent Scheduling | **P15** SchedulerProtocol | EXISTS | Service | EXACT | 4 methods: submit/next/cancel/pending_count |
 | **S12** Skill Management | **P16** SkillsProtocol | EXISTS | Service | EXACT | 9 methods: share/discover/subscribe/load/export |
@@ -878,9 +878,7 @@ Tier assignment per KERNEL-ARCHITECTURE.md (three swap tiers):
 
 **Priority Actions:**
 
-1. **Split EventsProtocol (P9)** → WatchProtocol + LockProtocol
-   - Rationale: violates ISP (Interface Segregation) — file watching and locking have different consumers and properties
-   - Impact: LOW — only 4 methods to redistribute
+1. ~~**Split EventsProtocol (P9)**~~ → WatchProtocol + LockProtocol — **DONE (#546)**
 
 2. **Create VersionProtocol** for S3 History & Snapshots
    - Rationale: HIGH value scenario with ~10 operations currently inlined in NexusFS

@@ -199,10 +199,16 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         True,  # Method names match (async/sync checked separately)
     ),
     (
-        "EventsProtocol",
-        "nexus.services.protocols.events",
+        "WatchProtocol",
+        "nexus.services.protocols.watch",
         "nexus.core.nexus_fs_events.NexusFSEventsMixin",
-        True,  # Method names match (async/sync checked separately)
+        True,  # wait_for_changes method match
+    ),
+    (
+        "LockProtocol",
+        "nexus.services.protocols.lock",
+        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
+        True,  # lock/extend_lock/unlock methods match
     ),
 ]
 

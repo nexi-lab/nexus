@@ -296,7 +296,7 @@ class SemanticSearchMixin:
 
     @rpc_expose(description="Index documents for semantic search")
     async def semantic_search_index(
-        self, path: str = "/", recursive: bool = True
+        self, path: str = "/", recursive: bool = True, zone_id: str | None = None
     ) -> dict[str, int]:
         """Index documents for semantic search.
 
@@ -325,7 +325,7 @@ class SemanticSearchMixin:
         # Use async indexing for high throughput
         if self._async_search is not None:
             assert self._async_search is not None  # Type guard for mypy
-            return await self._async_index_documents(path, recursive)
+            return await self._async_index_documents(path, recursive, zone_id=zone_id)
 
         # Fallback to sync indexing via _semantic_search
         assert self._semantic_search is not None  # Type guard
@@ -475,7 +475,9 @@ class SemanticSearchMixin:
     # Helper Methods: Semantic Search Indexing
     # =========================================================================
 
-    async def _async_index_documents(self, path: str, recursive: bool) -> dict[str, int]:
+    async def _async_index_documents(
+        self, path: str, recursive: bool, zone_id: str | None = None
+    ) -> dict[str, int]:
         """Index documents using async backend for high throughput."""
         from sqlalchemy import select
 
@@ -517,6 +519,8 @@ class SemanticSearchMixin:
                             FilePathModel.virtual_path == fp,
                             FilePathModel.deleted_at.is_(None),
                         )
+                        if zone_id is not None:
+                            stmt = stmt.where(FilePathModel.zone_id == zone_id)
                         result = session.execute(stmt)
                         file_model = result.scalar_one_or_none()
                         if file_model and content:

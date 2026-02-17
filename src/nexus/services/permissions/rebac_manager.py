@@ -23,8 +23,7 @@ from nexus.core.rebac import (
     Entity,
     NamespaceConfig,
 )
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.default_namespaces import (
+from nexus.rebac.default_namespaces import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
@@ -32,6 +31,7 @@ from nexus.services.permissions.default_namespaces import (
     DEFAULT_SKILL_NAMESPACE,
     DEFAULT_TRAJECTORY_NAMESPACE,
 )
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.graph.expand import ExpandEngine
 from nexus.services.permissions.graph.traversal import PermissionComputer
 from nexus.services.permissions.rebac_cache import ReBACPermissionCache

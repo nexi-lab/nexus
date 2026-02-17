@@ -433,7 +433,7 @@ class TestCrossZonePermissionExpansion:
     @pytest.fixture
     def manager_with_namespace(self, engine):
         """Create manager with file namespace for permission expansion."""
-        from nexus.services.permissions.default_namespaces import DEFAULT_FILE_NAMESPACE
+        from nexus.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
 
         manager = EnhancedReBACManager(
             engine=engine,

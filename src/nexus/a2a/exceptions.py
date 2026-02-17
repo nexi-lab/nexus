@@ -1,12 +1,15 @@
 """A2A protocol exceptions.
 
 Maps A2A-specific error conditions to JSON-RPC error codes
-per the A2A specification.
+per the A2A specification.  Each exception also carries a
+``grpc_status`` attribute for the gRPC transport binding (#1726).
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+import grpc
 
 
 class A2AError(Exception):
@@ -14,6 +17,7 @@ class A2AError(Exception):
 
     code: int = -32603  # Internal error default
     message: str = "Internal error"
+    grpc_status: grpc.StatusCode = grpc.StatusCode.INTERNAL
 
     def __init__(
         self,
@@ -40,6 +44,7 @@ class TaskNotFoundError(A2AError):
 
     code = -32001
     message = "Task not found"
+    grpc_status = grpc.StatusCode.NOT_FOUND
 
 
 class TaskNotCancelableError(A2AError):
@@ -47,6 +52,7 @@ class TaskNotCancelableError(A2AError):
 
     code = -32002
     message = "Task is not cancelable"
+    grpc_status = grpc.StatusCode.FAILED_PRECONDITION
 
 
 class InvalidStateTransitionError(A2AError):
@@ -54,6 +60,7 @@ class InvalidStateTransitionError(A2AError):
 
     code = -32003
     message = "Invalid state transition"
+    grpc_status = grpc.StatusCode.FAILED_PRECONDITION
 
 
 class UnsupportedOperationError(A2AError):
@@ -61,6 +68,7 @@ class UnsupportedOperationError(A2AError):
 
     code = -32004
     message = "Unsupported operation"
+    grpc_status = grpc.StatusCode.UNIMPLEMENTED
 
 
 class ContentTypeNotSupportedError(A2AError):
@@ -68,6 +76,7 @@ class ContentTypeNotSupportedError(A2AError):
 
     code = -32005
     message = "Content type not supported"
+    grpc_status = grpc.StatusCode.INVALID_ARGUMENT
 
 
 class PushNotificationNotSupportedError(A2AError):
@@ -75,6 +84,7 @@ class PushNotificationNotSupportedError(A2AError):
 
     code = -32006
     message = "Push notifications not supported"
+    grpc_status = grpc.StatusCode.UNIMPLEMENTED
 
 
 # Standard JSON-RPC errors (used by the A2A router)
@@ -85,6 +95,7 @@ class InvalidRequestError(A2AError):
 
     code = -32600
     message = "Invalid request"
+    grpc_status = grpc.StatusCode.INVALID_ARGUMENT
 
 
 class MethodNotFoundError(A2AError):
@@ -92,6 +103,7 @@ class MethodNotFoundError(A2AError):
 
     code = -32601
     message = "Method not found"
+    grpc_status = grpc.StatusCode.UNIMPLEMENTED
 
 
 class InvalidParamsError(A2AError):
@@ -99,6 +111,7 @@ class InvalidParamsError(A2AError):
 
     code = -32602
     message = "Invalid params"
+    grpc_status = grpc.StatusCode.INVALID_ARGUMENT
 
 
 class InternalError(A2AError):
@@ -106,3 +119,4 @@ class InternalError(A2AError):
 
     code = -32603
     message = "Internal error"
+    grpc_status = grpc.StatusCode.INTERNAL

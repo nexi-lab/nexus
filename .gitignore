@@ -202,6 +202,7 @@ aws-config
 aws-credentials
 
 # Claude Code local settings
+.claude/settings.json
 .claude/settings.local.json
 CLAUDE.md
 .claude/CLAUDE.md

@@ -245,7 +245,7 @@ class GmailConnectorBackend(
         logger = logging.getLogger(__name__)
 
         try:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth.factory import OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()
@@ -256,7 +256,7 @@ class GmailConnectorBackend(
                     name=self.provider,
                 )
                 # Register with TokenManager using the provider name from config
-                self.token_manager.register_provider(self.provider, provider_instance)
+                self.token_manager.register_provider(self.provider, provider_instance)  # type: ignore[arg-type]
                 logger.info(f"✓ Registered OAuth provider '{self.provider}' for Gmail backend")
             except ValueError as e:
                 # Provider not found in config or credentials not set

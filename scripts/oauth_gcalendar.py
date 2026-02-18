@@ -115,7 +115,9 @@ def main():
     # Save to database
     import asyncio
 
-    from nexus.server.auth.oauth_provider import OAuthCredential
+    from nexus.server.auth.oauth_provider import (
+        OAuthCredential,  # mutable version for token_manager
+    )
     from nexus.server.auth.token_manager import TokenManager
 
     db_path = Path.home() / ".nexus" / "nexus.db"

@@ -34,12 +34,12 @@ from sqlalchemy import select
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
 
+from nexus.auth.oauth.crypto import OAuthCrypto
 from nexus.core.exceptions import AuthenticationError
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.storage.models import OAuthCredentialModel
 from nexus.storage.token_rotation_store import TokenRotationStore
 
-from .oauth_crypto import OAuthCrypto
 from .oauth_provider import OAuthCredential, OAuthError, OAuthProvider
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 _REFRESH_COOLDOWN_SECONDS = 30
 
 # Token cache TTL in seconds
-_TOKEN_CACHE_TTL_SECONDS = 30
+_TOKEN_CACHE_TTL_SECONDS = 60
 
 # Timeout for OAuth provider refresh calls (prevents indefinite lock holding)
 _PROVIDER_REFRESH_TIMEOUT_SECONDS = 30

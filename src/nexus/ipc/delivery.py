@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from collections.abc import Callable, Coroutine
 from datetime import datetime
@@ -593,103 +594,84 @@ class MessageProcessor:
         # Track in dedup cache (TTL-based eviction via CacheStoreABC)
         await self._track_processed(envelope.id)
 
-    def _verify_signature_hot(self, envelope: MessageEnvelope) -> bool:
-        """Verify message signature on the hot path (no dead-letter, just drop).
+    def _check_signature_policy(
+        self, envelope: MessageEnvelope
+    ) -> tuple[bool, DLQReason | None, str]:
+        """Evaluate signature policy for an envelope.
 
-        Returns True if the message should proceed to the handler.
+        Shared logic for both hot and cold paths.
+
+        Returns:
+            (proceed, reason, detail) — proceed=True means handler should run.
+            When proceed=False, reason and detail describe the rejection.
         """
         if self._signing_mode == SigningMode.OFF:
-            return True
+            return True, None, ""
 
         has_signature = envelope.signature is not None
 
         if not has_signature:
             if self._signing_mode == SigningMode.ENFORCE:
-                logger.warning(
-                    "Hot-path: unsigned message %s rejected (enforce mode)",
-                    envelope.id,
-                )
-                return False
-            logger.warning(
-                "Hot-path: unsigned message %s (verify_only mode)",
-                envelope.id,
-            )
-            return True
-
-        if self._verifier is None:
-            return True
-
-        result = self._verifier.verify(envelope)
-        if not result.valid:
-            logger.warning(
-                "Hot-path: invalid signature on message %s: %s",
-                envelope.id,
-                result.detail,
-            )
-            return False
-
-        return True
-
-    async def _verify_signature(self, msg_path: str, envelope: MessageEnvelope) -> bool:
-        """Verify message signature based on signing_mode.
-
-        Returns True if the message should proceed to the handler,
-        False if it was dead-lettered or rejected.
-        """
-        if self._signing_mode == SigningMode.OFF:
-            return True
-
-        has_signature = envelope.signature is not None
-
-        if not has_signature:
-            if self._signing_mode == SigningMode.ENFORCE:
-                logger.warning(
-                    "Unsigned message %s rejected (enforce mode) for agent %s",
-                    envelope.id,
-                    self._agent_id,
-                )
-                await self._dead_letter(
-                    msg_path,
-                    DLQReason.UNSIGNED_MESSAGE,
-                    msg_id=envelope.id,
-                    timestamp=envelope.timestamp,
-                    detail="Message has no signature (enforce mode)",
-                )
-                return False
+                return False, DLQReason.UNSIGNED_MESSAGE, "Message has no signature (enforce mode)"
             # VERIFY_ONLY: warn but allow through
             logger.warning(
                 "Unsigned message %s (verify_only mode) for agent %s",
                 envelope.id,
                 self._agent_id,
             )
-            return True
+            return True, None, ""
 
-        # Has signature — verify it
         if self._verifier is None:
             logger.warning(
                 "No verifier configured but message %s has signature; allowing through",
                 envelope.id,
             )
-            return True
+            return True, None, ""
 
         result = self._verifier.verify(envelope)
         if not result.valid:
+            return False, DLQReason.INVALID_SIGNATURE, result.detail
+
+        return True, None, ""
+
+    def _verify_signature_hot(self, envelope: MessageEnvelope) -> bool:
+        """Verify message signature on the hot path (no dead-letter, just drop).
+
+        Returns True if the message should proceed to the handler.
+        """
+        proceed, reason, detail = self._check_signature_policy(envelope)
+        if not proceed:
             logger.warning(
-                "Invalid signature on message %s for agent %s: %s",
+                "Hot-path: message %s rejected (%s): %s",
+                envelope.id,
+                reason.value if reason else "unknown",
+                detail,
+            )
+        return proceed
+
+    async def _verify_signature(self, msg_path: str, envelope: MessageEnvelope) -> bool:
+        """Verify message signature on the cold path (dead-letters on failure).
+
+        Returns True if the message should proceed to the handler,
+        False if it was dead-lettered or rejected.
+        """
+        proceed, reason, detail = self._check_signature_policy(envelope)
+        if not proceed and reason is not None:
+            logger.warning(
+                "Message %s rejected for agent %s (%s): %s",
                 envelope.id,
                 self._agent_id,
-                result.detail,
+                reason.value,
+                detail,
             )
             await self._dead_letter(
                 msg_path,
-                DLQReason.INVALID_SIGNATURE,
+                reason,
                 msg_id=envelope.id,
                 timestamp=envelope.timestamp,
-                detail=result.detail,
+                detail=detail,
             )
-            return False
-
-        return True
+        return proceed
 
     async def _dead_letter(
         self,
@@ -720,8 +702,6 @@ class MessageProcessor:
 
             # Write structured .reason.json sidecar (best-effort)
             try:
-                import json
-
                 reason_data = json.dumps(
                     {
                         "reason": reason.value,

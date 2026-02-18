@@ -1735,6 +1735,15 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
 
+    # IPC Brick endpoints (Issue #1727, LEGO §8)
+    try:
+        from nexus.server.api.v2.routers.ipc import router as ipc_router
+
+        app.include_router(ipc_router)
+        logger.info("IPC endpoints registered (/api/v2/ipc/*)")
+    except ImportError as e:
+        logger.debug(f"IPC router unavailable: {e}")
+
     # Secrets audit log endpoints (Issue #997)
     try:
         from nexus.server.api.v2.routers.secrets_audit import (

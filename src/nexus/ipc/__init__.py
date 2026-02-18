@@ -26,7 +26,7 @@ from nexus.ipc.conventions import (
 from nexus.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
 from nexus.ipc.discovery import AgentDiscovery
 from nexus.ipc.driver import IPCVFSDriver
-from nexus.ipc.envelope import MessageEnvelope, MessageType, RoutingMetadata
+from nexus.ipc.envelope import MessageEnvelope, MessageType
 from nexus.ipc.exceptions import (
     CrossZoneDeliveryError,
     DLQReason,
@@ -45,7 +45,6 @@ __all__ = [
     # Envelope
     "MessageEnvelope",
     "MessageType",
-    "RoutingMetadata",
     # Conventions
     "AGENTS_ROOT",
     "agent_dir",

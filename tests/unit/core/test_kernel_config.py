@@ -396,6 +396,9 @@ class TestBrickServices:
             "api_key_creator",
             "snapshot_service",
             "task_queue_service",
+            "ipc_storage_driver",
+            "ipc_vfs_driver",
+            "ipc_provisioner",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

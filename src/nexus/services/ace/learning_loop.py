@@ -72,7 +72,7 @@ class LearningLoop:
         self.consolidation_engine = ConsolidationEngine(
             session, backend, llm_provider, user_id, agent_id, zone_id
         )
-        self.feedback_manager = FeedbackManager(session)
+        self.feedback_manager = FeedbackManager(session, zone_id=zone_id)
 
     async def execute_with_learning_async(
         self,

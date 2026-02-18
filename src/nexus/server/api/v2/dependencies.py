@@ -136,12 +136,14 @@ async def get_trajectory_manager(
 
 async def get_feedback_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> Any:
-    """Get FeedbackManager instance."""
+    """Get FeedbackManager instance with zone context."""
     from nexus.services.ace.feedback import FeedbackManager
 
+    context = _get_operation_context(auth_result)
     session = nexus_fs.memory.session
-    return FeedbackManager(session=session)
+    return FeedbackManager(session=session, zone_id=context.zone_id)
 
 
 async def get_playbook_manager(

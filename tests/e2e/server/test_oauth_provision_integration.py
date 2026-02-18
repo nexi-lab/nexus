@@ -12,9 +12,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from nexus import LocalBackend
+from nexus.auth.oauth.crypto import OAuthCrypto
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
-from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -36,9 +37,8 @@ def nx(tmp_path, record_store):
         backend=LocalBackend(tmp_path),
         metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
         record_store=record_store,
-        auto_parse=False,
-        enforce_permissions=True,
-        allow_admin_bypass=True,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True, allow_admin_bypass=True),
     )
     yield nx_instance
     nx_instance.close()

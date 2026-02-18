@@ -6,7 +6,7 @@ from nexus.core.permissions import (
     OperationContext,
     Permission,
 )
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 
 
 class TestOperationContext:
@@ -503,3 +503,25 @@ class TestHasAccessibleDescendantsBatch:
         ctx = OperationContext(user="alice", groups=["dev"])
         assert enforcer.has_accessible_descendants("/docs", ctx) is True
         assert enforcer.has_accessible_descendants("/skills", ctx) is False
+
+
+class TestFailClosedOnError:
+    """T3: Verify that check() path is fail-closed on ReBAC errors."""
+
+    def test_rebac_error_propagates_as_denial(self):
+        """ReBAC exceptions propagate (fail-closed), not silently allowed.
+
+        When rebac_check raises an exception, check() must NOT return True.
+        The exception should propagate to the caller, ensuring fail-closed
+        behavior in the hot permission-check path.
+        """
+
+        class BrokenReBACManager:
+            def rebac_check(self, **kwargs):
+                raise RuntimeError("simulated ReBAC failure")
+
+        enforcer = PermissionEnforcer(rebac_manager=BrokenReBACManager())
+        ctx = OperationContext(user="alice", groups=["dev"])
+
+        with pytest.raises(RuntimeError, match="simulated ReBAC failure"):
+            enforcer.check("/file.txt", Permission.READ, ctx)

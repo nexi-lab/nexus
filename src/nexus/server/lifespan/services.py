@@ -183,9 +183,9 @@ def _startup_key_service(app: FastAPI) -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
+            from nexus.auth.oauth.crypto import OAuthCrypto
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-            from nexus.server.auth.oauth_crypto import OAuthCrypto
             from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists

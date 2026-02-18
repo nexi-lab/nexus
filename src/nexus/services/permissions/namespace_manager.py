@@ -55,7 +55,7 @@ from cachetools import TTLCache
 
 if TYPE_CHECKING:
     from nexus.core.persistent_view_store import PersistentViewStore
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -267,22 +267,11 @@ class NamespaceManager:
 
         # Layer 1: dcache lookup (O(1))
         with self._dcache_lock:
-            positive = self._dcache_positive.get(dcache_key)
-            if positive is not None:
-                self._dcache_hits += 1
-                self._dcache_hit_total_ns += time.perf_counter_ns() - start_ns
-                self._dcache_hit_count += 1
-                return True
-
-            negative = self._dcache_negative.get(dcache_key)
-            if negative is not None:
-                self._dcache_hits += 1
-                self._dcache_negative_hits += 1
-                self._dcache_hit_total_ns += time.perf_counter_ns() - start_ns
-                self._dcache_hit_count += 1
-                return False
-
-        self._dcache_misses += 1
+            cached = self._dcache_lookup(dcache_key)
+        if cached is not None:
+            self._dcache_hit_total_ns += time.perf_counter_ns() - start_ns
+            self._dcache_hit_count += 1
+            return cached
 
         # Layer 2: mount table bisect (O(log m))
         _entries, mount_paths = self._get_mount_data(subject, zone_id)
@@ -337,22 +326,11 @@ class NamespaceManager:
         with self._dcache_lock:
             for i, path in enumerate(paths):
                 key = (subject_type, subject_id, path, zone_id, revision_bucket)
-
-                positive = self._dcache_positive.get(key)
-                if positive is not None:
-                    self._dcache_hits += 1
-                    visibility[i] = True
-                    continue
-
-                negative = self._dcache_negative.get(key)
-                if negative is not None:
-                    self._dcache_hits += 1
-                    self._dcache_negative_hits += 1
-                    visibility[i] = False
-                    continue
-
-                self._dcache_misses += 1
-                miss_indices.append(i)
+                cached = self._dcache_lookup(key)
+                if cached is not None:
+                    visibility[i] = cached
+                else:
+                    miss_indices.append(i)
 
         # Resolve misses via mount table bisect
         if miss_indices:
@@ -540,6 +518,26 @@ class NamespaceManager:
         """
         revision_bucket = self._get_current_revision_bucket(zone_id)
         return (subject[0], subject[1], path, zone_id, revision_bucket)
+
+    def _dcache_lookup(self, key: _DCacheKey) -> bool | None:
+        """Check dcache for cached visibility result.
+
+        Caller must hold self._dcache_lock.
+
+        Returns:
+            True on positive hit, False on negative hit, None on miss.
+        """
+        positive = self._dcache_positive.get(key)
+        if positive is not None:
+            self._dcache_hits += 1
+            return True
+        negative = self._dcache_negative.get(key)
+        if negative is not None:
+            self._dcache_hits += 1
+            self._dcache_negative_hits += 1
+            return False
+        self._dcache_misses += 1
+        return None
 
     def _get_current_revision_bucket(self, zone_id: str | None) -> int:
         """Get the current revision bucket for key-based quantization.

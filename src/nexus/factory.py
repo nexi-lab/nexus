@@ -435,7 +435,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         entity_registry = EntityRegistry(ctx.session_factory)
 
         # --- Permission Enforcer ---
-        from nexus.services.permissions.enforcer import PermissionEnforcer
+        from nexus.rebac.enforcer import PermissionEnforcer
 
         permission_enforcer = PermissionEnforcer(
             metadata_store=ctx.metadata_store,
@@ -1255,44 +1255,6 @@ def _create_provider_registry(parsing: Any) -> Any:
     return registry
 
 
-def _post_init(nx: NexusFS) -> None:
-    """Post-construction steps: mount restoration.
-
-    Called after NexusFS is constructed to perform I/O that requires
-    a fully-wired kernel instance.
-    """
-    import os
-
-    # Load all saved mounts from database and activate them
-    try:
-        if hasattr(nx, "load_all_saved_mounts"):
-            auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
-                "true",
-                "1",
-                "yes",
-            )
-            mount_result = nx.load_all_saved_mounts(auto_sync=auto_sync)
-            if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
-                sync_msg = (
-                    f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
-                )
-                logger.info(
-                    "Mount restoration: %d loaded%s, %d failed",
-                    mount_result["loaded"],
-                    sync_msg,
-                    mount_result["failed"],
-                )
-                if not auto_sync and mount_result["loaded"] > 0:
-                    logger.info(
-                        "Auto-sync disabled for fast startup. "
-                        "Use sync_mount() or set NEXUS_AUTO_SYNC_MOUNTS=true"
-                    )
-                for error in mount_result.get("errors", []):
-                    logger.error("  Mount error: %s", error)
-    except Exception as e:
-        logger.warning("Failed to load saved mounts during initialization: %s", e)
-
-
 def create_nexus_fs(
     backend: Backend,
     metadata_store: MetastoreABC,
@@ -1307,148 +1269,42 @@ def create_nexus_fs(
     memory: Any = None,
     parsing: Any = None,
     services: KernelServices | None = None,
-    # Legacy flat params — translated to config objects for backward compat
-    enforce_permissions: bool | None = None,
-    allow_admin_bypass: bool | None = None,
-    enforce_zone_isolation: bool | None = None,
-    audit_strict_mode: bool | None = None,
-    auto_parse: bool | None = None,
-    enable_tiger_cache: bool | None = None,
-    inherit_permissions: bool | None = None,
-    enable_deferred_permissions: bool | None = None,
-    deferred_flush_interval: float | None = None,
-    enable_workflows: bool | None = None,
-    coordination_url: str | None = None,
-    enable_distributed_events: bool | None = None,
-    enable_distributed_locks: bool | None = None,
-    enable_metadata_cache: bool | None = None,
-    cache_path_size: int | None = None,
-    cache_list_size: int | None = None,
-    cache_kv_size: int | None = None,
-    cache_exists_size: int | None = None,
-    cache_ttl_seconds: int | None = None,
-    enable_content_cache: bool | None = None,
-    content_cache_size_mb: int | None = None,
-    parse_providers: list[dict[str, Any]] | None = None,
     enable_write_buffer: bool | None = None,
-    enable_memory_paging: bool | None = None,
-    memory_main_capacity: int | None = None,
-    memory_recall_max_age_hours: float | None = None,
     enabled_bricks: frozenset[str] | None = None,
-    # Deprecated — ignored
     zone_id: str | None = None,
     agent_id: str | None = None,
-    custom_parsers: list[dict[str, Any]] | None = None,  # noqa: ARG001
     workflow_engine: WorkflowProtocol | None = None,
 ) -> NexusFS:
     """Create NexusFS with default services — the recommended entry point.
-
-    Accepts both new config objects and legacy flat params for backward
-    compatibility. Config objects take precedence when both are provided.
 
     Args:
         backend: Backend instance for file storage.
         metadata_store: MetastoreABC instance.
         record_store: Optional RecordStoreABC. When provided, all services
             (ReBAC, Audit, Permissions, etc.) are created and injected.
-        cache: CacheConfig object (or build from legacy flat params).
-        permissions: PermissionConfig object (or build from legacy flat params).
-        distributed: DistributedConfig object (or build from legacy flat params).
+        cache_store: CacheStoreABC instance for ephemeral cache.
+        is_admin: Whether the instance has admin privileges.
+        custom_namespaces: Custom namespace configurations.
+        cache: CacheConfig object.
+        permissions: PermissionConfig object.
+        distributed: DistributedConfig object.
         memory: MemoryConfig object.
         parsing: ParseConfig object.
         services: Pre-built KernelServices (skips create_nexus_services).
+        enable_write_buffer: Use async WriteBuffer for PG sync.
+        enabled_bricks: Set of brick names to enable.
+        zone_id: Default zone ID (for WorkspaceManager, embedded mode).
+        agent_id: Default agent ID (for WorkspaceManager, embedded mode).
+        workflow_engine: Pre-built workflow engine override.
 
     Returns:
         Fully configured NexusFS instance with services injected.
     """
     from nexus.core.config import (
-        CacheConfig as _CacheConfig,
-    )
-    from nexus.core.config import (
         DistributedConfig as _DistributedConfig,
-    )
-    from nexus.core.config import (
-        MemoryConfig as _MemoryConfig,
-    )
-    from nexus.core.config import (
-        ParseConfig as _ParseConfig,
-    )
-    from nexus.core.config import (
-        PermissionConfig as _PermissionConfig,
     )
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import NamespaceConfig, PathRouter
-
-    # Build config objects from legacy flat params if config objects not provided
-    if cache is None:
-        cache_kwargs: dict[str, Any] = {}
-        if enable_metadata_cache is not None:
-            cache_kwargs["enable_metadata_cache"] = enable_metadata_cache
-        if cache_path_size is not None:
-            cache_kwargs["path_size"] = cache_path_size
-        if cache_list_size is not None:
-            cache_kwargs["list_size"] = cache_list_size
-        if cache_kv_size is not None:
-            cache_kwargs["kv_size"] = cache_kv_size
-        if cache_exists_size is not None:
-            cache_kwargs["exists_size"] = cache_exists_size
-        if cache_ttl_seconds is not None:
-            cache_kwargs["ttl_seconds"] = cache_ttl_seconds
-        if enable_content_cache is not None:
-            cache_kwargs["enable_content_cache"] = enable_content_cache
-        if content_cache_size_mb is not None:
-            cache_kwargs["content_cache_size_mb"] = content_cache_size_mb
-        cache = _CacheConfig(**cache_kwargs) if cache_kwargs else None
-
-    if permissions is None:
-        perm_kwargs: dict[str, Any] = {}
-        if enforce_permissions is not None:
-            perm_kwargs["enforce"] = enforce_permissions
-        if inherit_permissions is not None:
-            perm_kwargs["inherit"] = inherit_permissions
-        if allow_admin_bypass is not None:
-            perm_kwargs["allow_admin_bypass"] = allow_admin_bypass
-        if enforce_zone_isolation is not None:
-            perm_kwargs["enforce_zone_isolation"] = enforce_zone_isolation
-        if audit_strict_mode is not None:
-            perm_kwargs["audit_strict_mode"] = audit_strict_mode
-        if enable_tiger_cache is not None:
-            perm_kwargs["enable_tiger_cache"] = enable_tiger_cache
-        if enable_deferred_permissions is not None:
-            perm_kwargs["enable_deferred"] = enable_deferred_permissions
-        if deferred_flush_interval is not None:
-            perm_kwargs["deferred_flush_interval"] = deferred_flush_interval
-        permissions = _PermissionConfig(**perm_kwargs) if perm_kwargs else None
-
-    if distributed is None:
-        dist_kwargs: dict[str, Any] = {}
-        if coordination_url is not None:
-            dist_kwargs["coordination_url"] = coordination_url
-        if enable_distributed_events is not None:
-            dist_kwargs["enable_events"] = enable_distributed_events
-        if enable_distributed_locks is not None:
-            dist_kwargs["enable_locks"] = enable_distributed_locks
-        if enable_workflows is not None:
-            dist_kwargs["enable_workflows"] = enable_workflows
-        distributed = _DistributedConfig(**dist_kwargs) if dist_kwargs else None
-
-    if memory is None:
-        mem_kwargs: dict[str, Any] = {}
-        if enable_memory_paging is not None:
-            mem_kwargs["enable_paging"] = enable_memory_paging
-        if memory_main_capacity is not None:
-            mem_kwargs["main_capacity"] = memory_main_capacity
-        if memory_recall_max_age_hours is not None:
-            mem_kwargs["recall_max_age_hours"] = memory_recall_max_age_hours
-        memory = _MemoryConfig(**mem_kwargs) if mem_kwargs else None
-
-    if parsing is None:
-        parse_kwargs: dict[str, Any] = {}
-        if auto_parse is not None:
-            parse_kwargs["auto_parse"] = auto_parse
-        if parse_providers is not None:
-            parse_kwargs["providers"] = tuple(parse_providers)
-        parsing = _ParseConfig(**parse_kwargs) if parse_kwargs else None
 
     # Create and configure router
     router = PathRouter()
@@ -1557,8 +1413,5 @@ def create_nexus_fs(
 
     # Attach CacheBrick to NexusFS for server layer access (Issue #1524)
     nx._cache_brick = _cache_brick  # type: ignore[attr-defined]
-
-    # Post-construction I/O (mount restoration, etc.)
-    _post_init(nx)
 
     return nx

@@ -29,7 +29,7 @@ from freezegun import freeze_time
 from sqlalchemy import create_engine
 
 from nexus.core.rebac import NamespaceConfig
-from nexus.services.permissions.rebac_manager import ReBACManager
+from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 # ── Fixtures ──────────────────────────────────────────────────────────

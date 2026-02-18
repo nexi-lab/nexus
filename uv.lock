@@ -3284,6 +3284,9 @@ all = [
 cloud-sql = [
     { name = "cloud-sql-python-connector", extra = ["asyncpg"] },
 ]
+compression = [
+    { name = "zstandard" },
+]
 dev = [
     { name = "freezegun" },
     { name = "hypothesis" },
@@ -3508,8 +3511,9 @@ requires-dist = [
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.22.1" },
+    { name = "zstandard", marker = "extra == 'compression'", specifier = ">=0.22.0" },
 ]
-provides-extras = ["performance", "mobile", "sandbox-monty", "sentry", "profiling", "dev", "test", "fuse", "postgres", "cloud-sql", "semantic-search", "semantic-search-remote", "e2b", "docker", "kafka", "nats-export", "pubsub", "sse", "event-streaming", "all"]
+provides-extras = ["performance", "compression", "mobile", "sandbox-monty", "sentry", "profiling", "dev", "test", "fuse", "postgres", "cloud-sql", "semantic-search", "semantic-search-remote", "e2b", "docker", "kafka", "nats-export", "pubsub", "sse", "event-streaming", "all"]
 
 [package.metadata.requires-dev]
 dev = [

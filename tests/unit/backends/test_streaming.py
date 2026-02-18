@@ -11,6 +11,7 @@ from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cas_blob_store import WriteResult
 from nexus.backends.local import LocalBackend
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -542,8 +543,8 @@ class TestReadRangeRPC:
             backend=LocalBackend(data_dir),
             metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -568,8 +569,8 @@ class TestReadRangeRPC:
             backend=LocalBackend(data_dir),
             metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -595,8 +596,8 @@ class TestReadRangeRPC:
             backend=LocalBackend(data_dir),
             metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -617,8 +618,8 @@ class TestReadRangeRPC:
             backend=LocalBackend(data_dir),
             metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -645,8 +646,8 @@ class TestStatRPC:
             backend=LocalBackend(data_dir),
             metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -675,8 +676,8 @@ class TestStatRPC:
             backend=LocalBackend(data_dir),
             metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -695,8 +696,8 @@ class TestStatRPC:
             backend=LocalBackend(data_dir),
             metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:

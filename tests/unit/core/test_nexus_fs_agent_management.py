@@ -107,9 +107,9 @@ class TestExtractUserId:
         result = nx._extract_user_id(context)
         assert result == "alice"
 
-    def test_extract_user_id_from_dict_with_user(self, nx: NexusFS) -> None:
-        """Test extracting user_id from dict with user key (fallback)."""
-        context = {"user": "bob"}
+    def test_extract_user_id_from_dict_with_user_id_key(self, nx: NexusFS) -> None:
+        """Test extracting user_id from dict with user_id key."""
+        context = {"user_id": "bob"}
         result = nx._extract_user_id(context)
         assert result == "bob"
 

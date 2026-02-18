@@ -226,10 +226,10 @@ Three tiers, mirroring Linux's kernel → system → user space communication:
 | Tier | Linux Analogue | Nexus | Latency | Topology |
 |------|---------------|-------|---------|----------|
 | **Kernel** | `kfifo` ring buffer | Nexus Native Pipe (`DT_PIPE`, MetastoreABC) | ~5μs | Intra-process |
-| **System** | `sendmsg()` / Unix sockets | gRPC (Zone Transport/API) | ~0.5–1ms | Point-to-point (1:1) |
-| **User Space** | POSIX `mq_open` / multi-queue | EventBus (CacheStoreABC pub/sub) | ~1–5ms | Fan-out (1:N) |
+| **System** | `sendmsg()` / Unix sockets / POSIX MQ | gRPC (consensus) + IPC (agent messaging) | ~0.5–1ms | Point-to-point (1:1) |
+| **User Space** | `dbus-daemon` / Netlink | EventBus (CacheStoreABC pub/sub) | ~1–5ms | Fan-out (1:N) |
 
-**Selection rule:** Consensus write path → System (gRPC, 1:1). Notification read path → User Space (EventBus, 1:N fan-out to 100s of observers). Internal signaling → Kernel (Pipe, zero-copy).
+**Selection rule:** Consensus write path → System (gRPC, 1:1). Agent-to-agent messaging → System (IPC, 1:1 queue). Notification read path → User Space (EventBus, 1:N fan-out to 100s of observers). Internal signaling → Kernel (Pipe, zero-copy).
 
 See `federation-memo.md` §7j for Pipe design.
 
@@ -244,6 +244,35 @@ See `federation-memo.md` §7j for Pipe design.
 | `ExchangeService` | `proto/nexus/exchange/v1/exchange.proto` | External | Agent Exchange API — identity (4 RPCs), payment (8 RPCs), audit (5 RPCs) |
 
 Named `Zone*` to match `ZoneConsensus` (Rust). `ExchangeService` is the external-facing API for agent-to-agent value exchange.
+
+IPC Agent Messaging (`src/nexus/ipc/`) is System Tier — 1:1 queue semantics using VFS as transport. Details in `ops-scenario-matrix.md` S29.
+
+### User Space Tier: EventBus
+
+> **Service Protocol:** `EventBusProtocol` (in `nexus.services.event_bus.protocol`)
+> — pub/sub for file system change notifications.
+> Kernel defines only the event data types (`FileEvent`, `FileEventType` in `nexus.core.event_bus`).
+
+Linux analogue: `dbus-daemon` (system message bus for 1:N broadcast).
+Consumed by `WatchProtocol` (S8) and `EventLogProtocol` (S17).
+
+| Backend | Module | Durability | Notes |
+|---------|--------|-----------|-------|
+| `RedisEventBus` | `services/event_bus/redis.py` | Best-effort (PG operation_log is SSOT) | Current default; Dragonfly/Redis pub/sub |
+| `NatsEventBus` | `services/event_bus/nats.py` | Durable (JetStream ack/nack) | Preferred long-term; 7-day retention |
+| `InMemoryEventBus` | *(not yet implemented)* | Ephemeral | Needed for kernel-only/embedded mode |
+
+Both backends should eventually route through `CacheStoreABC` pub/sub rather than direct client access.
+
+**Federation gap:** EventBus is currently zone-local. Cross-zone event propagation is not yet designed (Task #162).
+
+---
+
+## 7. RecordStoreABC Pattern
+
+Services consume `RecordStoreABC.session_factory` + SQLAlchemy ORM.
+Direct SQL or raw driver access is an abstraction break.
+This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code changes.
 
 ---
 

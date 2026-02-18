@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import logging
 
-__version__ = "0.7.2.dev0"
+__version__ = "0.7.2.dev0"  # bump to trigger CI quality checks
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 

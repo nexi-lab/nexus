@@ -296,8 +296,10 @@ class TestAgentReconnection:
             assert len(entries) == 1
             assert entries[0] == MountEntry(virtual_path="/workspace/proj")
 
-            # Simulate reconnection: clear L2
-            ns.invalidate(("user", "agent-1"))
+            # Simulate reconnection: clear L2 only (keep L3 persistent store intact)
+            with ns._lock:
+                ns._cache.pop(("user", "agent-1"), None)
+            ns.invalidate_dcache(("user", "agent-1"))
 
             # Second access: L2 miss → L3 hit → restore
             entries = ns.get_mount_table(("user", "agent-1"))

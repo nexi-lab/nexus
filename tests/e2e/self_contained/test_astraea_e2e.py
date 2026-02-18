@@ -86,7 +86,34 @@ def mock_queue():
     q.complete = AsyncMock()
     q.cancel = AsyncMock(return_value=True)
     q.cancel_by_agent = AsyncMock(return_value=2)
-    q.get_task = AsyncMock(return_value=None)
+    # get_task returns a ScheduledTask matching what submit() would create.
+    # The enqueue call args are captured by the mock, but get_status() needs
+    # get_task to return a non-None task, so we use side_effect to build a
+    # task dynamically from the last enqueue call.
+    _last_enqueue_kwargs: dict = {}
+
+    async def _enqueue_capture(*args, **kwargs):
+        _last_enqueue_kwargs.update(kwargs)
+        return "task-e2e-001"
+
+    async def _get_task_dynamic(*args, **kwargs):
+        if not _last_enqueue_kwargs:
+            return None
+        return _make_task(
+            task_id="task-e2e-001",
+            agent_id=_last_enqueue_kwargs.get("agent_id", "test-agent"),
+            executor_id=_last_enqueue_kwargs.get("executor_id", "exec-1"),
+            task_type=_last_enqueue_kwargs.get("task_type", "compute"),
+            priority_tier=PriorityTier(_last_enqueue_kwargs.get("priority_tier", 2)),
+            effective_tier=_last_enqueue_kwargs.get("effective_tier", 2),
+            status=TASK_STATUS_QUEUED,
+            priority_class=_last_enqueue_kwargs.get("priority_class", "batch"),
+            request_state=_last_enqueue_kwargs.get("request_state", "compute"),
+            estimated_service_time=_last_enqueue_kwargs.get("estimated_service_time", 30.0),
+        )
+
+    q.enqueue = AsyncMock(side_effect=_enqueue_capture)
+    q.get_task = AsyncMock(side_effect=_get_task_dynamic)
     q.aging_sweep = AsyncMock(return_value=0)
     q.count_running_by_agent = AsyncMock(return_value={})
     q.update_executor_state = AsyncMock()

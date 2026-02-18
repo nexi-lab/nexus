@@ -602,7 +602,7 @@ async def test_batch_read_permission_filter(tmp_path: Path) -> None:
     fs._metadata = mock_metadata
     fs._backend = mock_backend
 
-    ctx_user = OperationContext(user="alice", groups=["dev"])
+    ctx_user = OperationContext(user_id="alice", groups=["dev"])
     results = await fs.batch_read(
         ["/allowed/file1.txt", "/denied/file3.txt", "/allowed/file2.txt"],
         context=ctx_user,
@@ -640,7 +640,7 @@ async def test_batch_read_all_denied(tmp_path: Path) -> None:
     fs._initialized = True
     fs._metadata = mock_metadata
 
-    ctx_user = OperationContext(user="alice", groups=["dev"])
+    ctx_user = OperationContext(user_id="alice", groups=["dev"])
     results = await fs.batch_read(["/secret/a.txt", "/secret/b.txt"], context=ctx_user)
 
     assert results["/secret/a.txt"] is None

@@ -11,13 +11,16 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-# Grep strategy thresholds
+# Grep strategy thresholds (Issue #2071: non-resource thresholds stay as constants)
 GREP_SEQUENTIAL_THRESHOLD = 10  # Below this file count, use sequential (no overhead)
 GREP_PARALLEL_THRESHOLD = 100  # Above this, consider parallel processing
 GREP_TRIGRAM_THRESHOLD = 500  # Above this, prefer trigram index if available
 GREP_ZOEKT_THRESHOLD = 1000  # Above this, prefer Zoekt if available
-GREP_PARALLEL_WORKERS = 4  # Thread pool size for parallel grep
 GREP_CACHED_TEXT_RATIO = 0.8  # Use cached text path if > 80% files have cached text
+
+# Issue #2071: GREP_PARALLEL_WORKERS moved to ProfileTuning.search.grep_parallel_workers
+# Kept as fallback default for callers that don't receive tuning via DI.
+GREP_PARALLEL_WORKERS = 4  # Thread pool size for parallel grep (FULL profile default)
 
 # Glob strategy thresholds
 GLOB_RUST_THRESHOLD = 50  # Use Rust acceleration above this file count

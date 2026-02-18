@@ -78,7 +78,7 @@ def db_path_agent2(temp_nexus_dir):
 @pytest.fixture
 async def shared_event_bus(redis_client):
     """Create a shared event bus for all NexusFS instances in a test."""
-    from nexus.core.event_bus import RedisEventBus
+    from nexus.services.event_bus.redis import RedisEventBus
 
     bus = RedisEventBus(redis_client)
     await bus.start()
@@ -236,6 +236,9 @@ class TestWaitThenRead:
     async def test_wait_timeout_no_write(self, nexus_fs):
         """Agent A waits but no file written -> timeout returns None."""
         nexus_fs.mkdir("/empty", parents=True)
+
+        # Drain any stale events from mkdir before subscribing
+        await asyncio.sleep(0.3)
 
         change = await nexus_fs.events_service.wait_for_changes("/empty/", timeout=0.5)
 

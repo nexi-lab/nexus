@@ -97,7 +97,7 @@ def pipeline(connector):
 def test_context():
     """Create test operation context."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_system=True,

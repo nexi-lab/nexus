@@ -435,7 +435,7 @@ class TestGetOperationContext:
                 "is_admin": False,
             }
         )
-        assert ctx.user == "alice"
+        assert ctx.user_id == "alice"
         assert ctx.subject_type == "user"
         assert ctx.subject_id == "alice"
         assert ctx.zone_id == "z1"
@@ -465,7 +465,7 @@ class TestGetOperationContext:
             }
         )
         assert ctx.agent_id == "agent-001"
-        assert ctx.user == "agent-001"
+        assert ctx.user_id == "agent-001"
 
     def test_x_agent_id_upgrades_user_to_agent(self):
         """X-Agent-ID header should upgrade user subject to agent."""
@@ -485,7 +485,7 @@ class TestGetOperationContext:
     def test_defaults_for_missing_fields(self):
         """Missing fields should get sensible defaults."""
         ctx = get_operation_context({})
-        assert ctx.user == "anonymous"
+        assert ctx.user_id == "anonymous"
         assert ctx.subject_type == "user"
         assert ctx.zone_id == "root"
         assert ctx.is_admin is False

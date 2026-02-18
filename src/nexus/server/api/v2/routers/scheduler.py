@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.scheduler.constants import TIER_ALIASES, PriorityTier, RequestState
+from nexus.scheduler.constants import TIER_ALIASES, RequestState
 
 logger = logging.getLogger(__name__)
 
@@ -159,32 +158,6 @@ def _extract_agent_id(auth_result: dict[str, Any]) -> str:
 
 
 # =============================================================================
-# Response Converters
-# =============================================================================
-
-
-def _task_to_response(task: Any) -> TaskStatusResponse:
-    """Convert ScheduledTask to API response."""
-    return TaskStatusResponse(
-        id=task.id,
-        status=task.status,
-        agent_id=task.agent_id,
-        executor_id=task.executor_id,
-        task_type=task.task_type,
-        priority_tier=PriorityTier(task.priority_tier).name.lower(),
-        effective_tier=task.effective_tier,
-        enqueued_at=task.enqueued_at.isoformat() if task.enqueued_at else "",
-        started_at=task.started_at.isoformat() if task.started_at else None,
-        completed_at=task.completed_at.isoformat() if task.completed_at else None,
-        deadline=task.deadline.isoformat() if task.deadline else None,
-        boost_amount=str(task.boost_amount),
-        error_message=task.error_message,
-        priority_class=getattr(task, "priority_class", "batch"),
-        request_state=getattr(task, "request_state", "pending"),
-    )
-
-
-# =============================================================================
 # Endpoints
 # =============================================================================
 
@@ -200,26 +173,29 @@ async def submit_task(
     The task is enqueued with the specified priority and boost.
     Returns the task details with computed effective priority.
     """
-    from nexus.scheduler.constants import RequestState as RS
-    from nexus.scheduler.models import TaskSubmission
+    from nexus.services.protocols.scheduler import AgentRequest
 
     agent_id = _extract_agent_id(auth_result)
     tier = TIER_ALIASES[request.priority]
-    submission = TaskSubmission(
+    agent_request = AgentRequest(
         agent_id=agent_id,
+        zone_id=None,
+        priority=tier.value,
         executor_id=request.executor,
         task_type=request.task_type,
         payload=request.payload,
-        priority=tier,
-        deadline=request.deadline,
-        boost_amount=Decimal(request.boost),
-        idempotency_key=request.idempotency_key,
-        request_state=RS(request.request_state),
+        request_state=request.request_state,
+        deadline=request.deadline.isoformat() if request.deadline else None,
+        boost_amount=str(request.boost),
         estimated_service_time=request.estimated_service_time,
+        idempotency_key=request.idempotency_key,
     )
 
-    task = await scheduler.submit_task(submission)
-    return _task_to_response(task)
+    task_id = await scheduler.submit(agent_request)
+    status = await scheduler.get_status(task_id)
+    if status is None:
+        raise HTTPException(status_code=500, detail="Task creation failed")
+    return TaskStatusResponse(**status)
 
 
 @router.get("/task/{task_id}", response_model=TaskStatusResponse)
@@ -229,16 +205,16 @@ async def get_task_status(
     scheduler: Any = Depends(get_scheduler_service),
 ) -> TaskStatusResponse:
     """Get task status by ID."""
-    task = await scheduler.get_task_status(task_id)
-    if task is None:
+    status = await scheduler.get_status(task_id)
+    if status is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    return _task_to_response(task)
+    return TaskStatusResponse(**status)
 
 
 @router.post("/task/{task_id}/cancel", response_model=CancelResponse)
 async def cancel_task(
     task_id: str,
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
     scheduler: Any = Depends(get_scheduler_service),
 ) -> CancelResponse:
     """Cancel a queued task.
@@ -246,8 +222,7 @@ async def cancel_task(
     Only tasks with status 'queued' can be cancelled.
     Returns cancelled=true if successful, false otherwise.
     """
-    agent_id = _extract_agent_id(auth_result)
-    cancelled = await scheduler.cancel_task(task_id, agent_id=agent_id)
+    cancelled = await scheduler.cancel_by_id(task_id)
     return CancelResponse(cancelled=cancelled, task_id=task_id)
 
 

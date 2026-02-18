@@ -111,7 +111,7 @@ async def test_read_permission_denied(
 
     # Create user context (non-system, non-admin)
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -136,7 +136,7 @@ async def test_read_permission_allowed(
     await async_fs_with_permissions.write(path, content)
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -164,7 +164,7 @@ async def test_write_permission_denied(
     mock_rebac_manager.rebac_check.return_value = False
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -187,7 +187,7 @@ async def test_write_permission_allowed(
     mock_rebac_manager.rebac_check.return_value = True
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -220,7 +220,7 @@ async def test_delete_permission_denied(
     mock_rebac_manager.rebac_check.return_value = False
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -243,7 +243,7 @@ async def test_delete_permission_allowed(
     mock_rebac_manager.rebac_check.return_value = True
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -288,7 +288,7 @@ async def test_list_dir_filters_by_permission(
     mock_rebac_manager.rebac_check_bulk.side_effect = bulk_check_side_effect
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -325,7 +325,7 @@ async def test_admin_bypasses_read_permission(
 
     # Admin context should bypass
     admin_context = OperationContext(
-        user="admin",
+        user_id="admin",
         groups=["admins"],
         is_admin=True,
         zone_id="test-tenant",
@@ -349,7 +349,7 @@ async def test_admin_bypasses_write_permission(
     mock_rebac_manager.rebac_check.return_value = False
 
     admin_context = OperationContext(
-        user="admin",
+        user_id="admin",
         groups=["admins"],
         is_admin=True,
         zone_id="test-tenant",
@@ -372,7 +372,7 @@ async def test_admin_bypasses_delete_permission(
     # Allow write for admin to create file
     mock_rebac_manager.rebac_check.return_value = True
     admin_context = OperationContext(
-        user="admin",
+        user_id="admin",
         groups=["admins"],
         is_admin=True,
         zone_id="test-tenant",
@@ -405,7 +405,7 @@ async def test_system_bypasses_permission_check(
     mock_rebac_manager.rebac_check.return_value = False
 
     system_context = OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         is_system=True,
         zone_id="test-tenant",
@@ -439,7 +439,7 @@ async def test_no_permission_check_when_disabled(
 
     # Regular user context
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -505,7 +505,7 @@ async def test_read_checks_read_permission(
     await async_fs_with_permissions.write(path, content)
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -534,7 +534,7 @@ async def test_write_checks_write_permission(
     mock_rebac_manager.rebac_check.return_value = True
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -563,7 +563,7 @@ async def test_delete_checks_write_permission(
     await async_fs_with_permissions.write(path, content)
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -596,7 +596,7 @@ async def test_permission_check_uses_zone_id(
     mock_rebac_manager.rebac_check.return_value = True
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="custom-tenant-123",
     )
@@ -633,7 +633,7 @@ async def test_write_to_nested_path_checks_parent_permission(
     mock_rebac_manager.rebac_check.side_effect = track_check
 
     context = OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         zone_id="test-tenant",
     )
@@ -661,7 +661,7 @@ async def test_permission_error_message_contains_details(
     mock_rebac_manager.rebac_check.return_value = False
 
     context = OperationContext(
-        user="bob",
+        user_id="bob",
         groups=["readers"],
         zone_id="test-tenant",
     )
@@ -687,7 +687,7 @@ async def test_read_permission_denied_before_file_check(
     mock_rebac_manager.rebac_check.return_value = False
 
     context = OperationContext(
-        user="eve",
+        user_id="eve",
         groups=[],
         zone_id="test-tenant",
     )
@@ -716,7 +716,7 @@ async def test_different_users_different_permissions(
     mock_rebac_manager.rebac_check.side_effect = user_specific_check
 
     # Write as alice (allowed)
-    alice_context = OperationContext(user="alice", groups=[], zone_id="test-tenant")
+    alice_context = OperationContext(user_id="alice", groups=[], zone_id="test-tenant")
     result = await async_fs_with_permissions.write(path, content, context=alice_context)
     assert "etag" in result
 
@@ -725,7 +725,7 @@ async def test_different_users_different_permissions(
     assert read_content == content
 
     # Read as bob (denied)
-    bob_context = OperationContext(user="bob", groups=[], zone_id="test-tenant")
+    bob_context = OperationContext(user_id="bob", groups=[], zone_id="test-tenant")
     with pytest.raises(NexusPermissionError):
         await async_fs_with_permissions.read(path, context=bob_context)
 
@@ -745,7 +745,7 @@ async def test_empty_list_dir_with_no_permissions(
     mock_rebac_manager.rebac_check.return_value = False
     mock_rebac_manager.rebac_check_bulk.return_value = {}
 
-    context = OperationContext(user="outsider", groups=[], zone_id="test-tenant")
+    context = OperationContext(user_id="outsider", groups=[], zone_id="test-tenant")
 
     # List should return empty since user has no READ permission on any files
     items = await async_fs_with_permissions.list_dir("/secure", context=context)
@@ -769,7 +769,7 @@ async def test_selective_permission_enforcement(
     await async_fs_with_permissions.write("/allowed/file2.txt", b"Content 2")
 
     # All permissions allowed
-    context = OperationContext(user="partial", groups=[], zone_id="test-tenant")
+    context = OperationContext(user_id="partial", groups=[], zone_id="test-tenant")
 
     # We can read the allowed files
     content1 = await async_fs_with_permissions.read("/allowed/file1.txt", context=context)
@@ -802,7 +802,7 @@ async def test_permission_enforcer_none_is_permissive(
     await fs.initialize()
 
     try:
-        context = OperationContext(user="anyone", groups=[], zone_id="test-tenant")
+        context = OperationContext(user_id="anyone", groups=[], zone_id="test-tenant")
 
         # Operations should still work (permissive when no enforcer)
         result = await fs.write("/test/no-enforcer.txt", b"Content", context=context)

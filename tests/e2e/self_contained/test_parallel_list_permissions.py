@@ -45,7 +45,7 @@ def _make_context(
 ) -> OperationContext:
     """Create an OperationContext for testing."""
     return OperationContext(
-        user=user,
+        user_id=user,
         groups=[],
         zone_id=zone_id,
         is_admin=is_admin,

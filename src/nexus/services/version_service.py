@@ -335,7 +335,7 @@ class VersionService:
             raise PermissionError(f"Cannot rollback read-only path: {path}")
 
         # Perform rollback in metadata store
-        created_by = context.user if context else None
+        created_by = context.user_id if context else None
         await asyncio.to_thread(self.metadata.rollback, path, version, created_by=created_by)
 
         # Invalidate cache if enabled
@@ -503,7 +503,7 @@ class VersionService:
         )
 
         if not has_permission:
-            raise PermissionError(f"User '{context.user}' lacks READ permission for: {path}")
+            raise PermissionError(f"User '{context.user_id}' lacks READ permission for: {path}")
 
     async def _check_write_permission(self, path: str, context: OperationContext | None) -> None:
         """Check if user has write permission for path.
@@ -535,7 +535,7 @@ class VersionService:
         )
 
         if not has_permission:
-            raise PermissionError(f"User '{context.user}' lacks WRITE permission for: {path}")
+            raise PermissionError(f"User '{context.user_id}' lacks WRITE permission for: {path}")
 
     def _validate_path(self, path: str) -> str:
         """Validate and normalize path.

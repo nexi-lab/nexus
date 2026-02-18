@@ -32,6 +32,7 @@ from nexus.scheduler.constants import (
 from nexus.scheduler.models import ScheduledTask, TaskSubmission
 from nexus.scheduler.priority import compute_effective_tier
 from nexus.scheduler.service import SchedulerService
+from nexus.services.protocols.scheduler import AgentRequest
 
 # =============================================================================
 # Fixtures
@@ -88,39 +89,43 @@ class TestFullFlow:
     """Test complete task lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_submit_returns_queued_task(self, scheduler):
-        """Submit should return a ScheduledTask with queued status."""
-        submission = TaskSubmission(
+    async def test_submit_returns_task_id(self, scheduler, mock_queue):
+        """Submit should return a task ID string."""
+        request = AgentRequest(
             agent_id="agent-a",
+            zone_id=None,
+            priority=PriorityTier.NORMAL.value,
             executor_id="agent-b",
             task_type="process",
             payload={"data": "test"},
         )
 
-        task = await scheduler.submit_task(submission)
+        task_id = await scheduler.submit(request)
 
-        assert task.id == "task-int-001"
-        assert task.status == TASK_STATUS_QUEUED
-        assert task.agent_id == "agent-a"
-        assert task.executor_id == "agent-b"
-        assert task.task_type == "process"
-        assert task.payload == {"data": "test"}
+        assert task_id == "task-int-001"
+        # Verify correct args were passed to the queue
+        call_kwargs = mock_queue.enqueue.call_args[1]
+        assert call_kwargs["agent_id"] == "agent-a"
+        assert call_kwargs["executor_id"] == "agent-b"
+        assert call_kwargs["task_type"] == "process"
 
     @pytest.mark.asyncio
     async def test_submit_dequeue_flow(self, scheduler, mock_queue):
         """Submit then dequeue should return the task."""
-        submission = TaskSubmission(
+        request = AgentRequest(
             agent_id="agent-a",
+            zone_id=None,
+            priority=PriorityTier.NORMAL.value,
             executor_id="agent-b",
             task_type="process",
         )
 
-        submitted = await scheduler.submit_task(submission)
+        task_id = await scheduler.submit(request)
 
         # Simulate dequeue returning the submitted task
         now = datetime.now(UTC)
         _dequeue_result = ScheduledTask(
-            id=submitted.id,
+            id=task_id,
             agent_id="agent-a",
             executor_id="agent-b",
             task_type="process",
@@ -135,7 +140,7 @@ class TestFullFlow:
 
         dequeued = await scheduler.dequeue_next()
         assert dequeued is not None
-        assert dequeued.id == submitted.id
+        assert dequeued.id == task_id
         assert dequeued.status == TASK_STATUS_RUNNING
 
 
@@ -148,21 +153,23 @@ class TestBoostIntegration:
     """Test boost with CreditsService (disabled mode)."""
 
     @pytest.mark.asyncio
-    async def test_boost_with_disabled_credits(self, scheduler):
+    async def test_boost_with_disabled_credits(self, scheduler, mock_queue):
         """Boost should work with disabled CreditsService (pass-through)."""
-        submission = TaskSubmission(
+        request = AgentRequest(
             agent_id="agent-a",
+            zone_id=None,
+            priority=PriorityTier.LOW.value,
             executor_id="agent-b",
             task_type="process",
-            priority=PriorityTier.LOW,
-            boost_amount=BOOST_COST_PER_TIER * 2,
+            boost_amount=str(BOOST_COST_PER_TIER * 2),
         )
 
-        task = await scheduler.submit_task(submission)
+        await scheduler.submit(request)
 
-        # Effective tier should be lowered by boost
-        assert task.effective_tier == 1  # 3 (LOW) - 2 (boost) = 1 (HIGH)
-        assert task.boost_tiers == 2
+        # Verify effective tier and boost via queue enqueue args
+        call_kwargs = mock_queue.enqueue.call_args[1]
+        assert call_kwargs["effective_tier"] == 1  # 3 (LOW) - 2 (boost) = 1 (HIGH)
+        assert call_kwargs["boost_tiers"] == 2
 
 
 # =============================================================================
@@ -191,7 +198,7 @@ class TestCancelFlow:
             )
         )
 
-        result = await scheduler.cancel_task("task-cancel-1", agent_id="agent-a")
+        result = await scheduler.cancel_by_id("task-cancel-1")
         assert result is True
 
 

@@ -53,7 +53,7 @@ def main() -> int:
     print()
 
     # Create admin context
-    admin_context = OperationContext(user="system", groups=[], zone_id="alice", is_admin=True)
+    admin_context = OperationContext(user_id="system", groups=[], zone_id="alice", is_admin=True)
 
     # Test provision_user
     print("Testing provision_user...")

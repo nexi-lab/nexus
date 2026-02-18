@@ -1201,8 +1201,8 @@ class TestLockIsolation:
             nx.write("/shared.txt", b"content")
 
             # Create contexts for different zones
-            zone_a_ctx = OperationContext(user="user_a", groups=[], zone_id="zone_a")
-            zone_b_ctx = OperationContext(user="user_b", groups=[], zone_id="zone_b")
+            zone_a_ctx = OperationContext(user_id="user_a", groups=[], zone_id="zone_a")
+            zone_b_ctx = OperationContext(user_id="user_b", groups=[], zone_id="zone_b")
 
             acquired_order = []
 

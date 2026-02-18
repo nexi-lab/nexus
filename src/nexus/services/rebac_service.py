@@ -1536,7 +1536,7 @@ class ReBACService(ReBACShareMixin):
             >>> self._get_subject_from_context(context)
             ('user', 'alice')
 
-            >>> context = OperationContext(user="alice", groups=[])
+            >>> context = OperationContext(user_id="alice", groups=[])
             >>> self._get_subject_from_context(context)
             ('user', 'alice')
         """
@@ -1551,7 +1551,7 @@ class ReBACService(ReBACShareMixin):
 
             # Construct from subject_type + subject_id
             subject_type = context.get("subject_type", "user")
-            subject_id = context.get("subject_id") or context.get("user")
+            subject_id = context.get("subject_id") or context.get("user_id")
             if subject_id:
                 return (subject_type, subject_id)
 
@@ -1567,13 +1567,13 @@ class ReBACService(ReBACShareMixin):
         # Fallback: construct from attributes
         if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
             subject_type = getattr(context, "subject_type", "user")
-            subject_id = getattr(context, "subject_id", None) or getattr(context, "user", None)
+            subject_id = getattr(context, "subject_id", None) or getattr(context, "user_id", None)
             if subject_id:
                 return (subject_type, subject_id)
 
         # Last resort: use user field
-        if hasattr(context, "user") and context.user:
-            return ("user", context.user)
+        if hasattr(context, "user_id") and context.user_id:
+            return ("user", context.user_id)
 
         return None
 
@@ -1614,7 +1614,7 @@ class ReBACService(ReBACShareMixin):
         elif isinstance(context, dict):
             # Create OperationContext from dict
             op_context = OperationContext(
-                user=context.get("user", "unknown"),
+                user_id=context.get("user_id", "unknown"),
                 groups=context.get("groups", []),
                 zone_id=context.get("zone_id"),
                 is_admin=context.get("is_admin", False),
@@ -1653,14 +1653,14 @@ class ReBACService(ReBACShareMixin):
                     "ReBAC manager is not available. Ensure ReBACService is properly initialized."
                 )
             has_permission = self._rebac_manager.rebac_check(
-                subject=self._get_subject_from_context(context) or ("user", op_context.user),
+                subject=self._get_subject_from_context(context) or ("user", op_context.user_id),
                 permission="owner",  # Only owners can manage permissions
                 object=resource,
                 context=context,
             )
             if not has_permission:
                 raise PermissionError(
-                    f"Access denied: User '{op_context.user}' does not have owner "
+                    f"Access denied: User '{op_context.user_id}' does not have owner "
                     f"permission to manage {resource[0]} '{resource[1]}'"
                 )
             return
@@ -1679,17 +1679,17 @@ class ReBACService(ReBACShareMixin):
                         zone_id = parts[0]
 
                 # Check if user is zone admin for this resource's zone
-                if zone_id and op_context.user:
+                if zone_id and op_context.user_id:
                     from nexus.core.zone_helpers import is_zone_admin
 
-                    if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
+                    if is_zone_admin(self._rebac_manager, op_context.user_id, zone_id):
                         # Zone admin can share resources in their zone
                         return
 
                 # Neither owner nor zone admin - deny
                 perm_name = required_permission.upper()
                 raise PermissionError(
-                    f"Access denied: User '{op_context.user}' does not have {perm_name} "
+                    f"Access denied: User '{op_context.user_id}' does not have {perm_name} "
                     f"permission to manage permissions on '{resource_path}'. "
                     f"Only owners or zone admins can share resources."
                 )

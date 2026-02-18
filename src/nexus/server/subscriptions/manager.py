@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 # Constants
 MAX_RETRIES = 3
 RETRY_DELAYS = [1, 5, 30]  # seconds
-WEBHOOK_TIMEOUT = 10.0  # seconds
+# Issue #2071: WEBHOOK_TIMEOUT sourced from ProfileTuning.network.webhook_timeout
+# Module-level constant = FULL profile default; override via constructor DI.
+WEBHOOK_TIMEOUT = 10.0  # seconds (FULL profile default)
 MAX_CONSECUTIVE_FAILURES = 10  # Disable after this many failures
 
 

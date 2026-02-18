@@ -2,11 +2,11 @@
 
 Manages the feedback → event → materialized score pipeline:
 - Submit feedback: validate, create event, update materialized score.
-- Query reputation: composite score lookup with TTLCache.
+- Query reputation: composite score lookup from database.
 - Leaderboard: zone-scoped ranking by composite score.
 
-Uses SessionMixin for session lifecycle, TTLCache for read performance,
-and Bayesian Beta math for scoring.
+Federation-safe: no process-local caches or locks.
+All reads go directly to the database.
 """
 
 from __future__ import annotations
@@ -14,11 +14,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from cachetools import TTLCache
 from sqlalchemy import select
 
 from nexus.services.reputation.reputation_math import compute_composite_score
@@ -48,25 +46,18 @@ _OUTCOME_INCREMENTS: dict[str, tuple[float, float]] = {
 class ReputationService(SessionMixin):
     """Feedback and reputation score management.
 
-    Thread-safe: cache access synchronized via _cache_lock.
+    Federation-safe: no process-local caches or locks.
+    All reads go directly to the database.
 
     Args:
         session_factory: SQLAlchemy sessionmaker for database access.
-        cache_maxsize: Max entries in the reputation TTLCache.
-        cache_ttl: TTL in seconds for cached scores.
     """
 
     def __init__(
         self,
         session_factory: sessionmaker[Session],
-        cache_maxsize: int = 10_000,
-        cache_ttl: int = 60,
     ) -> None:
         self._session_factory = session_factory
-        self._cache_lock = threading.Lock()
-        self._score_cache: TTLCache[str, ReputationScore | None] = TTLCache(
-            maxsize=cache_maxsize, ttl=cache_ttl
-        )
 
     def submit_feedback(
         self,
@@ -167,11 +158,6 @@ class ReputationService(SessionMixin):
                 context=context,
             )
 
-            # Invalidate cache BEFORE commit to prevent stale reads
-            cache_key = f"{rated_agent_id}:{context}:all_time"
-            with self._cache_lock:
-                self._score_cache.pop(cache_key, None)
-
             record = self._event_model_to_record(event_model)
 
         if logger.isEnabledFor(logging.DEBUG):
@@ -201,13 +187,6 @@ class ReputationService(SessionMixin):
         Returns:
             ReputationScore record or None if not found.
         """
-        cache_key = f"{agent_id}:{context}:{window}"
-
-        with self._cache_lock:
-            cached = self._score_cache.get(cache_key)
-            if cached is not None:
-                return cached
-
         with self._get_session() as session:
             model = session.execute(
                 select(ReputationScoreModel).where(
@@ -220,12 +199,7 @@ class ReputationService(SessionMixin):
             if model is None:
                 return None
 
-            record = self._score_model_to_record(model)
-
-        with self._cache_lock:
-            self._score_cache[cache_key] = record
-
-        return record
+            return self._score_model_to_record(model)
 
     def get_leaderboard(
         self,

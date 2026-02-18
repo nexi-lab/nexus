@@ -43,7 +43,9 @@ from nexus.services.gateway import NexusFSGateway
 from nexus.services.search_semantic import SemanticSearchMixin
 
 # List directory traversal thresholds (Issue #901)
-LIST_PARALLEL_WORKERS = 10  # Thread pool size for parallel directory listing (I/O-bound)
+# Issue #2071: LIST_PARALLEL_WORKERS now sourced from ProfileTuning.search.list_parallel_workers
+# Kept as fallback for callers that don't receive tuning via DI.
+LIST_PARALLEL_WORKERS = 10  # Thread pool size for parallel directory listing (FULL profile default)
 LIST_PARALLEL_MAX_DEPTH = 100  # Safety limit to prevent infinite traversal (e.g., symlink loops)
 
 # Zone-aware path prefixes for cross-zone filtering (Issue #899)
@@ -667,7 +669,7 @@ class SearchService(SemanticSearchMixin):
                     )
             if not has_permission:
                 raise PermissionDeniedError(
-                    f"Access denied: User '{context.user}' does not have "
+                    f"Access denied: User '{context.user_id}' does not have "
                     f"TRAVERSE permission for '{path}'"
                 )
 
@@ -680,7 +682,7 @@ class SearchService(SemanticSearchMixin):
             from nexus.core.permissions import OperationContext
 
             list_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path
+                user_id="anonymous", groups=[], backend_path=route.backend_path
             )
 
         # Issue #901: Parallel directory traversal for 5-10x speedup

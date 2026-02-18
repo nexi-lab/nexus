@@ -5,7 +5,7 @@ Tasks are ordered by (effective_tier ASC, enqueued_at ASC) for
 strict priority ordering with FIFO within each tier.
 
 HRRN dequeue (Issue #1274) orders by priority_class ASC,
-hrrn_score() DESC, enqueued_at ASC for Astraea-style scheduling.
+inline HRRN score DESC, enqueued_at ASC for Astraea-style scheduling.
 
 Related: Issue #1212, #1274
 """
@@ -91,7 +91,8 @@ WHERE id = (
       AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
     ORDER BY
         priority_class ASC,
-        hrrn_score(enqueued_at, estimated_service_time) DESC,
+        (EXTRACT(EPOCH FROM (now() - enqueued_at)) + estimated_service_time)
+            / GREATEST(estimated_service_time, 0.001) DESC,
         enqueued_at ASC
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -115,7 +116,8 @@ WHERE id = (
       AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
     ORDER BY
         priority_class ASC,
-        hrrn_score(enqueued_at, estimated_service_time) DESC,
+        (EXTRACT(EPOCH FROM (now() - enqueued_at)) + estimated_service_time)
+            / GREATEST(estimated_service_time, 0.001) DESC,
         enqueued_at ASC
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -370,7 +372,7 @@ class TaskQueue:
     ) -> ScheduledTask | None:
         """Dequeue using HRRN scoring within priority classes (Astraea).
 
-        Orders by: priority_class ASC, hrrn_score DESC, enqueued_at ASC.
+        Orders by: priority_class ASC, HRRN score DESC, enqueued_at ASC.
         Filters out tasks whose executor is SUSPENDED.
 
         Args:

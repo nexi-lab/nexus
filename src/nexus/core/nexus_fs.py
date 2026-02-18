@@ -6574,15 +6574,6 @@ class NexusFS(  # type: ignore[misc]
             "ttl": 0,
         }
 
-    def clear_dir_visibility_cache(self) -> None:
-        """Clear the directory visibility cache.
-
-        Use this to force fresh visibility computations, for example
-        after bulk permission changes or for testing purposes.
-        """
-        if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
-            self._dir_visibility_cache.clear()
-
     @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
     def backfill_directory_index(
         self,

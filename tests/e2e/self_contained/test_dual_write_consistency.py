@@ -70,7 +70,7 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
             record_store=record_store,
             permissions=PermissionConfig(enforce=False),
             parsing=ParseConfig(auto_parse=False),
-            services=KernelServices(write_observer=write_observer),
+            kernel_services=KernelServices(write_observer=write_observer),
         )
     else:
         nx = create_nexus_fs(

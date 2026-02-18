@@ -2,6 +2,7 @@
 
 Issue #1287: Extract NexusFS Domain Services from God Object.
 Issue #1391: Builder pattern — frozen config dataclasses as SSOT for defaults.
+Issue #2034: Slim KernelServices — 3-tier split (Kernel / System / Brick).
 
 These frozen dataclasses group related constructor parameters so that
 the kernel receives a single config object instead of 50 keyword args.
@@ -10,6 +11,12 @@ Defaults live here (SSOT) — no duplication across NexusFS, factory, connect().
 Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 (path/list/kv/exists). This is distinct from the ``CacheStore`` pillar
 (Dragonfly/ephemeral KV+PubSub) which is a separate storage medium.
+
+Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
+
+    KernelServices  — Tier 0: boot-fatal, always present
+    SystemServices  — Tier 1: degraded-mode on failure, always started
+    BrickServices   — Tier 2: optional, silent on failure, hot-swappable
 """
 
 from __future__ import annotations
@@ -104,24 +111,31 @@ class ParseConfig:
 
 
 # ---------------------------------------------------------------------------
-# KernelServices — frozen container for injected service dependencies
+# KernelServices — Tier 0: boot-fatal kernel mechanisms
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class KernelServices:
-    """Injected service dependencies for NexusFS kernel.
+    """Tier 0 (KERNEL) — mandatory services that are fatal on failure.
 
-    All default to None = service not available. Created by
-    ``nexus.factory.create_nexus_services()`` and bundled here
-    for clean injection into the kernel constructor.
+    Contains only kernel-level mechanisms: VFS routing, permissions,
+    workspace management, sync/versioning, and cache invalidation.
+
+    Created by ``nexus.factory._boot_kernel_services()`` and injected
+    into the NexusFS kernel constructor.
 
     Frozen — all wiring must happen at construction time in factory.py.
     Use ``dataclasses.replace()`` to create modified copies if needed.
+
+    Issue #2034: Slimmed from ~40 fields to 15 kernel-only fields.
+    System and brick services moved to SystemServices / BrickServices.
     """
 
-    # --- Tier 0: KERNEL — mandatory, boot-fatal on failure ---
+    # VFS routing
     router: Any = None
+
+    # ReBAC permission subsystem
     rebac_manager: Any = None
     dir_visibility_cache: Any = None
     audit_store: Any = None
@@ -129,64 +143,97 @@ class KernelServices:
     permission_enforcer: Any = None
     hierarchy_manager: Any = None
     deferred_permission_buffer: Any = None
+
+    # Workspace subsystem
     workspace_registry: Any = None
     mount_manager: Any = None
     workspace_manager: Any = None
-    context_branch_service: Any = None  # Issue #1315: workspace branching
 
-    # Sync/versioning
+    # Sync / versioning
     write_observer: Any = None
     version_service: Any = None
     overlay_resolver: Any = None
-    wallet_provisioner: Any = None
-    snapshot_service: Any = None  # Issue #1752: Transactional snapshots
 
     # Cache invalidation (Issue #1169 / #1519)
     cache_observer: CacheInvalidationObserver | None = None
 
-    # --- Tier 1.5: SYSTEM SERVICE — Hook Engine + Brick Lifecycle (Issue #1257, #1704) ---
+
+# ---------------------------------------------------------------------------
+# SystemServices — Tier 1: degraded-mode on failure
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SystemServices:
+    """Tier 1 (SYSTEM) — critical, always-started, degraded-mode on failure.
+
+    Contains services that the kernel needs for agent identity, namespace
+    visibility, event delivery, observability, and lifecycle management.
+    System fails gracefully if these are unavailable (logs WARNING, sets None).
+
+    Created by ``nexus.factory._boot_system_services()``.
+
+    Issue #2034: Extracted from the monolithic KernelServices.
+    """
+
+    # Agent identity (Issue #1502)
+    agent_registry: Any = None
+    async_agent_registry: Any = None
+
+    # Namespace visibility (Issue #1502)
+    namespace_manager: NamespaceManagerProtocol | None = None
+    async_namespace_manager: Any = None
+
+    # Workspace branching (Issue #1315)
+    context_branch_service: Any = None
+
+    # Hook engine chain (Issue #1257)
     scoped_hook_engine: Any = None
+
+    # Brick lifecycle (Issue #1704)
     brick_lifecycle_manager: Any = None
 
-    # --- Tier 2: BRICK — infrastructure ---
+    # Event delivery (Issue #1241)
+    delivery_worker: Any = None
+
+    # Query observability (Issue #1301)
+    observability_subsystem: Any = None
+
+    # Resiliency policies (Issue #1366)
+    resiliency_manager: Any = None
+
+
+# ---------------------------------------------------------------------------
+# BrickServices — Tier 2: optional, silent on failure
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BrickServices:
+    """Tier 2 (BRICK) — optional, removable, silent on failure.
+
+    Contains feature bricks that can fail independently without affecting
+    the kernel or system services. The system continues without them.
+
+    Created by ``nexus.factory._boot_brick_services()``.
+
+    Issue #2034: Extracted from the monolithic KernelServices.
+    """
+
+    # Infrastructure bricks
     event_bus: Any = None
     lock_manager: Any = None
     workflow_engine: WorkflowProtocol | None = None
-
-    # Auth services — injected from server layer (Issue #1519, 3A)
-    api_key_creator: Any = None  # APIKeyCreatorProtocol
-
-    # Server-layer services — explicitly typed fields instead of opaque dict
-    observability_subsystem: Any = None
-    chunked_upload_service: Any = None
-    manifest_resolver: Any = None
-    manifest_metrics: Any = None
     rebac_circuit_breaker: Any = None
-    tool_namespace_middleware: Any = None
-    resiliency_manager: Any = None
-    delivery_worker: Any = None
 
-    # --- Tier 1: SYSTEM — kernel protocol services (Issue #1502) ---
-    agent_registry: Any = None
-    namespace_manager: NamespaceManagerProtocol | None = None
-    async_agent_registry: Any = None
-    async_namespace_manager: Any = None
-    async_vfs_router: Any = None
-
-    # Pre-built domain services (Issue #1519, 4B)
-    # When set, _wire_services() uses these instead of building internally.
-    # Enables factory pre-wiring and test-time mock injection.
-    rebac_service: Any = None
-    search_service: Any = None
-    events_service: Any = None
-
-    # Mount/sync/task-queue services (Issue #655)
-    # When set, NexusFS uses these instead of creating via @cached_property.
-    mount_core_service: Any = None
-    sync_service: Any = None
-    sync_job_service: Any = None
-    mount_persist_service: Any = None
-    task_queue_service: Any = None
+    # Feature bricks
+    wallet_provisioner: Any = None  # PAY brick
+    chunked_upload_service: Any = None  # UPLOADS brick
+    manifest_resolver: Any = None  # MANIFEST brick
+    tool_namespace_middleware: Any = None  # MCP brick
+    api_key_creator: Any = None  # AUTH brick (Issue #1519, 3A)
+    snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
+    task_queue_service: Any = None  # TASK_QUEUE brick (Issue #655)
 
 
 # ---------------------------------------------------------------------------

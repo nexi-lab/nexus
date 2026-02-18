@@ -21,11 +21,8 @@ async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
     bg_tasks: list[asyncio.Task] = []
 
     # Prefer the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars)
-    _factory_upload_svc = (
-        app.state.nexus_fs._service_extras.get("chunked_upload_service")
-        if app.state.nexus_fs
-        else None
-    )
+    _brk = getattr(app.state.nexus_fs, "_brick_services", None) if app.state.nexus_fs else None
+    _factory_upload_svc = getattr(_brk, "chunked_upload_service", None)
 
     if _factory_upload_svc is not None:
         app.state.chunked_upload_service = _factory_upload_svc

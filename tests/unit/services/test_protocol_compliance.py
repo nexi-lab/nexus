@@ -152,7 +152,7 @@ def assert_protocol_compliance(
 _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     # ── Fully extracted (expect pass) ──────────────────────────────────
     (
-        "LLMProtocol",
+        "LLMServiceProtocol",
         "nexus.services.protocols.llm",
         "nexus.services.llm_service.LLMService",
         True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
@@ -214,6 +214,70 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.services.snapshot.service.TransactionalSnapshotService",
         True,
     ),
+    # ── Async adapter protocols (Issue #1440) ─────────────────────────
+    (
+        "AgentRegistryProtocol",
+        "nexus.services.protocols.agent_registry",
+        "nexus.services.agents.async_agent_registry.AsyncAgentRegistry",
+        True,
+    ),
+    (
+        "NamespaceManagerProtocol",
+        "nexus.services.protocols.namespace_manager",
+        "nexus.rebac.async_namespace_manager.AsyncNamespaceManager",
+        True,
+    ),
+    (
+        "HookEngineProtocol",
+        "nexus.services.protocols.hook_engine",
+        "nexus.plugins.async_hooks.AsyncHookEngine",
+        True,
+    ),
+    # ── Service-layer protocols ───────────────────────────────────────
+    (
+        "MCPProtocol",
+        "nexus.services.protocols.mcp",
+        "nexus.services.mcp_service.MCPService",
+        True,
+    ),
+    (
+        "DelegationProtocol",
+        "nexus.services.protocols.delegation",
+        "nexus.services.delegation.service.DelegationService",
+        True,
+    ),
+    (
+        "OperationLogProtocol",
+        "nexus.services.protocols.operation_log",
+        "nexus.storage.operation_logger.OperationLogger",
+        True,
+    ),
+    # ── Scheduler (using InMemoryScheduler test stub) ─────────────────
+    (
+        "SchedulerProtocol",
+        "nexus.services.protocols.scheduler",
+        "nexus.services.protocols.scheduler.InMemoryScheduler",
+        True,
+    ),
+    # ── Brick-level protocols ─────────────────────────────────────────
+    (
+        "LLMProviderProtocol",
+        "nexus.services.protocols.llm_provider",
+        "nexus.llm.provider.LiteLLMProvider",
+        True,
+    ),
+    (
+        "ParseProtocol",
+        "nexus.services.protocols.parse",
+        "nexus.parsers.registry.ParserRegistry",
+        True,
+    ),
+    (
+        "PaymentProtocol",
+        "nexus.services.protocols.payment",
+        "nexus.pay.protocol.X402PaymentProtocol",
+        True,
+    ),
 ]
 
 
@@ -263,24 +327,41 @@ def test_service_protocol_compliance(
 
 _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
-    ("event_log", "nexus/services/protocols/event_log.py"),
+    ("auth", "nexus/services/protocols/auth.py"),
+    ("delegation", "nexus/services/protocols/delegation.py"),
+    ("event_log", "nexus/services/event_log/protocol.py"),
+    ("governance", "nexus/services/governance/protocols.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
+    ("llm_provider", "nexus/services/protocols/llm_provider.py"),
     ("lock", "nexus/services/protocols/lock.py"),
+    ("mcp", "nexus/services/protocols/mcp.py"),
+    ("memory", "nexus/services/protocols/memory.py"),
     ("mount", "nexus/services/protocols/mount.py"),
     ("namespace_manager", "nexus/services/protocols/namespace_manager.py"),
     ("oauth", "nexus/services/protocols/oauth.py"),
+    ("operation_log", "nexus/services/protocols/operation_log.py"),
+    ("parse", "nexus/services/protocols/parse.py"),
+    ("payment", "nexus/services/protocols/payment.py"),
     ("permission", "nexus/services/protocols/permission.py"),
+    ("plugin", "nexus/services/protocols/plugin.py"),
+    ("rebac", "nexus/services/protocols/rebac.py"),
+    ("reputation", "nexus/services/protocols/reputation.py"),
     ("scheduler", "nexus/services/protocols/scheduler.py"),
     ("search", "nexus/services/protocols/search.py"),
     ("share_link", "nexus/services/protocols/share_link.py"),
     ("skills", "nexus/services/protocols/skills.py"),
+    ("snapshot", "nexus/services/protocols/snapshot.py"),
+    ("trajectory", "nexus/services/protocols/trajectory.py"),
+    ("version", "nexus/services/protocols/version.py"),
     ("vfs_router", "nexus/core/protocols/vfs_router.py"),
     ("watch", "nexus/services/protocols/watch.py"),
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
+    ("caching", "nexus/core/protocols/caching.py"),
+    ("connector", "nexus/core/protocols/connector.py"),
     ("content_service", "nexus/core/protocols/content_service.py"),
+    ("describable", "nexus/core/protocols/describable.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
-    ("snapshot", "nexus/services/protocols/snapshot.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

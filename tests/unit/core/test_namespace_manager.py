@@ -631,7 +631,7 @@ class TestNamespaceManagerDualPath:
     @pytest.fixture(params=[True, False], ids=["rust", "python"])
     def ns_manager_dual(self, request, enhanced_rebac_manager):
         """NamespaceManager with RUST_AVAILABLE patched to True or False."""
-        with patch("nexus.rebac.rebac_fast.RUST_AVAILABLE", request.param):
+        with patch("nexus.rebac.utils.fast.RUST_AVAILABLE", request.param):
             ns = NamespaceManager(
                 rebac_manager=enhanced_rebac_manager,
                 revision_window=100,

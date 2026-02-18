@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
     from nexus.storage.record_store import RecordStoreABC
+    from nexus.workflows.protocol import WorkflowProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -409,7 +410,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         )
 
         # --- Directory Visibility Cache ---
-        from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
+        from nexus.rebac.cache.visibility import DirectoryVisibilityCache
 
         dir_visibility_cache = DirectoryVisibilityCache(
             tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
@@ -585,8 +586,8 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     namespace_manager: Any = None
     async_namespace_manager: Any = None
     try:
-        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
-        from nexus.services.permissions.namespace_factory import (
+        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.rebac.namespace_factory import (
             create_namespace_manager as _create_ns_manager,
         )
 
@@ -877,7 +878,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         )
 
     # --- Workflow engine ---
-    workflow_engine: Any = None
+    workflow_engine: WorkflowProtocol | None = None
     if ctx.dist.enable_workflows:
         # Try to get Rust glob_match for performance (falls back to fnmatch)
         _glob_match_fn: Any = None
@@ -983,6 +984,7 @@ def create_nexus_services(
     agent_id: str | None = None,
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
+    enabled_bricks: frozenset[str] | None = None,
 ) -> KernelServices:
     """Create default services for NexusFS dependency injection.
 
@@ -1010,14 +1012,36 @@ def create_nexus_services(
         agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
         enable_write_buffer: Use async WriteBuffer for PG sync (Issue #1246).
         resiliency_raw: Raw resiliency policy dict from YAML config.
+        enabled_bricks: Set of brick names to enable. When None, all bricks
+            are enabled (backward-compatible default = FULL profile).
 
     Returns:
-        KernelServices with all services populated.
+        KernelServices with all services populated (None for disabled bricks).
     """
+    import logging as _factory_logging
+
+    _factory_log = _factory_logging.getLogger(__name__)
+
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import PermissionConfig as _PermissionConfig
+
+    # --- Profile-based brick gating (Issue #1389) ---
+    if enabled_bricks is None:
+        from nexus.core.deployment_profile import DeploymentProfile
+
+        enabled_bricks = DeploymentProfile.FULL.default_bricks()
+
+    def _brick_on(name: str) -> bool:
+        return name in enabled_bricks
+
+    _factory_log.info(
+        "Factory: enabled_bricks=%d/%d %s",
+        len(enabled_bricks),
+        20,
+        sorted(enabled_bricks),
+    )
 
     perm = permissions or _PermissionConfig()
     cache_cfg = cache or _CacheConfig()
@@ -1169,7 +1193,9 @@ def _create_distributed_infra(
     return event_bus, lock_manager
 
 
-def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any:
+def _create_workflow_engine(
+    record_store: Any, glob_match_fn: Any = None
+) -> WorkflowProtocol | None:
     """Create workflow engine with async store and DI.
 
     Args:
@@ -1308,11 +1334,12 @@ def create_nexus_fs(
     enable_memory_paging: bool | None = None,
     memory_main_capacity: int | None = None,
     memory_recall_max_age_hours: float | None = None,
+    enabled_bricks: frozenset[str] | None = None,
     # Deprecated — ignored
     zone_id: str | None = None,
     agent_id: str | None = None,
     custom_parsers: list[dict[str, Any]] | None = None,  # noqa: ARG001
-    workflow_engine: Any = None,
+    workflow_engine: WorkflowProtocol | None = None,
 ) -> NexusFS:
     """Create NexusFS with default services — the recommended entry point.
 
@@ -1463,6 +1490,7 @@ def create_nexus_fs(
             zone_id=zone_id,
             agent_id=agent_id,
             enable_write_buffer=enable_write_buffer,
+            enabled_bricks=enabled_bricks,
         )
     elif services is None:
         from nexus.core.config import KernelServices as _KernelServices
@@ -1486,6 +1514,14 @@ def create_nexus_fs(
 
     parsers_brick = ParsersBrick(parsing_config=parsing)
     _parse_fn = parsers_brick.create_parse_fn()
+
+    # Create CacheBrick — owns all cache domain services (Issue #1524)
+    from nexus.cache.brick import CacheBrick
+
+    _cache_brick = CacheBrick(
+        cache_store=cache_store,
+        record_store=record_store,
+    )
 
     # Create content cache (Issue #657)
     _content_cache = None
@@ -1518,6 +1554,9 @@ def create_nexus_fs(
         provider_registry=parsers_brick.provider_registry,
         vfs_lock_manager=_vfs_lock_manager,
     )
+
+    # Attach CacheBrick to NexusFS for server layer access (Issue #1524)
+    nx._cache_brick = _cache_brick  # type: ignore[attr-defined]
 
     # Post-construction I/O (mount restoration, etc.)
     _post_init(nx)

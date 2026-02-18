@@ -1301,8 +1301,8 @@ class SearchService(SemanticSearchMixin):
             logger.warning("session_factory not provided, cannot list memory paths")
             return []
 
+        from nexus.rebac.entity_registry import EntityRegistry
         from nexus.services.memory.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()

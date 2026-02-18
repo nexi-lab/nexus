@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.bm25s_search import BM25SIndex
     from nexus.search.chunking import EntropyAwareChunker
+    from nexus.search.indexing import IndexingPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,9 @@ class SearchDaemon:
         # Entropy-aware chunker for filtering redundant content (Issue #1024)
         self._entropy_chunker: EntropyAwareChunker | None = None
 
+        # Indexing pipeline for parallel refresh (Issue #1094)
+        self._indexing_pipeline: IndexingPipeline | None = None
+
         # State
         self._initialized = False
         self._shutting_down = False
@@ -223,6 +227,19 @@ class SearchDaemon:
                 f"Entropy filtering enabled: threshold={self.config.entropy_threshold}, "
                 f"alpha={self.config.entropy_alpha}"
             )
+
+        # Initialize indexing pipeline for parallel refresh (Issue #1094)
+        from nexus.search.chunking import DocumentChunker
+        from nexus.search.indexing import IndexingPipeline as _IP
+
+        self._indexing_pipeline = _IP(
+            chunker=DocumentChunker(),
+            embedding_provider=self._embedding_provider,
+            entropy_chunker=self._entropy_chunker,
+            async_session_factory=self._async_session,
+            max_concurrency=10,
+            cross_doc_batching=True,
+        )
 
         # Start index refresh background task
         if self.config.refresh_enabled:
@@ -404,17 +421,13 @@ class SearchDaemon:
             self.stats.zoekt_available = False
 
     async def _check_embedding_cache(self) -> None:
-        """Check if embedding cache (Dragonfly) is connected."""
-        try:
-            from nexus.cache.dragonfly import DragonflyEmbeddingCache
+        """Check if embedding cache (Dragonfly) is connected.
 
-            cache = DragonflyEmbeddingCache()  # type: ignore[call-arg]
-            self.stats.embedding_cache_connected = await cache.is_connected()  # type: ignore[attr-defined]
-
-            if self.stats.embedding_cache_connected:
-                logger.info("Embedding cache (Dragonfly) connected")
-        except Exception:
-            self.stats.embedding_cache_connected = False
+        NOTE: Embedding cache health is now checked via CacheBrick.health_check().
+        This method is kept for backward compat but always reports False until
+        a CacheBrick reference is wired in (follow-up).
+        """
+        self.stats.embedding_cache_connected = False
 
     # =========================================================================
     # Search Methods
@@ -833,7 +846,7 @@ class SearchDaemon:
     # Index Refresh
     # =========================================================================
 
-    async def notify_file_change(self, path: str, _change_type: str = "update") -> None:
+    async def notify_file_change(self, path: str, change_type: str = "update") -> None:  # noqa: ARG002
         """Notify the daemon of a file change for index refresh.
 
         Changes are debounced and batched for efficiency.

@@ -24,8 +24,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from nexus.core.rebac import Entity
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.types import ConsistencyLevel
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.types import ConsistencyLevel
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from nexus.core.rebac import NamespaceConfig
-    from nexus.services.permissions.tiger_cache import TigerCache
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
 
@@ -657,7 +657,7 @@ class BulkPermissionChecker:
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
     ) -> bool:
         """Phase 2a: Try Rust acceleration. Returns True if successful."""
-        from nexus.services.permissions.rebac_fast import (
+        from nexus.services.permissions.utils.fast import (
             check_permissions_bulk_with_fallback,
             is_rust_available,
         )

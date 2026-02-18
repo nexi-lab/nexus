@@ -40,11 +40,6 @@ except ImportError:
         logger.debug("[COMPRESSION] zstd not available, using gzip only")
 
 
-def is_zstd_available() -> bool:
-    """Check if zstd compression is available."""
-    return _ZSTD_AVAILABLE
-
-
 def compress_zstd(data: bytes, level: int = 3) -> bytes:
     """Compress data using zstd.
 

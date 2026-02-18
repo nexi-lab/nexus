@@ -37,6 +37,7 @@ from nexus.search.contextual_chunking import (
     ContextualChunkingConfig,
 )
 from nexus.search.embeddings import EmbeddingProvider
+from nexus.search.indexing import IndexingPipeline, IndexResult
 from nexus.search.models import DocumentChunkModel, FilePathModel
 from nexus.search.protocols import FileReaderProtocol
 from nexus.search.results import BaseSearchResult
@@ -392,14 +393,14 @@ class SemanticSearch:
 
         return len(chunks)
 
-    async def index_directory(self, path: str = "/") -> dict[str, int]:
-        """Index all documents in a directory.
+    async def index_directory(self, path: str = "/") -> dict[str, IndexResult]:
+        """Index all documents in a directory using parallel pipeline (Issue #1094).
 
         Args:
             path: Root path to index (default: all files)
 
         Returns:
-            Dictionary mapping file paths to number of chunks indexed
+            Dictionary mapping file paths to IndexResult
         """
         # List all files
         files_result = self._list_files(path, recursive=True)
@@ -408,44 +409,67 @@ class SemanticSearch:
         files = files_result.items if hasattr(files_result, "items") else files_result
 
         # Filter to indexable files (exclude binary files, etc.)
-        indexable_files = []
+        _binary_exts = (
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".pdf",
+            ".zip",
+            ".tar",
+            ".gz",
+            ".exe",
+            ".bin",
+        )
+        indexable_files: list[str] = []
         for file in files:
             file_path = file if isinstance(file, str) else file.get("name", "")
-            # Skip directories and non-text files
             if not file_path or file_path.endswith("/"):
                 continue
-            # Skip common binary extensions
-            if file_path.endswith(
-                (
-                    ".png",
-                    ".jpg",
-                    ".jpeg",
-                    ".gif",
-                    ".pdf",
-                    ".zip",
-                    ".tar",
-                    ".gz",
-                    ".exe",
-                    ".bin",
-                )
-            ):
+            if file_path.endswith(_binary_exts):
                 continue
             indexable_files.append(file_path)
 
-        # Index each file
-        results = {}
-        for file_path in indexable_files:
-            try:
-                num_chunks = await self.index_document(file_path)
-                results[file_path] = num_chunks
-            except Exception as e:
-                # Log error but continue
-                import warnings
+        # Build documents list: (path, content, path_id)
+        documents: list[tuple[str, str, str]] = []
+        with self._get_session() as session:
+            from sqlalchemy import select as sa_select
 
-                warnings.warn(f"Failed to index {file_path}: {e}", stacklevel=2)
-                results[file_path] = -1  # Indicate error
+            for file_path in indexable_files:
+                try:
+                    content = self._get_searchable_text(file_path)
+                    if content is None:
+                        content = self._read_text(file_path)
 
-        return results
+                    stmt = sa_select(FilePathModel).where(
+                        FilePathModel.virtual_path == file_path,
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                    result = session.execute(stmt)
+                    file_model = result.scalar_one_or_none()
+                    if file_model:
+                        documents.append((file_path, content, file_model.path_id))
+                except Exception as e:
+                    logger.warning("Failed to read %s for indexing: %s", file_path, e)
+
+        if not documents:
+            return {}
+
+        # Create pipeline and index in parallel
+        pipeline = IndexingPipeline(
+            chunker=self.chunker,
+            embedding_provider=self.embedding_provider,
+            entropy_chunker=self._entropy_chunker,
+            contextual_chunker=self._contextual_chunker,
+            db_type=self.vector_db.db_type,
+            async_session_factory=self._session_factory,
+            max_concurrency=10,
+            cross_doc_batching=True,
+        )
+
+        index_results = await pipeline.index_documents(documents)
+
+        return {r.path: r for r in index_results}
 
     async def search(
         self,
@@ -716,38 +740,6 @@ class SemanticSearch:
             query, path=path, limit=limit, search_mode="semantic", adaptive_k=adaptive_k
         )
 
-    async def hybrid_search(
-        self,
-        query: str,
-        path: str = "/",
-        limit: int = 10,
-        alpha: float = 0.5,
-        fusion_method: str = "rrf",
-        adaptive_k: bool = False,
-    ) -> list[SemanticSearchResult]:
-        """Hybrid search combining keyword (BM25) and semantic (vector) search.
-
-        Args:
-            query: Search query
-            path: Root path to search (default: all files)
-            limit: Maximum results (used as k_base when adaptive_k=True)
-            alpha: Weight for vector search (0.0 = all BM25, 1.0 = all vector)
-            fusion_method: "rrf" (default), "weighted", "rrf_weighted"
-            adaptive_k: If True, dynamically adjust limit based on query complexity
-
-        Returns:
-            List of search results ranked by fusion score
-        """
-        return await self.search(
-            query,
-            path=path,
-            limit=limit,
-            search_mode="hybrid",
-            alpha=alpha,
-            fusion_method=fusion_method,
-            adaptive_k=adaptive_k,
-        )
-
     async def get_stats(self) -> dict[str, Any]:
         """Get stats (wrapper for get_index_stats)."""
         return await self.get_index_stats()
@@ -755,14 +747,3 @@ class SemanticSearch:
     async def delete_document(self, path: str) -> None:
         """Delete document (wrapper for delete_document_index)."""
         return await self.delete_document_index(path)
-
-    async def clear_index(self) -> None:
-        """Clear the entire search index."""
-        with self._get_session() as session:
-            # Delete all chunks
-            session.execute(delete(DocumentChunkModel))
-            session.commit()
-
-    def close(self) -> None:
-        """Close the search engine (no-op for now)."""
-        pass

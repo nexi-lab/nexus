@@ -190,22 +190,6 @@ async def handle_read_async(nexus_fs: NexusFS, params: Any, context: Any) -> byt
     return parsed_content
 
 
-def handle_read(nexus_fs: NexusFS, params: Any, context: Any) -> bytes | dict[str, Any]:
-    """Handle read method (sync version - kept for compatibility)."""
-    kwargs: dict[str, Any] = {"context": context}
-    if hasattr(params, "return_metadata") and params.return_metadata is not None:
-        kwargs["return_metadata"] = params.return_metadata
-    if hasattr(params, "parsed") and params.parsed is not None:
-        kwargs["parsed"] = params.parsed
-
-    result = nexus_fs.read(params.path, **kwargs)
-    if isinstance(result, bytes):
-        return result
-    if isinstance(result, dict):
-        result = unscope_internal_dict(result, ["path", "virtual_path"])
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Write / mutate handlers
 # ---------------------------------------------------------------------------
@@ -424,13 +408,13 @@ async def handle_semantic_search_index(
 
     if not hasattr(nexus_fs, "_semantic_search") or nexus_fs._semantic_search is None:
         try:
-            await nexus_fs.initialize_semantic_search()
+            await nexus_fs.ainitialize_semantic_search()
         except Exception as e:
             raise ValueError(
                 f"Semantic search is not initialized and could not be auto-initialized: {e}"
             ) from e
 
-    results = await nexus_fs.semantic_search_index(path=path, recursive=recursive)
+    results = await nexus_fs.asemantic_search_index(path=path, recursive=recursive)
 
     total_chunks = 0
     for v in results.values():

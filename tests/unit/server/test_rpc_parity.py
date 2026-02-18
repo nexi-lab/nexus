@@ -227,10 +227,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "get_etag",  # Returns ETag for early 304 check - clients receive ETags via HTTP headers on read
         # Async methods - TODO: Add async RPC support
         # Tracked in issue #XXX
-        "semantic_search",  # Async - requires async RPC support
-        "semantic_search_index",  # Async - requires async RPC support
-        "semantic_search_stats",  # Async - requires async RPC support
-        "initialize_semantic_search",  # Async - requires async RPC support
         "parse",  # Async - requires async RPC support
         # Already exposed via different mechanism
         "write_batch",  # Exposed via different RPC endpoint

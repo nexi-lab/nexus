@@ -363,41 +363,29 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
-    # Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)
-    # Provides optimized connection pooling for permission/tiger caches
+    # Initialize CacheBrick for Dragonfly/Redis or NullCacheStore fallback (Issue #1524)
+    # CacheBrick owns all cache domain services with lifecycle management
     try:
-        from nexus.cache.factory import init_cache_factory
-        from nexus.cache.settings import CacheSettings
+        cache_brick = getattr(_app.state.nexus_fs, "_cache_brick", None)
+        if cache_brick is not None:
+            await cache_brick.start()
+            _app.state.cache_factory = cache_brick  # Backward-compat alias
+            logger.info("CacheBrick started (Issue #1524)")
 
-        cache_settings = CacheSettings.from_env()
-
-        # Pass RecordStore for SQL-backed cache fallback when CacheStoreABC is not available
-        record_store = getattr(_app.state.nexus_fs, "_record_store", None)
-
-        _app.state.cache_factory = await init_cache_factory(
-            cache_settings, record_store=record_store
-        )
-        logger.info(
-            f"Cache factory initialized with {_app.state.cache_factory.backend_name} backend"
-        )
-
-        # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
-        # This enables L1 (memory) -> L2 (CacheStore) -> L3 (RecordStore) caching
-        if _app.state.cache_factory.has_cache_store:
+            # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
             tiger_cache = getattr(
                 getattr(_app.state.nexus_fs, "_rebac_manager", None),
                 "_tiger_cache",
                 None,
             )
-            if tiger_cache:
-                dragonfly_tiger = _app.state.cache_factory.get_tiger_cache()
-                tiger_cache.set_dragonfly_cache(dragonfly_tiger)
+            if tiger_cache and cache_brick.tiger_cache is not None:
+                tiger_cache.set_dragonfly_cache(cache_brick.tiger_cache)
                 logger.info(
                     "[TIGER] Dragonfly L2 cache wired up - "
-                    "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
+                    "L1 (memory) -> L2 (CacheBrick) -> L3 (PostgreSQL)"
                 )
     except Exception as e:
-        logger.warning(f"Failed to initialize cache factory: {e}")
+        logger.warning(f"Failed to initialize CacheBrick: {e}")
 
     # Event Log WAL for durable event persistence (Issue #1397)
     # Service-layer concern: WAL-first durability for EventBus, not a kernel pillar.
@@ -641,7 +629,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Start DirectoryGrantExpander worker for large directory grants (Leopard-style)
                 # This processes pending directory grants asynchronously in background
                 try:
-                    from nexus.rebac.tiger_cache import DirectoryGrantExpander
+                    from nexus.rebac.cache.tiger import DirectoryGrantExpander
 
                     expander = DirectoryGrantExpander(
                         engine=_app.state.nexus_fs._rebac_manager.engine,
@@ -1167,11 +1155,11 @@ async def lifespan(_app: FastAPI) -> Any:
     if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
         _app.state.nexus_fs.close()
 
-    # Shutdown cache factory (Issue #1075)
+    # Shutdown CacheBrick (Issue #1524, replaces #1075 cache_factory)
     if hasattr(_app.state, "cache_factory") and _app.state.cache_factory:
         try:
-            await _app.state.cache_factory.shutdown()
-            logger.info("Cache factory stopped")
+            await _app.state.cache_factory.stop()
+            logger.info("CacheBrick stopped")
         except Exception as e:
             logger.warning(f"Error shutting down cache factory: {e}")
 
@@ -1601,248 +1589,18 @@ def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
 
     # Features endpoint (Issue #1389) — public, rate-limit exempt
+    # ---- Core API routers (extracted from inline endpoints, #1602) ----
+    from nexus.server.api.core.debug import router as debug_router
     from nexus.server.api.core.features import router as features_router
+    from nexus.server.api.core.health import router as health_router
+    from nexus.server.api.core.rpc import router as rpc_router
+    from nexus.server.api.core.streaming import router as streaming_router
 
+    app.include_router(health_router)
     app.include_router(features_router)
-
-    # Health check (exempt from rate limiting - must always be accessible)
-    @app.get("/health", response_model=HealthResponse)
-    @limiter.exempt
-    async def health_check() -> HealthResponse | Any:
-        # Include configuration status for debugging
-        enforce_permissions = None
-        enforce_zone_isolation = None
-        has_auth = None
-
-        nx_fs = _fastapi_app.state.nexus_fs
-        if nx_fs:
-            enforce_permissions = getattr(nx_fs, "_enforce_permissions", None)
-            enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
-
-            # Federation mode: ensure topology is initialized (standard Raft lifecycle).
-            # The leader creates root "/" + mount topology via Raft consensus.
-            # Followers receive them via log replication. Docker health check
-            # acts as the readiness gate — returns 503 until topology is ready.
-            zone_mgr = getattr(nx_fs, "_zone_mgr", None)
-            if zone_mgr is not None and not zone_mgr.ensure_topology():
-                from fastapi.responses import JSONResponse
-
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "status": "starting",
-                        "service": "nexus-rpc",
-                        "detail": "Waiting for Raft leader election and topology initialization",
-                    },
-                )
-
-        # Check if authentication is configured
-        has_auth = bool(_fastapi_app.state.api_key or _fastapi_app.state.auth_provider)
-
-        return HealthResponse(
-            status="healthy",
-            service="nexus-rpc",
-            enforce_permissions=enforce_permissions,
-            enforce_zone_isolation=enforce_zone_isolation,
-            has_auth=has_auth,
-        )
-
-    # Extended health check with component status (Issue #951)
-    @app.get("/health/detailed", tags=["health"])
-    @limiter.exempt
-    async def health_check_detailed() -> dict[str, Any]:
-        """Detailed health check including all components.
-
-        Returns status of:
-        - Core service
-        - Search daemon (if enabled)
-        - Database connection
-        - Background tasks
-        - Mounted backends (Issue #708)
-        """
-        health: dict[str, Any] = {
-            "status": "healthy",
-            "service": "nexus-rpc",
-            "components": {},
-        }
-
-        # Check search daemon (Issue #951)
-        if _fastapi_app.state.search_daemon:
-            daemon_health = _fastapi_app.state.search_daemon.get_health()
-            health["components"]["search_daemon"] = daemon_health
-        else:
-            health["components"]["search_daemon"] = {
-                "status": "disabled",
-                "message": "Set NEXUS_SEARCH_DAEMON=true to enable",
-            }
-
-        # Check ReBAC + circuit breaker (Issue #726)
-        rebac_health: dict[str, Any] = {"status": "disabled"}
-        has_rebac = _fastapi_app.state.async_rebac_manager or getattr(
-            _fastapi_app.state.nexus_fs, "_rebac_manager", None
-        )
-        if has_rebac:
-            cb = getattr(_fastapi_app.state, "rebac_circuit_breaker", None)
-            if cb:
-                from nexus.rebac.circuit_breaker import CircuitState
-
-                cb_state = cb.state
-                if cb_state == CircuitState.CLOSED:
-                    rebac_status = "healthy"
-                elif cb_state == CircuitState.HALF_OPEN:
-                    rebac_status = "degraded"
-                else:
-                    rebac_status = "unhealthy"
-                rebac_health = {
-                    "status": rebac_status,
-                    "circuit_state": cb_state.value,
-                    "failure_count": cb.failure_count,
-                    "open_count": cb.open_count,
-                    "last_failure_time": cb.last_failure_time,
-                }
-            else:
-                rebac_health = {"status": "healthy"}
-        health["components"]["rebac"] = rebac_health
-
-        # Check subscription manager
-        health["components"]["subscriptions"] = {
-            "status": "healthy" if _fastapi_app.state.subscription_manager else "disabled",
-        }
-
-        # Check WebSocket manager (Issue #1116)
-        if _fastapi_app.state.websocket_manager:
-            ws_stats = _fastapi_app.state.websocket_manager.get_stats()
-            health["components"]["websocket"] = {
-                "status": "healthy",
-                "current_connections": ws_stats["current_connections"],
-                "total_connections": ws_stats["total_connections"],
-                "total_messages_sent": ws_stats["total_messages_sent"],
-                "connections_by_zone": ws_stats["connections_by_zone"],
-            }
-        else:
-            health["components"]["websocket"] = {"status": "disabled"}
-
-        # Check Reactive Subscription Manager (Issue #1167)
-        if _fastapi_app.state.reactive_subscription_manager:
-            try:
-                reactive_stats = _fastapi_app.state.reactive_subscription_manager.get_stats()
-                health["components"]["reactive_subscriptions"] = {
-                    "status": "healthy",
-                    "total_subscriptions": reactive_stats["total_subscriptions"],
-                    "read_set_subscriptions": reactive_stats["read_set_subscriptions"],
-                    "pattern_subscriptions": reactive_stats["pattern_subscriptions"],
-                    "avg_lookup_ms": reactive_stats["avg_lookup_ms"],
-                    "registry": reactive_stats["registry"],
-                }
-            except Exception as e:
-                health["components"]["reactive_subscriptions"] = {
-                    "status": "error",
-                    "error": str(e),
-                }
-        else:
-            health["components"]["reactive_subscriptions"] = {"status": "disabled"}
-
-        # Check mounted backends (Issue #708)
-        backends_health: dict[str, Any] = {}
-        if _fastapi_app.state.nexus_fs and hasattr(_fastapi_app.state.nexus_fs, "path_router"):
-            mounts = _fastapi_app.state.nexus_fs.path_router.list_mounts()
-            for mount in mounts:
-                backend = mount.backend
-                mount_point = mount.mount_point
-
-                # Call check_connection on backend
-                try:
-                    # Note: For user-scoped backends, health check without context
-                    # will return limited info. Full per-user health requires context.
-                    status = backend.check_connection()
-                    backends_health[mount_point] = {
-                        "backend": backend.name,
-                        "healthy": status.success,
-                        "latency_ms": status.latency_ms,
-                        "user_scoped": backend.user_scoped,
-                        "thread_safe": backend.thread_safe,
-                    }
-                    if status.error_message:
-                        backends_health[mount_point]["error"] = status.error_message
-                    if status.details:
-                        backends_health[mount_point]["details"] = status.details
-                except Exception as e:
-                    backends_health[mount_point] = {
-                        "backend": backend.name,
-                        "healthy": False,
-                        "error": str(e),
-                    }
-
-        health["components"]["backends"] = backends_health
-
-        # Update overall status if any backend is unhealthy
-        unhealthy_backends = [k for k, v in backends_health.items() if not v.get("healthy", True)]
-        if unhealthy_backends:
-            health["status"] = "degraded"
-            health["unhealthy_backends"] = unhealthy_backends
-
-        # Circuit breaker health (Issue #1366)
-        _resiliency_mgr = (
-            _fastapi_app.state.nexus_fs._service_extras.get("resiliency_manager")
-            if _fastapi_app.state.nexus_fs
-            and hasattr(_fastapi_app.state.nexus_fs, "_service_extras")
-            else None
-        )
-        if _resiliency_mgr is not None:
-            health["components"]["resiliency"] = _resiliency_mgr.health_check()
-            if health["components"]["resiliency"]["status"] == "degraded":
-                health["status"] = "degraded"
-
-        return health
-
-    # Connection pool metrics endpoint (Issue #1075)
-    @app.get("/metrics/pool", tags=["health"])
-    @limiter.exempt
-    async def pool_metrics() -> dict[str, Any]:
-        """Get database connection pool metrics.
-
-        Returns metrics for PostgreSQL and Redis/Dragonfly connection pools:
-        - pool_size: Base number of connections
-        - checked_out: Connections currently in use
-        - overflow: Connections beyond pool_size
-        - available: Connections ready to use
-
-        Useful for monitoring pool utilization and identifying
-        connection exhaustion issues.
-        """
-        metrics: dict[str, Any] = {}
-
-        # PostgreSQL pool stats from metadata store
-        if _fastapi_app.state.nexus_fs and hasattr(_fastapi_app.state.nexus_fs, "metadata"):
-            try:
-                pg_stats = _fastapi_app.state.nexus_fs.metadata.get_pool_stats()
-                metrics["postgres"] = pg_stats
-            except Exception as e:
-                metrics["postgres"] = {"error": str(e)}
-        else:
-            metrics["postgres"] = {"status": "not_available"}
-
-        # Redis/Dragonfly pool stats from cache factory
-        try:
-            from nexus.cache.factory import get_cache_factory
-
-            cache_factory = get_cache_factory()
-            if cache_factory.has_cache_store and cache_factory._cache_client:
-                dragonfly_stats = cache_factory._cache_client.get_pool_stats()
-                dragonfly_info = await cache_factory._cache_client.get_info()
-                metrics["dragonfly"] = {
-                    **dragonfly_stats,
-                    "server_info": dragonfly_info,
-                }
-            else:
-                metrics["dragonfly"] = {"status": "not_configured"}
-        except RuntimeError:
-            # Cache factory not initialized
-            metrics["dragonfly"] = {"status": "not_initialized"}
-        except Exception as e:
-            metrics["dragonfly"] = {"error": str(e)}
-
-        return metrics
+    app.include_router(debug_router)
+    app.include_router(streaming_router)
+    app.include_router(rpc_router)
 
     # Authentication routes
     try:

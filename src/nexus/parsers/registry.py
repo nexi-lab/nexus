@@ -33,7 +33,7 @@ class ParserRegistry(BaseRegistry[Parser]):
         self._parsers: tuple[Parser, ...] = ()
         self._parsers_by_extension: dict[str, tuple[Parser, ...]] = {}
 
-    def register(self, parser: Parser, **_kw: object) -> None:  # type: ignore[override]
+    def register(self, parser: Parser, **kw: object) -> None:  # type: ignore[override]  # noqa: ARG002
         """Register a new parser.
 
         Args:

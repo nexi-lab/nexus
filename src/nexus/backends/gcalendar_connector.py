@@ -259,7 +259,7 @@ send_notifications: true
 
             try:
                 provider_instance = factory.create_provider(name=self.provider)
-                self.token_manager.register_provider(self.provider, provider_instance)
+                self.token_manager.register_provider(self.provider, provider_instance)  # type: ignore[arg-type]
                 logger.info(f"Registered OAuth provider '{self.provider}' for Calendar backend")
             except ValueError as e:
                 logger.warning(

@@ -94,7 +94,7 @@ class XOAuthProvider(BaseOAuthProvider):
 
     # ── Code exchange ──────────────────────────────────────────
 
-    async def exchange_code(self, _code: str, **_kwargs: Any) -> OAuthCredential:
+    async def exchange_code(self, code: str, **kwargs: Any) -> OAuthCredential:  # noqa: ARG002
         raise OAuthError("X OAuth requires PKCE. Use exchange_code_pkce() instead.")
 
     async def exchange_code_pkce(self, code: str, code_verifier: str) -> OAuthCredential:
@@ -117,8 +117,8 @@ class XOAuthProvider(BaseOAuthProvider):
             cred = dataclasses.replace(cred, token_type="Bearer")
         return cred
 
-    def _build_exchange_params(self, _code: str, **_kwargs: Any) -> dict[str, str]:
-        # Not used directly — exchange_code raises. Required by ABC.
+    def _build_exchange_params(self, code: str, **kwargs: Any) -> dict[str, str]:  # noqa: ARG002
+        # Not used directly -- exchange_code raises. Required by ABC.
         return {}
 
     def _build_exchange_headers(self) -> dict[str, str] | None:

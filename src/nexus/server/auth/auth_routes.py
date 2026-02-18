@@ -893,10 +893,11 @@ async def oauth_check(
         # Exchange code for tokens to get user info
         from nexus.auth.oauth.pending import get_pending_oauth_manager
 
-        oauth_credential = await oauth_provider.google_provider.exchange_code(
+        google_provider = oauth_provider._get_provider("google")
+        oauth_credential = await google_provider.exchange_code(
             request.code, redirect_uri=request.redirect_uri
         )
-        user_info = await oauth_provider._extract_google_user_info(oauth_credential.access_token)
+        user_info = await oauth_provider._extract_user_info("google", oauth_credential.access_token)
 
         provider_user_id = user_info.get("sub")
         provider_email = user_info.get("email")

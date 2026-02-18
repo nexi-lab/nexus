@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 import pytest
 
@@ -14,10 +16,10 @@ class ConcreteProvider(BaseOAuthProvider):
 
     TOKEN_ENDPOINT = "https://example.com/token"
 
-    def get_authorization_url(self, state: str | None = None) -> str:
+    def get_authorization_url(self, state: str | None = None, **kwargs: Any) -> str:  # noqa: ARG002
         return f"https://example.com/auth?state={state}"
 
-    def _build_exchange_params(self, code: str) -> dict[str, str]:
+    def _build_exchange_params(self, code: str, **kwargs: Any) -> dict[str, str]:  # noqa: ARG002
         return {
             "client_id": self.client_id,
             "client_secret": self.client_secret,

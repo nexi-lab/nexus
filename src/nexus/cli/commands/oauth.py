@@ -375,7 +375,7 @@ def setup_gdrive(
         cred_id = await manager.store_credential(
             provider="google",
             user_email=user_email,
-            credential=credential,
+            credential=credential,  # type: ignore[arg-type]
             zone_id=zone_id or "root",
             created_by=user_email,
         )
@@ -537,7 +537,7 @@ def setup_x(
         cred_id = await manager.store_credential(
             provider="twitter",
             user_email=user_email,
-            credential=credential,
+            credential=credential,  # type: ignore[arg-type]
             zone_id=zone_id or "root",
             created_by=user_email,
         )

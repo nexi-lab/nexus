@@ -45,8 +45,13 @@ class MetadataStoreProtocol(Protocol):
     def set_file_metadata(self, path_id: Any, key: str, value: str) -> None: ...
 
 @runtime_checkable
-class LLMProviderProtocol(Protocol):
-    """LLM provider surface used by LLMAction."""
+class WorkflowLLMProtocol(Protocol):
+    """Narrow LLM provider surface used by LLMAction.
+
+    This is intentionally minimal — only the ``generate`` helper that
+    workflow actions need.  For the full brick-level LLM provider
+    contract see ``nexus.services.protocols.llm_provider.LLMProviderProtocol``.
+    """
 
     async def generate(self, *, model: str, prompt: str, system: str) -> str: ...
 
@@ -99,5 +104,5 @@ class WorkflowServices:
 
     nexus_ops: NexusOperationsProtocol | None = None
     metadata_store: MetadataStoreProtocol | None = None
-    llm_provider: LLMProviderProtocol | None = None
+    llm_provider: WorkflowLLMProtocol | None = None
     glob_match: GlobMatchFn | None = None

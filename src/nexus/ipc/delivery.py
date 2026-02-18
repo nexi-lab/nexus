@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -27,15 +28,18 @@ from nexus.ipc.conventions import (
 )
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 from nexus.ipc.exceptions import (
+    DLQReason,
     EnvelopeValidationError,
     InboxFullError,
     InboxNotFoundError,
 )
 from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
 from nexus.ipc.storage.protocol import IPCStorageDriver
+from nexus.storage.zone_settings import SigningMode
 
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
+    from nexus.ipc.signing import MessageSigner, MessageVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +102,7 @@ class MessageSender:
         hot_publisher: HotPathPublisher | None = None,
         delivery_mode: DeliveryMode = DeliveryMode.COLD_ONLY,
         max_cold_concurrency: int = DEFAULT_MAX_COLD_CONCURRENCY,
+        signer: MessageSigner | None = None,
     ) -> None:
         self._storage = storage
         self._publisher = event_publisher
@@ -109,6 +114,7 @@ class MessageSender:
         self._mode = delivery_mode if hot_publisher is not None else DeliveryMode.COLD_ONLY
         self._cold_semaphore = asyncio.Semaphore(max_cold_concurrency)
         self._pending_tasks: set[asyncio.Task[None]] = set()
+        self._signer = signer
 
     async def send(self, envelope: MessageEnvelope) -> str:
         """Send a message to the recipient's inbox.
@@ -125,6 +131,10 @@ class MessageSender:
             InboxFullError: If recipient's inbox exceeds size limit (cold modes).
             EnvelopeValidationError: If envelope is invalid.
         """
+        # Sign envelope before serialization (if signer is configured)
+        if self._signer is not None:
+            envelope = self._signer.sign(envelope)
+
         data = envelope.to_bytes()
         self._validate_envelope(envelope, serialized_size=len(data))
 
@@ -338,6 +348,8 @@ class MessageProcessor:
         dedup_ttl_seconds: int = 3600,
         hot_subscriber: HotPathSubscriber | None = None,
         max_handler_concurrency: int = DEFAULT_MAX_HANDLER_CONCURRENCY,
+        verifier: MessageVerifier | None = None,
+        signing_mode: SigningMode = SigningMode.OFF,
     ) -> None:
         self._storage = storage
         self._agent_id = agent_id
@@ -349,6 +361,8 @@ class MessageProcessor:
         self._hot_task: asyncio.Task[None] | None = None
         self._handler_semaphore = asyncio.Semaphore(max_handler_concurrency)
         self._handler_tasks: set[asyncio.Task[None]] = set()
+        self._verifier = verifier
+        self._signing_mode = signing_mode
 
     def _dedup_key(self, msg_id: str) -> str:
         """Zone-scoped cache key for message dedup."""
@@ -411,6 +425,11 @@ class MessageProcessor:
                         envelope.id,
                         envelope.ttl_seconds,
                     )
+                    await self._track_processed(envelope.id)
+                    continue
+
+                # Signature verification for hot path
+                if not self._verify_signature_hot(envelope):
                     await self._track_processed(envelope.id)
                     continue
 
@@ -497,7 +516,7 @@ class MessageProcessor:
                 exc,
             )
             # Move malformed message to dead letter
-            await self._move_to_dead_letter_raw(msg_path, reason=str(exc))
+            await self._dead_letter(msg_path, DLQReason.PARSE_ERROR, detail=str(exc))
             return
 
         # Dedup check via CacheStoreABC
@@ -527,7 +546,17 @@ class MessageProcessor:
                 envelope.ttl_seconds,
                 self._agent_id,
             )
-            await self._move_to_dead_letter(msg_path, envelope, reason="ttl_expired")
+            await self._dead_letter(
+                msg_path,
+                DLQReason.TTL_EXPIRED,
+                msg_id=envelope.id,
+                timestamp=envelope.timestamp,
+                detail=f"TTL {envelope.ttl_seconds}s expired",
+            )
+            return
+
+        # Signature verification (when signing_mode != OFF)
+        if not await self._verify_signature(msg_path, envelope):
             return
 
         # Invoke handler
@@ -540,7 +569,13 @@ class MessageProcessor:
                 exc,
                 exc_info=True,
             )
-            await self._move_to_dead_letter(msg_path, envelope, reason=f"handler_error: {exc}")
+            await self._dead_letter(
+                msg_path,
+                DLQReason.HANDLER_ERROR,
+                msg_id=envelope.id,
+                timestamp=envelope.timestamp,
+                detail=str(exc),
+            )
             return
 
         # Success: move to processed
@@ -557,44 +592,164 @@ class MessageProcessor:
         # Track in dedup cache (TTL-based eviction via CacheStoreABC)
         await self._track_processed(envelope.id)
 
-    async def _move_to_dead_letter(
-        self,
-        msg_path: str,
-        envelope: MessageEnvelope,
-        reason: str,
-    ) -> None:
-        """Move a message to the dead letter directory."""
-        try:
-            dest = message_path_in_dead_letter(self._agent_id, envelope.id, envelope.timestamp)
-            await self._storage.rename(msg_path, dest, self._zone_id)
-            logger.info(
-                "Message %s moved to dead_letter for agent %s (reason: %s)",
+    def _verify_signature_hot(self, envelope: MessageEnvelope) -> bool:
+        """Verify message signature on the hot path (no dead-letter, just drop).
+
+        Returns True if the message should proceed to the handler.
+        """
+        if self._signing_mode == SigningMode.OFF:
+            return True
+
+        has_signature = envelope.signature is not None
+
+        if not has_signature:
+            if self._signing_mode == SigningMode.ENFORCE:
+                logger.warning(
+                    "Hot-path: unsigned message %s rejected (enforce mode)",
+                    envelope.id,
+                )
+                return False
+            logger.warning(
+                "Hot-path: unsigned message %s (verify_only mode)",
+                envelope.id,
+            )
+            return True
+
+        if self._verifier is None:
+            return True
+
+        result = self._verifier.verify(envelope)
+        if not result.valid:
+            logger.warning(
+                "Hot-path: invalid signature on message %s: %s",
+                envelope.id,
+                result.detail,
+            )
+            return False
+
+        return True
+
+    async def _verify_signature(self, msg_path: str, envelope: MessageEnvelope) -> bool:
+        """Verify message signature based on signing_mode.
+
+        Returns True if the message should proceed to the handler,
+        False if it was dead-lettered or rejected.
+        """
+        if self._signing_mode == SigningMode.OFF:
+            return True
+
+        has_signature = envelope.signature is not None
+
+        if not has_signature:
+            if self._signing_mode == SigningMode.ENFORCE:
+                logger.warning(
+                    "Unsigned message %s rejected (enforce mode) for agent %s",
+                    envelope.id,
+                    self._agent_id,
+                )
+                await self._dead_letter(
+                    msg_path,
+                    DLQReason.UNSIGNED_MESSAGE,
+                    msg_id=envelope.id,
+                    timestamp=envelope.timestamp,
+                    detail="Message has no signature (enforce mode)",
+                )
+                return False
+            # VERIFY_ONLY: warn but allow through
+            logger.warning(
+                "Unsigned message %s (verify_only mode) for agent %s",
                 envelope.id,
                 self._agent_id,
-                reason,
+            )
+            return True
+
+        # Has signature — verify it
+        if self._verifier is None:
+            logger.warning(
+                "No verifier configured but message %s has signature; allowing through",
+                envelope.id,
+            )
+            return True
+
+        result = self._verifier.verify(envelope)
+        if not result.valid:
+            logger.warning(
+                "Invalid signature on message %s for agent %s: %s",
+                envelope.id,
+                self._agent_id,
+                result.detail,
+            )
+            await self._dead_letter(
+                msg_path,
+                DLQReason.INVALID_SIGNATURE,
+                msg_id=envelope.id,
+                timestamp=envelope.timestamp,
+                detail=result.detail,
+            )
+            return False
+
+        return True
+
+    async def _dead_letter(
+        self,
+        msg_path: str,
+        reason: DLQReason,
+        *,
+        msg_id: str | None = None,
+        timestamp: datetime | None = None,
+        detail: str = "",
+    ) -> None:
+        """Move a message to the dead-letter directory with a structured reason.
+
+        If *msg_id* and *timestamp* are provided (parsed envelope), the
+        destination is built from envelope fields.  Otherwise falls back
+        to extracting the filename from *msg_path* (raw/unparseable messages).
+
+        A ``.reason.json`` sidecar is written alongside the dead-lettered
+        message for programmatic triage.
+        """
+        try:
+            if msg_id is not None and timestamp is not None:
+                dest = message_path_in_dead_letter(self._agent_id, msg_id, timestamp)
+            else:
+                filename = msg_path.rsplit("/", 1)[-1]
+                dest = f"{dead_letter_path(self._agent_id)}/{filename}"
+
+            await self._storage.rename(msg_path, dest, self._zone_id)
+
+            # Write structured .reason.json sidecar (best-effort)
+            try:
+                import json
+
+                reason_data = json.dumps(
+                    {
+                        "reason": reason.value,
+                        "detail": detail,
+                        "agent_id": self._agent_id,
+                        "zone_id": self._zone_id,
+                        "msg_id": msg_id,
+                    },
+                    indent=2,
+                ).encode("utf-8")
+                reason_path = dest + ".reason.json"
+                await self._storage.write(reason_path, reason_data, self._zone_id)
+            except Exception:
+                logger.debug(
+                    "Failed to write .reason.json for dead-lettered message at %s",
+                    dest,
+                    exc_info=True,
+                )
+
+            logger.info(
+                "Message %s moved to dead_letter for agent %s (reason: %s, detail: %s)",
+                msg_id or msg_path,
+                self._agent_id,
+                reason.value,
+                detail,
             )
         except Exception:
             logger.error(
                 "Failed to move message %s to dead_letter",
-                envelope.id,
-                exc_info=True,
-            )
-
-    async def _move_to_dead_letter_raw(self, msg_path: str, reason: str) -> None:
-        """Move an unparseable message to dead letter using raw filename."""
-        try:
-            filename = msg_path.rsplit("/", 1)[-1]
-            dest = f"{dead_letter_path(self._agent_id)}/{filename}"
-            await self._storage.rename(msg_path, dest, self._zone_id)
-            logger.info(
-                "Malformed message moved to dead_letter for agent %s: %s (reason: %s)",
-                self._agent_id,
-                filename,
-                reason,
-            )
-        except Exception:
-            logger.error(
-                "Failed to move malformed message %s to dead_letter",
-                msg_path,
+                msg_id or msg_path,
                 exc_info=True,
             )

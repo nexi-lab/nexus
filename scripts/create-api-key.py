@@ -18,7 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.services.permissions.entity_registry import EntityRegistry
+from nexus.rebac.entity_registry import EntityRegistry
 
 
 def main() -> None:
@@ -88,6 +88,7 @@ def main() -> None:
         except Exception as e:
             print(f"Error creating API key: {e}")
             sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

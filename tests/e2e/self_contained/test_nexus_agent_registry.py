@@ -10,9 +10,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.services.agents.agent_record import AgentState
 from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
 

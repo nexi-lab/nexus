@@ -9,6 +9,7 @@ Phase 2: Core Refactoring (Issue #988, Task 2.8)
 Extracted from: nexus_fs_mcp.py (379 lines)
 """
 
+
 import builtins
 import logging
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+
 
 class MCPService:
     """Independent MCP service extracted from NexusFS.
@@ -87,7 +89,7 @@ class MCPService:
         self,
         tier: str | None = None,
         include_unmounted: bool = True,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """List MCP server mounts.
 
@@ -155,7 +157,7 @@ class MCPService:
     async def mcp_list_tools(
         self,
         name: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """List tools from a specific MCP mount.
 
@@ -253,7 +255,7 @@ class MCPService:
         headers: dict[str, str] | None = None,
         description: str | None = None,
         tier: str = "system",
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Mount an MCP server.
 
@@ -368,7 +370,7 @@ class MCPService:
     async def mcp_unmount(
         self,
         name: str,
-        _context: "OperationContext | None" = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Unmount an MCP server.
 
@@ -417,7 +419,7 @@ class MCPService:
     async def mcp_sync(
         self,
         name: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Sync/refresh tools from an MCP server.
 
@@ -494,6 +496,7 @@ class MCPService:
             raise RuntimeError("NexusFS not configured for MCPService")
 
         return MCPMountManager(cast(NexusFilesystem, self.nexus_fs))
+
 
 # =============================================================================
 # Phase 2 Extraction Progress

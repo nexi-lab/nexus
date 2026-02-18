@@ -7,6 +7,7 @@ All sync handlers are wrapped with ``to_thread_with_timeout`` by the dispatch
 layer — they MUST NOT call async code directly.
 """
 
+
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -22,12 +23,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 # Download URL generation
 # ---------------------------------------------------------------------------
 
+
 def generate_download_url(
-    nexus_fs: "NexusFS",
+    nexus_fs: NexusFS,
     path: str,
     context: Any,
     expires_in: int = 3600,
@@ -107,11 +110,13 @@ def generate_download_url(
         logger.warning(f"Failed to generate download URL for {path}: {e}")
         return None
 
+
 # ---------------------------------------------------------------------------
 # Read handlers
 # ---------------------------------------------------------------------------
 
-async def handle_read_async(nexus_fs: "NexusFS", params: Any, context: Any) -> bytes | dict[str, Any]:
+
+async def handle_read_async(nexus_fs: NexusFS, params: Any, context: Any) -> bytes | dict[str, Any]:
     """Handle read method (async version for parsed reads).
 
     Returns raw bytes which will be encoded by encode_rpc_message using
@@ -183,26 +188,13 @@ async def handle_read_async(nexus_fs: "NexusFS", params: Any, context: Any) -> b
 
     return parsed_content
 
-def handle_read(nexus_fs: "NexusFS", params: Any, context: Any) -> bytes | dict[str, Any]:
-    """Handle read method (sync version - kept for compatibility)."""
-    kwargs: dict[str, Any] = {"context": context}
-    if hasattr(params, "return_metadata") and params.return_metadata is not None:
-        kwargs["return_metadata"] = params.return_metadata
-    if hasattr(params, "parsed") and params.parsed is not None:
-        kwargs["parsed"] = params.parsed
-
-    result = nexus_fs.read(params.path, **kwargs)
-    if isinstance(result, bytes):
-        return result
-    if isinstance(result, dict):
-        result = unscope_internal_dict(result, ["path", "virtual_path"])
-    return result
 
 # ---------------------------------------------------------------------------
 # Write / mutate handlers
 # ---------------------------------------------------------------------------
 
-def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_write(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle write method."""
     content = params.content
     if isinstance(content, str):
@@ -225,11 +217,13 @@ def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     bytes_written = nexus_fs.write(params.path, content, **kwargs)
     return {"bytes_written": bytes_written}
 
-def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_exists(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
     return {"exists": nexus_fs.exists(params.path, context=context)}
 
-def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_list(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle list method with optional pagination support."""
     import time as _time
 
@@ -298,7 +292,8 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     )
     return response
 
-def handle_delete(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_delete(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
     try:
         nexus_fs.delete(params.path, context=context)
@@ -306,7 +301,8 @@ def handle_delete(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
         nexus_fs.delete(params.path)
     return {"deleted": True}
 
-def handle_rename(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_rename(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
     try:
         nexus_fs.rename(params.old_path, params.new_path, context=context)
@@ -314,12 +310,14 @@ def handle_rename(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
         nexus_fs.rename(params.old_path, params.new_path)
     return {"renamed": True}
 
-def handle_copy(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_copy(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle copy method."""
     nexus_fs.copy(params.src_path, params.dst_path, context=context)  # type: ignore[attr-defined]
     return {"copied": True}
 
-def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_mkdir(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle mkdir method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "parents") and params.parents is not None:
@@ -330,7 +328,8 @@ def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     nexus_fs.mkdir(params.path, **kwargs)
     return {"created": True}
 
-def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_rmdir(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle rmdir method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "recursive") and params.recursive is not None:
@@ -341,18 +340,21 @@ def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     nexus_fs.rmdir(params.path, **kwargs)
     return {"removed": True}
 
+
 # ---------------------------------------------------------------------------
 # Metadata / query handlers
 # ---------------------------------------------------------------------------
 
-def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_get_metadata(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
     metadata = nexus_fs.get_metadata(params.path, context=context)
     if isinstance(metadata, dict):
         metadata = unscope_internal_dict(metadata, ["path"])
     return {"metadata": metadata}
 
-def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_glob(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle glob method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
@@ -362,7 +364,8 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 
-def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_grep(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle grep method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
@@ -380,7 +383,8 @@ def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     results = [unscope_result(r) for r in results]
     return {"results": results}
 
-def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_search(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle search method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
@@ -393,8 +397,9 @@ def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
     results = nexus_fs.search(params.query, **kwargs)  # type: ignore[attr-defined]
     return {"results": results}
 
+
 async def handle_semantic_search_index(
-    nexus_fs: "NexusFS", params: Any, _context: Any
+    nexus_fs: NexusFS, params: Any, _context: Any
 ) -> dict[str, Any]:
     """Handle semantic_search_index method."""
     path = getattr(params, "path", "/")
@@ -402,13 +407,13 @@ async def handle_semantic_search_index(
 
     if not hasattr(nexus_fs, "_semantic_search") or nexus_fs._semantic_search is None:
         try:
-            await nexus_fs.initialize_semantic_search()
+            await nexus_fs.ainitialize_semantic_search()
         except Exception as e:
             raise ValueError(
                 f"Semantic search is not initialized and could not be auto-initialized: {e}"
             ) from e
 
-    results = await nexus_fs.semantic_search_index(path=path, recursive=recursive)
+    results = await nexus_fs.asemantic_search_index(path=path, recursive=recursive)
 
     total_chunks = 0
     for v in results.values():
@@ -419,6 +424,7 @@ async def handle_semantic_search_index(
 
     return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
-def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+
+def handle_is_directory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}

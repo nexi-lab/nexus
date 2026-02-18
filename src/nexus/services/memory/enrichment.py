@@ -213,7 +213,7 @@ class EnrichmentPipeline:
     def _enrich_entities(self, text: str, result: EnrichmentResult) -> None:
         """Extract named entities (#1025)."""
         try:
-            from nexus.services.permissions.entity_extractor import EntityExtractor
+            from nexus.rebac.entity_extractor import EntityExtractor
 
             extractor = EntityExtractor(use_spacy=False)
             entities = extractor.extract(text)

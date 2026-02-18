@@ -508,7 +508,7 @@ class TestBridgeReliability:
 
     def test_bridge_success(self, session_factory):
         """Bridge registers in entity_registry on successful register()."""
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(session_factory)
         entity_reg.register_entity("user", "alice")
@@ -538,7 +538,7 @@ class TestBridgeReliability:
 
     def test_unregister_bridge_failure_raises(self, session_factory):
         """Unregister bridge failure raises exception."""
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(session_factory)
         entity_reg.register_entity("user", "alice")
@@ -575,14 +575,14 @@ class TestHeartbeatCapacityWarning:
             reg.transition(f"agent-{i}", AgentState.CONNECTED, expected_generation=0)
 
         # Heartbeat 7 agents (below threshold)
-        with caplog.at_level(logging.WARNING, logger="nexus.core.heartbeat_buffer"):
+        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
             caplog.clear()
             for i in range(7):
                 reg.heartbeat(f"agent-{i}")
             assert "capacity" not in caplog.text
 
         # Heartbeat the 8th agent (hits 80%)
-        with caplog.at_level(logging.WARNING, logger="nexus.core.heartbeat_buffer"):
+        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
             caplog.clear()
             reg.heartbeat("agent-7")
             assert "capacity" in caplog.text
@@ -597,7 +597,7 @@ class TestRegistrationWithBridge:
 
     def test_entity_registry_creation(self, session_factory):
         """Registration creates entity in EntityRegistry via bridge."""
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(session_factory)
         entity_reg.register_entity("user", "alice")
@@ -614,7 +614,7 @@ class TestRegistrationWithBridge:
 
     def test_multi_agent_same_user(self, session_factory):
         """Multiple agents for same user are all tracked."""
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(session_factory)
         entity_reg.register_entity("user", "alice")
@@ -630,7 +630,7 @@ class TestRegistrationWithBridge:
 
     def test_unregister_preserves_others(self, session_factory):
         """Unregistering one agent doesn't affect others."""
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(session_factory)
         entity_reg.register_entity("user", "alice")

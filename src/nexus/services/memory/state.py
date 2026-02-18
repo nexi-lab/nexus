@@ -17,8 +17,8 @@ from typing import Any
 
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime
+from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)
 

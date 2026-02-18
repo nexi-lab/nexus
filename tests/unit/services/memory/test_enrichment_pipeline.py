@@ -14,8 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.services.memory.memory_api import Memory
-from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
 
@@ -94,7 +94,7 @@ class TestEntityExtraction:
         wrapped in try/except like all other enrichment steps.
         """
         with patch(
-            "nexus.services.permissions.entity_extractor.EntityExtractor.extract",
+            "nexus.rebac.entity_extractor.EntityExtractor.extract",
             side_effect=RuntimeError("NER engine crashed"),
         ):
             memory_id = memory_api.store(

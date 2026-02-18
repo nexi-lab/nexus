@@ -19,11 +19,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.services.agents.agent_record import AgentState
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService
-from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 from nexus.storage.models import Base
 
@@ -328,7 +328,7 @@ class TestBridgeReliabilityE2E:
         for i in range(10):
             small_registry.register(f"hb-warn-{i}", "alice")
 
-        with caplog.at_level(logging.WARNING, logger="nexus.core.heartbeat_buffer"):
+        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
             for i in range(10):
                 small_registry.heartbeat(f"hb-warn-{i}")
 

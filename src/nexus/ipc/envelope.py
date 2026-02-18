@@ -83,6 +83,11 @@ class MessageEnvelope(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     routing: RoutingMetadata | None = Field(default=None, exclude=True)
 
+    # Cryptographic signature fields (populated by MessageSigner)
+    signature: str | None = None
+    signer_did: str | None = None
+    signer_key_id: str | None = None
+
     @field_validator("sender", "recipient")
     @classmethod
     def _validate_agent_ref(cls, v: str) -> str:
@@ -96,6 +101,20 @@ class MessageEnvelope(BaseModel):
         if v is not None and v <= 0:
             raise ValueError("ttl_seconds must be positive")
         return v
+
+    def signing_bytes(self) -> bytes:
+        """Canonical JSON for signing (excludes signature and routing fields).
+
+        Returns deterministic bytes suitable for Ed25519 signing:
+        - Sorted keys for determinism
+        - Compact separators (no whitespace)
+        - Excludes signature, signer_did, signer_key_id, routing
+        """
+        data = self.model_dump(
+            by_alias=True,
+            exclude={"signature", "signer_did", "signer_key_id", "routing"},
+        )
+        return json.dumps(data, sort_keys=True, separators=(",", ":"), default=str).encode()
 
     def is_expired(self, now: datetime | None = None) -> bool:
         """Check if the message has exceeded its TTL.

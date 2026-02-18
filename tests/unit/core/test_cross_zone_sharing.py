@@ -13,11 +13,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.rebac.manager import (
-    ZoneAwareReBACManager,
-    ZoneIsolationError,
-)
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.consistency.zone_manager import ZoneIsolationError
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 
@@ -28,13 +26,14 @@ def engine():
     Base.metadata.create_all(engine)
     return engine
 
+
 @pytest.fixture
 def zone_aware_manager(engine):
     """Create a zone-aware ReBAC manager for testing.
 
     Uses cache_ttl_seconds=0 to disable caching for predictable test behavior.
     """
-    manager = ZoneAwareReBACManager(
+    manager = ReBACManager(
         engine=engine,
         cache_ttl_seconds=0,  # Disable cache for predictable tests
         max_depth=10,
@@ -42,6 +41,7 @@ def zone_aware_manager(engine):
     )
     yield manager
     manager.close()
+
 
 class TestCrossZoneAllowedRelations:
     """Tests for CROSS_ZONE_ALLOWED_RELATIONS configuration."""
@@ -64,6 +64,7 @@ class TestCrossZoneAllowedRelations:
         assert "editor" not in CROSS_ZONE_ALLOWED_RELATIONS
         assert "owner" not in CROSS_ZONE_ALLOWED_RELATIONS
         assert "member-of" not in CROSS_ZONE_ALLOWED_RELATIONS
+
 
 class TestCrossZoneSharingWrite:
     """Tests for creating cross-zone shares."""
@@ -141,6 +142,7 @@ class TestCrossZoneSharingWrite:
         )
         assert result is True
 
+
 class TestCrossZoneSharingPermissionCheck:
     """Tests for permission checks with cross-zone shares."""
 
@@ -175,6 +177,7 @@ class TestCrossZoneSharingPermissionCheck:
             zone_id="acme-zone",
         )
         assert result is False
+
 
 class TestCrossZoneMultipleShares:
     """Tests for multiple cross-zone shares."""
@@ -255,6 +258,7 @@ class TestCrossZoneMultipleShares:
         assert result_acme is True
         assert result_xyz is True
 
+
 class TestCrossZoneSharingRevoke:
     """Tests for revoking cross-zone shares."""
 
@@ -293,6 +297,7 @@ class TestCrossZoneSharingRevoke:
             zone_id="acme-zone",
         )
         assert result is False
+
 
 class TestCrossZoneSharingWithExpiration:
     """Tests for cross-zone shares with expiration."""
@@ -340,6 +345,7 @@ class TestCrossZoneSharingWithExpiration:
             zone_id="acme-zone",
         )
         assert result is True
+
 
 class TestCrossZoneRustPathFix:
     """Tests for cross-zone sharing in Rust acceleration path.
@@ -413,6 +419,7 @@ class TestCrossZoneRustPathFix:
         ]
         assert len(cross_zone_tuples) == 0
 
+
 class TestCrossZonePermissionExpansion:
     """Tests for permission expansion with cross-zone shares.
 
@@ -428,7 +435,7 @@ class TestCrossZonePermissionExpansion:
         """Create manager with file namespace for permission expansion."""
         from nexus.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
 
-        manager = ZoneAwareReBACManager(
+        manager = ReBACManager(
             engine=engine,
             cache_ttl_seconds=0,
             max_depth=10,

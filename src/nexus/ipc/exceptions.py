@@ -19,6 +19,8 @@ class DLQReason(StrEnum):
     MAX_HOPS_EXCEEDED = "max_hops_exceeded"
     PARSE_ERROR = "parse_error"
     BACKPRESSURE = "backpressure"
+    INVALID_SIGNATURE = "invalid_signature"
+    UNSIGNED_MESSAGE = "unsigned_message"
 
 
 class IPCError(Exception):

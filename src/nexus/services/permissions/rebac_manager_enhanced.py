@@ -38,6 +38,23 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.rebac import Entity, NamespaceConfig
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.rebac_tracing import (
+    record_check_result,
+    record_graph_limit_exceeded,
+    record_traversal_result,
+    start_check_span,
+    start_graph_traversal_span,
+)
+from nexus.rebac.types import (
+    CheckResult,
+    ConsistencyLevel,
+    ConsistencyRequirement,
+    GraphLimitExceeded,
+    GraphLimits,
+    TraversalStats,
+    WriteResult,
+)
 from nexus.services.permissions.batch.bulk_checker import BulkPermissionChecker
 from nexus.services.permissions.cache.tiger.facade import TigerFacade
 from nexus.services.permissions.consistency.revision import (
@@ -45,7 +62,6 @@ from nexus.services.permissions.consistency.revision import (
     increment_version_token,
 )
 from nexus.services.permissions.consistency.zone_manager import ZoneManager
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.directory.expander import DirectoryExpander
 from nexus.services.permissions.graph.bulk_evaluator import (
     check_direct_relation as _check_direct_relation_in_graph,
@@ -61,22 +77,6 @@ from nexus.services.permissions.graph.bulk_evaluator import (
 )
 from nexus.services.permissions.graph.zone_traversal import ZoneAwareTraversal
 from nexus.services.permissions.rebac_manager import ReBACManager
-from nexus.services.permissions.rebac_tracing import (
-    record_check_result,
-    record_graph_limit_exceeded,
-    record_traversal_result,
-    start_check_span,
-    start_graph_traversal_span,
-)
-from nexus.services.permissions.types import (
-    CheckResult,
-    ConsistencyLevel,
-    ConsistencyRequirement,
-    GraphLimitExceeded,
-    GraphLimits,
-    TraversalStats,
-    WriteResult,
-)
 from nexus.services.permissions.utils.changelog import insert_changelog_entry
 from nexus.services.permissions.utils.zone import normalize_zone_id
 from nexus.storage.models.permissions import ReBACTupleModel as RT
@@ -84,9 +84,10 @@ from nexus.storage.models.permissions import ReBACTupleModel as RT
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.services.permissions.cache.leopard import LeopardIndex
-    from nexus.services.permissions.rebac_iterator_cache import IteratorCache
-    from nexus.services.permissions.tiger_cache import TigerCache, TigerCacheUpdater
+    from nexus.rebac.cache.iterator import IteratorCache
+    from nexus.rebac.cache.leopard import LeopardIndex
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
+    from nexus.services.permissions.cache.tiger.updater import TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,7 @@ class EnhancedReBACManager(ReBACManager):
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
         if enable_leopard:
-            from nexus.services.permissions.cache.leopard import LeopardIndex
+            from nexus.rebac.cache.leopard import LeopardIndex
 
             self._leopard = LeopardIndex(
                 engine=engine,
@@ -169,10 +170,14 @@ class EnhancedReBACManager(ReBACManager):
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
         if enable_tiger_cache and engine.dialect.name == "postgresql":
-            from nexus.services.permissions.tiger_cache import (
+            from nexus.services.permissions.cache.tiger.bitmap_cache import (
                 TigerCache,
-                TigerCacheUpdater,
+            )
+            from nexus.services.permissions.cache.tiger.resource_map import (
                 TigerResourceMap,
+            )
+            from nexus.services.permissions.cache.tiger.updater import (
+                TigerCacheUpdater,
             )
 
             resource_map = TigerResourceMap(engine)
@@ -222,7 +227,7 @@ class EnhancedReBACManager(ReBACManager):
         )
 
         # Iterator cache for paginated list operations (Issue #722)
-        from nexus.services.permissions.rebac_iterator_cache import IteratorCache
+        from nexus.rebac.cache.iterator import IteratorCache
 
         self._iterator_cache: IteratorCache = IteratorCache(
             max_size=1000,
@@ -230,7 +235,7 @@ class EnhancedReBACManager(ReBACManager):
         )
 
         # Issue #922: Permission boundary cache for O(1) inheritance checks
-        from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
+        from nexus.rebac.cache.boundary import PermissionBoundaryCache
 
         self._boundary_cache: PermissionBoundaryCache = PermissionBoundaryCache()
 
@@ -244,7 +249,7 @@ class EnhancedReBACManager(ReBACManager):
         ] = []
 
         # Issue #1459: Unified cache coordinator
-        from nexus.services.permissions.cache.coordinator import CacheCoordinator
+        from nexus.rebac.cache.coordinator import CacheCoordinator
 
         self._cache_coordinator: CacheCoordinator = CacheCoordinator(
             l1_cache=self._l1_cache,
@@ -853,7 +858,7 @@ class EnhancedReBACManager(ReBACManager):
 
         # Try Rust acceleration first (has proper memoization, prevents timeout)
         try:
-            from nexus.services.permissions.rebac_fast import (
+            from nexus.services.permissions.utils.fast import (
                 check_permission_single_rust,
                 is_rust_available,
             )
@@ -2625,9 +2630,6 @@ class EnhancedReBACManager(ReBACManager):
     # Directory Operations (Issue #1459 Phase 13: delegated to DirectoryExpander)
     # =========================================================================
 
-    # Kept for backward compatibility — class attribute referenced by some tests
-    DIRECTORY_EXPANSION_LIMIT = 10_000
-
     def _is_directory_path(self, path: str) -> bool:
         """Check if a path represents a directory."""
         return self._directory_expander.is_directory_path(path)
@@ -2875,7 +2877,7 @@ class EnhancedReBACManager(ReBACManager):
         """
         import time as time_module
 
-        from nexus.services.permissions.rebac_fast import (
+        from nexus.services.permissions.utils.fast import (
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )

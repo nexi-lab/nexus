@@ -23,10 +23,12 @@ _auth_provider: DatabaseLocalAuth | None = None
 _oauth_provider: OAuthUserAuth | None = None
 _nexus_fs_instance: Any | None = None
 
+
 def set_auth_provider(provider: DatabaseLocalAuth) -> None:
     """Inject the authentication provider. Called by server layer at startup."""
     global _auth_provider
     _auth_provider = provider
+
 
 def get_auth_provider() -> DatabaseLocalAuth:
     """Return the injected auth provider (used as ``Depends(get_auth_provider)``).
@@ -41,38 +43,28 @@ def get_auth_provider() -> DatabaseLocalAuth:
         )
     return _auth_provider
 
-def reset_auth_provider() -> None:
-    """Reset auth provider to None — only for tests."""
-    global _auth_provider
-    _auth_provider = None
 
 def set_oauth_provider(provider: OAuthUserAuth) -> None:
     """Inject the OAuth authentication provider. Called by server layer at startup."""
     global _oauth_provider
     _oauth_provider = provider
 
+
 def get_oauth_provider() -> OAuthUserAuth | None:
     """Return the injected OAuth provider, or None if not configured."""
     return _oauth_provider
 
-def reset_oauth_provider() -> None:
-    """Reset OAuth provider to None — only for tests."""
-    global _oauth_provider
-    _oauth_provider = None
 
 def set_nexus_instance(nexus_fs: Any) -> None:
     """Inject the NexusFS instance for user provisioning. Called by server layer at startup."""
     global _nexus_fs_instance
     _nexus_fs_instance = nexus_fs
 
+
 def get_nexus_instance() -> Any | None:
     """Return the injected NexusFS instance, or None if not configured."""
     return _nexus_fs_instance
 
-def reset_nexus_instance() -> None:
-    """Reset NexusFS instance to None — only for tests."""
-    global _nexus_fs_instance
-    _nexus_fs_instance = None
 
 async def get_authenticated_user(
     authorization: str = Header(..., description="Bearer JWT token"),
@@ -116,9 +108,11 @@ async def get_authenticated_user(
             detail=f"Invalid or expired token: {e}",
         ) from e
 
+
 # ==============================================================================
 # Request/Response Models
 # ==============================================================================
+
 
 class RegisterRequest(BaseModel):
     """User registration request."""
@@ -128,11 +122,13 @@ class RegisterRequest(BaseModel):
     username: str | None = Field(None, description="Optional username")
     display_name: str | None = Field(None, description="Optional display name")
 
+
 class LoginRequest(BaseModel):
     """User login request."""
 
     identifier: str = Field(..., description="Email or username")
     password: str
+
 
 class ChangePasswordRequest(BaseModel):
     """Change password request."""
@@ -142,11 +138,13 @@ class ChangePasswordRequest(BaseModel):
         ..., min_length=8, description="New password must be at least 8 characters"
     )
 
+
 class UpdateProfileRequest(BaseModel):
     """Update user profile request."""
 
     display_name: str | None = None
     avatar_url: str | None = None
+
 
 class OAuthCallbackRequest(BaseModel):
     """OAuth callback request."""
@@ -156,6 +154,7 @@ class OAuthCallbackRequest(BaseModel):
     state: str | None = Field(None, description="State parameter for CSRF protection")
     redirect_uri: str | None = Field(None, description="Redirect URI used in authorization URL")
 
+
 class OAuthCheckRequest(BaseModel):
     """OAuth check request."""
 
@@ -164,6 +163,7 @@ class OAuthCheckRequest(BaseModel):
     state: str | None = Field(None, description="State parameter for CSRF protection")
     redirect_uri: str | None = Field(None, description="Redirect URI used in authorization URL")
 
+
 class OAuthConfirmRequest(BaseModel):
     """OAuth confirmation request."""
 
@@ -171,11 +171,13 @@ class OAuthConfirmRequest(BaseModel):
     zone_name: str | None = Field(None, description="Optional zone name for new user")
     zone_slug: str | None = Field(None, description="Optional zone slug for new user")
 
+
 class ZoneSetupRequest(BaseModel):
     """Zone setup request for password users."""
 
     zone_name: str | None = Field(None, description="Optional zone name")
     zone_slug: str | None = Field(None, description="Optional zone slug")
+
 
 class UserResponse(BaseModel):
     """User information response."""
@@ -188,6 +190,7 @@ class UserResponse(BaseModel):
     is_global_admin: bool = False
     primary_auth_method: str | None = None
 
+
 class RegisterResponse(BaseModel):
     """User registration response."""
 
@@ -198,12 +201,14 @@ class RegisterResponse(BaseModel):
     token: str
     api_key: str | None = None
 
+
 class LoginResponse(BaseModel):
     """User login response."""
 
     token: str
     user: UserResponse
     api_key: str | None = None
+
 
 class OAuthAuthorizeResponse(BaseModel):
     """OAuth authorization URL response."""
@@ -212,6 +217,7 @@ class OAuthAuthorizeResponse(BaseModel):
     state: str
     message: str = "Redirect user to auth_url to begin OAuth flow"
 
+
 class OAuthCallbackResponse(BaseModel):
     """OAuth callback response."""
 
@@ -219,6 +225,7 @@ class OAuthCallbackResponse(BaseModel):
     user: UserResponse
     is_new_user: bool
     message: str = "OAuth authentication successful"
+
 
 class OAuthCheckResponseExisting(BaseModel):
     """OAuth check response for existing users."""
@@ -231,6 +238,7 @@ class OAuthCheckResponseExisting(BaseModel):
     zone_id: str | None = None
     message: str = "OAuth authentication successful"
 
+
 class OAuthCheckResponseNew(BaseModel):
     """OAuth check response for new users requiring confirmation."""
 
@@ -239,6 +247,7 @@ class OAuthCheckResponseNew(BaseModel):
     user_info: dict[str, Any]
     zone_info: dict[str, Any]
     message: str = "Please confirm your account details"
+
 
 class OAuthConfirmResponse(BaseModel):
     """OAuth confirmation response."""
@@ -250,6 +259,7 @@ class OAuthConfirmResponse(BaseModel):
     zone_id: str | None = None
     message: str = "OAuth authentication confirmed"
 
+
 class ZoneSetupResponse(BaseModel):
     """Zone setup response."""
 
@@ -258,11 +268,13 @@ class ZoneSetupResponse(BaseModel):
     zone_id: str
     message: str = "Zone created successfully"
 
+
 # ==============================================================================
 # Router
 # ==============================================================================
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(
@@ -306,6 +318,7 @@ async def register(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
@@ -395,12 +408,13 @@ async def login(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
 
+
 @router.post("/setup-zone", response_model=ZoneSetupResponse)
 async def setup_zone(
     request: ZoneSetupRequest,
     user_info: tuple[str, str] = Depends(get_authenticated_user),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
-) -> "ZoneSetupResponse":
+) -> ZoneSetupResponse:
     """Create zone and API key for password-authenticated users.
 
     This endpoint is for password users who have already registered and logged in
@@ -581,6 +595,7 @@ async def setup_zone(
             detail=f"Zone setup failed: {e}",
         ) from e
 
+
 @router.get("/me", response_model=UserResponse)
 async def get_profile(
     user_info: tuple[str, str] = Depends(get_authenticated_user),
@@ -621,6 +636,7 @@ async def get_profile(
             is_global_admin=user.is_global_admin == 1,
             primary_auth_method=user.primary_auth_method,
         )
+
 
 @router.patch("/me", response_model=UserResponse)
 async def update_profile(
@@ -673,6 +689,7 @@ async def update_profile(
             primary_auth_method=user.primary_auth_method,
         )
 
+
 @router.post("/change-password")
 async def change_password(
     request: ChangePasswordRequest,
@@ -716,9 +733,11 @@ async def change_password(
             detail=str(e),
         ) from e
 
+
 # ==============================================================================
 # Email Verification Routes
 # ==============================================================================
+
 
 class RequestVerificationRequest(BaseModel):
     """Request email verification request."""
@@ -727,10 +746,12 @@ class RequestVerificationRequest(BaseModel):
         None, description="Email to verify (defaults to authenticated user)"
     )
 
+
 class VerifyEmailRequest(BaseModel):
     """Verify email with token."""
 
     token: str = Field(..., description="Verification token from email link")
+
 
 @router.post("/request-verification", status_code=status.HTTP_202_ACCEPTED)
 async def request_verification(
@@ -770,9 +791,10 @@ async def request_verification(
 
     return {"message": "If this email is registered, a verification link has been sent."}
 
+
 @router.post("/verify-email")
 async def verify_email(
-    request: "VerifyEmailRequest",
+    request: VerifyEmailRequest,
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> dict[str, str]:
     """Verify email with a verification token.
@@ -797,9 +819,11 @@ async def verify_email(
             detail=str(e),
         ) from e
 
+
 # ==============================================================================
 # OAuth Routes
 # ==============================================================================
+
 
 @router.get("/oauth/google/authorize", response_model=OAuthAuthorizeResponse)
 async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthorizeResponse:
@@ -831,6 +855,7 @@ async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthoriz
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate OAuth URL: {e}",
         ) from e
+
 
 @router.post("/oauth/check")
 async def oauth_check(
@@ -1133,6 +1158,7 @@ async def oauth_check(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth check failed: {e}",
         ) from e
+
 
 @router.post("/oauth/confirm", response_model=OAuthConfirmResponse)
 async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
@@ -1441,6 +1467,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth confirm failed: {e}",
         ) from e
+
 
 @router.post("/oauth/callback", response_model=OAuthCallbackResponse)
 async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse:

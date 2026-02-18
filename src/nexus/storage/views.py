@@ -478,9 +478,6 @@ VIEW_GENERATORS = [
     ("orphaned_content_objects", get_orphaned_content_view),
 ]
 
-# For backward compatibility with static views (SQLite only)
-ALL_VIEWS = [(name, func("sqlite")) for name, func in VIEW_GENERATORS]
-
 # SQL to drop all views
 VIEW_NAMES = [name for name, _ in VIEW_GENERATORS]
 DROP_VIEWS = [text(f"DROP VIEW IF EXISTS {name};") for name in VIEW_NAMES]

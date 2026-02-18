@@ -55,7 +55,7 @@ async def _startup_async_rebac(app: "FastAPI") -> None:
         # Issue #940: Initialize AsyncNexusFS with permission enforcement
         try:
             from nexus.core.async_nexus_fs import AsyncNexusFS
-            from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+            from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
             backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
             tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
@@ -71,7 +71,7 @@ async def _startup_async_rebac(app: "FastAPI") -> None:
             if enforce_permissions and hasattr(app.state, "nexus_fs"):
                 sync_rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
-                    from nexus.services.permissions.namespace_factory import (
+                    from nexus.rebac.namespace_factory import (
                         create_namespace_manager,
                     )
 
@@ -201,7 +201,9 @@ def _startup_tiger_cache(app: "FastAPI") -> list[asyncio.Task]:
 
                     from sqlalchemy.engine import Engine
 
-                    from nexus.services.permissions.tiger_cache import DirectoryGrantExpander
+                    from nexus.services.permissions.cache.tiger.expander import (
+                        DirectoryGrantExpander,
+                    )
 
                     _rebac_engine = cast(Engine, getattr(_rebac, "engine", None))
                     expander = DirectoryGrantExpander(

@@ -307,7 +307,7 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         sync_rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
         if sync_rebac:
             try:
-                from nexus.services.permissions.namespace_factory import (
+                from nexus.rebac.namespace_factory import (
                     create_namespace_manager,
                 )
 

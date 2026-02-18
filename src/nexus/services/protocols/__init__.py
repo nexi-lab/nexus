@@ -29,8 +29,9 @@ from nexus.rebac.namespace_manager import NamespaceMount
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
-from nexus.services.protocols.context_manifest import ContextManifestProtocol
-from nexus.services.protocols.governance import GovernanceProtocol
+from nexus.services.protocols.auth import APIKeyCreatorProtocol
+from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
+from nexus.services.protocols.delegation import DelegationProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -48,12 +49,17 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
-from nexus.services.protocols.llm import LLMProtocol, LLMServiceProtocol
+from nexus.services.protocols.llm import LLMServiceProtocol
+from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.services.protocols.lock import LockProtocol
 from nexus.services.protocols.mcp import MCPProtocol
+from nexus.services.protocols.memory import MemoryProtocol
 from nexus.services.protocols.mount import MountProtocol, ProgressCallback
+from nexus.services.protocols.mount_core import MountCoreProtocol
+from nexus.services.protocols.mount_persist import MountPersistProtocol
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.services.protocols.oauth import OAuthProtocol
+from nexus.services.protocols.operation_log import OperationLogProtocol
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
@@ -61,42 +67,52 @@ from nexus.services.protocols.plugin import PluginProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.reputation import ReputationProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
-from nexus.services.protocols.search import SearchBrickProtocol
+from nexus.services.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
 from nexus.services.protocols.skills import SkillsProtocol
+from nexus.services.protocols.sync import SyncContext, SyncResult, SyncServiceProtocol
+from nexus.services.protocols.sync_job import SyncJobProtocol
+from nexus.services.protocols.task_queue import TaskQueueProtocol
+from nexus.services.protocols.trajectory import TrajectoryProtocol
+from nexus.services.protocols.version import VersionProtocol
 from nexus.services.protocols.watch import WatchProtocol
+from nexus.services.protocols.write_back import WriteBackProtocol
 from nexus.workflows.protocol import (
-    LLMProviderProtocol,
     MetadataStoreProtocol,
     NexusOperationsProtocol,
+    WorkflowLLMProtocol,
     WorkflowProtocol,
 )
 
 __all__ = [
+    "APIKeyCreatorProtocol",
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
     "AnomalyDetectorProtocol",
-    "ContextManifestProtocol",
+    "ChunkedUploadProtocol",
+    "DelegationProtocol",
     "EventLogConfig",
     "EventLogProtocol",
-    "GovernanceProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
     "HookResult",
     "HookSpec",
-    "LLMProtocol",
     "LLMProviderProtocol",
     "LLMServiceProtocol",
     "LockProtocol",
     "MCPProtocol",
+    "MemoryProtocol",
     "MetadataStoreProtocol",
+    "MountCoreProtocol",
+    "MountPersistProtocol",
     "MountProtocol",
     "NamespaceManagerProtocol",
     "NamespaceMount",
     "NexusOperationsProtocol",
     "OAuthProtocol",
+    "OperationLogProtocol",
     "POST_COPY",
     "POST_DELETE",
     "POST_MKDIR",
@@ -116,8 +132,18 @@ __all__ = [
     "ReputationProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
+    "SearchProtocol",
     "ShareLinkProtocol",
     "SkillsProtocol",
+    "SyncContext",
+    "SyncJobProtocol",
+    "SyncResult",
+    "SyncServiceProtocol",
+    "TaskQueueProtocol",
+    "TrajectoryProtocol",
+    "VersionProtocol",
     "WatchProtocol",
+    "WorkflowLLMProtocol",
     "WorkflowProtocol",
+    "WriteBackProtocol",
 ]

@@ -8,8 +8,9 @@ Rust acceleration for significant performance improvements.
 
 import time
 
-from nexus.services.permissions.rebac_fast import get_performance_stats, is_rust_available
 from nexus.services.permissions.rebac_manager import ReBACManager
+from nexus.services.permissions.utils.fast import get_performance_stats, is_rust_available
+
 
 def setup_demo_data(manager: ReBACManager) -> None:
     """Set up demo permission data."""
@@ -35,6 +36,7 @@ def setup_demo_data(manager: ReBACManager) -> None:
             )
 
     print(f"✓ Created permissions for {len(users)} users and {len(files)} files")
+
 
 def benchmark_batch_checking(manager: ReBACManager, checks: list) -> dict:
     """Benchmark permission checking with and without Rust."""
@@ -106,6 +108,7 @@ def benchmark_batch_checking(manager: ReBACManager, checks: list) -> dict:
 
     return results
 
+
 def demo_use_cases(manager: ReBACManager) -> None:
     """Demonstrate practical use cases for batch checking."""
     print("\n" + "=" * 60)
@@ -159,6 +162,7 @@ def demo_use_cases(manager: ReBACManager) -> None:
     print("\nPermissions per user:")
     for user, count in allowed_count.items():
         print(f"  {user}: {count}/{len(sample_files)} files")
+
 
 def main():
     """Run the demonstration."""
@@ -216,6 +220,7 @@ def main():
     print("\n" + "=" * 60)
     print("Demo complete!")
     print("=" * 60)
+
 
 if __name__ == "__main__":
     main()

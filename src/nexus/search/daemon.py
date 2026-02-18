@@ -149,6 +149,7 @@ class SearchDaemon:
         self._async_session: Any | None = None  # async_sessionmaker (Issue #1597)
         self._async_search: AsyncSemanticSearch | None = None
         self._embedding_provider: Any = None
+        self._record_store: Any | None = None  # SQLAlchemyRecordStore fallback
         self._owns_engine = False  # True only when we created the engine ourselves
 
         # Accept injected session factory from RecordStoreABC
@@ -252,9 +253,13 @@ class SearchDaemon:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
 
-        # Close database connections (only if we created the engine)
-        if self._async_engine and self._owns_engine:
-            await self._async_engine.dispose()
+        # Close database connections (only if we created them)
+        if self._owns_engine:
+            if self._record_store is not None:
+                self._record_store.close()
+                self._record_store = None
+            elif self._async_engine:
+                await self._async_engine.dispose()
         self._async_engine = None
         self._async_session = None
 
@@ -314,30 +319,15 @@ class SearchDaemon:
         start = time.perf_counter()
 
         try:
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            # Convert sync URL to async
-            db_url = self.config.database_url
-            if db_url.startswith("postgresql://"):
-                db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-            elif db_url.startswith("sqlite:///"):
-                db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
-
-            self._async_engine = create_async_engine(
-                db_url,
-                pool_pre_ping=True,
-                pool_size=self.config.db_pool_min_size,
-                max_overflow=self.config.db_pool_max_size - self.config.db_pool_min_size,
-                pool_recycle=self.config.db_pool_recycle,
-            )
+            # Delegate engine creation to RecordStoreABC (Issue #615).
+            # Pool settings are controlled via NEXUS_DB_POOL_SIZE / NEXUS_DB_MAX_OVERFLOW
+            # environment variables inside SQLAlchemyRecordStore.
+            self._record_store = SQLAlchemyRecordStore(db_url=self.config.database_url)
+            self._async_session = self._record_store.async_session_factory
+            self._async_engine = self._record_store._async_engine
             self._owns_engine = True
-
-            # Create session factory once (Issue #1597: avoid per-method creation).
-            # expire_on_commit=False matches RecordStoreABC convention and avoids
-            # lazy-load exceptions after commit in async context (SA2 best practice).
-            self._async_session = async_sessionmaker(
-                self._async_engine, class_=AsyncSession, expire_on_commit=False
-            )
 
             # Warm the pool by executing a simple query
             async with self._async_engine.connect() as conn:
@@ -373,7 +363,10 @@ class SearchDaemon:
             # Use a zero vector which won't match anything but loads the index
             async with self._async_engine.connect() as conn:
                 # Set HNSW search parameters for high recall
-                await conn.execute(text(f"SET hnsw.ef_search = {self.config.vector_ef_search}"))
+                await conn.execute(
+                    text("SELECT set_config('hnsw.ef_search', :val, true)"),
+                    {"val": str(self.config.vector_ef_search)},
+                )
 
                 # Dummy query to warm index (SELECT 1 with vector operation)
                 # Check if embedding column exists first
@@ -839,7 +832,7 @@ class SearchDaemon:
     # Index Refresh
     # =========================================================================
 
-    async def notify_file_change(self, path: str, _change_type: str = "update") -> None:
+    async def notify_file_change(self, path: str, change_type: str = "update") -> None:  # noqa: ARG002
         """Notify the daemon of a file change for index refresh.
 
         Changes are debounced and batched for efficiency.
@@ -1036,6 +1029,8 @@ def set_search_daemon(daemon: SearchDaemon) -> None:
 async def create_and_start_daemon(
     database_url: str | None = None,
     bm25s_index_dir: str | None = None,
+    *,
+    async_session_factory: Any | None = None,
 ) -> SearchDaemon:
     """Create, configure and start a search daemon.
 
@@ -1044,6 +1039,7 @@ async def create_and_start_daemon(
     Args:
         database_url: Database URL (from env if not provided)
         bm25s_index_dir: BM25S index directory
+        async_session_factory: Injected async_sessionmaker from RecordStoreABC.
 
     Returns:
         Initialized SearchDaemon instance
@@ -1053,7 +1049,7 @@ async def create_and_start_daemon(
         bm25s_index_dir=bm25s_index_dir or ".nexus-data/bm25s",
     )
 
-    daemon = SearchDaemon(config)
+    daemon = SearchDaemon(config, async_session_factory=async_session_factory)
     await daemon.startup()
 
     set_search_daemon(daemon)

@@ -14,6 +14,7 @@ Write path: L3 first (source of truth) -> L2 (if available) -> L1
 Related: Issue #682
 """
 
+
 import logging
 import threading
 import time
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class CacheKey:
@@ -58,6 +60,7 @@ class CacheKey:
             )
         )
 
+
 class TigerCache:
     """Pre-materialized permission cache using Roaring Bitmaps.
 
@@ -75,10 +78,10 @@ class TigerCache:
 
     def __init__(
         self,
-        engine: "Engine",
-        resource_map: "TigerResourceMap | None" = None,
-        rebac_manager: "EnhancedReBACManager | None" = None,
-        dragonfly_cache: "DragonflyTigerCache | None" = None,
+        engine: Engine,
+        resource_map: TigerResourceMap | None = None,
+        rebac_manager: EnhancedReBACManager | None = None,
+        dragonfly_cache: DragonflyTigerCache | None = None,
     ):
         """Initialize Tiger Cache.
 
@@ -110,7 +113,7 @@ class TigerCache:
         # Persistent thread pool for L2 operations (avoid per-operation creation)
         self._l2_executor: Any | None = None
 
-    def set_dragonfly_cache(self, dragonfly_cache: "DragonflyTigerCache | None") -> None:
+    def set_dragonfly_cache(self, dragonfly_cache: DragonflyTigerCache | None) -> None:
         """Set or update the Dragonfly cache backend.
 
         This allows late binding of the Dragonfly cache after initialization,
@@ -248,7 +251,7 @@ class TigerCache:
             logger.warning(f"[TIGER] L2 Dragonfly error: {e}")
             return None
 
-    def set_rebac_manager(self, manager: "EnhancedReBACManager") -> None:
+    def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
         """Set the ReBAC manager for permission computation."""
         self._rebac_manager = manager
 
@@ -259,7 +262,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> set[int]:
         """Get all resource integer IDs that subject can access.
 
@@ -300,8 +303,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_id: str,
-        _zone_id: str = "",  # Deprecated: kept for API compatibility, ignored
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> bool | None:
         """Check if subject has permission on resource using cached bitmap.
 
@@ -311,7 +313,6 @@ class TigerCache:
             permission: Permission to check
             resource_type: Type of resource
             resource_id: String ID of resource
-            _zone_id: Zone ID (used for resource lookup, not cache key)
             conn: Optional database connection
 
         Returns:
@@ -363,7 +364,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> bytes | None:
         """Get serialized bitmap bytes for Rust interop (Issue #896).
 
@@ -542,7 +543,7 @@ class TigerCache:
         return paths
 
     def _load_from_db(
-        self, key: CacheKey, conn: "Connection | None" = None, skip_l2: bool = False
+        self, key: CacheKey, conn: Connection | None = None, skip_l2: bool = False
     ) -> Any:
         """Load bitmap from L2 (Dragonfly) or L3 (PostgreSQL).
 
@@ -635,7 +636,7 @@ class TigerCache:
             with self._engine.connect() as new_conn:
                 return execute(new_conn)
 
-    def _bulk_load_from_db(self, keys: list[CacheKey], conn: "Connection") -> dict[CacheKey, Any]:
+    def _bulk_load_from_db(self, keys: list[CacheKey], conn: Connection) -> dict[CacheKey, Any]:
         """Bulk load bitmaps from database in a single query.
 
         Args:
@@ -699,26 +700,18 @@ class TigerCache:
                     results.update(batch_results)
                 return results
 
-            # Build parameterized OR conditions for SQLite
-            conditions: list[str] = []
-            params = {}
-            for i, k in enumerate(to_fetch):
-                conditions.append(
-                    f"(subject_type = :st_{i} AND subject_id = :si_{i}"
-                    f" AND permission = :pm_{i} AND resource_type = :rt_{i})"
-                )
-                params[f"st_{i}"] = k.subject_type
-                params[f"si_{i}"] = k.subject_id
-                params[f"pm_{i}"] = k.permission
-                params[f"rt_{i}"] = k.resource_type
-            where_clause = " OR ".join(conditions)
+            values = ", ".join(
+                f"('{k.subject_type}', '{k.subject_id}', '{k.permission}', '{k.resource_type}')"
+                for k in to_fetch
+            )
             query = text(f"""
                 SELECT subject_type, subject_id, permission, resource_type,
                        bitmap_data, revision
                 FROM tiger_cache
-                WHERE {where_clause}
+                WHERE (subject_type, subject_id, permission, resource_type)
+                    IN (VALUES {values})
             """)
-            db_result = conn.execute(query, params)
+            db_result = conn.execute(query)
 
         # Process results and update cache
         with self._lock:
@@ -810,7 +803,7 @@ class TigerCache:
         zone_id: str,
         resource_int_ids: set[int],
         revision: int,
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> None:
         """Update the cache for a subject.
 
@@ -931,7 +924,7 @@ class TigerCache:
         permission: str | None = None,
         resource_type: str | None = None,
         zone_id: str | None = None,
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> int:
         """Invalidate cache entries matching the criteria.
 
@@ -975,8 +968,8 @@ class TigerCache:
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-        # Delete from database — where_clause is built from hardcoded column names only
-        query = text("DELETE FROM tiger_cache WHERE " + where_clause)
+        # Delete from database
+        query = text(f"DELETE FROM tiger_cache WHERE {where_clause}")
 
         def execute(connection: Connection) -> int:
             result = connection.execute(query, params)
@@ -1139,9 +1132,7 @@ class TigerCache:
 
         try:
             # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
-            resource_int_id = self._resource_map.get_or_create_int_id(
-                resource_type, resource_id, zone_id
-            )
+            resource_int_id = self._resource_map.get_or_create_int_id(resource_type, resource_id)
 
             with self._engine.begin() as conn:
                 # Step 2: Load existing bitmap from DB (if exists)

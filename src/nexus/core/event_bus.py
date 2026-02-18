@@ -1010,7 +1010,7 @@ def create_event_bus(
     if backend == "nats":
         if nats_url is None:
             raise ValueError("nats_url is required for NATS backend")
-        from nexus.core.event_bus_nats import NatsEventBus
+        from nexus.services.event_bus_nats import NatsEventBus
 
         return NatsEventBus(nats_url=nats_url, **kwargs)
 

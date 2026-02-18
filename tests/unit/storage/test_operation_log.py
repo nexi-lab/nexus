@@ -19,12 +19,14 @@ def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
+
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
     """Create a SQLAlchemyRecordStore for testing."""
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
     yield rs
     rs.close()
+
 
 @pytest.fixture
 def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
@@ -38,6 +40,7 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
     )
     yield nx
     nx.close()
+
 
 def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that write operations are logged."""
@@ -58,6 +61,7 @@ def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore
         assert latest.path == path
         assert latest.status == "success"
         assert latest.snapshot_hash is None  # New file, no previous version
+
 
 def test_write_update_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that updating a file logs the previous version."""
@@ -92,6 +96,7 @@ def test_write_update_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
         assert metadata["size"] == len(content1)
         assert metadata["version"] == 1
 
+
 def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that delete operations are logged with snapshot."""
     path = "/test.txt"
@@ -119,6 +124,7 @@ def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStor
         assert metadata is not None
         assert metadata["size"] == len(content)
 
+
 def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that rename operations are logged."""
     old_path = "/old.txt"
@@ -141,15 +147,16 @@ def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStor
         assert latest.new_path == new_path
         assert latest.status == "success"
 
+
 def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test filtering operations by agent ID using context parameter."""
-    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
+    from nexus.core.permissions import OperationContext
 
     # Use context parameter with different agent IDs
-    context1 = EnhancedOperationContext(user="test", groups=[], agent_id="agent-1")
+    context1 = OperationContext(user="test", groups=[], agent_id="agent-1")
     nx.write("/file1.txt", b"Content 1", context=context1)
 
-    context2 = EnhancedOperationContext(user="test", groups=[], agent_id="agent-2")
+    context2 = OperationContext(user="test", groups=[], agent_id="agent-2")
     nx.write("/file2.txt", b"Content 2", context=context2)
 
     # Check operation log filtering
@@ -165,6 +172,7 @@ def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyR
         ops_agent2 = logger.list_operations(agent_id="agent-2", limit=10)
         assert len(ops_agent2) >= 1
         assert all(op.agent_id == "agent-2" for op in ops_agent2)
+
 
 def test_operation_log_filtering_by_type(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test filtering operations by type."""
@@ -195,6 +203,7 @@ def test_operation_log_filtering_by_type(nx: NexusFS, record_store: SQLAlchemyRe
         assert len(rename_ops) >= 1
         assert all(op.operation_type == "rename" for op in rename_ops)
 
+
 def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting operation history for a specific path."""
     path = "/test.txt"
@@ -213,6 +222,7 @@ def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> N
         assert all(op.path == path for op in history)
         assert all(op.operation_type == "write" for op in history)
 
+
 def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting the last operation."""
     # Perform operations
@@ -228,6 +238,7 @@ def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) ->
         assert last_op.path == "/file2.txt"  # Most recent
         assert last_op.operation_type == "write"
 
+
 def test_undo_write_new_file(nx: NexusFS) -> None:
     """Test undoing a write operation for a new file (should delete it)."""
     path = "/test.txt"
@@ -240,6 +251,7 @@ def test_undo_write_new_file(nx: NexusFS) -> None:
     # Undo by deleting the file
     nx.delete(path)
     assert not nx.exists(path)
+
 
 def test_undo_write_update(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test undoing a write operation that updated an existing file."""
@@ -271,6 +283,7 @@ def test_undo_write_update(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
         restored_content = nx.read(path)
         assert restored_content == content1
 
+
 def test_undo_delete(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test undoing a delete operation."""
     path = "/test.txt"
@@ -297,6 +310,7 @@ def test_undo_delete(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
         # Verify restoration
         assert nx.exists(path)
         assert nx.read(path) == content
+
 
 def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test undoing a rename operation."""

@@ -416,7 +416,8 @@ def search_init(
         with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
 
             async def init_search() -> None:
-                await nx.initialize_semantic_search(  # type: ignore[attr-defined]
+                nxfs = cast("NexusFS", nx)
+                await nxfs.ainitialize_semantic_search(
                     embedding_provider=provider,
                     embedding_model=model,
                     api_key=api_key,
@@ -483,8 +484,11 @@ def search_index(
                 if isinstance(nx, NexusFS) and (
                     not hasattr(nx, "_semantic_search") or nx._semantic_search is None
                 ):
-                    await nx.initialize_semantic_search()
-                result: dict[str, int] = await nx.semantic_search_index(path, recursive=recursive)  # type: ignore[attr-defined]
+                    await nx.ainitialize_semantic_search()
+                nxfs = cast("NexusFS", nx)
+                result: dict[str, int] = await nxfs.asemantic_search_index(
+                    path, recursive=recursive
+                )
                 return result
 
             results = asyncio.run(do_index())
@@ -502,7 +506,8 @@ def search_index(
 
         # Show stats
         async def get_stats() -> dict[str, Any]:
-            result: dict[str, Any] = await nx.semantic_search_stats()  # type: ignore[attr-defined]
+            nxfs = cast("NexusFS", nx)
+            result: dict[str, Any] = await nxfs.asemantic_search_stats()
             return result
 
         stats = asyncio.run(get_stats())
@@ -573,10 +578,11 @@ def search_query(
                 if isinstance(nx, NexusFS) and (
                     not hasattr(nx, "_semantic_search") or nx._semantic_search is None
                 ):
-                    await nx.initialize_semantic_search(
+                    await nx.ainitialize_semantic_search(
                         embedding_provider=provider, api_key=api_key
                     )
-                result: list[dict[str, Any]] = await nx.semantic_search(  # type: ignore[attr-defined]
+                nxfs = cast("NexusFS", nx)
+                result: list[dict[str, Any]] = await nxfs.asemantic_search(
                     query, path=path, limit=limit, search_mode=mode
                 )
                 return result
@@ -635,8 +641,9 @@ def search_stats(backend_config: BackendConfig) -> None:
             if isinstance(nx, NexusFS) and (
                 not hasattr(nx, "_semantic_search") or nx._semantic_search is None
             ):
-                await nx.initialize_semantic_search()
-            result: dict[str, Any] = await nx.semantic_search_stats()  # type: ignore[attr-defined]
+                await nx.ainitialize_semantic_search()
+            nxfs = cast("NexusFS", nx)
+            result: dict[str, Any] = await nxfs.asemantic_search_stats()
             return result
 
         stats = asyncio.run(get_stats())

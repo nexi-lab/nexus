@@ -10,6 +10,7 @@ Batch optimization:
 - Default batch size optimized per provider for best throughput
 """
 
+
 import asyncio
 import logging
 import os
@@ -31,6 +32,7 @@ DEFAULT_BATCH_SIZES = {
     "fastembed": 256,  # Local inference can handle larger batches
 }
 
+
 class EmbeddingModel(StrEnum):
     """Supported embedding models."""
 
@@ -43,11 +45,10 @@ class EmbeddingModel(StrEnum):
     VOYAGE_3 = "voyage-3"  # Best quality, 1024d, $0.06/1M tokens
     VOYAGE_3_LITE = "voyage-3-lite"  # Fast & cheap, 512d, $0.02/1M tokens
     VOYAGE_3_LARGE = "voyage-3-large"  # Highest quality, 1024d
-    VOYAGE_2 = "voyage-2"  # Legacy
-    VOYAGE_LARGE_2 = "voyage-large-2"  # Legacy
 
     # OpenRouter (via OpenAI-compatible API)
     OPENROUTER_DEFAULT = "openai/text-embedding-3-small"
+
 
 class EmbeddingProvider(ABC):
     """Abstract base class for embedding providers.
@@ -143,6 +144,7 @@ class EmbeddingProvider(ABC):
 
         return embeddings
 
+
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """OpenAI embedding provider."""
 
@@ -208,6 +210,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         else:
             # Default for unknown models
             return 1536
+
 
 class VoyageAIEmbeddingProvider(EmbeddingProvider):
     """Voyage AI embedding provider.
@@ -322,6 +325,7 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
             # Default for unknown models
             return 1024
 
+
 class OpenRouterEmbeddingProvider(EmbeddingProvider):
     """OpenRouter embedding provider (OpenAI-compatible API)."""
 
@@ -391,6 +395,7 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
         else:
             # Default for unknown models
             return 1536
+
 
 class FastEmbedProvider(EmbeddingProvider):
     """Local embedding provider using FastEmbed (ONNX-optimized).
@@ -463,6 +468,7 @@ class FastEmbedProvider(EmbeddingProvider):
         else:
             return 384
 
+
 class CachedEmbeddingProvider(EmbeddingProvider):
     """Wrapper that adds caching to any embedding provider.
 
@@ -491,7 +497,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
     def __init__(
         self,
         provider: EmbeddingProvider,
-        cache: "EmbeddingCacheProtocol",
+        cache: EmbeddingCacheProtocol,
     ):
         """Initialize cached embedding provider.
 
@@ -500,7 +506,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
             cache: EmbeddingCacheProtocol instance (any driver)
         """
         self._provider = provider
-        self._cache: "EmbeddingCacheProtocol" = cache
+        self._cache: EmbeddingCacheProtocol = cache
         self._model_name = self._get_model_name()
 
     def _get_model_name(self) -> str:
@@ -584,6 +590,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
         """
         return self._cache.get_metrics()
 
+
 def create_embedding_provider(
     provider: str = "openai", model: str | None = None, api_key: str | None = None
 ) -> EmbeddingProvider:
@@ -643,13 +650,14 @@ def create_embedding_provider(
             "Supported: openai, voyage, voyage-lite, voyage-large, fastembed, openrouter"
         )
 
+
 async def create_cached_embedding_provider(
     provider: str = "openai",
     model: str | None = None,
     api_key: str | None = None,
     cache_url: str | None = None,
     cache_ttl: int = 86400,
-    embedding_cache: "EmbeddingCacheProtocol | None" = None,
+    embedding_cache: EmbeddingCacheProtocol | None = None,
 ) -> EmbeddingProvider:
     """Create an embedding provider with caching enabled.
 

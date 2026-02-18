@@ -158,7 +158,7 @@ def server_app():
     nexus_fs._audit_strict_mode = False
 
     # Verify event bus is NATS
-    from nexus.core.event_bus_nats import NatsEventBus
+    from nexus.services.event_bus_nats import NatsEventBus
 
     assert nexus_fs._event_bus is not None
     assert isinstance(nexus_fs._event_bus, NatsEventBus)
@@ -209,7 +209,7 @@ class TestServerStartup:
 
     def test_event_bus_is_nats(self, client, nexus_fs):
         """Event bus should be NatsEventBus."""
-        from nexus.core.event_bus_nats import NatsEventBus
+        from nexus.services.event_bus_nats import NatsEventBus
 
         assert isinstance(nexus_fs._event_bus, NatsEventBus)
 

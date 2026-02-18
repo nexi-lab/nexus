@@ -7,17 +7,14 @@ These functions depend on a ReBAC manager instance and are therefore
 part of the server composition layer (not a standalone brick).
 """
 
+
 import contextlib
-from datetime import UTC, datetime
 from typing import Any
-
-from sqlalchemy.orm import Session
-
-from nexus.storage.models import UserModel
 
 # ==============================================================================
 # ReBAC Group Naming Helpers
 # ==============================================================================
+
 
 def zone_group_id(zone_id: str) -> str:
     """Generate zone group ID from zone_id.
@@ -26,6 +23,7 @@ def zone_group_id(zone_id: str) -> str:
         zone_group_id("acme") -> "zone-acme"
     """
     return f"zone-{zone_id}"
+
 
 def parse_zone_from_group(group_id: str) -> str | None:
     """Extract zone_id from group ID.
@@ -38,13 +36,16 @@ def parse_zone_from_group(group_id: str) -> str | None:
         return group_id[len("zone-") :]
     return None
 
+
 def is_zone_group(group_id: str) -> bool:
     """Check if group ID is a zone group (starts with "zone-")."""
     return group_id.startswith("zone-")
 
+
 # ==============================================================================
 # Zone Role Checks
 # ==============================================================================
+
 
 def is_zone_owner(
     rebac_manager: Any,
@@ -65,6 +66,7 @@ def is_zone_owner(
             zone_id=zone_id,
         )
     )
+
 
 def is_zone_admin(
     rebac_manager: Any,
@@ -89,6 +91,7 @@ def is_zone_admin(
         )
     )
 
+
 def can_invite_to_zone(
     rebac_manager: Any,
     user_id: str,
@@ -97,9 +100,11 @@ def can_invite_to_zone(
     """Check if user can invite others to zone (admin or owner)."""
     return is_zone_admin(rebac_manager, user_id, zone_id)
 
+
 # ==============================================================================
 # Zone Membership Operations
 # ==============================================================================
+
 
 def add_user_to_zone(
     rebac_manager: Any,
@@ -157,6 +162,7 @@ def add_user_to_zone(
     )
     return result.tuple_id  # type: ignore[no-any-return]
 
+
 def remove_user_from_zone(
     rebac_manager: Any,
     user_id: str,
@@ -190,6 +196,7 @@ def remove_user_from_zone(
         zone_id=zone_id,
     )
 
+
 def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
     """Get list of zone IDs that user belongs to.
 
@@ -214,6 +221,7 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
         pass
     return zone_ids
 
+
 def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool:
     """Check if user belongs to zone."""
     try:
@@ -229,78 +237,3 @@ def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool
             return cursor.fetchone() is not None
     except Exception:
         return False
-
-# ==============================================================================
-# Default Zone Selection
-# ==============================================================================
-
-def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
-    """Get user's default zone.
-
-    Priority:
-    1. User's session preference (stored in session/cookie) - TODO
-    2. First zone in membership list
-    3. None if user has no zones
-    """
-    zone_ids = get_user_zones(rebac_manager, user_id)
-    if not zone_ids:
-        return None
-    return zone_ids[0]
-
-def require_zone_context(
-    rebac_manager: Any,
-    user_id: str,
-    zone_id: str | None,
-    session: Session,
-    auto_create: bool = False,
-) -> str:
-    """Require zone context for operation.
-
-    If zone_id not provided, use default zone.
-
-    Raises:
-        ValueError: If user has no zone memberships and auto_create=False
-    """
-    if zone_id:
-        if not user_belongs_to_zone(rebac_manager, user_id, zone_id):
-            raise ValueError(f"User {user_id} does not belong to zone {zone_id}")
-        return zone_id
-
-    default_zone = get_user_default_zone(rebac_manager, user_id, session)
-    if default_zone:
-        return default_zone
-
-    if auto_create:
-        raise ValueError(
-            f"User {user_id} has no zone memberships. Auto-create not yet implemented."
-        )
-    else:
-        raise ValueError(f"User {user_id} has no zone memberships")
-
-# ==============================================================================
-# User Soft Delete
-# ==============================================================================
-
-def soft_delete_user(session: Session, user_id: str) -> UserModel | None:
-    """Soft delete a user (sets is_active=0 and deleted_at=now())."""
-    user = session.get(UserModel, user_id)
-    if not user:
-        return None
-
-    user.is_active = 0
-    user.deleted_at = datetime.now(UTC)
-    session.add(user)
-    session.flush()
-    return user
-
-def restore_user(session: Session, user_id: str) -> UserModel | None:
-    """Restore a soft-deleted user (sets is_active=1 and deleted_at=None)."""
-    user = session.get(UserModel, user_id)
-    if not user:
-        return None
-
-    user.is_active = 1
-    user.deleted_at = None
-    session.add(user)
-    session.flush()
-    return user

@@ -23,13 +23,13 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from nexus.rebac.types import ConsistencyMode
 from nexus.services.permissions.rebac_manager_enhanced import (
     ConsistencyLevel,
     ConsistencyRequirement,
     EnhancedReBACManager,
     WriteResult,
 )
-from nexus.services.permissions.types import ConsistencyMode
 from nexus.storage.models import Base
 
 

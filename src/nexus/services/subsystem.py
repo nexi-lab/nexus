@@ -4,15 +4,12 @@ Issue #1287: Extract NexusFS Domain Services from God Object.
 
 This module provides:
 - ``Subsystem`` ABC: Base class for all extracted subsystems with lifecycle hooks.
-- ``ContextIdentity``: Frozen dataclass replacing 10+ copy-paste context extraction sites.
-- ``extract_context_identity()``: DRY helper to extract zone/user/admin from OperationContext.
 """
 
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from nexus.core.types import OperationContext as OperationContext  # noqa: F401
+from abc import ABC, abstractmethod
+from typing import Any
+
 
 class Subsystem(ABC):
     """Base class for extracted NexusFS subsystems.

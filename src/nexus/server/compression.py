@@ -39,9 +39,6 @@ except ImportError:
     except ImportError:
         logger.debug("[COMPRESSION] zstd not available, using gzip only")
 
-def is_zstd_available() -> bool:
-    """Check if zstd compression is available."""
-    return _ZSTD_AVAILABLE
 
 def compress_zstd(data: bytes, level: int = 3) -> bytes:
     """Compress data using zstd.
@@ -70,6 +67,7 @@ def compress_zstd(data: bytes, level: int = 3) -> bytes:
     else:
         raise RuntimeError("Unknown zstd module interface")
 
+
 def compress_gzip(data: bytes, level: int = 6) -> bytes:
     """Compress data using gzip.
 
@@ -81,6 +79,7 @@ def compress_gzip(data: bytes, level: int = 6) -> bytes:
         Compressed data
     """
     return gzip.compress(data, compresslevel=level)
+
 
 def compress_response(
     data: bytes,

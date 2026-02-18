@@ -54,17 +54,21 @@ def generate_resource_id(resource_type: str, name: str | None = None) -> str:
     else:
         return f"{prefix}_{uuid_suffix}"
 
+
 def system_path(resource_type: str, resource_id: str) -> str:
     """Generate system-wide path."""
     return f"/{resource_type}/{resource_id}"
+
 
 def zone_path(zone_id: str, resource_type: str, resource_id: str) -> str:
     """Generate zone-wide path."""
     return f"/zone/{zone_id}/{resource_type}/{resource_id}"
 
+
 def user_path(zone_id: str, user_id: str, resource_type: str, resource_id: str) -> str:
     """Generate user-owned path."""
     return f"/zone/{zone_id}/user:{user_id}/{resource_type}/{resource_id}"
+
 
 def provision_system_resources(nx: Any) -> None:
     """Create system-wide resources."""
@@ -116,6 +120,7 @@ def provision_system_resources(nx: Any) -> None:
     except Exception as e:
         print(f"  ✗ Failed to create system skill: {e}")
 
+
 def provision_zone_resources(nx: Any, zone_id: str) -> None:
     """Create zone-wide resources."""
     # Create admin context for provisioning
@@ -155,6 +160,7 @@ def provision_zone_resources(nx: Any, zone_id: str) -> None:
         print(f"  ✓ Would create connector at {connector_path}")
     except Exception as e:
         print(f"  ✗ Failed to create zone connector: {e}")
+
 
 def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
     """Create folder structure for admin user with proper permissions."""
@@ -385,6 +391,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
 
             traceback.print_exc()
 
+
 def provision_default_skills(
     nx: Any, zone_id: str, user_id: str, context: OperationContext
 ) -> dict[str, str]:
@@ -472,6 +479,7 @@ def provision_default_skills(
 
     return skill_paths_map
 
+
 def load_env_file(env_file: str = ".env") -> dict:
     """Load environment variables from .env file."""
     env_vars = {}
@@ -499,6 +507,7 @@ def load_env_file(env_file: str = ".env") -> dict:
 
     return env_vars
 
+
 def ensure_admin_api_key(zone_id: str = "default", env_file: str = ".env") -> str | None:
     """Ensure admin API key exists, loading from .env or creating if needed.
 
@@ -513,7 +522,7 @@ def ensure_admin_api_key(zone_id: str = "default", env_file: str = ".env") -> st
     from sqlalchemy.orm import sessionmaker
 
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.rebac.entity_registry import EntityRegistry
 
     # Load .env
     env_vars = load_env_file(env_file)
@@ -612,6 +621,7 @@ def ensure_admin_api_key(zone_id: str = "default", env_file: str = ".env") -> st
             print(f"  ✗ Failed to create API key: {e}")
             return None
 
+
 def provision_user_resources(nx: Any, zone_id: str, user_id: str) -> None:
     """Create user-owned resources."""
     print(f"Creating user resources for {zone_id}/{user_id}...")
@@ -685,6 +695,7 @@ def provision_user_resources(nx: Any, zone_id: str, user_id: str) -> None:
             nx, user_id, zone_id, AGENT_RESOURCE_GRANTS, agent_name="UntrustedAgent"
         )
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Provision Nexus with namespace convention")
     parser.add_argument("--zone", default="default", help="Zone ID (default: default)")
@@ -729,6 +740,7 @@ def main() -> None:
         # Close connection if it has a close method
         if hasattr(nx, "close"):
             nx.close()
+
 
 if __name__ == "__main__":
     main()

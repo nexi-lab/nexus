@@ -69,14 +69,6 @@ class PKCEStateStore:
         result: dict[str, str] = json.loads(raw)
         return result
 
-    @property
-    def size(self) -> int:
-        """Current number of entries (for monitoring/testing).
-
-        Not available with CacheStoreABC — returns -1 when backed by external store.
-        """
-        return -1
-
 
 class OAuthService:
     """Independent OAuth service extracted from NexusFS.

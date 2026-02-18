@@ -79,7 +79,3 @@ class LLMServiceProtocol(Protocol):
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ) -> Any: ...
-
-
-# Backward compatibility alias (Issue #1521)
-LLMProtocol = LLMServiceProtocol

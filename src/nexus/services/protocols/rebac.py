@@ -7,9 +7,11 @@ This is separate from PermissionProtocol (which defines the 6 core Zanzibar
 APIs). ReBACBrickProtocol defines the brick lifecycle + extended APIs.
 """
 
-from typing import Any, Protocol, runtime_checkable
 
-from nexus.rebac.types import WriteResult
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.rebac.types import WriteResult
 
 
 @runtime_checkable

@@ -23,7 +23,7 @@ from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
-from nexus.services.permissions.entity_registry import EntityRegistry  # noqa: E402
+from nexus.rebac.entity_registry import EntityRegistry  # noqa: E402
 from nexus.storage.models import APIKeyModel  # noqa: E402
 
 
@@ -111,6 +111,7 @@ def setup_admin_api_key(
         traceback.print_exc()
         return False
 
+
 def main() -> None:
     """Main entry point for CLI usage."""
     if len(sys.argv) < 3:
@@ -140,6 +141,7 @@ def main() -> None:
 
     success = setup_admin_api_key(database_url, admin_api_key, zone_id, user_id)
     sys.exit(0 if success else 1)
+
 
 if __name__ == "__main__":
     main()

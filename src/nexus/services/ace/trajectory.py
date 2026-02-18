@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.core.permissions import OperationContext, Permission
@@ -45,7 +46,7 @@ class TrajectoryManager:
         self.agent_id = agent_id
         self.zone_id = zone_id
         self.context = context or OperationContext(
-            user=user_id, groups=[], is_admin=False, is_system=False
+            user_id=user_id, groups=[], is_admin=False, is_system=False
         )
         self._active_trajectories: dict[str, dict[str, Any]] = {}
 
@@ -70,13 +71,13 @@ class TrajectoryManager:
             return True
 
         # 2. Direct creator access
-        if self.context.user == trajectory.agent_id:
+        if self.context.user_id == trajectory.agent_id:
             return True
 
         # 3. User ownership (same user created it)
         # 4. Zone-scoped sharing (TODO: requires scope attribute in TrajectoryModel)
         # 5. Global scope (TODO: requires scope attribute in TrajectoryModel)
-        return self.context.user == trajectory.user_id
+        return self.context.user_id == trajectory.user_id
 
     def start_trajectory(
         self,
@@ -179,8 +180,12 @@ class TrajectoryManager:
         if trajectory_id not in self._active_trajectories:
             # Load from database if not in memory
             db_traj = (
-                self.session.query(TrajectoryModel)
-                .filter_by(trajectory_id=trajectory_id, status="in_progress")
+                self.session.execute(
+                    select(TrajectoryModel).filter_by(
+                        trajectory_id=trajectory_id, status="in_progress"
+                    )
+                )
+                .scalars()
                 .first()
             )
 
@@ -226,7 +231,11 @@ class TrajectoryManager:
         self._active_trajectories[trajectory_id]["trace_hash"] = new_trace_hash
 
         # Update database
-        db_traj = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
+        db_traj = (
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
+        )
         if db_traj:
             db_traj.trace_hash = new_trace_hash
             self.session.commit()
@@ -263,8 +272,12 @@ class TrajectoryManager:
         if trajectory_id not in self._active_trajectories:
             # Load from database if not in memory
             db_traj = (
-                self.session.query(TrajectoryModel)
-                .filter_by(trajectory_id=trajectory_id, status="in_progress")
+                self.session.execute(
+                    select(TrajectoryModel).filter_by(
+                        trajectory_id=trajectory_id, status="in_progress"
+                    )
+                )
+                .scalars()
                 .first()
             )
 
@@ -312,7 +325,9 @@ class TrajectoryManager:
 
         # Update existing trajectory record (was created in start_trajectory)
         db_trajectory = (
-            self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
         )
 
         if db_trajectory:
@@ -365,7 +380,9 @@ class TrajectoryManager:
             PermissionError: If user lacks READ permission
         """
         trajectory = (
-            self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id).first()
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
         )
         if not trajectory:
             return None
@@ -417,21 +434,21 @@ class TrajectoryManager:
         Returns:
             List of trajectory summaries (without full trace), filtered by permissions
         """
-        query = self.session.query(TrajectoryModel)
+        stmt = select(TrajectoryModel)
 
         if agent_id:
-            query = query.filter_by(agent_id=agent_id)
+            stmt = stmt.filter_by(agent_id=agent_id)
         if task_type:
-            query = query.filter_by(task_type=task_type)
+            stmt = stmt.filter_by(task_type=task_type)
         if status:
-            query = query.filter_by(status=status)
+            stmt = stmt.filter_by(status=status)
         if path:
-            query = query.filter_by(path=path)
+            stmt = stmt.filter_by(path=path)
 
-        query = query.order_by(TrajectoryModel.started_at.desc()).limit(
+        stmt = stmt.order_by(TrajectoryModel.started_at.desc()).limit(
             limit * 2
         )  # Fetch extra for filtering
-        trajectories = query.all()
+        trajectories = self.session.execute(stmt).scalars().all()
 
         # Filter by permissions
         accessible_trajectories = [

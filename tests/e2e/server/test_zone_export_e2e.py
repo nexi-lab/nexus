@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.portability import (
     BundleReader,
@@ -46,8 +47,8 @@ def nexus_fs(temp_dir):
         backend=LocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=False,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
 
     # Create test files

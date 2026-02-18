@@ -24,10 +24,11 @@ from nexus.cache.backend_wrapper import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
+from nexus.core.config import PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
+from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -346,15 +347,14 @@ class TestCachingPermissions:
         cached_backend = CachingBackendWrapper(inner=inner_backend, config=config)
 
         # Create NexusFS with permissions enabled
-        metadata_store = InMemoryFileMetadataStore()
+        metadata_store = InMemoryMetastore()
         record_store = SQLAlchemyRecordStore()  # in-memory SQLite
 
         nx = create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,  # simplify test — no zone checks
+            permissions=PermissionConfig(enforce=True, enforce_zone_isolation=False),
         )
 
         yield nx, cached_backend
@@ -364,7 +364,7 @@ class TestCachingPermissions:
     def test_admin_can_read_through_cache(self, nexus_with_cache):
         """Admin user can read files, and content gets cached."""
         nx, cached_backend = nexus_with_cache
-        admin = OperationContext(user="admin", groups=[], is_admin=True)
+        admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write a file as admin
         nx.write("/test/cached_file.txt", b"cached content", context=admin)
@@ -390,7 +390,7 @@ class TestCachingPermissions:
     def test_unauthorized_user_denied_even_when_cached(self, nexus_with_cache):
         """Non-authorized user is denied even when content is in cache."""
         nx, cached_backend = nexus_with_cache
-        admin = OperationContext(user="admin", groups=[], is_admin=True)
+        admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write a file as admin
         nx.write("/test/secret.txt", b"secret data", context=admin)
@@ -404,27 +404,27 @@ class TestCachingPermissions:
         assert stats["l1"]["entries"] > 0, "Content should be cached in L1"
 
         # Non-admin user without explicit permission should be DENIED
-        unauthorized = OperationContext(user="mallory", groups=[], is_admin=False)
+        unauthorized = OperationContext(user_id="mallory", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
             nx.read("/test/secret.txt", context=unauthorized)
 
     def test_permission_enforced_on_write_with_cache(self, nexus_with_cache):
         """Non-authorized user cannot write even with caching enabled."""
         nx, _ = nexus_with_cache
-        admin = OperationContext(user="admin", groups=[], is_admin=True)
+        admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create directory as admin
         nx.mkdir("/test/protected", parents=True, context=admin)
 
         # Non-admin user should be denied write
-        unauthorized = OperationContext(user="eve", groups=[], is_admin=False)
+        unauthorized = OperationContext(user_id="eve", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
             nx.write("/test/protected/hack.txt", b"pwned", context=unauthorized)
 
     def test_cached_content_not_leaked_across_users(self, nexus_with_cache):
         """User A's cached read does not leak data to unauthorized User B."""
         nx, cached_backend = nexus_with_cache
-        admin = OperationContext(user="admin", groups=[], is_admin=True)
+        admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write multiple files as admin
         nx.write("/test/public.txt", b"public info", context=admin)
@@ -449,14 +449,14 @@ class TestCachingPermissions:
             )
 
         # Alice should STILL be denied on private.txt even though it's cached
-        alice = OperationContext(user="alice", groups=[], is_admin=False)
+        alice = OperationContext(user_id="alice", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
             nx.read("/test/private.txt", context=alice)
 
     def test_delete_with_permissions_invalidates_cache(self, nexus_with_cache):
         """Deleting a file invalidates it from cache."""
         nx, cached_backend = nexus_with_cache
-        admin = OperationContext(user="admin", groups=[], is_admin=True)
+        admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write and read to populate cache
         nx.write("/test/delete_me.txt", b"temp data", context=admin)
@@ -485,19 +485,18 @@ class TestCachingPermissions:
         )
         cached_backend = CachingBackendWrapper(inner=inner_backend, config=config)
 
-        metadata_store = InMemoryFileMetadataStore()
+        metadata_store = InMemoryMetastore()
         record_store = SQLAlchemyRecordStore()
 
         nx = create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,
+            permissions=PermissionConfig(enforce=True, enforce_zone_isolation=False),
         )
 
         try:
-            admin = OperationContext(user="admin", groups=[], is_admin=True)
+            admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
             # Write-through: write populates cache immediately
             nx.write("/wt/file.txt", b"write through data", context=admin)
@@ -507,7 +506,7 @@ class TestCachingPermissions:
             assert content == b"write through data"
 
             # Unauthorized user still blocked
-            unauthorized = OperationContext(user="nobody", groups=[], is_admin=False)
+            unauthorized = OperationContext(user_id="nobody", groups=[], is_admin=False)
             with pytest.raises(PermissionError):
                 nx.read("/wt/file.txt", context=unauthorized)
         finally:
@@ -571,20 +570,20 @@ class TestCachingWithFastAPIServer:
         # Use file-based SQLite so all connections share the same DB
         # (in-memory SQLite gives each connection a separate database)
         db_path = tmp_path / "http_test.db"
-        metadata_store = InMemoryFileMetadataStore()
+        metadata_store = InMemoryMetastore()
         record_store = SQLAlchemyRecordStore(db_path=db_path)
 
         nx = create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,
-            enable_deferred_permissions=False,  # Avoid async parent tuple creation
+            permissions=PermissionConfig(
+                enforce=True, enforce_zone_isolation=False, enable_deferred=False
+            ),
         )
 
         # === Set up data and permissions directly (Python API) ===
-        admin = OperationContext(user="admin", groups=[], is_admin=True)
+        admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write test files in SEPARATE directories to prevent ReBAC parent
         # inheritance cascading across boundaries.  The permission system

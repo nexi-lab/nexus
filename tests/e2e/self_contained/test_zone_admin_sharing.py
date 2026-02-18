@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.server.auth.user_helpers import add_user_to_zone
@@ -38,12 +39,12 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),
     )
 
     # Grant admin ownership of root directory for tests
-    admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+    admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
     nx.rebac_create(
         subject=("user", "admin"),
         relation="direct_owner",
@@ -65,7 +66,7 @@ class TestZoneAdminSharing:
         """Test that zone admin can share files in their zone."""
         # Setup: Create zone structure
         zone_id = "acme"
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory (using Windows-compatible path)
         zone_path = f"/zone/{zone_id}"
@@ -89,7 +90,7 @@ class TestZoneAdminSharing:
 
         # Alice (zone admin) should be able to share bob's file
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -115,7 +116,7 @@ class TestZoneAdminSharing:
         """Test that zone owner can share files (owners are also admins)."""
         # Setup
         zone_id = "acme"
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory
         zone_path = f"/zone/{zone_id}"
@@ -138,7 +139,7 @@ class TestZoneAdminSharing:
 
         # Alice (zone owner) should be able to share bob's file
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -157,7 +158,7 @@ class TestZoneAdminSharing:
     def test_zone_admin_cannot_share_in_other_zone(self, nx: NexusFS) -> None:
         """Test that zone admin cannot share files in other zones."""
         # Setup: Create two zones
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone1
         zone1_path = "/zone/acme"
@@ -188,7 +189,7 @@ class TestZoneAdminSharing:
 
         # Alice should NOT be able to share files in zone2
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -207,7 +208,7 @@ class TestZoneAdminSharing:
         """Test that regular zone member cannot share files they don't own."""
         # Setup
         zone_id = "acme"
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
@@ -229,7 +230,7 @@ class TestZoneAdminSharing:
 
         # Alice (regular member) should NOT be able to share bob's file
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -248,7 +249,7 @@ class TestZoneAdminSharing:
         """Test that zone admin can share files with groups."""
         # Setup
         zone_id = "acme"
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
@@ -284,7 +285,7 @@ class TestZoneAdminSharing:
 
         # Alice (zone admin) should be able to share with group
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -319,7 +320,7 @@ class TestBackwardCompatibility:
         """Test that file owners can still share their files."""
         # Setup
         zone_id = "acme"
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
@@ -338,7 +339,7 @@ class TestBackwardCompatibility:
 
         # Bob (owner) should be able to share his own file
         bob_context = {
-            "user": "bob",
+            "user_id": "bob",
             "groups": [],
             "is_admin": False,
             "is_system": False,

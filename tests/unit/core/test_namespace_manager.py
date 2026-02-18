@@ -19,9 +19,8 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.permissions import OperationContext, Permission
-from nexus.services.permissions.enforcer import PermissionEnforcer
-from nexus.services.permissions.namespace_manager import (
+from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.rebac.namespace_manager import (
     MountEntry,
     NamespaceManager,
     build_mount_entries,
@@ -44,7 +43,7 @@ def engine():
 @pytest.fixture
 def enhanced_rebac_manager(engine):
     """Create an EnhancedReBACManager for testing."""
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,
@@ -487,7 +486,7 @@ class TestPermissionEnforcerNamespaceIntegration:
         )
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -508,7 +507,7 @@ class TestPermissionEnforcerNamespaceIntegration:
         )
 
         system_ctx = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             is_system=True,
             zone_id="test_zone",
@@ -529,7 +528,7 @@ class TestPermissionEnforcerNamespaceIntegration:
 
         # Regular user with no grants
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
         )
@@ -555,7 +554,7 @@ class TestPermissionEnforcerNamespaceIntegration:
         )
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id=zone,
         )
@@ -581,7 +580,7 @@ class TestPermissionEnforcerNamespaceIntegration:
             namespace_manager=None,  # No namespace manager
         )
 
-        ctx = OperationContext(user="alice", groups=[], zone_id=zone)
+        ctx = OperationContext(user_id="alice", groups=[], zone_id=zone)
 
         # Should still work via ReBAC (no namespace filtering)
         result = enforcer.check("/workspace/file.txt", Permission.READ, ctx)
@@ -604,7 +603,7 @@ class TestPermissionEnforcerNamespaceIntegration:
             namespace_manager=namespace_manager,
         )
 
-        ctx = OperationContext(user="alice", groups=[], zone_id=zone)
+        ctx = OperationContext(user_id="alice", groups=[], zone_id=zone)
 
         all_paths = [
             "/workspace/project-alpha/a.txt",
@@ -632,7 +631,7 @@ class TestNamespaceManagerDualPath:
     @pytest.fixture(params=[True, False], ids=["rust", "python"])
     def ns_manager_dual(self, request, enhanced_rebac_manager):
         """NamespaceManager with RUST_AVAILABLE patched to True or False."""
-        with patch("nexus.services.permissions.rebac_fast.RUST_AVAILABLE", request.param):
+        with patch("nexus.rebac.utils.fast.RUST_AVAILABLE", request.param):
             ns = NamespaceManager(
                 rebac_manager=enhanced_rebac_manager,
                 revision_window=100,
@@ -779,7 +778,7 @@ class TestNamespaceEdgeCases:
 
         # Agent with no grants
         ctx = OperationContext(
-            user="agent-x",
+            user_id="agent-x",
             agent_id="agent-x",
             subject_type="agent",
             subject_id="agent-x",
@@ -808,7 +807,7 @@ class TestNamespaceEdgeCases:
         )
 
         ctx = OperationContext(
-            user="agent-filter",
+            user_id="agent-filter",
             agent_id="agent-filter",
             subject_type="agent",
             subject_id="agent-filter",
@@ -838,7 +837,7 @@ class TestNamespaceEdgeCases:
         )
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},

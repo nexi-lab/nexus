@@ -70,14 +70,6 @@ class PKCEStateStore:
         result: dict[str, str] = json.loads(raw)
         return result
 
-    @property
-    def size(self) -> int:
-        """Current number of entries (for monitoring/testing).
-
-        Not available with CacheStoreABC — returns -1 when backed by external store.
-        """
-        return -1
-
 
 class OAuthService:
     """Independent OAuth service extracted from NexusFS.
@@ -408,7 +400,7 @@ class OAuthService:
         # Extract user_id from context (Nexus user identity)
         current_user_id = None
         if context:
-            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+            current_user_id = getattr(context, "user_id", None)
         created_by = current_user_id or user_email
 
         # Use provider's actual name for storage
@@ -506,7 +498,7 @@ class OAuthService:
         # Extract current user's identity from context
         current_user_id = None
         if context:
-            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+            current_user_id = getattr(context, "user_id", None)
         is_admin = context and getattr(context, "is_admin", False)
 
         # List credentials for zone (and optionally user)
@@ -792,7 +784,7 @@ class OAuthService:
         # Get user info from context
         user_id = "admin"
         if context:
-            user_id = getattr(context, "user_id", None) or getattr(context, "user", None) or "admin"
+            user_id = getattr(context, "user_id", None) or "admin"
 
         # Create unique Klavis user ID for this Nexus user
         klavis_user_id = f"nexus-{user_id}"
@@ -1139,7 +1131,7 @@ class OAuthService:
         """
         current_user_id = None
         if context:
-            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+            current_user_id = getattr(context, "user_id", None)
         is_admin = context and getattr(context, "is_admin", False)
 
         if is_admin or not current_user_id:
@@ -1173,7 +1165,7 @@ class OAuthService:
             OAuthProviderFactory instance
         """
         if self._oauth_factory is None:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth.factory import OAuthProviderFactory
 
             # Get config if available
             oauth_config = None

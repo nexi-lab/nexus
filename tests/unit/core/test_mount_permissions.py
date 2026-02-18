@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -35,8 +36,8 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),
     )
     yield nx
     nx.close()
@@ -49,8 +50,8 @@ def nx_without_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-noperm")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=False,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()
@@ -94,7 +95,7 @@ class TestListMountsPermissionFiltering:
 
         # Create context for user Alice (with admin to create mount)
         context_alice_admin = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -104,7 +105,7 @@ class TestListMountsPermissionFiltering:
 
         # Create context for user Alice (non-admin for list_mounts test)
         context_alice = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -122,7 +123,7 @@ class TestListMountsPermissionFiltering:
 
         # Create context for user Bob (with admin to create mount)
         context_bob_admin = OperationContext(
-            user="bob@example.com",
+            user_id="bob@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -132,7 +133,7 @@ class TestListMountsPermissionFiltering:
 
         # Create context for user Bob (non-admin for list_mounts test)
         context_bob = OperationContext(
-            user="bob@example.com",
+            user_id="bob@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -176,7 +177,7 @@ class TestListMountsPermissionFiltering:
 
         # Admin context for mount creation
         context_alice_admin = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -194,7 +195,7 @@ class TestListMountsPermissionFiltering:
         )
 
         context_bob = OperationContext(
-            user="bob@example.com",
+            user_id="bob@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -223,7 +224,7 @@ class TestListMountsPermissionFiltering:
 
         # Admin context for mount creation
         context_alice_admin = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -233,7 +234,7 @@ class TestListMountsPermissionFiltering:
 
         # Non-admin context for list_mounts test
         context_alice = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -303,7 +304,7 @@ class TestListSavedMountsUserFiltering:
 
         # Create context for Alice
         context_alice = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -321,7 +322,7 @@ class TestListSavedMountsUserFiltering:
 
         # Create context for Bob
         context_bob = OperationContext(
-            user="bob@example.com",
+            user_id="bob@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -359,7 +360,7 @@ class TestListSavedMountsUserFiltering:
 
         # Create context for zone1
         context_zone1 = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -397,7 +398,7 @@ class TestListSavedMountsUserFiltering:
 
         # Alice's context
         context_alice = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -427,7 +428,7 @@ class TestListSavedMountsUserFiltering:
 
         # Create context for agent
         context_agent = OperationContext(
-            user="bot123",
+            user_id="bot123",
             groups=[],
             zone_id="zone1",
             subject_type="agent",
@@ -454,7 +455,7 @@ class TestCrossZoneIsolation:
 
         # Admin context for mount creation
         context_zone1_admin = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -464,7 +465,7 @@ class TestCrossZoneIsolation:
 
         # Non-admin context for list tests
         context_zone1 = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -494,7 +495,7 @@ class TestCrossZoneIsolation:
 
         # Admin context for mount creation
         context_zone2_admin = OperationContext(
-            user="bob@example.com",
+            user_id="bob@example.com",
             groups=[],
             zone_id="zone2",
             subject_type="user",
@@ -504,7 +505,7 @@ class TestCrossZoneIsolation:
 
         # Non-admin context for list tests
         context_zone2 = OperationContext(
-            user="bob@example.com",
+            user_id="bob@example.com",
             groups=[],
             zone_id="zone2",
             subject_type="user",
@@ -561,7 +562,7 @@ class TestSaveMountAutoPopulation:
     ) -> None:
         """Test that save_mount automatically populates owner_user_id from context."""
         context = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -587,7 +588,7 @@ class TestSaveMountAutoPopulation:
     ) -> None:
         """Test that save_mount automatically populates zone_id from context."""
         context = OperationContext(
-            user="bob@example.com",
+            user_id="bob@example.com",
             groups=[],
             zone_id="acme_corp",
             subject_type="user",
@@ -613,7 +614,7 @@ class TestSaveMountAutoPopulation:
     ) -> None:
         """Test that explicit owner_user_id and zone_id override context values."""
         context = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -639,7 +640,7 @@ class TestSaveMountAutoPopulation:
     def test_save_mount_with_agent_context(self, nx_with_permissions: NexusFS) -> None:
         """Test that save_mount handles agent subject_type correctly."""
         context = OperationContext(
-            user="bot123",
+            user_id="bot123",
             groups=[],
             zone_id="zone1",
             subject_type="agent",
@@ -666,7 +667,7 @@ class TestSaveMountAutoPopulation:
         """Test that list_saved_mounts returns only mounts owned by the user after auto-population."""
         # Alice saves a mount
         context_alice = OperationContext(
-            user="alice@example.com",
+            user_id="alice@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",
@@ -681,7 +682,7 @@ class TestSaveMountAutoPopulation:
 
         # Bob saves a mount
         context_bob = OperationContext(
-            user="bob@example.com",
+            user_id="bob@example.com",
             groups=[],
             zone_id="zone1",
             subject_type="user",

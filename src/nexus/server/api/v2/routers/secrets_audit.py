@@ -29,7 +29,7 @@ from nexus.server.api.v2.models.secrets_audit import (
     SecretsAuditEventResponse,
     SecretsAuditIntegrityResponse,
 )
-from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+from nexus.services.protocols.secrets_audit_log import SecretsAuditLogProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def _build_filters(
 # --------------------------------------------------------------------------
 
 
-def get_secrets_audit_logger() -> tuple[SecretsAuditLogger, str]:
+def get_secrets_audit_logger() -> tuple[SecretsAuditLogProtocol, str]:
     """Placeholder dependency — overridden by fastapi_server.py."""
     raise HTTPException(status_code=500, detail="Secrets audit not configured")
 
@@ -108,7 +108,7 @@ def list_events(
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
     cursor: str | None = Query(None, description="Cursor from previous response"),
     include_total: bool = Query(False, description="Include total count"),
-    logger_and_zone: tuple[SecretsAuditLogger, str] = Depends(get_secrets_audit_logger),
+    logger_and_zone: tuple[SecretsAuditLogProtocol, str] = Depends(get_secrets_audit_logger),
 ) -> SecretsAuditEventListResponse:
     """List secrets audit events with cursor-based pagination."""
     audit_logger, zone_id = logger_and_zone
@@ -158,7 +158,7 @@ def export_events(
     actor_id: str | None = Query(None),
     provider: str | None = Query(None),
     limit: int = Query(10_000, ge=1, le=100_000, description="Max rows to export"),
-    logger_and_zone: tuple[SecretsAuditLogger, str] = Depends(get_secrets_audit_logger),
+    logger_and_zone: tuple[SecretsAuditLogProtocol, str] = Depends(get_secrets_audit_logger),
 ) -> StreamingResponse:
     """Export secrets audit events as CSV or JSON (streaming)."""
     audit_logger, zone_id = logger_and_zone
@@ -238,7 +238,7 @@ def _json_response(rows: list[dict[str, Any]]) -> StreamingResponse:
 @router.get("/events/{record_id}")
 def get_event(
     record_id: str,
-    logger_and_zone: tuple[SecretsAuditLogger, str] = Depends(get_secrets_audit_logger),
+    logger_and_zone: tuple[SecretsAuditLogProtocol, str] = Depends(get_secrets_audit_logger),
 ) -> SecretsAuditEventResponse:
     """Get a single secrets audit event by ID."""
     audit_logger, zone_id = logger_and_zone
@@ -257,7 +257,7 @@ def get_event(
 @router.get("/integrity/{record_id}")
 def verify_integrity(
     record_id: str,
-    logger_and_zone: tuple[SecretsAuditLogger, str] = Depends(get_secrets_audit_logger),
+    logger_and_zone: tuple[SecretsAuditLogProtocol, str] = Depends(get_secrets_audit_logger),
 ) -> SecretsAuditIntegrityResponse:
     """Verify a record's hash matches its data (tamper detection)."""
     audit_logger, zone_id = logger_and_zone

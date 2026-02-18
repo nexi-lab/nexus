@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.core.deployment_profile import DeploymentProfile
 from nexus.core.exceptions import BootError, NexusError
 
 # ---------------------------------------------------------------------------
@@ -57,12 +58,14 @@ def _make_mock_ctx(**overrides: Any) -> Any:
     """Build a minimal _BootContext-like object for tier function tests."""
     from nexus.factory import _BootContext
 
+    mock_engine = MagicMock()
     defaults = {
         "record_store": MagicMock(),
         "metadata_store": MagicMock(),
         "backend": MagicMock(),
         "router": MagicMock(),
-        "engine": MagicMock(),
+        "engine": mock_engine,
+        "read_engine": mock_engine,
         "session_factory": MagicMock(),
         "perm": MagicMock(
             enforce_zone_isolation=True,
@@ -83,6 +86,7 @@ def _make_mock_ctx(**overrides: Any) -> Any:
         "enable_write_buffer": False,
         "resiliency_raw": None,
         "db_url": "sqlite:///:memory:",
+        "profile_tuning": DeploymentProfile.FULL.tuning(),
     }
     defaults.update(overrides)
     return _BootContext(**defaults)
@@ -198,6 +202,9 @@ class TestBootSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
+            "context_branch_service",
+            "brick_lifecycle_manager",
+            "scoped_hook_engine",
         }
         assert expected_keys == set(result.keys())
 
@@ -248,7 +255,8 @@ class TestBootBrickServices:
             "lock_manager",
             "workflow_engine",
             "api_key_creator",
-            "rlm_service",
+            "snapshot_service",
+            "task_queue_service",
         }
         assert expected_keys == set(result.keys())
 

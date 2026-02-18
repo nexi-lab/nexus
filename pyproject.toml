@@ -137,6 +137,12 @@ performance = [
     "fastembed>=0.4.0",
 ]
 
+compression = [
+    # zstd compression for CompressedStorage wrapper (Issue #1705)
+    # Python 3.14+ has native compression.zstd; this is the fallback for 3.12/3.13
+    "zstandard>=0.22.0",
+]
+
 mobile = [
     # GGUF model support via llama.cpp (Issue #1214)
     # For local embedding inference on mobile/edge devices
@@ -459,7 +465,7 @@ module = "nexus.backends.passthrough"
 disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
-module = "nexus.core.file_watcher"
+module = "nexus.services.watch.file_watcher"
 # inotify_simple and pywin32 return untyped values
 disable_error_code = ["no-any-return"]
 
@@ -543,7 +549,7 @@ warn_unused_ignores = false
 disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped", "attr-defined", "arg-type"]
 
 [[tool.mypy.overrides]]
-module = "nexus.core.event_bus"
+module = "nexus.services.event_bus.redis"
 # redis PubSub.aclose() not in type stubs
 disable_error_code = ["attr-defined"]
 
@@ -576,9 +582,23 @@ module = [
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = "nexus.server.auth.oidc"
+module = [
+    "nexus.server.auth.oidc",
+    "nexus.auth.providers.oidc",
+]
 # requests stubs
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "nexus.auth.cache"
+# cachetools library has complex generic types
+disable_error_code = ["import-untyped", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.auth.tests.*"
+# Test files — relaxed type checking (consistent with project test conventions)
+disallow_untyped_defs = false
+disable_error_code = ["func-returns-value"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -623,6 +643,8 @@ module = [
     "nexus.raft.commands_pb2_grpc",
     "nexus.raft.transport_pb2",
     "nexus.raft.transport_pb2_grpc",
+    "nexus.a2a.a2a_pb2",
+    "nexus.a2a.a2a_pb2_grpc",
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
@@ -631,6 +653,11 @@ follow_imports = "skip"
 module = "nexus.raft.client"
 # gRPC client interacts heavily with generated pb2 modules (metadata_pb2, commands_pb2)
 # that have no type stubs — attribute access on implicit Any modules
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["nexus.a2a.grpc_server", "nexus.a2a.proto_converter"]
+# gRPC server and proto converter interact with generated a2a_pb2 module
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
@@ -672,6 +699,8 @@ exclude = [
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
     "src/nexus/core/_compact_generated.py",    # Generated at install time
     "src/nexus/core/protocols/",               # Generated at install time
+    "src/nexus/a2a/a2a_pb2.py",               # Generated gRPC stub
+    "src/nexus/a2a/a2a_pb2_grpc.py",          # Generated gRPC stub
 ]
 
 [tool.ruff.lint]

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -35,8 +36,8 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,
-        auto_parse=False,
-        enforce_permissions=False,  # Disable permissions for tests
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()
@@ -150,13 +151,13 @@ def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStor
 
 def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test filtering operations by agent ID using context parameter."""
-    from nexus.core.types import OperationContext
+    from nexus.core.permissions import OperationContext
 
     # Use context parameter with different agent IDs
-    context1 = OperationContext(user="test", groups=[], agent_id="agent-1")
+    context1 = OperationContext(user_id="test", groups=[], agent_id="agent-1")
     nx.write("/file1.txt", b"Content 1", context=context1)
 
-    context2 = OperationContext(user="test", groups=[], agent_id="agent-2")
+    context2 = OperationContext(user_id="test", groups=[], agent_id="agent-2")
     nx.write("/file2.txt", b"Content 2", context=context2)
 
     # Check operation log filtering

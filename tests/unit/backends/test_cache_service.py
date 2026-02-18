@@ -370,7 +370,7 @@ class TestReadBulkFromCache:
 
 class TestReadContentWithCache:
     def test_cache_miss_fetches_from_backend(self, cache_service, file_cache):
-        ctx = OperationContext(user="test", groups=[], backend_path="/file.txt", is_system=True)
+        ctx = OperationContext(user_id="test", groups=[], backend_path="/file.txt", is_system=True)
 
         with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             result = cache_service.read_content_with_cache("hash1", ctx)
@@ -379,7 +379,7 @@ class TestReadContentWithCache:
         assert result.from_cache is False
 
     def test_requires_backend_path(self, cache_service):
-        ctx = OperationContext(user="test", groups=[], is_system=True)
+        ctx = OperationContext(user_id="test", groups=[], is_system=True)
         with pytest.raises(ValueError, match="backend_path"):
             cache_service.read_content_with_cache("hash1", ctx)
 
@@ -401,7 +401,7 @@ class TestReadContentWithCache:
         )
 
         ctx = OperationContext(
-            user="test", groups=[], backend_path="/test/cached.txt", is_system=True
+            user_id="test", groups=[], backend_path="/test/cached.txt", is_system=True
         )
         ctx.virtual_path = "/test/cached.txt"
 

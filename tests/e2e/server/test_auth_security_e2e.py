@@ -25,12 +25,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.raft import _HAS_METASTORE
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import Base
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -101,7 +102,7 @@ def _create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=enforce_permissions,
+        permissions=PermissionConfig(enforce=enforce_permissions),
         is_admin=False,
     )
 
@@ -316,7 +317,7 @@ class TestZoneIsolation:
     def _admin_ctx(zone_id: str) -> OperationContext:
         """Admin context for a given zone (no MANAGE_ZONES capability)."""
         return OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id=zone_id,
             is_admin=True,
@@ -389,7 +390,7 @@ class TestPermissionEnforcement:
         """An unprivileged user cannot read a file they have no grant for."""
         nx = nexus_fs_enforced
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -398,7 +399,7 @@ class TestPermissionEnforcement:
 
         # Unprivileged user with no grants
         user_ctx = OperationContext(
-            user="mallory",
+            user_id="mallory",
             groups=[],
             zone_id="root",
         )
@@ -411,7 +412,7 @@ class TestPermissionEnforcement:
         file_path = "/zone/default/user:admin/readme.md"
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -428,7 +429,7 @@ class TestPermissionEnforcement:
             )
 
         viewer_ctx = OperationContext(
-            user="viewer",
+            user_id="viewer",
             groups=[],
             zone_id="root",
         )
@@ -445,7 +446,7 @@ class TestPermissionEnforcement:
         """An unprivileged user cannot edit a file they have no grant for."""
         nx = nexus_fs_enforced
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -455,7 +456,7 @@ class TestPermissionEnforcement:
 
         # Unprivileged user with no grants
         user_ctx = OperationContext(
-            user="mallory",
+            user_id="mallory",
             groups=[],
             zone_id="root",
         )
@@ -472,7 +473,7 @@ class TestPermissionEnforcement:
         file_path = "/zone/default/user:admin/editable.py"
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -489,7 +490,7 @@ class TestPermissionEnforcement:
             )
 
         viewer_ctx = OperationContext(
-            user="viewer",
+            user_id="viewer",
             groups=[],
             zone_id="root",
         )
@@ -516,7 +517,7 @@ class TestPermissionEnforcement:
         file_path = "/zone/default/user:admin/writable.py"
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -533,7 +534,7 @@ class TestPermissionEnforcement:
             )
 
         editor_ctx = OperationContext(
-            user="editor",
+            user_id="editor",
             groups=[],
             zone_id="root",
         )
@@ -577,7 +578,7 @@ class TestStaleSessionDetection:
 
         # Write a test file as admin
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -610,7 +611,7 @@ class TestStaleSessionDetection:
 
         try:
             stale_ctx = OperationContext(
-                user="owner",
+                user_id="owner",
                 groups=[],
                 zone_id="root",
                 subject_type="agent",
@@ -630,7 +631,7 @@ class TestStaleSessionDetection:
         nx = nexus_fs_enforced
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -659,7 +660,7 @@ class TestStaleSessionDetection:
 
         try:
             current_ctx = OperationContext(
-                user="owner",
+                user_id="owner",
                 groups=[],
                 zone_id="root",
                 subject_type="agent",
@@ -680,7 +681,7 @@ class TestStaleSessionDetection:
         nx = nexus_fs_enforced
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -699,7 +700,7 @@ class TestStaleSessionDetection:
 
         try:
             deleted_ctx = OperationContext(
-                user="owner",
+                user_id="owner",
                 groups=[],
                 zone_id="root",
                 subject_type="agent",
@@ -714,7 +715,7 @@ class TestStaleSessionDetection:
 
     def test_jwt_roundtrip_with_agent_generation(self):
         """Full JWT roundtrip: create_token → authenticate → auth_result has generation."""
-        from nexus.server.auth.local import LocalAuth
+        from nexus.auth.providers.local import LocalAuth
 
         auth = LocalAuth(jwt_secret="e2e-test-secret", token_expiry=3600)
 

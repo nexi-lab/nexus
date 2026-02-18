@@ -5,7 +5,6 @@ This module provides CLI commands for managing OAuth credentials:
 - nexus oauth revoke: Revoke a credential
 - nexus oauth test: Test a credential's validity
 - nexus oauth refresh: Manually refresh a token
-- nexus oauth init: Initialize OAuth flow for a provider
 
 Examples:
     # List all credentials
@@ -16,9 +15,6 @@ Examples:
 
     # Test a credential
     nexus oauth test google alice@example.com
-
-    # Initialize OAuth flow for Google Drive
-    nexus oauth init google --client-id "..." --client-secret "..." --scopes "https://www.googleapis.com/auth/drive"
 """
 
 from __future__ import annotations
@@ -31,13 +27,9 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from nexus.auth.oauth.providers.x import XOAuthProvider
 from nexus.cli.utils import console
-from nexus.server.auth import (
-    GoogleOAuthProvider,
-    MicrosoftOAuthProvider,
-    TokenManager,
-)
-from nexus.server.auth.x_oauth import XOAuthProvider
+from nexus.server.auth.token_manager import TokenManager
 
 # Rich console for output
 _console = Console()
@@ -322,7 +314,7 @@ def setup_gdrive(
         nexus oauth setup-gdrive --user-email "alice@example.com"
     """
 
-    from nexus.server.auth import GoogleOAuthProvider
+    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 
     # Validate that credentials are provided (either via options or environment)
     if not client_id:
@@ -383,7 +375,7 @@ def setup_gdrive(
         cred_id = await manager.store_credential(
             provider="google",
             user_email=user_email,
-            credential=credential,
+            credential=credential,  # type: ignore[arg-type]
             zone_id=zone_id or "root",
             created_by=user_email,
         )
@@ -545,7 +537,7 @@ def setup_x(
         cred_id = await manager.store_credential(
             provider="twitter",
             user_email=user_email,
-            credential=credential,
+            credential=credential,  # type: ignore[arg-type]
             zone_id=zone_id or "root",
             created_by=user_email,
         )
@@ -568,93 +560,3 @@ def setup_x(
 
         console.print(f"[dim]{traceback.format_exc()}[/dim]")
         sys.exit(1)
-
-
-@oauth.command("init")
-@click.argument("provider", type=click.Choice(["google", "microsoft", "microsoft-onedrive"]))
-@click.option("--client-id", type=str, required=True, help="OAuth client ID")
-@click.option("--client-secret", type=str, required=True, help="OAuth client secret")
-@click.option(
-    "--redirect-uri",
-    type=str,
-    default="http://localhost:2026/oauth/callback",
-    help="OAuth redirect URI",
-)
-@click.option(
-    "--scopes",
-    type=str,
-    multiple=True,
-    help="OAuth scopes (can be specified multiple times)",
-)
-def init_oauth_flow(
-    provider: str,
-    client_id: str,
-    client_secret: str,
-    redirect_uri: str,
-    scopes: tuple[str, ...],
-) -> None:
-    """Initialize OAuth flow and get authorization URL.
-
-    This generates an authorization URL for the user to visit and grant permissions.
-    After granting permissions, the user will be redirected with an authorization code.
-
-    \b
-    Examples:
-        # Google Drive
-        nexus oauth init google \\
-            --client-id "123.apps.googleusercontent.com" \\
-            --client-secret "secret" \\
-            --scopes "https://www.googleapis.com/auth/drive"
-
-        # Microsoft OneDrive
-        nexus oauth init microsoft-onedrive \\
-            --client-id "12345678-1234-1234-1234-123456789012" \\
-            --client-secret "secret~..." \\
-            --scopes "Files.ReadWrite.All" \\
-            --scopes "offline_access"
-
-        # Note: 'microsoft' is also accepted as an alias for 'microsoft-onedrive'
-    """
-    scopes_list = list(scopes)
-
-    oauth_provider: GoogleOAuthProvider | MicrosoftOAuthProvider
-    if provider == "google":
-        oauth_provider = GoogleOAuthProvider(
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-            scopes=scopes_list,
-            provider_name="google-drive",
-        )
-    elif provider in ("microsoft", "microsoft-onedrive"):
-        # Note: zone_id is hardcoded to "common" in MicrosoftOAuthProvider
-        oauth_provider = MicrosoftOAuthProvider(
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-            scopes=scopes_list,
-            provider_name="microsoft-onedrive",
-        )
-    else:
-        console.print(f"[red]Unsupported provider: {provider}[/red]")
-        sys.exit(1)
-
-    # Generate authorization URL
-    auth_url = oauth_provider.get_authorization_url(state="nexus_cli")
-
-    console.print("\n[bold green]OAuth Authorization Flow[/bold green]")
-    console.print(f"\n[bold]Provider:[/bold] {provider}")
-    console.print(f"[bold]Client ID:[/bold] {client_id}")
-    console.print(f"[bold]Scopes:[/bold] {', '.join(scopes_list)}")
-    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
-    console.print(f"\n{auth_url}\n")
-    console.print(
-        "[bold yellow]Step 2:[/bold yellow] After authorization, you'll be redirected with a code."
-    )
-    console.print(
-        "[bold yellow]Step 3:[/bold yellow] Use that code with the Nexus API or server to complete the flow."
-    )
-    console.print(
-        "\n[dim]Note: This CLI command only generates the URL. To complete the flow, "
-        "use the Nexus server's OAuth endpoints.[/dim]"
-    )

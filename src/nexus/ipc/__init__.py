@@ -26,8 +26,10 @@ from nexus.ipc.conventions import (
 from nexus.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
 from nexus.ipc.discovery import AgentDiscovery
 from nexus.ipc.driver import IPCVFSDriver
-from nexus.ipc.envelope import MessageEnvelope, MessageType
+from nexus.ipc.envelope import MessageEnvelope, MessageType, RoutingMetadata
 from nexus.ipc.exceptions import (
+    CrossZoneDeliveryError,
+    DLQReason,
     EnvelopeValidationError,
     InboxFullError,
     InboxNotFoundError,
@@ -35,12 +37,15 @@ from nexus.ipc.exceptions import (
     MessageExpiredError,
 )
 from nexus.ipc.provisioning import AgentProvisioner
+from nexus.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
+from nexus.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
 from nexus.ipc.sweep import TTLSweeper
 
 __all__ = [
     # Envelope
     "MessageEnvelope",
     "MessageType",
+    "RoutingMetadata",
     # Conventions
     "AGENTS_ROOT",
     "agent_dir",
@@ -53,6 +58,13 @@ __all__ = [
     "DeliveryMode",
     "MessageSender",
     "MessageProcessor",
+    # Signing (#1729)
+    "MessageSigner",
+    "MessageVerifier",
+    "SigningMode",
+    "VerifyResult",
+    # Cross-zone
+    "CrossZoneStorageDriver",
     # Discovery
     "AgentDiscovery",
     # VFS Driver
@@ -67,4 +79,6 @@ __all__ = [
     "InboxNotFoundError",
     "InboxFullError",
     "MessageExpiredError",
+    "CrossZoneDeliveryError",
+    "DLQReason",
 ]

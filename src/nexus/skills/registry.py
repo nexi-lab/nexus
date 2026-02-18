@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nexus.skills.exceptions import (
+    SkillDependencyError,
+    SkillNotFoundError,
     SkillPermissionDeniedError,
-    SkillValidationError,
 )
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
@@ -20,18 +21,6 @@ if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
-
-
-class SkillNotFoundError(SkillValidationError):
-    """Raised when a skill is not found in the registry."""
-
-    pass
-
-
-class SkillDependencyError(SkillValidationError):
-    """Raised when skill dependencies cannot be resolved."""
-
-    pass
 
 
 class SkillRegistry:
@@ -102,7 +91,7 @@ class SkillRegistry:
             paths["zone"] = f"/zone/{zone_id}/skill/"
 
             # Check user_id first (v0.5.0+), then fall back to user (legacy field)
-            user_id = context.user_id or getattr(context, "user", None)
+            user_id = context.user_id
             if user_id:
                 # Personal skills: /zone/{tid}/user/{uid}/skill/
                 paths["personal"] = f"/zone/{zone_id}/user/{user_id}/skill/"

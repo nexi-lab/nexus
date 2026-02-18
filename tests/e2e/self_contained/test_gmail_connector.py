@@ -26,6 +26,7 @@ from nexus.connectors.gmail.schemas import (
     ReplyEmailSchema,
     SendEmailSchema,
 )
+from nexus.core.config import PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -104,9 +105,8 @@ def gmail_backend(mock_gmail_service, tmp_path):
 def operation_context():
     """Create an operation context for testing."""
     return OperationContext(
-        user="test@example.com",
-        groups=[],
         user_id="test@example.com",
+        groups=[],
         zone_id="root",
     )
 
@@ -328,7 +328,7 @@ class TestSkillDocGeneration:
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
-            enforce_permissions=False,
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:

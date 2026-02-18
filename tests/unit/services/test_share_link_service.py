@@ -49,7 +49,7 @@ def service_no_perms(mock_gateway):
 def context():
     """Standard operation context."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_system=False,
@@ -61,7 +61,7 @@ def context():
 def admin_context():
     """Admin operation context."""
     return OperationContext(
-        user="admin_user",
+        user_id="admin_user",
         groups=["admins"],
         zone_id="test_zone",
         is_system=False,

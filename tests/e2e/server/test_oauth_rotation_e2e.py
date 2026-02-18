@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.core.exceptions import AuthenticationError
 from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.server.auth.token_manager import TokenManager, _hash_token
@@ -46,13 +47,15 @@ def e2e_setup():
     session_factory = sessionmaker(bind=engine)
 
     audit_logger = SecretsAuditLogger(session_factory=session_factory)
-    manager = TokenManager(db_url=db_url, audit_logger=audit_logger)
+    cache_store = InMemoryCacheStore()
+    manager = TokenManager(db_url=db_url, audit_logger=audit_logger, cache_store=cache_store)
 
     yield {
         "manager": manager,
         "audit_logger": audit_logger,
         "session_factory": session_factory,
         "engine": engine,
+        "cache_store": cache_store,
     }
 
     manager.close()
@@ -121,7 +124,8 @@ class TestOAuthRotationE2E:
             session.commit()
 
         # Clear cache to force DB re-read
-        manager._token_cache.clear()
+        cache_store = e2e_setup["cache_store"]
+        await cache_store.delete_by_pattern("oauth:token:*")
 
         # Mock provider that returns a NEW refresh token (rotation)
         mock_provider = AsyncMock()

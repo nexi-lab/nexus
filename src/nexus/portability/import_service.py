@@ -44,7 +44,7 @@ def _create_import_context() -> OperationContext:
     from nexus.core.permissions import OperationContext
 
     return OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         is_admin=True,
         is_system=True,  # System operations bypass all checks
@@ -385,7 +385,7 @@ class ZoneImportService:
         try:
             # For metadata-only import, we need to create a metadata entry
             # without actual content. This is useful for catalog-style imports.
-            from nexus.core._metadata_generated import FileMetadata
+            from nexus.core.metadata import FileMetadata
 
             metadata = FileMetadata(
                 path=path,

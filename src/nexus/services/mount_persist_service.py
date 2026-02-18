@@ -83,6 +83,7 @@ class MountPersistService:
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -96,6 +97,7 @@ class MountPersistService:
             backend_config: Backend-specific configuration
             priority: Mount priority (default: 0)
             readonly: Read-only flag (default: False)
+            io_profile: I/O tuning profile (Issue #1413)
             owner_user_id: Owner user ID (auto-populated from context)
             zone_id: Zone ID (auto-populated from context)
             description: Human-readable description
@@ -125,6 +127,7 @@ class MountPersistService:
             backend_config=backend_config,
             priority=priority,
             readonly=readonly,
+            io_profile=io_profile,
             owner_user_id=owner_user_id,
             zone_id=zone_id,
             description=description,
@@ -138,6 +141,7 @@ class MountPersistService:
                 backend_config=backend_config,
                 priority=priority,
                 readonly=readonly,
+                io_profile=io_profile,
                 context=context,
             )
         except Exception as e:
@@ -188,6 +192,7 @@ class MountPersistService:
             backend_config=backend_config,
             priority=config["priority"],
             readonly=bool(config["readonly"]),
+            io_profile=config.get("io_profile", "balanced"),
             context=context,
         )
 
@@ -238,6 +243,7 @@ class MountPersistService:
                     backend_config=backend_config,
                     priority=mount["priority"],
                     readonly=bool(mount["readonly"]),
+                    io_profile=mount.get("io_profile", "balanced"),
                 )
 
                 loaded += 1
@@ -358,7 +364,7 @@ class MountPersistService:
                 subject_type, subject_id = "user", owner_parts[0]
 
             return OperationContext(
-                user=subject_id,
+                user_id=subject_id,
                 groups=[],
                 zone_id=mount.get("zone_id", "root"),
                 subject_type=subject_type,

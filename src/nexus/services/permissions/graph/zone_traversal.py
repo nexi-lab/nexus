@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import or_, select
 
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
-from nexus.services.permissions.types import (
+from nexus.rebac.types import (
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,

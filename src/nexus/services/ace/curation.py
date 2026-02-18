@@ -120,12 +120,16 @@ class Curator:
             Curation results or None if no reflections found
         """
         # Find reflection memories for this trajectory
+        from sqlalchemy import select
+
         reflection_memories = (
-            self.session.query(MemoryModel)
-            .filter_by(
-                trajectory_id=trajectory_id,
-                memory_type="reflection",
+            self.session.execute(
+                select(MemoryModel).filter_by(
+                    trajectory_id=trajectory_id,
+                    memory_type="reflection",
+                )
             )
+            .scalars()
             .all()
         )
 
@@ -144,7 +148,13 @@ class Curator:
         Returns:
             Reflection data or None if not found
         """
-        memory = self.session.query(MemoryModel).filter_by(memory_id=memory_id).first()
+        from sqlalchemy import select
+
+        memory = (
+            self.session.execute(select(MemoryModel).filter_by(memory_id=memory_id))
+            .scalars()
+            .first()
+        )
         if not memory:
             return None
 

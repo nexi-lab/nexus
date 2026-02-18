@@ -17,7 +17,7 @@ def operation_context():
         OperationContext with test user, group, and zone
     """
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_system=False,
@@ -33,7 +33,7 @@ def system_context():
         OperationContext with system privileges
     """
     return OperationContext(
-        user="system",
+        user_id="system",
         groups=["system"],
         zone_id="system",
         is_system=True,
@@ -49,7 +49,7 @@ def admin_context():
         OperationContext with admin privileges
     """
     return OperationContext(
-        user="admin_user",
+        user_id="admin_user",
         groups=["admin"],
         zone_id="test_zone",
         is_system=False,

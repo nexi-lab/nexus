@@ -49,6 +49,9 @@ chrono = "0.4"
 # Libc for FUSE types
 libc = "0.2"
 
+# Async runtime for Unix socket IPC daemon
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal"] }
+
 [dev-dependencies]
 # Mocking HTTP requests for tests
 mockito = "1.7"
@@ -66,8 +69,15 @@ url = "2.5"
 # Benchmarking (will add benchmark file later)
 criterion = "0.5"
 
+[[bench]]
+name = "fuse_operations"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+[profile.bench]
+inherits = "release"

@@ -4,7 +4,7 @@ Issue #1287: Extract NexusFS Domain Services from God Object.
 
 Provides standard fixtures used across all subsystem test modules:
 - operation_context: Pre-built OperationContext for test assertions
-- mock_metadata_store: Mock FileMetadataProtocol
+- mock_metadata_store: Mock MetastoreABC
 - mock_session_factory: Mock SQLAlchemy session factory
 - mock_permission_enforcer: Mock PermissionEnforcer
 """
@@ -22,7 +22,7 @@ from nexus.core.permissions import OperationContext
 def operation_context() -> OperationContext:
     """Standard OperationContext for subsystem tests."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_admin=False,
@@ -33,7 +33,7 @@ def operation_context() -> OperationContext:
 def admin_context() -> OperationContext:
     """Admin OperationContext for subsystem tests."""
     return OperationContext(
-        user="admin_user",
+        user_id="admin_user",
         groups=["admins"],
         zone_id="test_zone",
         is_admin=True,
@@ -42,7 +42,7 @@ def admin_context() -> OperationContext:
 
 @pytest.fixture
 def mock_metadata_store() -> MagicMock:
-    """Mock FileMetadataProtocol for subsystem tests.
+    """Mock MetastoreABC for subsystem tests.
 
     Provides a MagicMock with commonly accessed attributes pre-configured.
     """

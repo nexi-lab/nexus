@@ -1,20 +1,7 @@
-"""Backward-compat shim: nexus.services.permissions.permissions_enhanced.
+"""Backward-compat shim — canonical: nexus.rebac.permissions_enhanced."""
 
-Canonical location: ``nexus.rebac.permissions_enhanced``
-"""
-
-from nexus.rebac.permissions_enhanced import (
+from nexus.rebac.permissions_enhanced import (  # noqa: F401
     AdminCapability,
     AuditLogEntry,
     AuditStore,
-    EnhancedOperationContext,
-    EnhancedPermissionEnforcer,
 )
-
-__all__ = [
-    "AdminCapability",
-    "AuditLogEntry",
-    "AuditStore",
-    "EnhancedOperationContext",
-    "EnhancedPermissionEnforcer",
-]

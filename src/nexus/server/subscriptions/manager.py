@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 # Constants
 MAX_RETRIES = 3
 RETRY_DELAYS = [1, 5, 30]  # seconds
-WEBHOOK_TIMEOUT = 10.0  # seconds
+# Issue #2071: WEBHOOK_TIMEOUT sourced from ProfileTuning.network.webhook_timeout
+# Module-level constant = FULL profile default; override via constructor DI.
+WEBHOOK_TIMEOUT = 10.0  # seconds (FULL profile default)
 MAX_CONSECUTIVE_FAILURES = 10  # Disable after this many failures
 
 
@@ -104,15 +106,19 @@ class SubscriptionManager:
         Returns:
             Subscription if found, None otherwise
         """
+        from sqlalchemy import select
+
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
             model = (
-                session.query(SubscriptionModel)
-                .filter(
-                    SubscriptionModel.subscription_id == subscription_id,
-                    SubscriptionModel.zone_id == zone_id,
+                session.execute(
+                    select(SubscriptionModel).where(
+                        SubscriptionModel.subscription_id == subscription_id,
+                        SubscriptionModel.zone_id == zone_id,
+                    )
                 )
+                .scalars()
                 .first()
             )
             if model is None:
@@ -137,16 +143,18 @@ class SubscriptionManager:
         Returns:
             List of subscriptions
         """
+        from sqlalchemy import select
+
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
-            query = session.query(SubscriptionModel).filter(SubscriptionModel.zone_id == zone_id)
+            stmt = select(SubscriptionModel).where(SubscriptionModel.zone_id == zone_id)
             if enabled_only:
-                query = query.filter(SubscriptionModel.enabled == 1)
-            query = query.order_by(SubscriptionModel.created_at.desc())
-            query = query.limit(limit).offset(offset)
+                stmt = stmt.where(SubscriptionModel.enabled == 1)
+            stmt = stmt.order_by(SubscriptionModel.created_at.desc())
+            stmt = stmt.limit(limit).offset(offset)
 
-            return [self._to_subscription(m) for m in query.all()]
+            return [self._to_subscription(m) for m in session.execute(stmt).scalars().all()]
 
     def update(
         self,
@@ -164,15 +172,19 @@ class SubscriptionManager:
         Returns:
             Updated subscription if found, None otherwise
         """
+        from sqlalchemy import select
+
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
             model = (
-                session.query(SubscriptionModel)
-                .filter(
-                    SubscriptionModel.subscription_id == subscription_id,
-                    SubscriptionModel.zone_id == zone_id,
+                session.execute(
+                    select(SubscriptionModel).where(
+                        SubscriptionModel.subscription_id == subscription_id,
+                        SubscriptionModel.zone_id == zone_id,
+                    )
                 )
+                .scalars()
                 .first()
             )
             if model is None:
@@ -216,20 +228,20 @@ class SubscriptionManager:
         Returns:
             True if deleted, False if not found
         """
+        from sqlalchemy import delete
+
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
-            result = (
-                session.query(SubscriptionModel)
-                .filter(
+            result: Any = session.execute(
+                delete(SubscriptionModel).where(
                     SubscriptionModel.subscription_id == subscription_id,
                     SubscriptionModel.zone_id == zone_id,
                 )
-                .delete()
             )
             session.commit()
 
-            if result > 0:
+            if result.rowcount > 0:
                 logger.info(f"Deleted subscription {subscription_id}")
                 return True
             return False
@@ -314,16 +326,20 @@ class SubscriptionManager:
         zone_id: str,
     ) -> list[Subscription]:
         """Sync implementation of _get_matching_subscriptions."""
+        from sqlalchemy import select
+
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
             # Get enabled subscriptions for zone
             models = (
-                session.query(SubscriptionModel)
-                .filter(
-                    SubscriptionModel.zone_id == zone_id,
-                    SubscriptionModel.enabled == 1,
+                session.execute(
+                    select(SubscriptionModel).where(
+                        SubscriptionModel.zone_id == zone_id,
+                        SubscriptionModel.enabled == 1,
+                    )
                 )
+                .scalars()
                 .all()
             )
 
@@ -494,12 +510,18 @@ class SubscriptionManager:
 
     def _compute_signature_sync(self, subscription_id: str, payload: bytes) -> str | None:
         """Sync implementation of _compute_signature."""
+        from sqlalchemy import select
+
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
             model = (
-                session.query(SubscriptionModel)
-                .filter(SubscriptionModel.subscription_id == subscription_id)
+                session.execute(
+                    select(SubscriptionModel).where(
+                        SubscriptionModel.subscription_id == subscription_id
+                    )
+                )
+                .scalars()
                 .first()
             )
             if model is None or not model.secret:
@@ -539,12 +561,18 @@ class SubscriptionManager:
         error: str | None = None,  # noqa: ARG002 - reserved for future logging
     ) -> None:
         """Sync implementation of _update_delivery_status."""
+        from sqlalchemy import select
+
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
             model = (
-                session.query(SubscriptionModel)
-                .filter(SubscriptionModel.subscription_id == subscription_id)
+                session.execute(
+                    select(SubscriptionModel).where(
+                        SubscriptionModel.subscription_id == subscription_id
+                    )
+                )
+                .scalars()
                 .first()
             )
             if model is None:

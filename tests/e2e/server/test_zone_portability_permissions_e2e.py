@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.portability import (
@@ -42,12 +43,12 @@ def source_nexus_fs_with_permissions(temp_dir):
         backend=LocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,  # Enable permissions
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),  # Enable permissions
     )
 
     # Create admin context for writing test files
-    admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+    admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
     # Create test files as admin
     fs.write("/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context)
@@ -68,8 +69,8 @@ def target_nexus_fs_with_permissions(temp_dir):
         backend=LocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,  # Enable permissions
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),  # Enable permissions
     )
 
     yield fs
@@ -147,7 +148,7 @@ class TestImportWithPermissions:
         assert result.files_created == 3
 
         # Verify files exist via metadata store (bypasses permission checks)
-        admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+        admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Check via metadata directly
         meta = target_nexus_fs_with_permissions.metadata.get("/workspace/readme.md")
@@ -163,7 +164,7 @@ class TestImportWithPermissions:
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test SKIP conflict mode with permissions enabled."""
-        admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+        admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
         target_nexus_fs_with_permissions.write(
@@ -192,7 +193,7 @@ class TestImportWithPermissions:
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test OVERWRITE conflict mode with permissions enabled."""
-        admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+        admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
         target_nexus_fs_with_permissions.write(
@@ -226,7 +227,7 @@ class TestRoundTripWithPermissions:
     ):
         """Test that content is preserved through export/import with permissions."""
         bundle_path = temp_dir / "roundtrip_perms.nexus"
-        admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+        admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Export from source
         export_manifest = export_zone_bundle(

@@ -22,8 +22,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from nexus.core.permissions import OperationContext, Permission
+from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +308,7 @@ class MemoryVersioning:
                 source_type="rollback",
                 parent_version_id=parent_version_id,
                 change_reason=f"Rollback to version {version}",
-                created_by=check_context.user if check_context else None,
+                created_by=check_context.user_id if check_context else None,
             )
 
             session.commit()

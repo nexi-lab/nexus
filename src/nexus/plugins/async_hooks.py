@@ -55,6 +55,11 @@ _PHASE_TO_HOOK_TYPE: dict[str, HookType] = {
     "post_mkdir": HookType.AFTER_MKDIR,
     "pre_copy": HookType.BEFORE_COPY,
     "post_copy": HookType.AFTER_COPY,
+    # Brick lifecycle phases (Issue #1257)
+    "pre_mount": HookType.BEFORE_MOUNT,
+    "post_mount": HookType.AFTER_MOUNT,
+    "pre_unmount": HookType.BEFORE_UNMOUNT,
+    "post_unmount": HookType.AFTER_UNMOUNT,
 }
 
 

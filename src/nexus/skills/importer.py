@@ -10,7 +10,10 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
+from nexus.skills.exceptions import (
+    SkillImportError,
+    SkillPermissionDeniedError,
+)
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillRegistry
@@ -19,12 +22,6 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
-
-
-class SkillImportError(SkillValidationError):
-    """Raised when skill import fails."""
-
-    pass
 
 
 class SkillImporter:
@@ -383,7 +380,7 @@ class SkillImporter:
 
         if tier == "personal":
             # Personal: /zone/{tid}/user/{uid}/skill/{skill_name}/
-            user_id = context.user_id or getattr(context, "user", None)
+            user_id = context.user_id
             if not user_id:
                 raise ValueError("user_id required for personal tier skills")
             return f"/zone/{zone_id}/user/{user_id}/skill/{skill_name}/"
@@ -394,7 +391,7 @@ class SkillImporter:
 
         # Legacy user tier support (for backward compatibility)
         if tier == "user":
-            user_id = context.user_id or getattr(context, "user", None)
+            user_id = context.user_id
             if user_id:
                 return f"/skills/users/{user_id}/{skill_name}/"
             return f"/skills/user/{skill_name}/"

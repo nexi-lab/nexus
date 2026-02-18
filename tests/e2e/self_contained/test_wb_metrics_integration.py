@@ -15,9 +15,20 @@ import pytest
 from starlette.testclient import TestClient
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+# Check if native Raft module is available (required for RaftMetadataStore.embedded)
+try:
+    from nexus.raft import Metastore
+
+    _raft_available = Metastore is not None
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft Metastore not available")
 
 # All 9 metric families emitted by WriteBufferCollector
 _EXPECTED_WB_METRICS = [
@@ -54,7 +65,7 @@ def app_and_key(tmp_path):
         metadata_store=metadata_store,
         record_store=record_store,
         is_admin=True,
-        enable_tiger_cache=False,
+        permissions=PermissionConfig(enable_tiger_cache=False),
         enable_write_buffer=True,  # Force-enable for SQLite
     )
 

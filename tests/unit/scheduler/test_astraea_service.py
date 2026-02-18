@@ -17,7 +17,7 @@ from nexus.scheduler.constants import (
     PriorityTier,
 )
 from nexus.scheduler.events import AgentStateEmitter, AgentStateEvent
-from nexus.scheduler.models import ScheduledTask, TaskSubmission
+from nexus.scheduler.models import ScheduledTask
 from nexus.scheduler.policies.fair_share import FairShareCounter
 from nexus.scheduler.service import SchedulerService
 from nexus.services.protocols.scheduler import AgentRequest
@@ -177,20 +177,22 @@ class TestFairShareRejection:
     """Test that tasks are rejected when agent is at capacity."""
 
     @pytest.mark.asyncio
-    async def test_submit_task_rejected_at_capacity(self, mock_queue, mock_pool):
+    async def test_submit_rejected_at_capacity(self, mock_queue, mock_pool):
         fs = FairShareCounter(default_max_concurrent=1)
         svc = SchedulerService(queue=mock_queue, db_pool=mock_pool, fair_share=fs, use_hrrn=True)
 
         # Fill up the agent's capacity
         fs.record_start("exec-1")
 
-        sub = TaskSubmission(
+        req = AgentRequest(
             agent_id="agent-a",
+            zone_id=None,
+            priority=2,
             executor_id="exec-1",
             task_type="compute",
         )
         with pytest.raises(ValueError, match="at capacity"):
-            await svc.submit_task(sub)
+            await svc.submit(req)
 
 
 # =============================================================================

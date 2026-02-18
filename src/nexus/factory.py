@@ -48,10 +48,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.config import (
+        BrickServices,
         CacheConfig,
         DistributedConfig,
         KernelServices,
         PermissionConfig,
+        SystemServices,
     )
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
@@ -1009,7 +1011,7 @@ def create_nexus_services(
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
     enabled_bricks: frozenset[str] | None = None,
-) -> KernelServices:
+) -> tuple[KernelServices, SystemServices, BrickServices]:
     """Create default services for NexusFS dependency injection.
 
     Orchestrates 3-tier boot sequence:
@@ -1040,16 +1042,21 @@ def create_nexus_services(
             are enabled (backward-compatible default = FULL profile).
 
     Returns:
-        KernelServices with all services populated (None for disabled bricks).
+        Tuple of (KernelServices, SystemServices, BrickServices).
+
+    .. versionchanged:: Issue #2034
+        Returns a 3-tuple instead of a single KernelServices.
     """
     import logging as _factory_logging
 
     _factory_log = _factory_logging.getLogger(__name__)
 
+    from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import PermissionConfig as _PermissionConfig
+    from nexus.core.config import SystemServices as _SystemServices
 
     # --- Profile-based brick gating (Issue #1389) ---
     from nexus.core.deployment_profile import DeploymentProfile
@@ -1103,61 +1110,62 @@ def create_nexus_services(
     )
 
     # --- Tier 0: KERNEL (fatal on failure) ---
-    kernel = _boot_kernel_services(ctx)
+    kernel_dict = _boot_kernel_services(ctx)
 
     # --- Tier 1: SYSTEM (degraded on failure) ---
-    system = _boot_system_services(ctx, kernel)
+    system_dict = _boot_system_services(ctx, kernel_dict)
 
     # --- Tier 2: BRICK (optional) ---
-    brick = _boot_brick_services(ctx, kernel)
+    brick_dict = _boot_brick_services(ctx, kernel_dict)
 
     # --- Start background threads post-construction ---
-    _start_background_services(kernel, system)
+    _start_background_services(kernel_dict, system_dict)
 
-    # --- Assemble KernelServices ---
-    return _KernelServices(
-        # Kernel tier
+    # --- Assemble 3-tier containers (Issue #2034) ---
+    kernel_services = _KernelServices(
         router=router,
-        rebac_manager=kernel["rebac_manager"],
-        rebac_circuit_breaker=kernel["rebac_circuit_breaker"],
-        dir_visibility_cache=kernel["dir_visibility_cache"],
-        audit_store=kernel["audit_store"],
-        entity_registry=kernel["entity_registry"],
-        permission_enforcer=kernel["permission_enforcer"],
-        hierarchy_manager=kernel["hierarchy_manager"],
-        deferred_permission_buffer=kernel["deferred_permission_buffer"],
-        workspace_registry=kernel["workspace_registry"],
-        mount_manager=kernel["mount_manager"],
-        workspace_manager=kernel["workspace_manager"],
-        context_branch_service=system.get("context_branch_service"),
-        write_observer=kernel["write_observer"],
-        version_service=kernel["version_service"],
-        # System tier
-        agent_registry=system["agent_registry"],
-        async_agent_registry=system["async_agent_registry"],
-        namespace_manager=system["namespace_manager"],
-        async_namespace_manager=system["async_namespace_manager"],
-        async_vfs_router=system["async_vfs_router"],
-        resiliency_manager=system["resiliency_manager"],
-        brick_lifecycle_manager=system.get("brick_lifecycle_manager"),
-        scoped_hook_engine=system.get("scoped_hook_engine"),
-        # Brick tier
-        overlay_resolver=None,
-        wallet_provisioner=brick["wallet_provisioner"],
-        event_bus=brick["event_bus"],
-        lock_manager=brick["lock_manager"],
-        workflow_engine=brick["workflow_engine"],
-        # Server-layer services (first-class fields)
-        observability_subsystem=system["observability_subsystem"],
-        chunked_upload_service=brick["chunked_upload_service"],
-        manifest_resolver=brick["manifest_resolver"],
-        manifest_metrics=brick["manifest_metrics"],
-        tool_namespace_middleware=brick["tool_namespace_middleware"],
-        delivery_worker=system["delivery_worker"],
-        api_key_creator=brick["api_key_creator"],
-        snapshot_service=brick["snapshot_service"],
-        task_queue_service=brick["task_queue_service"],
+        rebac_manager=kernel_dict["rebac_manager"],
+        dir_visibility_cache=kernel_dict["dir_visibility_cache"],
+        audit_store=kernel_dict["audit_store"],
+        entity_registry=kernel_dict["entity_registry"],
+        permission_enforcer=kernel_dict["permission_enforcer"],
+        hierarchy_manager=kernel_dict["hierarchy_manager"],
+        deferred_permission_buffer=kernel_dict["deferred_permission_buffer"],
+        workspace_registry=kernel_dict["workspace_registry"],
+        mount_manager=kernel_dict["mount_manager"],
+        workspace_manager=kernel_dict["workspace_manager"],
+        write_observer=kernel_dict["write_observer"],
+        version_service=kernel_dict["version_service"],
     )
+
+    system_services = _SystemServices(
+        agent_registry=system_dict["agent_registry"],
+        async_agent_registry=system_dict["async_agent_registry"],
+        namespace_manager=system_dict["namespace_manager"],
+        async_namespace_manager=system_dict["async_namespace_manager"],
+        context_branch_service=system_dict.get("context_branch_service"),
+        scoped_hook_engine=system_dict.get("scoped_hook_engine"),
+        brick_lifecycle_manager=system_dict.get("brick_lifecycle_manager"),
+        delivery_worker=system_dict["delivery_worker"],
+        observability_subsystem=system_dict["observability_subsystem"],
+        resiliency_manager=system_dict["resiliency_manager"],
+    )
+
+    brick_services = _BrickServices(
+        event_bus=brick_dict["event_bus"],
+        lock_manager=brick_dict["lock_manager"],
+        workflow_engine=brick_dict["workflow_engine"],
+        rebac_circuit_breaker=kernel_dict["rebac_circuit_breaker"],
+        wallet_provisioner=brick_dict["wallet_provisioner"],
+        chunked_upload_service=brick_dict["chunked_upload_service"],
+        manifest_resolver=brick_dict["manifest_resolver"],
+        tool_namespace_middleware=brick_dict["tool_namespace_middleware"],
+        api_key_creator=brick_dict["api_key_creator"],
+        snapshot_service=brick_dict["snapshot_service"],
+        task_queue_service=brick_dict["task_queue_service"],
+    )
+
+    return kernel_services, system_services, brick_services
 
 
 def _create_distributed_infra(
@@ -1306,7 +1314,9 @@ def create_nexus_fs(
     distributed: DistributedConfig | None = None,
     memory: Any = None,
     parsing: Any = None,
-    services: KernelServices | None = None,
+    kernel_services: KernelServices | None = None,
+    system_services: SystemServices | None = None,
+    brick_services: BrickServices | None = None,
     enable_write_buffer: bool | None = None,
     enabled_bricks: frozenset[str] | None = None,
     zone_id: str | None = None,
@@ -1328,7 +1338,9 @@ def create_nexus_fs(
         distributed: DistributedConfig object.
         memory: MemoryConfig object.
         parsing: ParseConfig object.
-        services: Pre-built KernelServices (skips create_nexus_services).
+        kernel_services: Pre-built KernelServices (skips create_nexus_services).
+        system_services: Pre-built SystemServices.
+        brick_services: Pre-built BrickServices.
         enable_write_buffer: Use async WriteBuffer for PG sync.
         enabled_bricks: Set of brick names to enable.
         zone_id: Default zone ID (for WorkspaceManager, embedded mode).
@@ -1337,10 +1349,17 @@ def create_nexus_fs(
 
     Returns:
         Fully configured NexusFS instance with services injected.
+
+    .. versionchanged:: Issue #2034
+        ``services`` param replaced by ``kernel_services``, ``system_services``,
+        ``brick_services`` (3-tier split).
     """
+    from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import (
         DistributedConfig as _DistributedConfig,
     )
+    from nexus.core.config import KernelServices as _KernelServices
+    from nexus.core.config import SystemServices as _SystemServices
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import NamespaceConfig, PathRouter
 
@@ -1354,9 +1373,6 @@ def create_nexus_fs(
     router.add_mount("/", backend, priority=0)
 
     # KERNEL-ARCHITECTURE §2: No CacheStore → EventBus disabled.
-    # When no real CacheStore is provided (None or NullCacheStore), disable
-    # EventBus to prevent creating a standalone Redis/Dragonfly connection
-    # for events that would violate the graceful-degradation invariant.
     _has_real_cache = cache_store is not None
     if _has_real_cache:
         from nexus.core.cache_store import NullCacheStore as _NullCacheStore
@@ -1372,8 +1388,8 @@ def create_nexus_fs(
             logger.debug("EventBus disabled: no CacheStore provided (KERNEL-ARCHITECTURE §2)")
 
     # Create services if record_store is provided and no pre-built services
-    if services is None and record_store is not None:
-        services = create_nexus_services(
+    if kernel_services is None and record_store is not None:
+        kernel_services, system_services, brick_services = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
@@ -1386,22 +1402,26 @@ def create_nexus_fs(
             enable_write_buffer=enable_write_buffer,
             enabled_bricks=enabled_bricks,
         )
-    elif services is None:
-        from nexus.core.config import KernelServices as _KernelServices
-
-        services = _KernelServices(router=router)
+    elif kernel_services is None:
+        kernel_services = _KernelServices(router=router)
     else:
         # Use provided services but ensure router is set (frozen — use replace)
-        if services.router is None:
+        if kernel_services.router is None:
             from dataclasses import replace as _dc_replace
 
-            services = _dc_replace(services, router=router)
+            kernel_services = _dc_replace(kernel_services, router=router)
+
+    # Default system/brick to empty containers when not provided
+    if system_services is None:
+        system_services = _SystemServices()
+    if brick_services is None:
+        brick_services = _BrickServices()
 
     # Inject workflow_engine override if provided directly (frozen — use replace)
     if workflow_engine is not None:
         from dataclasses import replace as _dc_replace
 
-        services = _dc_replace(services, workflow_engine=workflow_engine)
+        brick_services = _dc_replace(brick_services, workflow_engine=workflow_engine)
 
     # Create ParsersBrick — owns both registries (Issue #1523)
     from nexus.parsers.brick import ParsersBrick
@@ -1441,7 +1461,9 @@ def create_nexus_fs(
         distributed=distributed,
         memory=memory,
         parsing=parsing,
-        services=services,
+        kernel_services=kernel_services,
+        system_services=system_services,
+        brick_services=brick_services,
         parse_fn=_parse_fn,
         content_cache=_content_cache,
         parser_registry=parsers_brick.parser_registry,

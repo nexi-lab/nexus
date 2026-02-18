@@ -40,7 +40,7 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
         backend=backend,
         metadata_store=metadata_store,
         permissions=PermissionConfig(enforce=enforce_permissions),
-        services=KernelServices(version_service=version_service),
+        kernel_services=KernelServices(version_service=version_service),
     )
 
 

@@ -327,8 +327,8 @@ class TestStartBackgroundServices:
 class TestCreateNexusServicesIntegration:
     """Integration tests for create_nexus_services orchestrator."""
 
-    def test_full_boot_returns_kernel_services(self) -> None:
-        from nexus.core.config import KernelServices
+    def test_full_boot_returns_three_tier_tuple(self) -> None:
+        from nexus.core.config import BrickServices, KernelServices, SystemServices
         from nexus.factory import create_nexus_services
 
         record_store = MagicMock()
@@ -342,10 +342,15 @@ class TestCreateNexusServicesIntegration:
             backend=MagicMock(),
             router=MagicMock(),
         )
-        assert isinstance(result, KernelServices)
-        assert result.rebac_manager is not None
-        assert result.rebac_circuit_breaker is not None
-        assert result.permission_enforcer is not None
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        kernel, system, brick = result
+        assert isinstance(kernel, KernelServices)
+        assert isinstance(system, SystemServices)
+        assert isinstance(brick, BrickServices)
+        assert kernel.rebac_manager is not None
+        assert kernel.permission_enforcer is not None
+        assert brick.rebac_circuit_breaker is not None
 
     def test_kernel_failure_propagates_boot_error(self) -> None:
         from nexus.factory import create_nexus_services

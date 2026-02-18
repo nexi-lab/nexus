@@ -31,24 +31,24 @@ def _make_lifecycle_brick(name: str = "test") -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-class TestKernelServicesIntegration:
-    """Verify BrickLifecycleManager is a first-class KernelServices field."""
+class TestSystemServicesIntegration:
+    """Verify BrickLifecycleManager is a first-class SystemServices field (Issue #2034)."""
 
-    def test_kernel_services_has_brick_lifecycle_manager_field(self) -> None:
-        """KernelServices should have a brick_lifecycle_manager field."""
-        from nexus.core.config import KernelServices
+    def test_system_services_has_brick_lifecycle_manager_field(self) -> None:
+        """SystemServices should have a brick_lifecycle_manager field."""
+        from nexus.core.config import SystemServices
 
-        ks = KernelServices()
-        assert hasattr(ks, "brick_lifecycle_manager")
-        assert ks.brick_lifecycle_manager is None  # Default is None
+        ss = SystemServices()
+        assert hasattr(ss, "brick_lifecycle_manager")
+        assert ss.brick_lifecycle_manager is None  # Default is None
 
-    def test_kernel_services_accepts_lifecycle_manager(self) -> None:
-        """KernelServices should accept a BrickLifecycleManager instance."""
-        from nexus.core.config import KernelServices
+    def test_system_services_accepts_lifecycle_manager(self) -> None:
+        """SystemServices should accept a BrickLifecycleManager instance."""
+        from nexus.core.config import SystemServices
 
         manager = BrickLifecycleManager()
-        ks = KernelServices(brick_lifecycle_manager=manager)
-        assert ks.brick_lifecycle_manager is manager
+        ss = SystemServices(brick_lifecycle_manager=manager)
+        assert ss.brick_lifecycle_manager is manager
 
 
 # ---------------------------------------------------------------------------

@@ -202,6 +202,7 @@ class TestBootSystemServices:
             "resiliency_manager",
             "context_branch_service",
             "brick_lifecycle_manager",
+            "scoped_hook_engine",
         }
         assert expected_keys == set(result.keys())
 

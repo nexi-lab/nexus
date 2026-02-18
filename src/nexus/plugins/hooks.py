@@ -1,5 +1,6 @@
-"""Plugin hooks system for lifecycle events."""
+"""Plugin hooks system for lifecycle events (Issue #1257: timeout enforcement)."""
 
+import asyncio
 import logging
 from collections.abc import Callable
 from enum import StrEnum
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 class HookType(StrEnum):
     """Available hook types for plugins."""
 
+    # Filesystem phases
     BEFORE_WRITE = "before_write"
     AFTER_WRITE = "after_write"
     BEFORE_READ = "before_read"
@@ -21,6 +23,12 @@ class HookType(StrEnum):
     AFTER_MKDIR = "after_mkdir"
     BEFORE_COPY = "before_copy"
     AFTER_COPY = "after_copy"
+
+    # Brick lifecycle phases (Issue #1257)
+    BEFORE_MOUNT = "before_mount"
+    AFTER_MOUNT = "after_mount"
+    BEFORE_UNMOUNT = "before_unmount"
+    AFTER_UNMOUNT = "after_unmount"
 
 
 class PluginHooks:
@@ -72,12 +80,19 @@ class PluginHooks:
         """
         return bool(self._hooks.get(hook_type))
 
-    async def execute(self, hook_type: HookType, context: dict[str, Any]) -> dict[str, Any] | None:
+    async def execute(
+        self,
+        hook_type: HookType,
+        context: dict[str, Any],
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any] | None:
         """Execute all handlers for a hook type.
 
         Args:
             hook_type: Type of hook to execute
             context: Context data passed to handlers
+            timeout: Per-handler timeout in seconds.  ``None`` = no timeout.
 
         Returns:
             Modified context or None if hook execution should stop
@@ -87,11 +102,22 @@ class PluginHooks:
 
         for _priority, handler in self._hooks[hook_type]:
             try:
-                result = await handler(context)
+                if timeout is not None:
+                    result = await asyncio.wait_for(handler(context), timeout=timeout)
+                else:
+                    result = await handler(context)
                 if result is None:
                     # Handler returned None - stop execution
                     return None
                 context = result
+            except TimeoutError:
+                logger.warning(
+                    "Hook %s handler %s timed out after %.2fs — skipping",
+                    hook_type,
+                    handler,
+                    timeout,
+                )
+                continue
             except Exception:
                 logger.exception("Hook %s handler %s failed", hook_type, handler)
                 continue

@@ -27,7 +27,7 @@ from pyroaring import BitMap as RoaringBitmap
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
-    from nexus.cache.dragonfly import DragonflyTigerCache
+    from nexus.cache.base import TigerCacheProtocol
     from nexus.rebac.cache.tiger.resource_map import TigerResourceMap
     from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
@@ -82,7 +82,7 @@ class TigerCache:
         engine: Engine,
         resource_map: TigerResourceMap | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
-        dragonfly_cache: DragonflyTigerCache | None = None,
+        dragonfly_cache: TigerCacheProtocol | None = None,
     ):
         """Initialize Tiger Cache.
 
@@ -100,7 +100,7 @@ class TigerCache:
         self._is_postgresql = "postgresql" in str(engine.url)
 
         # L2: Dragonfly distributed cache (optional)
-        self._dragonfly: DragonflyTigerCache | None = dragonfly_cache
+        self._dragonfly: TigerCacheProtocol | None = dragonfly_cache
         self._dragonfly_url: str | None = None  # Cached URL for sync Redis client
 
         # L1: In-memory cache for hot entries
@@ -114,19 +114,20 @@ class TigerCache:
         # Persistent thread pool for L2 operations (avoid per-operation creation)
         self._l2_executor: Any | None = None
 
-    def set_dragonfly_cache(self, dragonfly_cache: DragonflyTigerCache | None) -> None:
+    def set_dragonfly_cache(self, dragonfly_cache: TigerCacheProtocol | None) -> None:
         """Set or update the Dragonfly cache backend.
 
         This allows late binding of the Dragonfly cache after initialization,
         useful when the cache factory initializes after TigerCache.
 
         Args:
-            dragonfly_cache: DragonflyTigerCache instance or None to disable
+            dragonfly_cache: TigerCacheProtocol instance or None to disable
         """
         self._dragonfly = dragonfly_cache
         if dragonfly_cache:
             # Cache URL for sync Redis operations
-            self._dragonfly_url = getattr(dragonfly_cache._client, "_url", None)
+            _client = getattr(dragonfly_cache, "_client", None)
+            self._dragonfly_url = getattr(_client, "_url", None) if _client else None
             # Create persistent thread pool (max 4 workers for L2 ops)
             import concurrent.futures
 

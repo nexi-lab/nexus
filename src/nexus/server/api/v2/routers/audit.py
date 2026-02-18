@@ -32,7 +32,7 @@ from nexus.server.api.v2.models import (
     AuditTransactionListResponse,
     AuditTransactionResponse,
 )
-from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+from nexus.services.protocols.exchange_audit_log import ExchangeAuditLogProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ def list_transactions(
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
     cursor: str | None = Query(None, description="Cursor from previous response"),
     include_total: bool = Query(False, description="Include total count"),
-    logger_and_zone: tuple[ExchangeAuditLogger, str] = Depends(get_exchange_audit_logger),
+    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
 ) -> AuditTransactionListResponse:
     """List exchange audit transactions with cursor-based pagination."""
     audit_logger, zone_id = logger_and_zone
@@ -166,7 +166,7 @@ def list_transactions(
 def get_aggregations(
     since: datetime | None = Query(None, description="Start time (ISO-8601)"),
     until: datetime | None = Query(None, description="End time (ISO-8601)"),
-    logger_and_zone: tuple[ExchangeAuditLogger, str] = Depends(get_exchange_audit_logger),
+    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
 ) -> AuditAggregationResponse:
     """Compute aggregations: total volume, count, top counterparties."""
     audit_logger, zone_id = logger_and_zone
@@ -194,7 +194,7 @@ def export_transactions(
     seller_agent_id: str | None = Query(None),
     status: str | None = Query(None),
     application: str | None = Query(None),
-    logger_and_zone: tuple[ExchangeAuditLogger, str] = Depends(get_exchange_audit_logger),
+    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
 ) -> StreamingResponse:
     """Export transactions as CSV or JSON (streaming)."""
     audit_logger, zone_id = logger_and_zone
@@ -299,7 +299,7 @@ def _json_response(rows: list[dict[str, Any]]) -> StreamingResponse:
 @router.get("/transactions/{record_id}")
 def get_transaction(
     record_id: str,
-    logger_and_zone: tuple[ExchangeAuditLogger, str] = Depends(get_exchange_audit_logger),
+    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
 ) -> AuditTransactionResponse:
     """Get a single audit transaction by ID."""
     audit_logger, zone_id = logger_and_zone
@@ -318,7 +318,7 @@ def get_transaction(
 @router.get("/integrity/{record_id}")
 def verify_integrity(
     record_id: str,
-    logger_and_zone: tuple[ExchangeAuditLogger, str] = Depends(get_exchange_audit_logger),
+    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
 ) -> AuditIntegrityResponse:
     """Verify a record's hash matches its data (tamper detection)."""
     audit_logger, zone_id = logger_and_zone

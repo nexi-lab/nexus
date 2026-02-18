@@ -321,7 +321,12 @@ class SemanticSearch:
         if not chunks:
             # Update tracking even for empty files (Issue #865)
             with self._get_session() as session:
-                file_model = session.get(FilePathModel, path_id)
+                # Zone-scoped lookup (avoid session.get which bypasses zone_id)
+                fp_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
+                _zone_id = getattr(self.nx, "zone_id", None) if self.nx else None
+                if _zone_id is not None:
+                    fp_stmt = fp_stmt.where(FilePathModel.zone_id == _zone_id)
+                file_model = session.scalar(fp_stmt)
                 if file_model:
                     file_model.indexed_content_hash = current_content_hash
                     file_model.last_indexed_at = datetime.now(UTC)
@@ -383,8 +388,12 @@ class SemanticSearch:
                     self.vector_db.store_embedding(session, chunk_id, embedding)
                 session.commit()
 
-            # Update indexing tracking fields (Issue #865)
-            file_model = session.get(FilePathModel, path_id)
+            # Update indexing tracking fields (Issue #865, zone-scoped)
+            fp_stmt2 = select(FilePathModel).where(FilePathModel.path_id == path_id)
+            _zone_id = getattr(self.nx, "zone_id", None) if self.nx else None
+            if _zone_id is not None:
+                fp_stmt2 = fp_stmt2.where(FilePathModel.zone_id == _zone_id)
+            file_model = session.scalar(fp_stmt2)
             if file_model:
                 file_model.indexed_content_hash = current_content_hash
                 file_model.last_indexed_at = datetime.now(UTC)

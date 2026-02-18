@@ -47,7 +47,7 @@ from nexus.search.graph_retrieval import (
     graph_enhanced_fusion,
 )
 from nexus.search.graph_store import GraphStore
-from nexus.search.semantic import SemanticSearchResult
+from nexus.search.results import BaseSearchResult as SemanticSearchResult
 from nexus.storage.models import Base
 
 logging.basicConfig(

@@ -8,7 +8,7 @@ routers be thin adapters with no business logic.
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +27,9 @@ class DaemonSemanticSearchWrapper:
         limit: int = 10,
         search_mode: str = "hybrid",
         alpha: float = 0.5,
+        **kwargs: Any,  # noqa: ARG002
     ) -> list[Any]:
-        from nexus.search.semantic import SemanticSearchResult
+        from nexus.search.results import BaseSearchResult
 
         results = await self.daemon.search(
             query=query,
@@ -38,7 +39,7 @@ class DaemonSemanticSearchWrapper:
             alpha=alpha,
         )
         return [
-            SemanticSearchResult(
+            BaseSearchResult(
                 path=r.path,
                 chunk_index=r.chunk_index,
                 chunk_text=r.chunk_text,
@@ -101,10 +102,8 @@ async def graph_enhanced_search(
             neighbor_hops=2,
         )
 
-        from nexus.search.semantic import SemanticSearch
-
         retriever = GraphEnhancedRetriever(
-            semantic_search=cast(SemanticSearch, semantic_wrapper),
+            semantic_search=semantic_wrapper,
             graph_store=graph_store,
             embedding_provider=embedding_provider,
             config=config,

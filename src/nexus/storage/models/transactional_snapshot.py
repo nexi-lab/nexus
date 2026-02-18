@@ -87,9 +87,7 @@ class TransactionSnapshotModel(Base):
 
         valid_statuses = {"ACTIVE", "COMMITTED", "ROLLED_BACK", "EXPIRED"}
         if self.status not in valid_statuses:
-            raise ValidationError(
-                f"status must be one of {valid_statuses}, got {self.status}"
-            )
+            raise ValidationError(f"status must be one of {valid_statuses}, got {self.status}")
 
         if not self.agent_id:
             raise ValidationError("agent_id is required")

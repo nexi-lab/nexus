@@ -3177,9 +3177,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.services.protocols.transactional_snapshot import SnapshotId
 
         asyncio.get_event_loop().run_until_complete(
-            self._snapshot_service.commit(
-                SnapshotId(id=snapshot_id), context=context
-            )
+            self._snapshot_service.commit(SnapshotId(id=snapshot_id), context=context)
         )
         return {"status": "committed", "snapshot_id": snapshot_id}
 
@@ -3204,9 +3202,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.services.protocols.transactional_snapshot import SnapshotId
 
         result = asyncio.get_event_loop().run_until_complete(
-            self._snapshot_service.rollback(
-                SnapshotId(id=snapshot_id), context=context
-            )
+            self._snapshot_service.rollback(SnapshotId(id=snapshot_id), context=context)
         )
         return {
             "snapshot_id": result.snapshot_id,

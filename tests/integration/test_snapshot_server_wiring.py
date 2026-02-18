@@ -193,9 +193,7 @@ class TestSnapshotServerWiring:
             json={"agent_id": "list-agent", "paths": ["/workspace/file-1.txt"]},
         )
 
-        resp = client.get(
-            "/api/v2/snapshots/active", params={"agent_id": "list-agent"}
-        )
+        resp = client.get("/api/v2/snapshots/active", params={"agent_id": "list-agent"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["count"] == 2

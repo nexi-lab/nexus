@@ -166,8 +166,7 @@ class InvalidTransactionStateError(Exception):
         self.current_state = current_state
         self.attempted_action = attempted_action
         super().__init__(
-            f"Cannot {attempted_action} transaction {snapshot_id}: "
-            f"current state is {current_state}"
+            f"Cannot {attempted_action} transaction {snapshot_id}: current state is {current_state}"
         )
 
 

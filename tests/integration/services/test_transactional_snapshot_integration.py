@@ -428,7 +428,10 @@ class TestFullLifecycleIntegration:
 
     @pytest.mark.asyncio
     async def test_cleanup_expired_with_real_db(
-        self, service: TransactionalSnapshotService, metadata_store: InMemoryMetadataStore, session_factory
+        self,
+        service: TransactionalSnapshotService,
+        metadata_store: InMemoryMetadataStore,
+        session_factory,
     ) -> None:
         """Expired transactions are cleaned up from real SQLite DB."""
         from nexus.storage.models.transactional_snapshot import TransactionSnapshotModel

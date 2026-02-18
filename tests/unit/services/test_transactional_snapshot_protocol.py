@@ -39,7 +39,11 @@ class TestTransactionState:
         assert TransactionState.EXPIRED == "EXPIRED"
 
     def test_all_terminal_states(self) -> None:
-        terminal = {TransactionState.COMMITTED, TransactionState.ROLLED_BACK, TransactionState.EXPIRED}
+        terminal = {
+            TransactionState.COMMITTED,
+            TransactionState.ROLLED_BACK,
+            TransactionState.EXPIRED,
+        }
         assert TransactionState.ACTIVE not in terminal
         assert len(terminal) == 3
 

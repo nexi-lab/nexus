@@ -205,9 +205,7 @@ class TransactionalSnapshotService:
         with start_snapshot_span("rollback", snapshot_id=snapshot_id.id) as _span:
             return await self._rollback_inner(snapshot_id, _span)
 
-    async def _rollback_inner(
-        self, snapshot_id: SnapshotId, span: Any
-    ) -> TransactionResult:
+    async def _rollback_inner(self, snapshot_id: SnapshotId, span: Any) -> TransactionResult:
         # Session 1: Read snapshot + validate state
         with self._session_factory() as session:
             model = session.get(TransactionSnapshotModel, snapshot_id.id)
@@ -440,17 +438,19 @@ class TransactionalSnapshotService:
 
 def _serialize_metadata(meta: Any) -> str:
     """Serialize FileMetadata to JSON string for snapshot storage."""
-    return json.dumps({
-        "path": meta.path,
-        "backend_name": meta.backend_name,
-        "physical_path": meta.physical_path,
-        "size": meta.size,
-        "etag": meta.etag,
-        "mime_type": getattr(meta, "mime_type", None),
-        "version": getattr(meta, "version", 1),
-        "zone_id": getattr(meta, "zone_id", None),
-        "created_by": getattr(meta, "created_by", None),
-    })
+    return json.dumps(
+        {
+            "path": meta.path,
+            "backend_name": meta.backend_name,
+            "physical_path": meta.physical_path,
+            "size": meta.size,
+            "etag": meta.etag,
+            "mime_type": getattr(meta, "mime_type", None),
+            "version": getattr(meta, "version", 1),
+            "zone_id": getattr(meta, "zone_id", None),
+            "created_by": getattr(meta, "created_by", None),
+        }
+    )
 
 
 def _deserialize_to_metadata(ps: PathSnapshot) -> Any:

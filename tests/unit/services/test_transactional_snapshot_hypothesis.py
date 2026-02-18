@@ -138,14 +138,16 @@ class TransactionalSnapshotStateMachine(RuleBasedStateMachine):
         # Check if this SHOULD overlap in the model
         would_overlap = False
         for txn in self._model.transactions.values():
-            if txn.agent_id == agent_id and txn.state == TransactionState.ACTIVE and set(paths) & set(txn.paths):
+            if (
+                txn.agent_id == agent_id
+                and txn.state == TransactionState.ACTIVE
+                and set(paths) & set(txn.paths)
+            ):
                 would_overlap = True
                 break
 
         try:
-            sid = asyncio.get_event_loop().run_until_complete(
-                self._service.begin(agent_id, paths)
-            )
+            sid = asyncio.get_event_loop().run_until_complete(self._service.begin(agent_id, paths))
         except OverlappingTransactionError:
             assert would_overlap, "Unexpected overlap error"
             return None
@@ -182,18 +184,18 @@ class TransactionalSnapshotStateMachine(RuleBasedStateMachine):
         )
         self._model.files[path] = new_hash
 
-    @precondition(lambda self: any(
-        t.state == TransactionState.ACTIVE for t in self._model.transactions.values()
-    ))
+    @precondition(
+        lambda self: any(
+            t.state == TransactionState.ACTIVE for t in self._model.transactions.values()
+        )
+    )
     @rule(data=st.data())
     def commit_transaction(self, data: st.DataObject) -> None:
         """Commit a random active transaction."""
         import asyncio
 
         active_ids = [
-            tid
-            for tid, t in self._model.transactions.items()
-            if t.state == TransactionState.ACTIVE
+            tid for tid, t in self._model.transactions.items() if t.state == TransactionState.ACTIVE
         ]
         if not active_ids:
             return
@@ -205,18 +207,18 @@ class TransactionalSnapshotStateMachine(RuleBasedStateMachine):
 
         self._model.transactions[tid].state = TransactionState.COMMITTED
 
-    @precondition(lambda self: any(
-        t.state == TransactionState.ACTIVE for t in self._model.transactions.values()
-    ))
+    @precondition(
+        lambda self: any(
+            t.state == TransactionState.ACTIVE for t in self._model.transactions.values()
+        )
+    )
     @rule(data=st.data())
     def rollback_transaction(self, data: st.DataObject) -> None:
         """Rollback a random active transaction and verify restoration."""
         import asyncio
 
         active_ids = [
-            tid
-            for tid, t in self._model.transactions.items()
-            if t.state == TransactionState.ACTIVE
+            tid for tid, t in self._model.transactions.items() if t.state == TransactionState.ACTIVE
         ]
         if not active_ids:
             return
@@ -251,9 +253,7 @@ class TransactionalSnapshotStateMachine(RuleBasedStateMachine):
 
         for tid, model_txn in self._model.transactions.items():
             sid = SnapshotId(id=tid)
-            info = asyncio.get_event_loop().run_until_complete(
-                self._service.get_transaction(sid)
-            )
+            info = asyncio.get_event_loop().run_until_complete(self._service.get_transaction(sid))
             assert info.status == model_txn.state, (
                 f"Transaction {tid}: model={model_txn.state}, real={info.status}"
             )
@@ -267,9 +267,7 @@ class TransactionalSnapshotStateMachine(RuleBasedStateMachine):
             if model_txn.state in (TransactionState.COMMITTED, TransactionState.ROLLED_BACK):
                 sid = SnapshotId(id=tid)
                 try:
-                    asyncio.get_event_loop().run_until_complete(
-                        self._service.commit(sid)
-                    )
+                    asyncio.get_event_loop().run_until_complete(self._service.commit(sid))
                     raise AssertionError(f"commit() should have failed for {model_txn.state}")
                 except InvalidTransactionStateError:
                     pass  # Expected

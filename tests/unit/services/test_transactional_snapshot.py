@@ -183,7 +183,11 @@ class TestBegin:
             expected_min = datetime.now(UTC).replace(tzinfo=None) + timedelta(
                 seconds=config.ttl_seconds - 5
             )
-            expires = model.expires_at.replace(tzinfo=None) if model.expires_at.tzinfo else model.expires_at
+            expires = (
+                model.expires_at.replace(tzinfo=None)
+                if model.expires_at.tzinfo
+                else model.expires_at
+            )
             assert expires >= expected_min
 
     @pytest.mark.asyncio

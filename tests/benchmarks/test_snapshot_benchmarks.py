@@ -224,6 +224,4 @@ class TestSnapshotOverhead:
         loop.run_until_complete(svc.rollback(sid))
         elapsed_ms = (time.perf_counter() - start) * 1000
 
-        assert elapsed_ms < 200, (
-            f"Full snapshot cycle (100 files) took {elapsed_ms:.2f}ms (>200ms)"
-        )
+        assert elapsed_ms < 200, f"Full snapshot cycle (100 files) took {elapsed_ms:.2f}ms (>200ms)"

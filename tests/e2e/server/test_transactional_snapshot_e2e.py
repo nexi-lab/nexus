@@ -80,9 +80,7 @@ class TestSnapshotListActive:
             json={"agent_id": "e2e-list-agent", "paths": ["/list-b.txt"]},
         )
 
-        resp = test_app.get(
-            "/api/v2/snapshots/active", params={"agent_id": "e2e-list-agent"}
-        )
+        resp = test_app.get("/api/v2/snapshots/active", params={"agent_id": "e2e-list-agent"})
         assert resp.status_code == 200, f"list_active failed: {resp.text}"
         data = resp.json()
         assert data["count"] >= 2
@@ -161,9 +159,7 @@ class TestSnapshotAPIShapes:
         assert set(data.keys()) == expected_keys
 
     def test_active_response_shape(self, test_app: httpx.Client) -> None:
-        resp = test_app.get(
-            "/api/v2/snapshots/active", params={"agent_id": "no-such-agent"}
-        )
+        resp = test_app.get("/api/v2/snapshots/active", params={"agent_id": "no-such-agent"})
         assert resp.status_code == 200
         data = resp.json()
         assert set(data.keys()) == {"transactions", "count"}

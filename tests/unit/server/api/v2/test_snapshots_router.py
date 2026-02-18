@@ -252,9 +252,7 @@ class TestGetEndpoint:
 class TestListActiveEndpoint:
     """GET /api/v2/snapshots/active"""
 
-    def test_list_active(
-        self, client: TestClient, metadata_store: InMemoryMetadataStore
-    ) -> None:
+    def test_list_active(self, client: TestClient, metadata_store: InMemoryMetadataStore) -> None:
         metadata_store.put(_make_file("/a.txt"))
         metadata_store.put(_make_file("/b.txt"))
         client.post(

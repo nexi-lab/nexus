@@ -229,8 +229,6 @@ def _startup_reputation_service(app: FastAPI) -> None:
 
         app.state.reputation_service = ReputationService(
             session_factory=app.state.nexus_fs.SessionLocal,
-            cache_maxsize=10_000,
-            cache_ttl=60,
         )
         logger.info("[REPUTATION] ReputationService initialized (singleton)")
     except Exception as e:

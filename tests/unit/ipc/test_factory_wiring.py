@@ -9,8 +9,6 @@ Issue: #1727
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestIPCBrickWiring:
     """Verify IPC brick is correctly wired in _boot_brick_services."""

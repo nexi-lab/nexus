@@ -478,7 +478,8 @@ class NexusPay:
             idempotency_key=idempotency_key,
         )
 
-        return await self._scheduler.submit(agent_request)
+        result: str = await self._scheduler.submit(agent_request)
+        return result
 
     # =========================================================================
     # Decorators

@@ -1295,6 +1295,7 @@ def create_app(
     # Expose kernel services on app.state so routers never reach into
     # NexusFS private attributes (Issue #701).
     app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
+    app.state.rebac_service = getattr(nexus_fs, "rebac_service", None)  # Issue #2033: Strangler Fig
     app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
     app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
 

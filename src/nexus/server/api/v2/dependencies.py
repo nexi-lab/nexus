@@ -90,6 +90,23 @@ async def get_llm_provider(
 
 
 # =============================================================================
+# Domain service dependencies (Strangler Fig — Issue #2033)
+# =============================================================================
+
+
+async def get_rebac_service(request: Request) -> Any:
+    """Get ReBACService instance from app state.
+
+    Wired by factory.py → fastapi_server.py, bypassing NexusFS entirely.
+    This is the Strangler Fig entry point for ReBAC domain extraction.
+    """
+    service = getattr(request.app.state, "rebac_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="ReBACService not initialized")
+    return service
+
+
+# =============================================================================
 # ACE manager dependencies
 # =============================================================================
 

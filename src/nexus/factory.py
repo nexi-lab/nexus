@@ -527,6 +527,16 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             session_factory=ctx.session_factory,
         )
 
+        # --- ReBACService (Issue #2033: pre-wired in factory, not in NexusFS) ---
+        from nexus.services.rebac_service import ReBACService
+
+        rebac_service = ReBACService(
+            rebac_manager=rebac_manager,
+            enforce_permissions=ctx.perm.enforce,
+            enable_audit_logging=True,
+            circuit_breaker=rebac_circuit_breaker,
+        )
+
         result = {
             "rebac_manager": rebac_manager,
             "rebac_circuit_breaker": rebac_circuit_breaker,
@@ -541,6 +551,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             "workspace_manager": workspace_manager,
             "write_observer": write_observer,
             "version_service": version_service,
+            "rebac_service": rebac_service,
         }
 
         elapsed = time.perf_counter() - t0
@@ -1113,6 +1124,7 @@ def create_nexus_services(
         context_branch_service=system.get("context_branch_service"),
         write_observer=kernel["write_observer"],
         version_service=kernel["version_service"],
+        rebac_service=kernel["rebac_service"],
         # System tier
         agent_registry=system["agent_registry"],
         async_agent_registry=system["async_agent_registry"],

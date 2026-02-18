@@ -102,9 +102,7 @@ class BaseOAuthProvider(ABC):
 
         params = self._build_refresh_params(credential)
         headers = self._build_refresh_headers()
-        token_data = await self._post_token_request(
-            params, headers=headers, action="refresh token"
-        )
+        token_data = await self._post_token_request(params, headers=headers, action="refresh token")
         new_cred = self._parse_token_response(token_data)
 
         # Preserve old refresh_token if server didn't return a new one

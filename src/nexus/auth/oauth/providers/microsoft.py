@@ -52,9 +52,7 @@ class MicrosoftOAuthProvider(BaseOAuthProvider):
         }
 
     def _build_refresh_params(self, credential: OAuthCredential) -> dict[str, str]:
-        scopes = self._scopes_with_offline(
-            list(credential.scopes) if credential.scopes else None
-        )
+        scopes = self._scopes_with_offline(list(credential.scopes) if credential.scopes else None)
         return {
             "client_id": self.client_id,
             "client_secret": self.client_secret,

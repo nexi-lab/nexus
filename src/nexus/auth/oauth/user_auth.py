@@ -60,9 +60,7 @@ class OAuthUserAuth:
                 list(providers.keys()),
             )
 
-    def get_auth_url(
-        self, provider_name: str, redirect_uri: str | None = None
-    ) -> tuple[str, str]:
+    def get_auth_url(self, provider_name: str, redirect_uri: str | None = None) -> tuple[str, str]:
         """Get OAuth authorization URL for any registered provider.
 
         Returns:
@@ -102,7 +100,9 @@ class OAuthUserAuth:
         user_info = await self._extract_user_info(provider_name, oauth_credential.access_token)
 
         provider_user_id = user_info.get("sub") or user_info.get("id")
-        provider_email = user_info.get("email") or user_info.get("mail") or user_info.get("userPrincipalName")
+        provider_email = (
+            user_info.get("email") or user_info.get("mail") or user_info.get("userPrincipalName")
+        )
         email_verified = user_info.get("email_verified", False)
         name = user_info.get("name") or user_info.get("displayName")
         picture = user_info.get("picture")
@@ -158,13 +158,9 @@ class OAuthUserAuth:
     async def handle_google_callback(
         self, code: str, _state: str | None = None, redirect_uri: str | None = None
     ) -> tuple[UserModel, str]:
-        return await self.handle_callback(
-            "google", code, _state=_state, redirect_uri=redirect_uri
-        )
+        return await self.handle_callback("google", code, _state=_state, redirect_uri=redirect_uri)
 
-    async def _extract_user_info(
-        self, provider_name: str, access_token: str
-    ) -> dict[str, Any]:
+    async def _extract_user_info(self, provider_name: str, access_token: str) -> dict[str, Any]:
         """Fetch user info from provider's userinfo endpoint."""
         import httpx
 
@@ -407,9 +403,7 @@ class OAuthUserAuth:
 
     def get_user_oauth_accounts(self, user_id: str) -> list[dict[str, Any]]:
         with self.session_factory() as session:
-            stmt = select(UserOAuthAccountModel).where(
-                UserOAuthAccountModel.user_id == user_id
-            )
+            stmt = select(UserOAuthAccountModel).where(UserOAuthAccountModel.user_id == user_id)
             accounts = session.scalars(stmt).all()
 
             return [
@@ -417,9 +411,7 @@ class OAuthUserAuth:
                     "oauth_account_id": account.oauth_account_id,
                     "provider": account.provider,
                     "provider_email": account.provider_email,
-                    "created_at": (
-                        account.created_at.isoformat() if account.created_at else None
-                    ),
+                    "created_at": (account.created_at.isoformat() if account.created_at else None),
                     "last_used_at": (
                         account.last_used_at.isoformat() if account.last_used_at else None
                     ),

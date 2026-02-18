@@ -5,7 +5,7 @@ through a JSON-RPC API. This allows remote clients (including FUSE mounts) to
 access Nexus over the network.
 """
 
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import RPCErrorCode, RPCRequest, RPCResponse
 from nexus.server.rpc_server import NexusRPCServer, RPCRequestHandler
 

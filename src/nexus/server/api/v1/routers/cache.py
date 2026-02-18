@@ -8,6 +8,7 @@ Provides cache management endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
+
 import logging
 from typing import Any
 
@@ -20,6 +21,7 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["cache"])
+
 
 @router.post("/api/cache/warmup")
 async def warmup_cache(
@@ -83,6 +85,7 @@ async def warmup_cache(
 
     return {"status": "completed", **stats.to_dict()}
 
+
 @router.get("/api/cache/stats")
 async def get_cache_stats(
     _auth_result: dict[str, Any] = Depends(require_auth),
@@ -142,6 +145,7 @@ async def get_cache_stats(
     cache_stats["file_access_tracker"] = tracker.get_stats()
 
     return cache_stats
+
 
 @router.get("/api/cache/hot-files")
 async def get_hot_files(

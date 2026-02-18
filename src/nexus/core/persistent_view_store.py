@@ -19,6 +19,7 @@ Key design:
     - Optional: persistent_store=None disables L3 (graceful degradation)
 """
 
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -48,6 +49,7 @@ class PersistentView:
     grants_hash: str
     revision_bucket: int
     created_at: datetime
+
 
 class PersistentViewStore(Protocol):
     """Protocol for persistent namespace view storage (L3 cache).

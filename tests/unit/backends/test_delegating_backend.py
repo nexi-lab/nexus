@@ -7,6 +7,7 @@ Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping Rule #2
 """
 
+
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
@@ -18,6 +19,7 @@ from nexus.core.response import HandlerResponse
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_inner() -> MagicMock:
@@ -38,14 +40,17 @@ def mock_inner() -> MagicMock:
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=True)
     return mock
 
+
 @pytest.fixture
 def delegating(mock_inner: MagicMock) -> DelegatingBackend:
     """Create a DelegatingBackend wrapping the mock inner."""
     return DelegatingBackend(inner=mock_inner)
 
+
 # ---------------------------------------------------------------------------
 # Property Delegation Tests
 # ---------------------------------------------------------------------------
+
 
 class TestPropertyDelegation:
     """All Backend capability properties must forward to inner, not return defaults."""
@@ -72,9 +77,11 @@ class TestPropertyDelegation:
     def test_name_delegates(self, delegating: DelegatingBackend) -> None:
         assert delegating.name == "test-backend"
 
+
 # ---------------------------------------------------------------------------
 # describe() Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDescribeDelegation:
     """DelegatingBackend.describe() should pass through to inner by default."""
@@ -88,9 +95,11 @@ class TestDescribeDelegation:
         wrapper = DelegatingBackend(inner=mock_inner)
         assert wrapper.describe() == "cache → s3"
 
+
 # ---------------------------------------------------------------------------
 # Content Operation Delegation Tests
 # ---------------------------------------------------------------------------
+
 
 class TestContentDelegation:
     """Content operations should delegate to inner backend."""
@@ -116,9 +125,11 @@ class TestContentDelegation:
         mock_inner.delete_content.assert_called_once_with("abc123", context=None)
         assert result is expected
 
+
 # ---------------------------------------------------------------------------
 # Directory Operation Delegation Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDirectoryDelegation:
     """Directory operations should delegate to inner backend."""
@@ -137,9 +148,11 @@ class TestDirectoryDelegation:
         mock_inner.rmdir.assert_called_once_with("/test", recursive=True, context=None)
         assert result is expected
 
+
 # ---------------------------------------------------------------------------
 # __getattr__ Fallback Tests
 # ---------------------------------------------------------------------------
+
 
 class TestListDirDelegation:
     """list_dir has a NotImplementedError default on Backend, must explicitly delegate."""
@@ -149,6 +162,7 @@ class TestListDirDelegation:
         result = delegating.list_dir("/path")
         mock_inner.list_dir.assert_called_once_with("/path", context=None)
         assert result == ["file.txt", "subdir/"]
+
 
 class TestGetAttrFallback:
     """__getattr__ should forward truly unknown attributes to inner backend."""

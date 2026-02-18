@@ -6,6 +6,7 @@ This module provides functionality for mounting external MCP servers
 Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 """
 
+
 import json
 import logging
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class MCPMountError(Exception):
     """Raised when MCP mount operations fail."""
 
@@ -29,6 +31,7 @@ class MCPMountError(Exception):
         self.message = message
         self.path = path
         super().__init__(message)
+
 
 class MCPMountManager:
     """Manager for mounting and interacting with external MCP servers.
@@ -85,7 +88,7 @@ class MCPMountManager:
     }
 
     @staticmethod
-    def get_mcp_tier_paths(context: "OperationContext | None" = None) -> dict[str, str]:
+    def get_mcp_tier_paths(context: OperationContext | None = None) -> dict[str, str]:
         """Get context-aware tier paths for MCP tool discovery.
 
         Structure:
@@ -117,7 +120,7 @@ class MCPMountManager:
     # Mount configuration filename (per-folder)
     MOUNT_CONFIG_FILENAME = "mount.json"
 
-    def __init__(self, filesystem: "NexusFilesystem | None" = None):
+    def __init__(self, filesystem: NexusFilesystem | None = None):
         """Initialize MCP mount manager.
 
         Args:
@@ -972,7 +975,7 @@ class MCPMountManager:
         except Exception as e:
             raise MCPMountError(f"Tool execution failed: {e}") from e
 
-    def discover_mounts(self, context: "OperationContext | None" = None) -> int:
+    def discover_mounts(self, context: OperationContext | None = None) -> int:
         """Discover mounts from context-aware tier paths.
 
         Scans all available tiers for the given context and loads mount configurations.
@@ -1119,7 +1122,7 @@ class MCPMountManager:
         self,
         include_unmounted: bool = True,
         tier: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[MCPMount]:
         """List mount configurations.
 
@@ -1154,7 +1157,7 @@ class MCPMountManager:
     def get_mount(
         self,
         name: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> MCPMount | None:
         """Get mount configuration by name.
 

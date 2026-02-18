@@ -12,6 +12,7 @@ This module covers critical security properties:
 - Consistency level validation
 """
 
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,22 +20,23 @@ import pytest
 from nexus.core.permissions import (
     OperationContext,
     Permission,
-    PermissionEnforcer,
 )
-from nexus.rebac.manager import (
+from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.services.permissions.rebac_manager_enhanced import (
     CheckResult,
     ConsistencyLevel,
-    ConsistencyMode,
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,
     WriteResult,
 )
+from nexus.services.permissions.types import ConsistencyMode
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_mock_rebac(allowed_map: dict[tuple, bool] | None = None):
     """Create a mock ReBAC manager that answers permission queries.
@@ -62,9 +64,11 @@ def _make_mock_rebac(allowed_map: dict[tuple, bool] | None = None):
     rebac.rebac_check_bulk.side_effect = _check_bulk
     return rebac
 
+
 # ---------------------------------------------------------------------------
 # Permission check enforcement
 # ---------------------------------------------------------------------------
+
 
 class TestPermissionEnforcement:
     """Verify permissions are correctly enforced (allowed/denied)."""
@@ -138,9 +142,11 @@ class TestPermissionEnforcement:
         ctx = OperationContext(user="alice", groups=[])
         assert enforcer.check("/file.txt", perm, ctx) is False
 
+
 # ---------------------------------------------------------------------------
 # Zone isolation
 # ---------------------------------------------------------------------------
+
 
 class TestZoneIsolation:
     """Verify cross-zone access is prevented."""
@@ -200,9 +206,11 @@ class TestZoneIsolation:
         zone_arg = call_kwargs.kwargs.get("zone_id") or call_kwargs[0][3]
         assert zone_arg == "root"
 
+
 # ---------------------------------------------------------------------------
 # Permission escalation prevention
 # ---------------------------------------------------------------------------
+
 
 class TestPermissionEscalation:
     """Verify users cannot escalate their own permissions."""
@@ -263,9 +271,11 @@ class TestPermissionEscalation:
         # Missing admin:write:* => falls to ReBAC => denied
         assert enforcer.check("/file.txt", Permission.WRITE, ctx) is False
 
+
 # ---------------------------------------------------------------------------
 # Admin fallback behaviour
 # ---------------------------------------------------------------------------
+
 
 class TestAdminBehavior:
     """Verify admin bypass behavior is correct and scoped."""
@@ -316,9 +326,11 @@ class TestAdminBehavior:
         # /user/data.txt does NOT match allowlist => falls to ReBAC => denied
         assert enforcer.check("/user/data.txt", Permission.READ, ctx) is False
 
+
 # ---------------------------------------------------------------------------
 # Permission bypass when enforcement is disabled (no ReBAC manager)
 # ---------------------------------------------------------------------------
+
 
 class TestPermissionBypassNoEnforcement:
     """Verify behavior when no ReBAC manager is configured."""
@@ -346,9 +358,11 @@ class TestPermissionBypassNoEnforcement:
         )
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
 
+
 # ---------------------------------------------------------------------------
 # Empty/null context handling
 # ---------------------------------------------------------------------------
+
 
 class TestEmptyNullContextHandling:
     """Verify edge cases with empty or unusual contexts."""
@@ -387,9 +401,11 @@ class TestEmptyNullContextHandling:
         assert ctx.backend_path == "/mnt/gcs/data"
         assert ctx.virtual_path == "/workspace/data"
 
+
 # ---------------------------------------------------------------------------
 # Edge cases: paths
 # ---------------------------------------------------------------------------
+
 
 class TestPathEdgeCases:
     """Verify edge cases with various path formats."""
@@ -468,9 +484,11 @@ class TestPathEdgeCases:
 
         assert enforcer.check("/workspace/file.txt", Permission.READ, ctx) is False
 
+
 # ---------------------------------------------------------------------------
 # Graph limits and DoS protection (P0-5)
 # ---------------------------------------------------------------------------
+
 
 class TestGraphLimitProtection:
     """Verify graph limit constants and GraphLimitExceeded behavior."""
@@ -509,9 +527,11 @@ class TestGraphLimitProtection:
         exc = GraphLimitExceeded("fan_out", 1000, 2000)
         assert exc.path == []
 
+
 # ---------------------------------------------------------------------------
 # Consistency levels and requirements
 # ---------------------------------------------------------------------------
+
 
 class TestConsistencyValidation:
     """Verify consistency requirement validation."""
@@ -553,9 +573,11 @@ class TestConsistencyValidation:
             == ConsistencyLevel.STRONG
         )
 
+
 # ---------------------------------------------------------------------------
 # CheckResult and WriteResult data classes
 # ---------------------------------------------------------------------------
+
 
 class TestResultDataClasses:
     """Verify CheckResult and WriteResult carry correct metadata."""
@@ -610,9 +632,11 @@ class TestResultDataClasses:
         assert wr.revision == 42
         assert wr.consistency_token == "tok_42"
 
+
 # ---------------------------------------------------------------------------
 # Traversal stats
 # ---------------------------------------------------------------------------
+
 
 class TestTraversalStats:
     """Verify TraversalStats defaults."""
@@ -627,9 +651,11 @@ class TestTraversalStats:
         assert stats.cache_misses == 0
         assert stats.duration_ms == 0.0
 
+
 # ---------------------------------------------------------------------------
 # TRAVERSE permission implication
 # ---------------------------------------------------------------------------
+
 
 class TestTraversePermission:
     """Verify TRAVERSE is implied by READ or WRITE."""
@@ -675,9 +701,11 @@ class TestTraversePermission:
         result = enforcer.check("/dir", Permission.TRAVERSE, ctx)
         assert result is False
 
+
 # ---------------------------------------------------------------------------
 # Audit logging for bypass events
 # ---------------------------------------------------------------------------
+
 
 class TestBypassAuditLogging:
     """Verify that bypass events are logged to the audit store."""
@@ -730,9 +758,11 @@ class TestBypassAuditLogging:
         assert entry.allowed is False
         assert "kill_switch" in entry.denial_reason
 
+
 # ---------------------------------------------------------------------------
 # Multiple overlapping security checks
 # ---------------------------------------------------------------------------
+
 
 class TestCombinedSecurityScenarios:
     """Complex adversarial scenarios combining multiple security features."""

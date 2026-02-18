@@ -31,6 +31,7 @@ from nexus.storage.models import Base, FilePathModel
 # Fixtures
 # =========================================================================
 
+
 class MockConnector:
     """Minimal mock connector for CacheService tests."""
 
@@ -50,6 +51,7 @@ class MockConnector:
     def _read_content_from_backend(self, path, context=None):
         return None
 
+
 @pytest.fixture
 def db_session(tmp_path: Path):
     """Create test database session factory."""
@@ -58,29 +60,35 @@ def db_session(tmp_path: Path):
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)
 
+
 @pytest.fixture
 def connector(db_session):
     """Create mock connector with DB session."""
     return MockConnector(session_factory=db_session)
+
 
 @pytest.fixture
 def l1_only_connector():
     """Create mock connector in L1-only mode."""
     return MockConnector(l1_only=True)
 
+
 @pytest.fixture
 def cache_service(connector):
     """Create CacheService with mock connector, no L1."""
     return CacheService(connector=connector, l1_cache=None)
+
 
 @pytest.fixture
 def file_cache(tmp_path: Path):
     """Create a fresh disk cache."""
     return FileContentCache(tmp_path / "cache")
 
+
 # =========================================================================
 # Caching availability checks
 # =========================================================================
+
 
 class TestHasCaching:
     def test_l1_only_returns_true(self, l1_only_connector):
@@ -101,9 +109,11 @@ class TestHasCaching:
         assert svc.has_caching() is False
         assert svc.has_l2_caching() is False
 
+
 # =========================================================================
 # Invalidation — bug fix verification
 # =========================================================================
+
 
 class TestInvalidateCache:
     def test_invalidate_uses_bare_path_key(self, cache_service):
@@ -146,9 +156,11 @@ class TestInvalidateCache:
     def test_invalidate_no_args_returns_zero(self, cache_service):
         assert cache_service.invalidate_cache() == 0
 
+
 # =========================================================================
 # Read from cache
 # =========================================================================
+
 
 class TestReadFromCache:
     def test_l1_miss_l2_miss_returns_none(self, cache_service, file_cache):
@@ -207,9 +219,11 @@ class TestReadFromCache:
         result = svc.read_from_cache("/test/file.txt")
         assert result is None
 
+
 # =========================================================================
 # Write to cache
 # =========================================================================
+
 
 class TestWriteToCache:
     def test_l1_l2_write(self, cache_service, db_session, file_cache):
@@ -260,9 +274,11 @@ class TestWriteToCache:
         assert entry.content_type == "reference"
         assert entry.content_text is None
 
+
 # =========================================================================
 # Bulk write
 # =========================================================================
+
 
 class TestBulkWriteToCache:
     def test_writes_multiple_entries(self, cache_service, db_session, file_cache):
@@ -303,9 +319,11 @@ class TestBulkWriteToCache:
     def test_empty_entries_returns_empty(self, cache_service):
         assert cache_service.bulk_write_to_cache([]) == []
 
+
 # =========================================================================
 # Bulk read from cache
 # =========================================================================
+
 
 class TestReadBulkFromCache:
     def test_all_misses(self, cache_service, file_cache):
@@ -344,9 +362,11 @@ class TestReadBulkFromCache:
     def test_empty_paths_returns_empty(self, cache_service):
         assert cache_service.read_bulk_from_cache([]) == {}
 
+
 # =========================================================================
 # read_content_with_cache
 # =========================================================================
+
 
 class TestReadContentWithCache:
     def test_cache_miss_fetches_from_backend(self, cache_service, file_cache):
@@ -391,9 +411,11 @@ class TestReadContentWithCache:
         assert result.from_cache is True
         assert result.content == b"cached data"
 
+
 # =========================================================================
 # Version checking
 # =========================================================================
+
 
 class TestCheckVersion:
     def test_no_version_support_returns_true(self, cache_service):
@@ -410,15 +432,18 @@ class TestCheckVersion:
         with pytest.raises(ConflictError):
             cache_service.check_version("/test.txt", "v1")
 
+
 # =========================================================================
 # Content hash / size lookups
 # =========================================================================
+
 
 class TestGetContentHash:
     def test_returns_none_when_no_caching(self):
         connector = MockConnector(session_factory=None)
         svc = CacheService(connector=connector)
         assert svc.get_content_hash("/test.txt") is None
+
 
 class TestGetSizeFromCache:
     def test_returns_none_on_miss(self, cache_service, file_cache):
@@ -444,9 +469,11 @@ class TestGetSizeFromCache:
         with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             assert cache_service.get_size_from_cache(path) == 5
 
+
 # =========================================================================
 # Helpers
 # =========================================================================
+
 
 class TestPopulateL1:
     def test_calls_l1_put(self, cache_service):
@@ -496,6 +523,7 @@ class TestPopulateL1:
         )
         mock_l1.put.assert_called_once()
 
+
 class TestCacheZone:
     def test_default_zone_is_root(self, cache_service):
         assert cache_service._get_cache_zone() == "root"
@@ -503,6 +531,7 @@ class TestCacheZone:
     def test_uses_connector_zone_id(self, connector, cache_service):
         connector.zone_id = "my_zone"
         assert cache_service._get_cache_zone() == "my_zone"
+
 
 class TestCacheTTL:
     def test_default_ttl_is_zero(self, cache_service):

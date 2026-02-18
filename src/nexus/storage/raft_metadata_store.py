@@ -28,8 +28,7 @@ import logging
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from nexus.core.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import MetastoreABC
+from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +94,7 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
         raise ValueError(f"Failed to deserialize metadata: {e}") from e
 
 
-class RaftMetadataStore(MetastoreABC):
+class RaftMetadataStore(FileMetadataProtocol):
     """Primary metadata store for Nexus using embedded redb database.
 
     This store provides fast local metadata operations (~5μs) with optional

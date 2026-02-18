@@ -7,10 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.skills.exceptions import (
-    SkillManagerError,
-    SkillPermissionDeniedError,
-)
+from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 from nexus.skills.models import SkillMetadata
 from nexus.skills.parser import SkillParser
 from nexus.skills.protocols import NexusFilesystem
@@ -22,6 +19,12 @@ if TYPE_CHECKING:
     from nexus.skills.governance import SkillGovernance
 
 logger = logging.getLogger(__name__)
+
+
+class SkillManagerError(SkillValidationError):
+    """Raised when skill management operations fail."""
+
+    pass
 
 
 class SkillManager:

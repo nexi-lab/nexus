@@ -25,6 +25,7 @@ Usage:
     buffer.stop()
 """
 
+
 import logging
 import threading
 import time
@@ -35,12 +36,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 class EventType(Enum):
     """Types of write events that can be buffered."""
 
     WRITE = "write"
     DELETE = "delete"
     RENAME = "rename"
+
 
 @dataclass(frozen=True)
 class WriteEvent:
@@ -61,6 +64,7 @@ class WriteEvent:
     # Rename-specific
     old_path: str | None = None
     new_path: str | None = None
+
 
 class WriteBuffer:
     """Thread-safe write-behind buffer for PostgreSQL materialized view sync.
@@ -278,10 +282,10 @@ class WriteBuffer:
         try:
             with self._session_factory() as session:
                 op_logger = OperationLogger(session)
+                recorder = VersionRecorder(session)
 
                 for event in events:
                     zone = event.zone_id or "root"
-                    recorder = VersionRecorder(session, zone_id=event.zone_id)
 
                     if event.event_type == EventType.WRITE:
                         op_logger.log_operation(

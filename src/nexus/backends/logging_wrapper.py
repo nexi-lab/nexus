@@ -24,6 +24,7 @@ Design reference:
     - Issue #1449: Recursive Protocol wrapping + describe() for composition chains
 """
 
+
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class LoggingBackendWrapper(DelegatingBackend):
     """Transparent logging decorator for any Backend implementation.
 
@@ -49,7 +51,7 @@ class LoggingBackendWrapper(DelegatingBackend):
         - INFO: lifecycle events (connect, disconnect)
     """
 
-    def __init__(self, inner: "Backend") -> None:
+    def __init__(self, inner: Backend) -> None:
         super().__init__(inner)
 
     # === Chain Introspection ===
@@ -61,8 +63,8 @@ class LoggingBackendWrapper(DelegatingBackend):
     # === Content Operations (with logging) ===
 
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bytes]:
         start = time.perf_counter()
         response = self._inner.read_content(content_hash, context=context)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -75,8 +77,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[str]":
+        self, content: bytes, context: OperationContext | None = None
+    ) -> HandlerResponse[str]:
         start = time.perf_counter()
         response = self._inner.write_content(content, context=context)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -90,8 +92,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[None]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[None]:
         start = time.perf_counter()
         response = self._inner.delete_content(content_hash, context=context)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -104,8 +106,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bool]:
         start = time.perf_counter()
         response = self._inner.content_exists(content_hash, context=context)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -124,8 +126,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[None]:
         start = time.perf_counter()
         response = self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -141,8 +143,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[None]:
         start = time.perf_counter()
         response = self._inner.rmdir(path, recursive=recursive, context=context)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -157,7 +159,7 @@ class LoggingBackendWrapper(DelegatingBackend):
 
     # === Connection Lifecycle (INFO level) ===
 
-    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
+    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         start = time.perf_counter()
         response = self._inner.connect(context=context)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -169,7 +171,7 @@ class LoggingBackendWrapper(DelegatingBackend):
         )
         return response
 
-    def disconnect(self, context: "OperationContext | None" = None) -> None:
+    def disconnect(self, context: OperationContext | None = None) -> None:
         start = time.perf_counter()
         self._inner.disconnect(context=context)
         elapsed_ms = (time.perf_counter() - start) * 1000

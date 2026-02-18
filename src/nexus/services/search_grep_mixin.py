@@ -10,6 +10,7 @@ This mixin provides all content searching (grep) functionality:
 Extracted from: search_service.py (2,265 lines -> ~660 remaining)
 """
 
+
 import asyncio
 import builtins
 import logging

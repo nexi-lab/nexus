@@ -4,6 +4,7 @@ Validates that SearchBrickProtocol is runtime_checkable, that mock classes
 satisfy isinstance checks, and that all method signatures are correct.
 """
 
+
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ from nexus.services.protocols.search import SearchBrickProtocol
 # =============================================================================
 # Protocol structural checks
 # =============================================================================
+
 
 class TestSearchBrickProtocolStructure:
     """Verify SearchBrickProtocol is runtime_checkable and well-formed."""
@@ -53,9 +55,11 @@ class TestSearchBrickProtocolStructure:
         """Protocol must declare async notify_file_change()."""
         assert hasattr(SearchBrickProtocol, "notify_file_change")
 
+
 # =============================================================================
 # Mock implementation satisfying protocol
 # =============================================================================
+
 
 class MockSearchBrick:
     """Minimal mock that satisfies SearchBrickProtocol."""
@@ -90,6 +94,7 @@ class MockSearchBrick:
 
     async def notify_file_change(self, path: str, change_type: str = "update") -> None:
         pass
+
 
 class TestMockSatisfiesProtocol:
     """Verify mock class passes isinstance check."""
@@ -129,15 +134,18 @@ class TestMockSatisfiesProtocol:
         brick = MockSearchBrick()
         await brick.notify_file_change("/test.py", "update")  # should not raise
 
+
 # =============================================================================
 # Negative tests — incomplete implementations fail isinstance
 # =============================================================================
+
 
 class IncompleteSearchBrick:
     """Missing required methods — should NOT pass isinstance."""
 
     async def search(self, query: str, *, limit: int = 10) -> list:
         return []
+
 
 class TestIncompleteImplementation:
     """Objects missing methods should not satisfy the protocol."""
@@ -147,9 +155,11 @@ class TestIncompleteImplementation:
         brick = IncompleteSearchBrick()
         assert not isinstance(brick, SearchBrickProtocol)
 
+
 # =============================================================================
 # AsyncMock-based protocol test (common pattern for services)
 # =============================================================================
+
 
 class TestAsyncMockProtocol:
     """Verify protocol works with unittest.mock.AsyncMock."""

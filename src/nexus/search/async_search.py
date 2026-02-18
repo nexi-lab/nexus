@@ -27,6 +27,7 @@ Usage:
     results = await search.search("authentication", limit=10)
 """
 
+
 import asyncio
 import logging
 import uuid
@@ -53,10 +54,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 # AsyncSearchResult is identical to BaseSearchResult (Issue #1520: DRY unification)
 AsyncSearchResult = BaseSearchResult
 
-def create_async_engine_from_url(database_url: str) -> "AsyncEngine":
+
+def create_async_engine_from_url(database_url: str) -> AsyncEngine:
     """Create async engine from database URL via RecordStoreABC.
 
     Delegates to SQLAlchemyRecordStore which handles URL conversion
@@ -74,6 +77,7 @@ def create_async_engine_from_url(database_url: str) -> "AsyncEngine":
     # Trigger lazy async engine creation and return it
     _ = store.async_session_factory
     return cast("AsyncEngine", store._async_engine)
+
 
 class AsyncSemanticSearch:
     """Fully async semantic search for high-throughput scenarios.
@@ -221,7 +225,7 @@ class AsyncSemanticSearch:
         except Exception as e:
             logger.warning(f"Could not initialize BM25S: {e}")
 
-    async def _init_postgresql(self, session: "AsyncSession") -> None:
+    async def _init_postgresql(self, session: AsyncSession) -> None:
         """Initialize pgvector and pg_textsearch extensions."""
         # Initialize pgvector for semantic search
         try:
@@ -250,7 +254,7 @@ class AsyncSemanticSearch:
         except Exception as e:
             logger.debug(f"pg_textsearch not available: {e}. Using ts_rank fallback.")
 
-    async def _init_sqlite(self, session: "AsyncSession") -> None:
+    async def _init_sqlite(self, session: AsyncSession) -> None:
         """Initialize sqlite-vec and FTS5."""
         # FTS5 table for keyword search
         try:
@@ -563,7 +567,7 @@ class AsyncSemanticSearch:
 
     async def _keyword_search(
         self,
-        session: "AsyncSession",
+        session: AsyncSession,
         query: str,
         limit: int,
         path_filter: str | None,
@@ -793,7 +797,7 @@ class AsyncSemanticSearch:
 
     async def _vector_search(
         self,
-        session: "AsyncSession",
+        session: AsyncSession,
         embedding: list[float],
         limit: int,
         path_filter: str | None,
@@ -843,7 +847,7 @@ class AsyncSemanticSearch:
 
     async def _hybrid_search(
         self,
-        session: "AsyncSession",
+        session: AsyncSession,
         query: str,
         limit: int,
         path_filter: str | None,

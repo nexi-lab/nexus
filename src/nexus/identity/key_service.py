@@ -10,6 +10,7 @@ KeyService manages Ed25519 signing keys with:
 Thread-safe via threading.Lock for cache operations.
 """
 
+
 import logging
 import threading
 import uuid
@@ -35,6 +36,7 @@ def _utcnow_naive() -> datetime:
     """
     return datetime.now(UTC).replace(tzinfo=None)
 
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -44,6 +46,7 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class AgentKeyRecord:
@@ -59,8 +62,10 @@ class AgentKeyRecord:
     expires_at: datetime | None
     revoked_at: datetime | None
 
+
 # Sentinel for cache miss
 _CACHE_MISS = object()
+
 
 class KeyService:
     """Manages agent signing keys with idempotent provisioning.
@@ -74,7 +79,7 @@ class KeyService:
 
     def __init__(
         self,
-        record_store: "RecordStoreABC",
+        record_store: RecordStoreABC,
         crypto: IdentityCrypto,
         cache_maxsize: int = 5000,
         cache_ttl: int = 60,
@@ -97,7 +102,7 @@ class KeyService:
         )
 
     @contextmanager
-    def _get_session(self) -> "Generator[Session, None, None]":
+    def _get_session(self) -> Generator[Session, None, None]:
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:
@@ -264,7 +269,7 @@ class KeyService:
 
         return record
 
-    def get_public_key_object(self, key_id: str) -> "Ed25519PublicKey | None":
+    def get_public_key_object(self, key_id: str) -> Ed25519PublicKey | None:
         """Get the Ed25519PublicKey object for a key_id.
 
         Convenience method for signature verification.

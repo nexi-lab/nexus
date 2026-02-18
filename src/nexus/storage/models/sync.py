@@ -3,6 +3,7 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
+
 import json
 from datetime import UTC, datetime
 
@@ -67,6 +68,7 @@ class SyncJobModel(Base):
             "error_message": self.error_message,
         }
 
+
 class BackendChangeLogModel(Base):
     """Change log for delta sync tracking (Issue #1127).
 
@@ -112,6 +114,7 @@ class BackendChangeLogModel(Base):
             raise ValidationError("backend_name is required")
         if self.size_bytes is not None and self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
+
 
 class SyncBacklogModel(Base):
     """Backlog for bidirectional sync write-back operations (Issue #1129).
@@ -164,6 +167,7 @@ class SyncBacklogModel(Base):
             f"op={self.operation_type}, status={self.status})>"
         )
 
+
 class ConflictLogModel(Base):
     """Audit log for conflict resolution events (Issue #1130)."""
 
@@ -208,6 +212,7 @@ class ConflictLogModel(Base):
             f"<ConflictLogModel(path={self.path}, backend={self.backend_name}, "
             f"strategy={self.strategy}, outcome={self.outcome}, status={self.status})>"
         )
+
 
 class PendingOperationModel(Base):
     """Offline queue pending operation for proxy replay.

@@ -3,6 +3,7 @@
 Issue #1138: Event Stream Export.
 """
 
+
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
@@ -19,6 +20,7 @@ def _make_event(event_id: str = "evt-1", path: str = "/test.txt") -> FileEvent:
         event_id=event_id,
     )
 
+
 def _make_mock_exporter(name: str, fail_ids: list[str] | None = None):
     """Create a mock exporter that implements the protocol."""
     exporter = MagicMock()
@@ -28,6 +30,7 @@ def _make_mock_exporter(name: str, fail_ids: list[str] | None = None):
     exporter.close = AsyncMock()
     exporter.health_check = AsyncMock(return_value=True)
     return exporter
+
 
 class TestExporterRegistry:
     """Test ExporterRegistry register/unregister/dispatch."""

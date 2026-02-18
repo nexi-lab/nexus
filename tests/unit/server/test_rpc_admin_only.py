@@ -5,6 +5,7 @@ This tests the systematic admin_only guard added to @rpc_expose decorator
 and enforced in _auto_dispatch.
 """
 
+
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,7 @@ from nexus.core.rpc_decorator import rpc_expose
 # ============================================================================
 # Test 1: Decorator sets _rpc_admin_only flag
 # ============================================================================
+
 
 class TestRpcExposeAdminOnly:
     """Test that @rpc_expose(admin_only=True) sets the flag on the function."""
@@ -59,9 +61,11 @@ class TestRpcExposeAdminOnly:
         assert my_method._rpc_version == "2.0"
         assert my_method._rpc_admin_only is True
 
+
 # ============================================================================
 # Test 2: _auto_dispatch enforces admin_only
 # ============================================================================
+
 
 @dataclass
 class FakeContext:
@@ -71,14 +75,17 @@ class FakeContext:
     user: str = "testuser"
     zone_id: str = "root"
 
+
 # Real functions with proper signatures for inspect.signature to work
 @rpc_expose(description="admin operation", admin_only=True)
 async def _fake_admin_method(_context=None):
     return {"result": "admin_ok"}
 
+
 @rpc_expose(description="normal operation", admin_only=False)
 async def _fake_normal_method(_context=None):
     return {"result": "normal_ok"}
+
 
 class TestDispatchAdminEnforcement:
     """Test that _dispatch_method rejects non-admin callers for admin_only methods.
@@ -173,9 +180,11 @@ class TestDispatchAdminEnforcement:
         )
         assert result == {"result": "normal_ok"}
 
+
 # ============================================================================
 # Test 3: backfill_directory_index is marked admin_only
 # ============================================================================
+
 
 class TestBackfillDirectoryIndexAdminOnly:
     """Test that backfill_directory_index has admin_only=True on its decorator."""
@@ -198,9 +207,11 @@ class TestBackfillDirectoryIndexAdminOnly:
         assert method is not None
         assert getattr(method, "_rpc_exposed", False) is True
 
+
 # ============================================================================
 # Test 4: Safety net — admin-like methods must have admin_only=True
 # ============================================================================
+
 
 class TestAdminMethodAnnotationSafety:
     """Ensure methods with admin-like names are always marked admin_only."""

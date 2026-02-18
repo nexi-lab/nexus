@@ -18,6 +18,7 @@ Note: Uses `direct_owner` relation which grants `read` permission in the
 default ReBAC namespace configuration.
 """
 
+
 import tempfile
 import uuid
 from collections.abc import Generator
@@ -35,11 +36,13 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # when running tests in parallel with pytest-xdist
 pytestmark = pytest.mark.xdist_group(name="rebac_sqlite")
 
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
+
 
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
@@ -53,6 +56,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     )
     yield nx
     nx.close()
+
 
 class TestRebacCreate:
     """Tests for rebac_create method."""
@@ -151,6 +155,7 @@ class TestRebacCreate:
                 zone_id="root",
             )
 
+
 class TestRebacDelete:
     """Tests for rebac_delete method."""
 
@@ -194,6 +199,7 @@ class TestRebacDelete:
             object=("file", "/doc.txt"),
             zone_id="root",
         )
+
 
 class TestRebacCheck:
     """Tests for rebac_check method - core permission checking."""
@@ -277,6 +283,7 @@ class TestRebacCheck:
             zone_id="root",
         )
 
+
 class TestRebacCheckBatch:
     """Tests for rebac_check_batch method."""
 
@@ -308,6 +315,7 @@ class TestRebacCheckBatch:
         """Test batch with empty list returns empty results."""
         results = nx.rebac_check_batch([])
         assert results == []
+
 
 class TestCrossZone:
     """Tests for cross-zone isolation."""
@@ -358,6 +366,7 @@ class TestCrossZone:
             zone_id="cross_zone_b",
         )
 
+
 class TestRebacExpand:
     """Tests for rebac_expand method."""
 
@@ -391,6 +400,7 @@ class TestRebacExpand:
         # Should return a list (possibly empty)
         assert isinstance(subjects, list)
 
+
 class TestRebacExplain:
     """Tests for rebac_explain method."""
 
@@ -419,6 +429,7 @@ class TestRebacExplain:
             zone_id="root",
         )
         assert explanation is not None
+
 
 class TestConcurrency:
     """Tests for concurrent operations.
@@ -469,6 +480,7 @@ class TestConcurrency:
         assert len(results) == 3
         assert all(r is True for r in results)
 
+
 class TestCacheBehavior:
     """Tests for cache behavior."""
 
@@ -512,6 +524,7 @@ class TestCacheBehavior:
                 object=("file", "/repeat_doc.txt"),
                 zone_id="root",
             )
+
 
 class TestRebacListTuples:
     """Tests for rebac_list_tuples method."""

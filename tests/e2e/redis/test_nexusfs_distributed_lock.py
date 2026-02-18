@@ -87,7 +87,6 @@ async def nx_with_lock(temp_dir, redis_client, isolated_db):
 
     # Inject lock manager (redis_client is already connected by fixture)
     nx._lock_manager = RedisLockManager(redis_client)
-    nx.events_service._lock_manager = nx._lock_manager
 
     yield nx
 
@@ -127,8 +126,6 @@ async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
     lock_manager = RedisLockManager(redis_client)
     nx1._lock_manager = lock_manager
     nx2._lock_manager = lock_manager
-    nx1.events_service._lock_manager = lock_manager
-    nx2.events_service._lock_manager = lock_manager
 
     yield nx1, nx2
 
@@ -166,7 +163,6 @@ def nx_sync_with_lock(temp_dir, isolated_db):
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )
     nx._lock_manager = lock_manager
-    nx.events_service._lock_manager = nx._lock_manager
 
     yield nx
 
@@ -216,7 +212,7 @@ class TestLockedContextManager:
         # Write initial content
         nx_with_lock.write("/test.txt", b"initial")
 
-        async with nx_with_lock.events_service.locked("/test.txt") as lock_id:
+        async with nx_with_lock.locked("/test.txt") as lock_id:
             assert lock_id is not None
             assert isinstance(lock_id, str)
 
@@ -235,12 +231,12 @@ class TestLockedContextManager:
         nx_with_lock.write("/test.txt", b"content")
 
         with pytest.raises(ValueError, match="intentional"):
-            async with nx_with_lock.events_service.locked("/test.txt") as lock_id:
+            async with nx_with_lock.locked("/test.txt") as lock_id:
                 assert lock_id is not None
                 raise ValueError("intentional error")
 
         # Lock should be released - another lock should succeed immediately
-        async with nx_with_lock.events_service.locked("/test.txt", timeout=1.0) as lock_id2:
+        async with nx_with_lock.locked("/test.txt", timeout=1.0) as lock_id2:
             assert lock_id2 is not None
 
     @pytest.mark.asyncio
@@ -252,10 +248,10 @@ class TestLockedContextManager:
         nx1.write("/shared.txt", b"content")
 
         # Agent 1 holds the lock
-        async with nx1.events_service.locked("/shared.txt", timeout=30.0):
+        async with nx1.locked("/shared.txt", timeout=30.0):
             # Agent 2 tries to acquire - should timeout
             with pytest.raises(LockTimeout) as exc_info:
-                async with nx2.events_service.locked("/shared.txt", timeout=0.5):
+                async with nx2.locked("/shared.txt", timeout=0.5):
                     pass  # Should not reach here
 
             assert exc_info.value.path == "/shared.txt"
@@ -270,13 +266,13 @@ class TestLockedContextManager:
         acquired_order = []
 
         async def agent1():
-            async with nx1.events_service.locked("/shared.txt", timeout=5.0):
+            async with nx1.locked("/shared.txt", timeout=5.0):
                 acquired_order.append("agent1")
                 await asyncio.sleep(0.3)  # Hold lock briefly
 
         async def agent2():
             await asyncio.sleep(0.1)  # Start slightly later
-            async with nx2.events_service.locked("/shared.txt", timeout=5.0):
+            async with nx2.locked("/shared.txt", timeout=5.0):
                 acquired_order.append("agent2")
 
         await asyncio.gather(agent1(), agent2())
@@ -338,7 +334,7 @@ class TestWriteWithLock:
             import asyncio
 
             async def _hold():
-                async with nx_sync_with_lock.events_service.locked("/contended.txt", timeout=10.0):
+                async with nx_sync_with_lock.locked("/contended.txt", timeout=10.0):
                     barrier.wait()  # Signal that lock is held
                     import time
 
@@ -408,7 +404,6 @@ class TestWriteWithLock:
                 permissions=PermissionConfig(enforce=False),
             )
             nx._lock_manager = RedisLockManager(stub_client)
-            nx.events_service._lock_manager = nx._lock_manager
             return nx
 
         nx1 = create_nx()
@@ -550,7 +545,7 @@ class TestAtomicUpdate:
             await nx_with_lock.atomic_update("/test.txt", bad_transform)
 
         # Lock should be released - another operation should work
-        async with nx_with_lock.events_service.locked("/test.txt", timeout=1.0):
+        async with nx_with_lock.locked("/test.txt", timeout=1.0):
             pass  # Should succeed if lock was released
 
 
@@ -570,7 +565,7 @@ class TestCombinedScenarios:
         nx1, nx2 = nx_pair_with_lock
         nx1.write("/shared.txt", b"initial")
 
-        async with nx1.events_service.locked("/shared.txt"):
+        async with nx1.locked("/shared.txt"):
             # Agent 2's write(lock=True) should timeout
             # Must run in thread since write(lock=True) can't be called from async context
             with pytest.raises(LockTimeout):
@@ -584,7 +579,7 @@ class TestCombinedScenarios:
         nx1, nx2 = nx_pair_with_lock
         nx1.write("/shared.txt", b"initial")
 
-        async with nx1.events_service.locked("/shared.txt"):
+        async with nx1.locked("/shared.txt"):
             # Agent 2's write(lock=False) succeeds (LWW - no lock)
             # This is expected behavior for backward compatibility
             nx2.write("/shared.txt", b"lww-write", lock=False)
@@ -609,7 +604,7 @@ class TestCombinedScenarios:
 
             # Use a wrapper since we can't await in lambda
             content = nx1.read("/shared.txt")
-            async with nx1.events_service.locked("/shared.txt"):
+            async with nx1.locked("/shared.txt"):
                 await asyncio.sleep(0.5)
                 nx1.write("/shared.txt", content + b"-updated", lock=False)
 
@@ -641,7 +636,7 @@ class TestEdgeCases:
     async def test_locked_on_new_file(self, nx_with_lock: NexusFS):
         """Test locked() on a path that doesn't exist yet."""
         # Lock a non-existent path, then create the file
-        async with nx_with_lock.events_service.locked("/new_file.txt") as lock_id:
+        async with nx_with_lock.locked("/new_file.txt") as lock_id:
             assert lock_id is not None
             nx_with_lock.write("/new_file.txt", b"created", lock=False)
 
@@ -656,9 +651,9 @@ class TestEdgeCases:
         # This test documents the expected behavior
         try:
             # Nested context managers intentional - testing reentrant lock behavior
-            async with nx_with_lock.events_service.locked("/test.txt", timeout=1.0):  # noqa: SIM117
+            async with nx_with_lock.locked("/test.txt", timeout=1.0):  # noqa: SIM117
                 # Try to acquire same lock again - may timeout
-                async with nx_with_lock.events_service.locked("/test.txt", timeout=0.5):
+                async with nx_with_lock.locked("/test.txt", timeout=0.5):
                     pass
         except Exception:
             # If not reentrant, this is expected
@@ -692,7 +687,7 @@ class TestEdgeCases:
         nx_with_lock.write("/test.txt", b"content")
 
         # Short TTL
-        async with nx_with_lock.events_service.locked("/test.txt", ttl=5.0) as lock_id:
+        async with nx_with_lock.locked("/test.txt", ttl=5.0) as lock_id:
             assert lock_id is not None
             # Lock should be active
             await asyncio.sleep(0.1)
@@ -819,10 +814,9 @@ class TestMultiThreadingContention:
                         permissions=PermissionConfig(enforce=False),
                     )
                     nx._lock_manager = RedisLockManager(client)
-                    nx.events_service._lock_manager = nx._lock_manager
                     try:
                         for _ in range(count):
-                            async with nx.events_service.locked("/counter.json", timeout=30.0):
+                            async with nx.locked("/counter.json", timeout=30.0):
                                 # Read directly from file (bypass NexusFS cache)
                                 data = json.loads(counter_file.read_text())
                                 data["count"] += 1
@@ -1195,7 +1189,6 @@ class TestLockIsolation:
                 permissions=PermissionConfig(enforce=False),
             )
             nx._lock_manager = RedisLockManager(client)
-            nx.events_service._lock_manager = nx._lock_manager
 
             nx.write("/shared.txt", b"content")
 
@@ -1206,18 +1199,14 @@ class TestLockIsolation:
             acquired_order = []
 
             async def zone_a_lock():
-                async with nx.events_service.locked(
-                    "/shared.txt", timeout=5.0, _context=zone_a_ctx
-                ):
+                async with nx.locked("/shared.txt", timeout=5.0, _context=zone_a_ctx):
                     acquired_order.append("A_start")
                     await asyncio.sleep(0.3)
                     acquired_order.append("A_end")
 
             async def zone_b_lock():
                 await asyncio.sleep(0.1)  # Start slightly later
-                async with nx.events_service.locked(
-                    "/shared.txt", timeout=5.0, _context=zone_b_ctx
-                ):
+                async with nx.locked("/shared.txt", timeout=5.0, _context=zone_b_ctx):
                     acquired_order.append("B_acquired")
 
             await asyncio.gather(zone_a_lock(), zone_b_lock())
@@ -1248,14 +1237,14 @@ class TestLockIsolation:
         acquired_order = []
 
         async def first_lock():
-            async with nx1.events_service.locked("/shared.txt", timeout=5.0):
+            async with nx1.locked("/shared.txt", timeout=5.0):
                 acquired_order.append("first_start")
                 await asyncio.sleep(0.3)
                 acquired_order.append("first_end")
 
         async def second_lock():
             await asyncio.sleep(0.1)  # Start slightly later
-            async with nx2.events_service.locked("/shared.txt", timeout=5.0):
+            async with nx2.locked("/shared.txt", timeout=5.0):
                 acquired_order.append("second_acquired")
 
         await asyncio.gather(first_lock(), second_lock())

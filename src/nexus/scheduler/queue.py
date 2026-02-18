@@ -10,6 +10,7 @@ hrrn_score() DESC, enqueued_at ASC for Astraea-style scheduling.
 Related: Issue #1212, #1274
 """
 
+
 import json
 from datetime import datetime
 from decimal import Decimal
@@ -242,9 +243,11 @@ WHERE status = 'queued' AND zone_id = $1
 GROUP BY priority_class
 """
 
+
 # =============================================================================
 # Row-to-Model Conversion
 # =============================================================================
+
 
 def _row_to_task(row: dict[str, Any]) -> ScheduledTask:
     """Convert a database row (dict) to a ScheduledTask."""
@@ -279,9 +282,11 @@ def _row_to_task(row: dict[str, Any]) -> ScheduledTask:
         ),
     )
 
+
 # =============================================================================
 # TaskQueue
 # =============================================================================
+
 
 class TaskQueue:
     """PostgreSQL-backed priority task queue.

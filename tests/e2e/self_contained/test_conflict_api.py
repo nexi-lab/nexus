@@ -4,6 +4,7 @@ Tests the full HTTP request/response cycle for conflict management
 endpoints using a real ConflictLogStore backed by in-memory SQLite.
 """
 
+
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -32,8 +33,10 @@ from nexus.storage.models import Base
 # Helpers
 # =============================================================================
 
+
 def _now() -> datetime:
     return datetime.now(UTC)
+
 
 def _make_record(
     *,
@@ -64,9 +67,11 @@ def _make_record(
         resolved_at=now,
     )
 
+
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def store() -> ConflictLogStore:
@@ -78,6 +83,7 @@ def store() -> ConflictLogStore:
     )
     Base.metadata.create_all(engine)
     return ConflictLogStore(sessionmaker(bind=engine))
+
 
 @pytest.fixture
 def client(store: ConflictLogStore) -> TestClient:
@@ -96,6 +102,7 @@ def client(store: ConflictLogStore) -> TestClient:
 
     return TestClient(app)
 
+
 @pytest.fixture
 def non_admin_client(store: ConflictLogStore) -> TestClient:
     """TestClient where the authenticated user is NOT an admin."""
@@ -113,9 +120,11 @@ def non_admin_client(store: ConflictLogStore) -> TestClient:
 
     return TestClient(app)
 
+
 # =============================================================================
 # Admin Authorization Tests (#4B)
 # =============================================================================
+
 
 class TestNonAdminRejection:
     """Non-admin users get 403 on all conflict endpoints."""
@@ -136,9 +145,11 @@ class TestNonAdminRejection:
         )
         assert resp.status_code == 403
 
+
 # =============================================================================
 # GET /api/v2/sync/conflicts
 # =============================================================================
+
 
 class TestListConflicts:
     """Tests for GET /api/v2/sync/conflicts."""
@@ -202,9 +213,11 @@ class TestListConflicts:
         assert body["total"] == 1
         assert body["conflicts"][0]["backend_name"] == "s3"
 
+
 # =============================================================================
 # GET /api/v2/sync/conflicts/{id}
 # =============================================================================
+
 
 class TestGetConflict:
     """Tests for GET /api/v2/sync/conflicts/{id}."""
@@ -227,9 +240,11 @@ class TestGetConflict:
         resp = client.get("/api/v2/sync/conflicts/nonexistent")
         assert resp.status_code == 404
 
+
 # =============================================================================
 # POST /api/v2/sync/conflicts/{id}/resolve
 # =============================================================================
+
 
 class TestResolveConflict:
     """Tests for POST /api/v2/sync/conflicts/{id}/resolve."""
@@ -285,9 +300,11 @@ class TestResolveConflict:
         )
         assert resp.status_code == 422
 
+
 # =============================================================================
 # Auth Enforcement
 # =============================================================================
+
 
 @pytest.fixture
 def client_no_auth(store: ConflictLogStore) -> TestClient:
@@ -305,6 +322,7 @@ def client_no_auth(store: ConflictLogStore) -> TestClient:
     app.dependency_overrides[get_conflict_log_store] = _mock_store
 
     return TestClient(app, raise_server_exceptions=False)
+
 
 class TestAuthEnforcement:
     """Verify all endpoints reject unauthenticated requests."""
@@ -330,9 +348,11 @@ class TestAuthEnforcement:
         response = getattr(client_no_auth, method.lower())(path, **kwargs)
         assert response.status_code == 401
 
+
 # =============================================================================
 # Store Not Initialized (503)
 # =============================================================================
+
 
 @pytest.fixture
 def client_no_store() -> TestClient:
@@ -350,6 +370,7 @@ def client_no_store() -> TestClient:
     app.dependency_overrides[get_conflict_log_store] = _no_store
 
     return TestClient(app, raise_server_exceptions=False)
+
 
 class TestStoreNotInitialized:
     """Verify endpoints return 503 when write-back service is disabled."""

@@ -16,6 +16,7 @@ Usage:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -29,8 +30,9 @@ from nexus.storage.models.permissions import ReBACVersionSequenceModel as RBVS
 
 logger = logging.getLogger(__name__)
 
+
 def increment_version_token(
-    engine: "Engine",
+    engine: Engine,
     zone_id: str = "root",
 ) -> str:
     """Atomically increment and return the version token for a zone.
@@ -98,7 +100,8 @@ def increment_version_token(
 
     return f"v{version}"
 
-def get_zone_revision_for_grant(engine: "Engine", zone_id: str) -> int:
+
+def get_zone_revision_for_grant(engine: Engine, zone_id: str) -> int:
     """Get current zone revision for consistency during expansion.
 
     This prevents the "new enemy" problem: files created after the grant

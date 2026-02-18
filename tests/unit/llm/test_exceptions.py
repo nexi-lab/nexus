@@ -1,5 +1,6 @@
 """Tests for exception hierarchy (src/nexus/llm/exceptions.py)."""
 
+
 import pytest
 
 from nexus.llm.exceptions import (

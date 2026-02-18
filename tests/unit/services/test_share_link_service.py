@@ -6,6 +6,7 @@ permission enforcement, and access logging.
 All async service methods are tested via asyncio.run().
 """
 
+
 import asyncio
 from unittest.mock import MagicMock
 
@@ -19,6 +20,7 @@ from nexus.services.share_link_service import ShareLinkService
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def mock_gateway():
     """Create a mock NexusFSGateway with session factory."""
@@ -29,15 +31,18 @@ def mock_gateway():
     gw.session_factory = MagicMock()
     return gw
 
+
 @pytest.fixture
 def service(mock_gateway):
     """Create a ShareLinkService with mock gateway."""
     return ShareLinkService(gateway=mock_gateway, enforce_permissions=True)
 
+
 @pytest.fixture
 def service_no_perms(mock_gateway):
     """Create a ShareLinkService with permissions disabled."""
     return ShareLinkService(gateway=mock_gateway, enforce_permissions=False)
+
 
 @pytest.fixture
 def context():
@@ -50,6 +55,7 @@ def context():
         is_admin=False,
     )
 
+
 @pytest.fixture
 def admin_context():
     """Admin operation context."""
@@ -61,9 +67,11 @@ def admin_context():
         is_admin=True,
     )
 
+
 # =============================================================================
 # Initialization
 # =============================================================================
+
 
 class TestShareLinkServiceInit:
     """Tests for ShareLinkService construction."""
@@ -84,9 +92,11 @@ class TestShareLinkServiceInit:
         svc = ShareLinkService(gateway=mock_gateway, enforce_permissions=False)
         assert svc._enforce_permissions is False
 
+
 # =============================================================================
 # Password hashing
 # =============================================================================
+
 
 class TestPasswordHashing:
     """Tests for password hash/verify utilities."""
@@ -125,9 +135,11 @@ class TestPasswordHashing:
         assert ShareLinkService._verify_password("password", "no_colon_here") is False
         assert ShareLinkService._verify_password("password", "") is False
 
+
 # =============================================================================
 # Context extraction
 # =============================================================================
+
 
 class TestContextExtraction:
     """Tests for _extract_context_info helper."""
@@ -151,9 +163,11 @@ class TestContextExtraction:
         assert user_id == "anonymous"
         assert is_admin is False
 
+
 # =============================================================================
 # create_share_link
 # =============================================================================
+
 
 class TestCreateShareLink:
     """Tests for the create_share_link method."""
@@ -227,9 +241,11 @@ class TestCreateShareLink:
         # rebac_check should not be called
         mock_gateway.rebac_check.assert_not_called()
 
+
 # =============================================================================
 # get_share_link
 # =============================================================================
+
 
 class TestGetShareLink:
     """Tests for the get_share_link method."""
@@ -242,9 +258,11 @@ class TestGetShareLink:
         assert not result.success
         assert result.error_code == 500
 
+
 # =============================================================================
 # revoke_share_link
 # =============================================================================
+
 
 class TestRevokeShareLink:
     """Tests for the revoke_share_link method."""
@@ -257,9 +275,11 @@ class TestRevokeShareLink:
         assert not result.success
         assert result.error_code == 500
 
+
 # =============================================================================
 # list_share_links
 # =============================================================================
+
 
 class TestListShareLinks:
     """Tests for the list_share_links method."""
@@ -272,9 +292,11 @@ class TestListShareLinks:
         assert not result.success
         assert result.error_code == 500
 
+
 # =============================================================================
 # access_share_link
 # =============================================================================
+
 
 class TestAccessShareLink:
     """Tests for the access_share_link method."""
@@ -287,9 +309,11 @@ class TestAccessShareLink:
         assert not result.success
         assert result.error_code == 500
 
+
 # =============================================================================
 # get_share_link_access_logs
 # =============================================================================
+
 
 class TestGetShareLinkAccessLogs:
     """Tests for the get_share_link_access_logs method."""

@@ -7,6 +7,7 @@ idempotent producer for exactly-once semantics.
 Optional dependency: ``pip install nexus-ai-fs[kafka]``
 """
 
+
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -18,10 +19,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class KafkaExporter:
     """Kafka event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: "KafkaExporterConfig") -> None:
+    def __init__(self, config: KafkaExporterConfig) -> None:
         self._config = config
         self._producer: Any | None = None
 

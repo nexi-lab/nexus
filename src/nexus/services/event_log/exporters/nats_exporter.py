@@ -9,6 +9,7 @@ Uses Nats-Msg-Id header for server-side deduplication.
 Optional dependency: ``pip install nexus-ai-fs[nats-export]``
 """
 
+
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -20,10 +21,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class NatsExporter:
     """NATS JetStream event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: "NatsExporterConfig") -> None:
+    def __init__(self, config: NatsExporterConfig) -> None:
         self._config = config
         self._nc: Any | None = None
         self._js: Any | None = None

@@ -1,5 +1,6 @@
 """Skill governance and approval workflows."""
 
+
 import logging
 import uuid
 from dataclasses import dataclass
@@ -14,12 +15,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class ApprovalStatus(StrEnum):
     """Status of a skill approval request."""
 
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+
 
 @dataclass
 class SkillApproval:
@@ -53,10 +56,12 @@ class SkillApproval:
         if not isinstance(self.status, ApprovalStatus):
             raise SkillValidationError(f"status must be ApprovalStatus, got {type(self.status)}")
 
+
 class GovernanceError(SkillValidationError):
     """Raised when governance operations fail."""
 
     pass
+
 
 class SkillGovernance:
     """Governance system for skill approvals.
@@ -93,7 +98,7 @@ class SkillGovernance:
 
     def __init__(
         self,
-        rebac_manager: "ReBACManager | None" = None,
+        rebac_manager: ReBACManager | None = None,
     ):
         """Initialize governance system.
 

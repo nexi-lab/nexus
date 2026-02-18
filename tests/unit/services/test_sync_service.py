@@ -3,6 +3,7 @@
 Tests metadata and content synchronization from connector backends.
 """
 
+
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -20,6 +21,7 @@ from nexus.services.sync_service import (
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def mock_gateway():
@@ -44,10 +46,12 @@ def mock_gateway():
 
     return gw
 
+
 @pytest.fixture
 def sync_service(mock_gateway):
     """Create a SyncService with mocked gateway."""
     return SyncService(gateway=mock_gateway)
+
 
 @pytest.fixture
 def operation_context():
@@ -60,6 +64,7 @@ def operation_context():
         is_admin=False,
     )
 
+
 @pytest.fixture
 def sync_context(operation_context):
     """Standard sync context for tests."""
@@ -69,9 +74,11 @@ def sync_context(operation_context):
         context=operation_context,
     )
 
+
 # =============================================================================
 # _belongs_to_other_mount helper tests
 # =============================================================================
+
 
 class TestBelongsToOtherMount:
     """Tests for the _belongs_to_other_mount helper function."""
@@ -106,9 +113,11 @@ class TestBelongsToOtherMount:
         sorted_mounts = ["/mnt/deep"]
         assert _belongs_to_other_mount("/mnt/deep/a/b/c/d.txt", sorted_mounts) is True
 
+
 # =============================================================================
 # SyncService initialization tests
 # =============================================================================
+
 
 class TestSyncServiceInit:
     """Tests for SyncService construction."""
@@ -124,9 +133,11 @@ class TestSyncServiceInit:
         assert service._change_log is not None
         assert service._change_log._session_factory is mock_gateway.session_factory
 
+
 # =============================================================================
 # sync_mount tests
 # =============================================================================
+
 
 class TestSyncMount:
     """Tests for the sync_mount method."""
@@ -246,9 +257,11 @@ class TestSyncMount:
         # Should only call list_dir once (root), not recurse into subdir
         assert backend.list_dir.call_count == 1
 
+
 # =============================================================================
 # dry_run tests
 # =============================================================================
+
 
 class TestSyncMountDryRun:
     """Tests for dry_run mode."""
@@ -312,9 +325,11 @@ class TestSyncMountDryRun:
         sync_service.sync_mount(ctx)
         backend.sync_content_to_cache.assert_not_called()
 
+
 # =============================================================================
 # _sync_deletions tests
 # =============================================================================
+
 
 class TestSyncDeletions:
     """Tests for _sync_deletions method."""
@@ -451,9 +466,11 @@ class TestSyncDeletions:
         assert len(result.errors) == 1
         assert "Failed to check for deletions" in result.errors[0]
 
+
 # =============================================================================
 # Error handling tests
 # =============================================================================
+
 
 class TestSyncErrorHandling:
     """Tests for error handling during sync."""
@@ -496,9 +513,11 @@ class TestSyncErrorHandling:
         assert len(result.errors) > 0
         assert "Failed to add" in result.errors[0]
 
+
 # =============================================================================
 # _sync_all_mounts tests
 # =============================================================================
+
 
 class TestSyncAllMounts:
     """Tests for syncing all mounts when mount_point is None."""
@@ -559,9 +578,11 @@ class TestSyncAllMounts:
         # The mount failed, but the overall operation did not crash
         assert len(result.errors) > 0
 
+
 # =============================================================================
 # _file_unchanged (delta sync) tests
 # =============================================================================
+
 
 class TestFileUnchanged:
     """Tests for delta sync change detection."""
@@ -646,9 +667,11 @@ class TestFileUnchanged:
 
         assert sync_service._file_unchanged(file_info, cached) is False
 
+
 # =============================================================================
 # SyncResult dataclass tests
 # =============================================================================
+
 
 class TestSyncResult:
     """Tests for SyncResult dataclass."""
@@ -671,9 +694,11 @@ class TestSyncResult:
         assert d["files_created"] == 5
         assert "errors" in d
 
+
 # =============================================================================
 # Pattern matching tests
 # =============================================================================
+
 
 class TestMatchesPatterns:
     """Tests for include/exclude pattern filtering."""
@@ -695,9 +720,11 @@ class TestMatchesPatterns:
         assert sync_service._matches_patterns("/mnt/test/module.pyc", ctx) is False
         assert sync_service._matches_patterns("/mnt/test/module.py", ctx) is True
 
+
 # =============================================================================
 # SyncContext tests
 # =============================================================================
+
 
 class TestSyncContext:
     """Tests for SyncContext defaults."""

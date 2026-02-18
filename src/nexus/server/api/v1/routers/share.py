@@ -8,6 +8,7 @@ Provides public share link endpoints (anonymous access allowed):
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
+
 import logging
 from typing import Any
 
@@ -26,9 +27,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["share"])
 
+
 # =============================================================================
 # Helpers
 # =============================================================================
+
 
 def _share_error_status_code(error_msg: str) -> int:
     """Map share-link error messages to HTTP status codes."""
@@ -43,9 +46,11 @@ def _share_error_status_code(error_msg: str) -> int:
         return 429
     return 400
 
+
 # =============================================================================
 # Endpoints
 # =============================================================================
+
 
 @router.get("/api/share/{link_id}")
 async def get_share_link_info(
@@ -65,6 +70,7 @@ async def get_share_link_info(
         raise HTTPException(status_code=status_code, detail=result.error_message or "Error")
 
     return JSONResponse(content=result.data)
+
 
 @router.post("/api/share/{link_id}/access")
 async def access_share_link(
@@ -102,6 +108,7 @@ async def access_share_link(
         raise HTTPException(status_code=status_code, detail=error_msg)
 
     return JSONResponse(content=result.data)
+
 
 @router.get("/api/share/{link_id}/download", response_model=None)
 async def download_via_share_link(

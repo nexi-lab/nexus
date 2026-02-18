@@ -1,5 +1,6 @@
 """Learning loop - main ACE integration."""
 
+
 import asyncio
 import traceback
 from collections.abc import Callable
@@ -66,11 +67,11 @@ class LearningLoop:
         self.reflector = Reflector(
             session, backend, llm_provider, self.trajectory_manager, user_id, agent_id, zone_id
         )
-        self.curator = Curator(session, backend, self.playbook_manager, zone_id=zone_id)
+        self.curator = Curator(session, backend, self.playbook_manager)
         self.consolidation_engine = ConsolidationEngine(
             session, backend, llm_provider, user_id, agent_id, zone_id
         )
-        self.feedback_manager = FeedbackManager(session, zone_id=zone_id)
+        self.feedback_manager = FeedbackManager(session)
 
     async def execute_with_learning_async(
         self,

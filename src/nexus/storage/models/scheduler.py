@@ -6,6 +6,7 @@ in scheduler/queue.py with a proper ORM model.
 Related: Issue #1212
 """
 
+
 from datetime import UTC, datetime
 from decimal import Decimal
 

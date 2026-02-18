@@ -13,6 +13,7 @@ Run with:
     pytest tests/e2e/test_auth_security_e2e.py -v --override-ini="addopts="
 """
 
+
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -23,12 +24,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.raft import _HAS_METASTORE
+from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import Base
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -41,9 +42,11 @@ pytestmark = [
     ),
 ]
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _rpc_body(method: str, params: dict | None = None) -> str:
     """Build JSON-RPC request body."""
@@ -55,6 +58,7 @@ def _rpc_body(method: str, params: dict | None = None) -> str:
             "params": params or {},
         }
     )
+
 
 def _rpc_post(
     client: TestClient,
@@ -72,6 +76,7 @@ def _rpc_post(
         headers=default_headers,
     )
     return resp.status_code, resp.json()
+
 
 def _create_nexus_fs(
     tmp_path: Path,
@@ -99,9 +104,11 @@ def _create_nexus_fs(
         is_admin=False,
     )
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def _db_engine(tmp_path: Path):
@@ -111,10 +118,12 @@ def _db_engine(tmp_path: Path):
     Base.metadata.create_all(engine)
     return engine
 
+
 @pytest.fixture()
 def _session_factory(_db_engine):
     """SQLAlchemy session factory bound to the test database."""
     return sessionmaker(bind=_db_engine)
+
 
 @pytest.fixture()
 def nexus_fs_enforced(tmp_path: Path):
@@ -123,12 +132,14 @@ def nexus_fs_enforced(tmp_path: Path):
     yield nx
     nx.close()
 
+
 @pytest.fixture()
 def nexus_fs_open(tmp_path: Path):
     """NexusFS with enforce_permissions=False (for writing seed data)."""
     nx = _create_nexus_fs(tmp_path, enforce_permissions=False, suffix="_open")
     yield nx
     nx.close()
+
 
 def _make_app_with_db_auth(
     nexus_fs: NexusFS,
@@ -149,6 +160,7 @@ def _make_app_with_db_auth(
         auth_provider=auth_provider,
         database_url=db_url,
     )
+
 
 def _make_app_with_static_key(
     nexus_fs: NexusFS,
@@ -181,9 +193,11 @@ def _make_app_with_static_key(
         database_url=db_url,
     )
 
+
 # ---------------------------------------------------------------------------
 # A) API Key Lifecycle
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.e2e
 class TestAPIKeyLifecycle:
@@ -287,9 +301,11 @@ class TestAPIKeyLifecycle:
 
         assert status == 401, f"Expected 401 for revoked key, got {status}: {body}"
 
+
 # ---------------------------------------------------------------------------
 # B) Zone Isolation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.e2e
 class TestZoneIsolation:
@@ -342,9 +358,11 @@ class TestZoneIsolation:
                 context=admin_b,
             )
 
+
 # ---------------------------------------------------------------------------
 # C) Permission Enforcement
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.e2e
 class TestPermissionEnforcement:
@@ -532,9 +550,11 @@ class TestPermissionEnforcement:
         content = nx.read(file_path, context=editor_ctx)
         assert content == b"x = 42\n"
 
+
 # ---------------------------------------------------------------------------
 # D) Stale Session Detection (Issue #1445)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.e2e
 class TestStaleSessionDetection:
@@ -693,7 +713,7 @@ class TestStaleSessionDetection:
 
     def test_jwt_roundtrip_with_agent_generation(self):
         """Full JWT roundtrip: create_token → authenticate → auth_result has generation."""
-        from nexus.auth.providers.local import LocalAuth
+        from nexus.server.auth.local import LocalAuth
 
         auth = LocalAuth(jwt_secret="e2e-test-secret", token_expiry=3600)
 
@@ -729,9 +749,11 @@ class TestStaleSessionDetection:
         assert ctx.agent_generation is None
         assert ctx.subject_type == "agent"
 
+
 # ---------------------------------------------------------------------------
 # E) Rate Limiting
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.e2e
 @pytest.mark.skip(

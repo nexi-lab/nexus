@@ -9,6 +9,7 @@ logic; this subsystem adds only the Subsystem ABC contract.
 Constructor takes explicit deps — no ``self`` god-reference to NexusFS.
 """
 
+
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from nexus.services.protocols.llm import LLMProtocol
 
 logger = logging.getLogger(__name__)
+
 
 class LLMSubsystem(Subsystem):
     """LLM-powered document reading subsystem.
@@ -30,12 +32,12 @@ class LLMSubsystem(Subsystem):
         llm_service: LLMProtocol implementation with the 4 RPC methods.
     """
 
-    def __init__(self, llm_service: "LLMProtocol") -> None:
+    def __init__(self, llm_service: LLMProtocol) -> None:
         self._service = llm_service
         logger.info("[LLMSubsystem] Initialized")
 
     @property
-    def service(self) -> "LLMProtocol":
+    def service(self) -> LLMProtocol:
         """Access the underlying LLM service."""
         return self._service
 

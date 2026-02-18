@@ -5,6 +5,7 @@ blocking the event loop (Decision 14).  Serialization logic is delegated
 to ``serialization.py`` (Decision 3).
 """
 
+
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
+
 class DatabaseTaskStore:
     """SQLAlchemy-backed task store.
 
@@ -35,7 +37,7 @@ class DatabaseTaskStore:
         A ``RecordStoreABC`` providing ``session_factory`` for database access.
     """
 
-    def __init__(self, record_store: "RecordStoreABC") -> None:
+    def __init__(self, record_store: RecordStoreABC) -> None:
         import warnings
 
         warnings.warn(
@@ -46,7 +48,6 @@ class DatabaseTaskStore:
             stacklevel=2,
         )
         self._session_factory = record_store.session_factory
-        self._executor = None  # Use default thread pool executor
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:
         """Run a sync function in the dedicated DB thread pool.

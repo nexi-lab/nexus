@@ -13,6 +13,7 @@ reading file contents.  The same pattern is used by the IPC
 ``TTLSweeper``.
 """
 
+
 import asyncio
 import logging
 import re
@@ -38,6 +39,7 @@ _DEFAULT_MAX_CACHE_SIZE = 10_000
 # Fallback agent ID when no agent is specified
 _UNASSIGNED_AGENT = "_unassigned"
 
+
 class _IndexEntry:
     """Lightweight cache entry mapping task_id to its location."""
 
@@ -47,6 +49,7 @@ class _IndexEntry:
         self.zone_id = zone_id
         self.agent_id = agent_id
         self.filename = filename
+
 
 class VFSTaskStore:
     """Stores A2A tasks as ``MessageEnvelope`` files under agent directories.
@@ -64,7 +67,7 @@ class VFSTaskStore:
 
     def __init__(
         self,
-        storage: "IPCStorageDriver",
+        storage: IPCStorageDriver,
         max_cache_size: int = _DEFAULT_MAX_CACHE_SIZE,
     ) -> None:
         self._storage = storage
@@ -421,14 +424,17 @@ class VFSTaskStore:
             evicted_id, _ = self._task_index.popitem(last=False)
             self._locks.pop(evicted_id, None)
 
+
 # ======================================================================
 # Helpers
 # ======================================================================
+
 
 def _validate_id(value: str, name: str) -> None:
     """Validate an ID string to prevent path traversal."""
     if not value or not _SAFE_ID_RE.match(value):
         raise ValueError(f"Invalid {name}: {value!r}")
+
 
 def _extract_task(data: bytes) -> Task | None:
     """Extract a Task from MessageEnvelope bytes.

@@ -10,6 +10,7 @@ Supports:
 - Removing mount configurations
 """
 
+
 import json
 import uuid
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ from nexus.storage.models import MountConfigModel
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
+
 
 class MountManager:
     """Manager for persistent mount configurations.
@@ -53,14 +55,13 @@ class MountManager:
         >>> manager.remove_mount("/personal/alice")
     """
 
-    def __init__(self, record_store: "RecordStoreABC") -> None:
+    def __init__(self, record_store: RecordStoreABC) -> None:
         """Initialize mount manager.
 
         Args:
             record_store: A RecordStoreABC providing session_factory for database access.
         """
         self._session_factory = record_store.session_factory
-        self.zone_id: str | None = None
 
     def save_mount(
         self,
@@ -69,7 +70,6 @@ class MountManager:
         backend_config: dict,
         priority: int = 0,
         readonly: bool = False,
-        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -82,7 +82,6 @@ class MountManager:
             backend_config: Backend-specific configuration (dict) - will be JSON-encoded
             priority: Mount priority (higher = preferred)
             readonly: Whether mount is read-only
-            io_profile: I/O tuning profile (Issue #1413)
             owner_user_id: User ID who owns this mount
             zone_id: Zone ID this mount belongs to
             description: Optional description of the mount
@@ -111,10 +110,6 @@ class MountManager:
         with self._session_factory() as session:
             # Check if mount already exists
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
-            if zone_id is not None:
-                stmt = stmt.where(MountConfigModel.zone_id == zone_id)
-            elif self.zone_id is not None:
-                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
             existing = session.execute(stmt).scalar_one_or_none()
 
             if existing:
@@ -131,7 +126,6 @@ class MountManager:
                 owner_user_id=owner_user_id,
                 zone_id=zone_id,
                 description=description,
-                io_profile=io_profile,
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
             )
@@ -174,8 +168,6 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
-            if self.zone_id is not None:
-                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:
@@ -218,8 +210,6 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
-            if self.zone_id is not None:
-                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:
@@ -232,7 +222,6 @@ class MountManager:
                 "backend_config": json.loads(mount_model.backend_config),
                 "priority": mount_model.priority,
                 "readonly": bool(mount_model.readonly),
-                "io_profile": mount_model.io_profile,
                 "owner_user_id": mount_model.owner_user_id,
                 "zone_id": mount_model.zone_id,
                 "description": mount_model.description,
@@ -270,8 +259,6 @@ class MountManager:
                 stmt = stmt.where(MountConfigModel.owner_user_id == owner_user_id)
             if zone_id:
                 stmt = stmt.where(MountConfigModel.zone_id == zone_id)
-            elif self.zone_id is not None:
-                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
 
             # Order by priority (desc) then mount_point
             stmt = stmt.order_by(MountConfigModel.priority.desc(), MountConfigModel.mount_point)
@@ -286,7 +273,6 @@ class MountManager:
                     "backend_config": json.loads(m.backend_config),
                     "priority": m.priority,
                     "readonly": bool(m.readonly),
-                    "io_profile": m.io_profile,
                     "owner_user_id": m.owner_user_id,
                     "zone_id": m.zone_id,
                     "description": m.description,
@@ -311,8 +297,6 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
-            if self.zone_id is not None:
-                stmt = stmt.where(MountConfigModel.zone_id == self.zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:

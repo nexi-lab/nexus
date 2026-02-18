@@ -16,6 +16,7 @@ Ledger update (record_spending):
 Default behavior: open by default (no policy = allow all transactions).
 """
 
+
 import json
 import logging
 import time
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 # Default approval expiry: 24 hours
 _APPROVAL_EXPIRY_HOURS = 24
 
+
 def _current_period_start(period_type: str, ref: date | None = None) -> date:
     """Calculate the start of the current period.
 
@@ -68,6 +70,7 @@ def _current_period_start(period_type: str, ref: date | None = None) -> date:
     msg = f"Unknown period_type: {period_type}"
     raise ValueError(msg)
 
+
 class SpendingPolicyService:
     """Manages spending policies and evaluates transactions against them.
 
@@ -79,7 +82,7 @@ class SpendingPolicyService:
 
     def __init__(
         self,
-        session_factory: "Callable[[], AsyncSession]",
+        session_factory: Callable[[], AsyncSession],
         *,
         cache_ttl: float = _CACHE_TTL,
         max_cache_entries: int = 4096,
@@ -217,7 +220,7 @@ class SpendingPolicyService:
         }
     )
 
-    async def update_policy(self, policy_id: str, zone_id: str | None = None, **updates: Any) -> SpendingPolicy | None:
+    async def update_policy(self, policy_id: str, **updates: Any) -> SpendingPolicy | None:
         """Update a spending policy by ID. Returns updated policy or None if not found."""
         from sqlalchemy import select
 
@@ -225,8 +228,6 @@ class SpendingPolicyService:
 
         async with self._session_factory() as session, session.begin():
             stmt = select(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
-            if zone_id is not None:
-                stmt = stmt.where(SpendingPolicyModel.zone_id == zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:
@@ -249,7 +250,7 @@ class SpendingPolicyService:
             await session.flush()
             return _model_to_policy(model)
 
-    async def delete_policy(self, policy_id: str, zone_id: str | None = None) -> bool:
+    async def delete_policy(self, policy_id: str) -> bool:
         """Delete a spending policy by ID. Returns True if deleted."""
         from sqlalchemy import delete, select
 
@@ -258,8 +259,6 @@ class SpendingPolicyService:
         async with self._session_factory() as session, session.begin():
             # Fetch first to invalidate cache
             stmt = select(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
-            if zone_id is not None:
-                stmt = stmt.where(SpendingPolicyModel.zone_id == zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:
@@ -269,8 +268,6 @@ class SpendingPolicyService:
             self._cache.pop(cache_key, None)
 
             del_stmt = delete(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
-            if zone_id is not None:
-                del_stmt = del_stmt.where(SpendingPolicyModel.zone_id == zone_id)
             await session.execute(del_stmt)
 
         return True
@@ -854,9 +851,11 @@ class SpendingPolicyService:
         self._hourly_counters.clear()
         self._daily_tx_counts.clear()
 
+
 # =============================================================================
 # Helpers
 # =============================================================================
+
 
 def _to_micro_or_none(value: Decimal | None) -> int | None:
     """Convert credits Decimal to micro-credits int, or None."""
@@ -864,7 +863,8 @@ def _to_micro_or_none(value: Decimal | None) -> int | None:
         return None
     return credits_to_micro(value)
 
-def _model_to_policy(model: "SpendingPolicyModel") -> SpendingPolicy:
+
+def _model_to_policy(model: SpendingPolicyModel) -> SpendingPolicy:
     """Convert SQLAlchemy model to frozen dataclass."""
     rules_parsed: list[dict[str, Any]] | None = None
     if model.rules is not None:
@@ -900,6 +900,7 @@ def _model_to_policy(model: "SpendingPolicyModel") -> SpendingPolicy:
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
+
 
 def _approval_model_to_dataclass(model: Any) -> SpendingApproval:
     """Convert SpendingApprovalModel to SpendingApproval dataclass."""

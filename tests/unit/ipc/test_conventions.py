@@ -1,5 +1,6 @@
 """Unit tests for path conventions."""
 
+
 from datetime import UTC, datetime
 
 from nexus.ipc.conventions import (
@@ -46,6 +47,7 @@ class TestPathConventions:
     def test_agent_card_path(self) -> None:
         assert agent_card_path("reviewer") == "/agents/reviewer/AGENT.json"
 
+
 class TestMessageFilename:
     """Tests for message filename generation."""
 
@@ -66,6 +68,7 @@ class TestMessageFilename:
         name1 = message_filename("msg_aaa", ts)
         name2 = message_filename("msg_bbb", ts)
         assert name1 != name2
+
 
 class TestFullPaths:
     """Tests for composed message paths."""
@@ -89,6 +92,7 @@ class TestFullPaths:
         ts = datetime(2026, 2, 12, 10, 0, 0, tzinfo=UTC)
         path = message_path_in_dead_letter("reviewer", "msg_abc", ts)
         assert path == "/agents/reviewer/dead_letter/20260212T100000_msg_abc.json"
+
 
 class TestTaskPaths:
     """Tests for A2A task path builders (§17.6 convergence)."""

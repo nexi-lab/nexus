@@ -14,6 +14,7 @@ This keeps the IPC brick testable in isolation — unit tests inject
 in-memory fakes that satisfy these Protocols.
 """
 
+
 from collections.abc import AsyncIterator
 from typing import Any, Protocol, runtime_checkable
 
@@ -60,6 +61,7 @@ class VFSOperations(Protocol):
         """Check if a path exists."""
         ...
 
+
 @runtime_checkable
 class EventPublisher(Protocol):
     """Minimal event publishing interface required by the IPC brick.
@@ -71,6 +73,7 @@ class EventPublisher(Protocol):
     async def publish(self, channel: str, data: dict[str, Any]) -> None:
         """Publish an event to a channel."""
         ...
+
 
 @runtime_checkable
 class EventSubscriber(Protocol):
@@ -84,6 +87,7 @@ class EventSubscriber(Protocol):
         """Subscribe to events on a channel. Yields events as they arrive."""
         ...
 
+
 @runtime_checkable
 class HotPathPublisher(Protocol):
     """Publish raw bytes to a NATS subject for hot-path delivery.
@@ -94,6 +98,7 @@ class HotPathPublisher(Protocol):
     async def publish(self, subject: str, data: bytes) -> None:
         """Publish data to the given subject."""
         ...
+
 
 @runtime_checkable
 class HotPathSubscriber(Protocol):

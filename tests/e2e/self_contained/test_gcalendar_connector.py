@@ -12,6 +12,7 @@ use real OAuth tokens in CI. For full E2E testing with real
 Google API, use the manual test script in scripts/test_gcalendar.py.
 """
 
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -33,6 +34,7 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # ============================================================================
 # FIXTURES
 # ============================================================================
+
 
 @pytest.fixture
 def mock_calendar_service():
@@ -81,6 +83,7 @@ def mock_calendar_service():
 
     return service
 
+
 @pytest.fixture
 def calendar_backend(mock_calendar_service, tmp_path):
     """Create a Calendar backend with mocked Google service."""
@@ -100,6 +103,7 @@ def calendar_backend(mock_calendar_service, tmp_path):
 
     return backend
 
+
 @pytest.fixture
 def operation_context():
     """Create an operation context for testing."""
@@ -110,9 +114,11 @@ def operation_context():
         zone_id="root",
     )
 
+
 # ============================================================================
 # SCHEMA VALIDATION TESTS
 # ============================================================================
+
 
 class TestCreateEventSchema:
     """Test CreateEventSchema validation."""
@@ -161,6 +167,7 @@ class TestCreateEventSchema:
                 end=TimeSlot(dateTime="2024-01-15T10:00:00-08:00"),
             )
 
+
 class TestUpdateEventSchema:
     """Test UpdateEventSchema validation."""
 
@@ -174,6 +181,7 @@ class TestUpdateEventSchema:
         assert update.summary == "New Title"
         assert update.start is None
         assert update.end is None
+
 
 class TestDeleteEventSchema:
     """Test DeleteEventSchema validation."""
@@ -195,9 +203,11 @@ class TestDeleteEventSchema:
 
         assert delete.confirm is True
 
+
 # ============================================================================
 # TRAIT VALIDATION TESTS
 # ============================================================================
+
 
 class TestTraitValidation:
     """Test trait-based validation."""
@@ -243,9 +253,11 @@ class TestTraitValidation:
         warnings = calendar_backend.validate_traits("delete_event", data)
         assert warnings == []
 
+
 # ============================================================================
 # SKILL.MD GENERATION TESTS
 # ============================================================================
+
 
 class TestSkillDocGeneration:
     """Test SKILL.md auto-generation."""
@@ -306,9 +318,11 @@ class TestSkillDocGeneration:
         finally:
             nx.close()
 
+
 # ============================================================================
 # YAML PARSING TESTS
 # ============================================================================
+
 
 class TestYAMLParsing:
     """Test YAML content parsing."""
@@ -345,9 +359,11 @@ start:
         assert "agent_intent" in data
         assert "weekly standup" in data["agent_intent"].lower()
 
+
 # ============================================================================
 # ERROR FORMATTING TESTS
 # ============================================================================
+
 
 class TestErrorFormatting:
     """Test error message formatting with SKILL.md references."""
@@ -384,9 +400,11 @@ class TestErrorFormatting:
         # Should include fix example from ERROR_REGISTRY
         assert "agent_intent" in str(error)
 
+
 # ============================================================================
 # MOCK API CALL TESTS
 # ============================================================================
+
 
 class TestMockedAPICalls:
     """Test connector operations with mocked Google API."""
@@ -436,9 +454,11 @@ summary: Updated Project Discussion
         assert "event1.yaml" in events
         assert "event2.yaml" in events
 
+
 # ============================================================================
 # CHECKPOINT TESTS
 # ============================================================================
+
 
 class TestCheckpoints:
     """Test checkpoint/rollback functionality."""

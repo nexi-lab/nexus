@@ -7,6 +7,7 @@ Tests verify:
 - get_model() returns correct model name
 """
 
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

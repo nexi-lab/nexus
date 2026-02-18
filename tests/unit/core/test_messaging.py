@@ -1,5 +1,6 @@
 """Unit tests for shared messaging primitives."""
 
+
 from nexus.a2a.messaging import (
     DataPart,
     FilePart,
@@ -22,6 +23,7 @@ class TestMessageMetadata:
         assert meta.correlation_id == "corr-1"
         assert meta.ttl_seconds == 60
         assert meta.version == "2.0"
+
 
 class TestPartReexports:
     def test_text_part_available(self) -> None:

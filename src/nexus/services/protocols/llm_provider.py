@@ -9,6 +9,7 @@ References:
     - Issue #1521: Extract LLM module into LLM brick
 """
 
+
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Protocol, runtime_checkable
 

@@ -1,5 +1,6 @@
 """IsolatedPool — executor lifecycle, submission, and health management."""
 
+
 import logging
 import threading
 from concurrent.futures import Executor, Future
@@ -16,6 +17,7 @@ from nexus.isolation.errors import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 class IsolatedPool:
     """Manages an executor pool for isolated backend calls.

@@ -6,6 +6,7 @@ in-memory event bus mock, and ExporterRegistry.
 Issue #1241, #1138.
 """
 
+
 import tempfile
 import time
 import uuid
@@ -27,11 +28,13 @@ def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
+
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "integration_test.db")
     yield rs
     rs.close()
+
 
 def _insert_undelivered(
     session_factory,
@@ -55,6 +58,7 @@ def _insert_undelivered(
         session.add(record)
         session.commit()
     return op_id
+
 
 class TestFullPollDispatchMarkCycle:
     """Integration test: poll -> dispatch -> mark delivered."""
@@ -123,6 +127,7 @@ class TestFullPollDispatchMarkCycle:
 
         assert count1 + count2 == 10
 
+
 class TestDLQIntegration:
     """Integration test: DLQ routing with real database."""
 
@@ -150,6 +155,7 @@ class TestDLQIntegration:
             assert dlq_entries[0].exporter_name == "internal"
             assert dlq_entries[0].failure_type == "transient"  # ConnectionError
             assert dlq_entries[0].resolved_at is None
+
 
 class TestWorkerLifecycleIntegration:
     """Integration test: start/stop with actual event processing."""

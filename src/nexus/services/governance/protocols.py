@@ -8,6 +8,7 @@ AnomalyServiceProtocol: anomaly detection lifecycle.
 CollusionServiceProtocol: collusion/fraud ring detection.
 """
 
+
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
         FraudScore,
         GovernanceEdge,
     )
+
 
 @runtime_checkable
 class AnomalyDetectorProtocol(Protocol):
@@ -41,6 +43,7 @@ class AnomalyDetectorProtocol(Protocol):
         """
         ...
 
+
 @runtime_checkable
 class GovernanceGraphProtocol(Protocol):
     """Protocol for governance constraint graph operations.
@@ -54,13 +57,13 @@ class GovernanceGraphProtocol(Protocol):
         from_agent: str,
         to_agent: str,
         zone_id: str,
-        constraint_type: "ConstraintType",
+        constraint_type: ConstraintType,
         reason: str = "",
-    ) -> "GovernanceEdge":
+    ) -> GovernanceEdge:
         """Add a governance constraint between two agents."""
         ...
 
-    async def remove_constraint(self, edge_id: str, zone_id: str | None = None) -> bool:
+    async def remove_constraint(self, edge_id: str) -> bool:
         """Remove a constraint by edge ID."""
         ...
 
@@ -69,7 +72,7 @@ class GovernanceGraphProtocol(Protocol):
         from_agent: str,
         to_agent: str,
         zone_id: str,
-    ) -> "ConstraintCheckResult":
+    ) -> ConstraintCheckResult:
         """Check if there's a constraint between two agents."""
         ...
 
@@ -77,9 +80,10 @@ class GovernanceGraphProtocol(Protocol):
         self,
         zone_id: str,
         agent_id: str | None = None,
-    ) -> list["GovernanceEdge"]:
+    ) -> list[GovernanceEdge]:
         """List constraint edges, optionally filtered by agent."""
         ...
+
 
 @runtime_checkable
 class AnomalyServiceProtocol(Protocol):
@@ -100,6 +104,7 @@ class AnomalyServiceProtocol(Protocol):
         """Analyze a transaction for anomalies."""
         ...
 
+
 @runtime_checkable
 class CollusionServiceProtocol(Protocol):
     """Protocol for collusion/fraud ring detection.
@@ -111,10 +116,10 @@ class CollusionServiceProtocol(Protocol):
     async def detect_rings(
         self,
         zone_id: str,
-    ) -> list["FraudRing"]:
+    ) -> list[FraudRing]:
         """Detect transaction rings (cycles) in the interaction graph."""
         ...
 
-    async def compute_fraud_scores(self, zone_id: str) -> dict[str, "FraudScore"]:
+    async def compute_fraud_scores(self, zone_id: str) -> dict[str, FraudScore]:
         """Compute composite fraud scores for all agents in a zone."""
         ...

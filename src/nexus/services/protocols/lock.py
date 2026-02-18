@@ -13,10 +13,12 @@ References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
 """
 
+
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+
 
 @runtime_checkable
 class LockProtocol(Protocol):
@@ -31,7 +33,7 @@ class LockProtocol(Protocol):
         timeout: float = 30.0,
         ttl: float = 30.0,
         max_holders: int = 1,
-        _context: "OperationContext | None" = None,
+        _context: OperationContext | None = None,
     ) -> str | None: ...
 
     async def extend_lock(
@@ -39,12 +41,12 @@ class LockProtocol(Protocol):
         lock_id: str,
         path: str,
         ttl: float = 30.0,
-        _context: "OperationContext | None" = None,
+        _context: OperationContext | None = None,
     ) -> bool: ...
 
     async def unlock(
         self,
         lock_id: str,
         path: str | None = None,
-        _context: "OperationContext | None" = None,
+        _context: OperationContext | None = None,
     ) -> bool: ...

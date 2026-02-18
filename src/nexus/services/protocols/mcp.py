@@ -10,10 +10,12 @@ References:
     - Issue #988: Extract MCP service from NexusFS
 """
 
+
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+
 
 @runtime_checkable
 class MCPProtocol(Protocol):
@@ -29,13 +31,13 @@ class MCPProtocol(Protocol):
         self,
         tier: str | None = None,
         include_unmounted: bool = True,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def mcp_list_tools(
         self,
         name: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def mcp_mount(
@@ -49,17 +51,17 @@ class MCPProtocol(Protocol):
         headers: dict[str, str] | None = None,
         description: str | None = None,
         tier: str = "system",
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     async def mcp_unmount(
         self,
         name: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     async def mcp_sync(
         self,
         name: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...

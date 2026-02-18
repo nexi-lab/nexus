@@ -1,5 +1,6 @@
 """Tests for cancellation handling (src/nexus/llm/cancellation.py)."""
 
+
 from nexus.llm.cancellation import (
     AsyncCancellationToken,
     CancellationToken,
@@ -36,6 +37,7 @@ class TestShutdownFlag:
 
         reset_shutdown_flag()
         assert should_continue() is True
+
 
 class TestCancellationToken:
     """Tests for the synchronous CancellationToken."""
@@ -124,6 +126,7 @@ class TestCancellationToken:
         # Manual cancel overrides everything
         token.cancel()
         assert token.is_cancelled() is True
+
 
 class TestAsyncCancellationToken:
     """Tests for the AsyncCancellationToken."""

@@ -369,7 +369,7 @@ def _mount_fuse(
             assert log_file is not None, "log_file must be set in daemon mode"
 
             # Configure logging to file with secret redaction (Issue #86)
-            from nexus.server.logging_processors import RedactingFormatter
+            from nexus.core.logging_utils import RedactingFormatter
 
             _fuse_formatter = RedactingFormatter(
                 "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -589,14 +589,17 @@ def serve(
         from nexus.fuse import mount_nexus
         mount_nexus(nx, "/mnt/nexus")
     """
+    import logging
     import os
     import subprocess
 
-    from nexus.server.logging_config import configure_logging
+    from nexus.core.logging_utils import setup_logging
 
-    # Set up structured logging with secret redaction (Issue #86 + #1002)
-    # configure_logging() reads NEXUS_LOG_REDACTION_ENABLED env var internally
-    configure_logging(env=os.getenv("NEXUS_ENV", "dev"), log_level="INFO")
+    # Set up logging with secret redaction (Issue #86)
+    # Read redaction setting from env var (config hasn't loaded yet at this point)
+    _redaction_env = os.getenv("NEXUS_LOG_REDACTION_ENABLED", "true").lower()
+    _redaction_enabled = _redaction_env in ("true", "1", "yes", "on")
+    setup_logging(level=logging.INFO, redaction_enabled=_redaction_enabled)
 
     try:
         # ============================================
@@ -955,17 +958,19 @@ def serve(
             sys.exit(1)
 
         # Create authentication provider
-        from nexus.auth.providers.base import AuthProvider
+        from nexus.server.auth.base import AuthProvider
 
         auth_provider: AuthProvider | None = None
         if auth_type == "database":
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
             from nexus.server.auth.database_local import DatabaseLocalAuth
             from nexus.server.auth.factory import DiscriminatingAuthProvider
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -986,8 +991,13 @@ def serve(
                     "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
                 )
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
-            session_factory = _record_store.session_factory
+            engine = create_engine(
+                db_url,
+                pool_pre_ping=True,
+                pool_recycle=1800,
+                pool_size=5,
+            )
+            session_factory = sessionmaker(bind=engine)
 
             # Create composite provider that routes tokens to appropriate handler
             auth_provider = DiscriminatingAuthProvider(
@@ -1006,8 +1016,10 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
             from nexus.server.auth.database_local import DatabaseLocalAuth
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1026,8 +1038,13 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
-            session_factory = _record_store.session_factory
+            engine = create_engine(
+                db_url,
+                pool_pre_ping=True,  # Test connections before use (fixes stale connection errors)
+                pool_recycle=1800,  # Recycle connections every 30 min
+                pool_size=5,  # Auth doesn't need many connections
+            )
+            session_factory = sessionmaker(bind=engine)
             # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
             auth_provider = DatabaseLocalAuth(
                 session_factory=session_factory,
@@ -1040,7 +1057,7 @@ def serve(
             # Single OIDC provider authentication
             import os
 
-            from nexus.server.auth.factory import create_auth_provider  # stays in server
+            from nexus.server.auth.factory import create_auth_provider
 
             oidc_issuer = os.getenv("NEXUS_OIDC_ISSUER")
             oidc_audience = os.getenv("NEXUS_OIDC_AUDIENCE")
@@ -1061,7 +1078,7 @@ def serve(
             import json
             import os
 
-            from nexus.server.auth.factory import create_auth_provider  # stays in server
+            from nexus.server.auth.factory import create_auth_provider
 
             oidc_providers_json = os.getenv("NEXUS_OIDC_PROVIDERS")
             if not oidc_providers_json:
@@ -1084,7 +1101,7 @@ def serve(
 
         elif auth_type == "static":
             # Static API key authentication (deprecated, use database instead)
-            from nexus.server.auth.factory import create_auth_provider  # stays in server
+            from nexus.server.auth.factory import create_auth_provider
 
             if not api_key:
                 console.print("[red]Error:[/red] Static authentication requires --api-key")
@@ -1099,7 +1116,7 @@ def serve(
 
         elif api_key:
             # Backward compatibility: --api-key without --auth-type defaults to static
-            from nexus.server.auth.factory import create_auth_provider  # stays in server
+            from nexus.server.auth.factory import create_auth_provider
 
             auth_provider = create_auth_provider("static", api_key=api_key)
             console.print("[yellow]⚠️  Using static API key authentication (deprecated)[/yellow]")
@@ -1127,12 +1144,9 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import text
+            from sqlalchemy import create_engine, text
 
-            from nexus.storage.record_store import SQLAlchemyRecordStore
-
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
-            engine = _record_store.engine
+            engine = create_engine(db_url)
 
             # List of tables to clear (in dependency order)
             tables_to_clear = [
@@ -1229,12 +1243,14 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
             from nexus.rebac.entity_registry import EntityRegistry
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
-            Session = _record_store.session_factory
+            engine = create_engine(db_url)
+            Session = sessionmaker(bind=engine)
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)

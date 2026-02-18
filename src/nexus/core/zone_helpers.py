@@ -9,6 +9,7 @@ kernel→server import violations. server/auth/user_helpers.py re-exports
 these for backward compatibility.
 """
 
+
 import logging
 from typing import Any
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # ReBAC Group Naming Helpers
 # ==============================================================================
+
 
 def zone_group_id(zone_id: str) -> str:
     """Generate zone group ID from zone_id.
@@ -31,6 +33,7 @@ def zone_group_id(zone_id: str) -> str:
         zone_group_id("acme") -> "zone-acme"
     """
     return f"zone-{zone_id}"
+
 
 def parse_zone_from_group(group_id: str) -> str | None:
     """Extract zone_id from group ID.
@@ -49,6 +52,7 @@ def parse_zone_from_group(group_id: str) -> str | None:
         return group_id[len("zone-") :]
     return None
 
+
 def is_zone_group(group_id: str) -> bool:
     """Check if group ID is a zone group.
 
@@ -59,6 +63,7 @@ def is_zone_group(group_id: str) -> bool:
         True if group ID is a zone group (starts with "zone-")
     """
     return group_id.startswith("zone-")
+
 
 def is_zone_owner(
     rebac_manager: Any,
@@ -88,6 +93,7 @@ def is_zone_owner(
             zone_id=zone_id,
         )
     )
+
 
 def is_zone_admin(
     rebac_manager: Any,
@@ -123,6 +129,7 @@ def is_zone_admin(
         )
     )
 
+
 def can_invite_to_zone(
     rebac_manager: Any,
     user_id: str,
@@ -143,6 +150,7 @@ def can_invite_to_zone(
             # Alice can call add_user_to_zone()
     """
     return is_zone_admin(rebac_manager, user_id, zone_id)
+
 
 def add_user_to_zone(
     rebac_manager: Any,
@@ -206,6 +214,7 @@ def add_user_to_zone(
     )
     return tuple_id
 
+
 def remove_user_from_zone(
     rebac_manager: Any,
     user_id: str,
@@ -247,6 +256,7 @@ def remove_user_from_zone(
         zone_id=zone_id,
     )
 
+
 def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
     """Get list of zone IDs that user belongs to.
 
@@ -278,6 +288,7 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
     except Exception as e:
         logger.warning("Failed to fetch zone IDs for user %s: %s", user_id, e)
     return zone_ids
+
 
 def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool:
     """Check if user belongs to zone.

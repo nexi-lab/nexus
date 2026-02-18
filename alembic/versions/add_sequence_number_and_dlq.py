@@ -20,6 +20,7 @@ down_revision: Union[str, Sequence[str], None] = "merge_token_rotation_delivered
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+
 def upgrade() -> None:
     """Add sequence_number column and dead_letter_queue table."""
     bind = op.get_bind()
@@ -102,6 +103,7 @@ def upgrade() -> None:
         "dead_letter_queue",
         ["operation_id"],
     )
+
 
 def downgrade() -> None:
     """Remove dead_letter_queue table and sequence_number column."""

@@ -7,6 +7,7 @@ Uses ordering key = zone_id for ordered delivery within a zone.
 Optional dependency: ``pip install nexus-ai-fs[pubsub]``
 """
 
+
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -18,10 +19,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class PubSubExporter:
     """Google Pub/Sub event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: "PubSubExporterConfig") -> None:
+    def __init__(self, config: PubSubExporterConfig) -> None:
         self._config = config
         self._publisher: Any | None = None
 

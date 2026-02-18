@@ -11,17 +11,20 @@ Each strategy receives remaining paths and returns (allowed, remaining).
 The chain short-circuits once all paths are resolved.
 """
 
+
 import logging
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from nexus.core.permissions import OperationContext
-from nexus.rebac.manager import ReBACManager
-from nexus.services.permissions.permission_cache import PermissionCacheCoordinator
+if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
+    from nexus.rebac.manager import ReBACManager
+    from nexus.services.permissions.permission_cache import PermissionCacheCoordinator
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class FilterContext:
@@ -35,6 +38,7 @@ class FilterContext:
     rebac_manager: ReBACManager
     router: Any = None
 
+
 @dataclass
 class FilterResult:
     """Result from a filter strategy."""
@@ -43,14 +47,17 @@ class FilterResult:
     remaining: list[str] = field(default_factory=list)
     short_circuit: bool = False
 
+
 class FilterStrategy(Protocol):
     """Single step in the permission filter chain."""
 
     def apply(self, ctx: FilterContext, remaining: list[str]) -> FilterResult: ...
 
+
 # =============================================================================
 # Strategy 1: Tiger Bitmap (O(1) bitmap)
 # =============================================================================
+
 
 class TigerBitmapStrategy:
     """Try O(1) bitmap filtering via Tiger Cache."""
@@ -70,9 +77,11 @@ class TigerBitmapStrategy:
 
         return FilterResult(allowed=allowed, remaining=still_remaining)
 
+
 # =============================================================================
 # Strategy 2: Leopard Directory Index (cached dir grants)
 # =============================================================================
+
 
 class LeopardIndexStrategy:
     """Check cached accessible directories for path inheritance."""
@@ -84,9 +93,11 @@ class LeopardIndexStrategy:
         allowed, still_remaining = ctx.cache.try_leopard_lookup(remaining, ctx.subject, ctx.zone_id)
         return FilterResult(allowed=allowed, remaining=still_remaining)
 
+
 # =============================================================================
 # Strategy 3: Hierarchy Pre-Filter (batch ancestor checks)
 # =============================================================================
+
 
 class HierarchyPreFilterStrategy:
     """Batch-check parent directories to eliminate entire subtrees.
@@ -202,9 +213,11 @@ class HierarchyPreFilterStrategy:
 
         return unique_parents
 
+
 # =============================================================================
 # Strategy 4: Zone Pre-Filter (cross-zone elimination)
 # =============================================================================
+
 
 class ZonePreFilterStrategy:
     """Skip paths belonging to other zones."""
@@ -228,9 +241,11 @@ class ZonePreFilterStrategy:
 
         return FilterResult(allowed=[], remaining=kept)
 
+
 # =============================================================================
 # Strategy 5: Bulk ReBAC (final fallback)
 # =============================================================================
+
 
 class BulkReBACStrategy:
     """Final fallback: check all remaining paths via rebac_check_bulk().
@@ -285,6 +300,7 @@ class BulkReBACStrategy:
 
         return FilterResult(allowed=allowed, remaining=[], short_circuit=True)
 
+
 # =============================================================================
 # Chain Composition
 # =============================================================================
@@ -297,6 +313,7 @@ DEFAULT_FILTER_CHAIN: list[FilterStrategy] = [
     ZonePreFilterStrategy(),
     BulkReBACStrategy(),
 ]
+
 
 def run_filter_chain(
     ctx: FilterContext,

@@ -1,5 +1,6 @@
 """Tests for LLM metrics tracking (src/nexus/llm/metrics.py)."""
 
+
 from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 
 
@@ -33,6 +34,7 @@ class TestTokenUsage:
         assert result.cache_read_tokens == 30
         assert result.cache_write_tokens == 15
 
+
 class TestResponseLatency:
     """Test ResponseLatency dataclass."""
 
@@ -42,6 +44,7 @@ class TestResponseLatency:
         assert rl.latency == 1.5
         assert rl.response_id == "resp_123"
         assert rl.timestamp > 0
+
 
 class TestLLMMetrics:
     """Test LLMMetrics class."""

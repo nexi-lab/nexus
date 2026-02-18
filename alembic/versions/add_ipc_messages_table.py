@@ -22,6 +22,7 @@ down_revision: Union[str, Sequence[str], None] = "merge_spending_and_contextual"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+
 def upgrade() -> None:
     """Add ipc_messages table with zone+path indexes."""
     op.create_table(
@@ -54,6 +55,7 @@ def upgrade() -> None:
         ["zone_id", "dir_path"],
         unique=False,
     )
+
 
 def downgrade() -> None:
     """Remove ipc_messages table."""

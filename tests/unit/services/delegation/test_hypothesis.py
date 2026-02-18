@@ -6,6 +6,7 @@ This holds regardless of mode, scope_prefix, remove/add/readonly lists.
 Uses Hypothesis to generate random inputs and verify the invariant holds.
 """
 
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -41,9 +42,11 @@ _grant_list = st.lists(_grant, min_size=0, max_size=50)
 
 _mode = st.sampled_from([DelegationMode.COPY, DelegationMode.CLEAN, DelegationMode.SHARED])
 
+
 # ---------------------------------------------------------------------------
 # Anti-escalation invariant
 # ---------------------------------------------------------------------------
+
 
 class TestAntiEscalationInvariant:
     """The derived grants must be a subset of parent grants (by object_id)."""
@@ -95,9 +98,11 @@ class TestAntiEscalationInvariant:
         with pytest.raises(EscalationError):
             derive_grants(parent_grants, DelegationMode.CLEAN, add_grants=[extra_path])
 
+
 # ---------------------------------------------------------------------------
 # Privilege monotonicity: readonly_paths can only downgrade, never upgrade
 # ---------------------------------------------------------------------------
+
 
 class TestPrivilegeMonotonicity:
     """Readonly paths can only reduce privilege, never increase."""
@@ -126,9 +131,11 @@ class TestPrivilegeMonotonicity:
                     f"for {grant.object_id}"
                 )
 
+
 # ---------------------------------------------------------------------------
 # Scope prefix filtering
 # ---------------------------------------------------------------------------
+
 
 class TestScopePrefixProperty:
     """All derived grants must match the scope prefix (when set)."""
@@ -156,9 +163,11 @@ class TestScopePrefixProperty:
         # SHARED with no prefix should return all unique parent IDs
         assert derived_ids == parent_ids
 
+
 # ---------------------------------------------------------------------------
 # Remove grants reduces set
 # ---------------------------------------------------------------------------
+
 
 class TestRemoveGrantsProperty:
     """Remove grants can only reduce the derived set."""
@@ -181,9 +190,11 @@ class TestRemoveGrantsProperty:
         removed_ids = {g.object_id for g in result_removed}
         assert removed_ids <= full_ids
 
+
 # ---------------------------------------------------------------------------
 # validate_scope_prefix property
 # ---------------------------------------------------------------------------
+
 
 class TestPrefixValidationProperty:
     """Property tests for scope_prefix validation."""
@@ -208,9 +219,11 @@ class TestPrefixValidationProperty:
         with pytest.raises(InvalidPrefixError):
             validate_scope_prefix(path)
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _rank(relation: str) -> int:
     """Rank relations by privilege level."""

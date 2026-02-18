@@ -3,6 +3,7 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
+
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -144,6 +145,7 @@ class ReBACTupleModel(Base):
         ),
     )
 
+
 class ReBACNamespaceModel(Base):
     """Namespace configuration for ReBAC permission expansion."""
 
@@ -163,6 +165,7 @@ class ReBACNamespaceModel(Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
+
 
 class ReBACGroupClosureModel(Base):
     """Leopard-style transitive group closure for O(1) membership lookups."""
@@ -191,6 +194,7 @@ class ReBACGroupClosureModel(Base):
             f"{self.group_type}:{self.group_id}, depth={self.depth})>"
         )
 
+
 class ReBACChangelogModel(Base):
     """Change log for ReBAC tuple modifications."""
 
@@ -213,6 +217,7 @@ class ReBACChangelogModel(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
     )
 
+
 class ReBACVersionSequenceModel(Base):
     """Per-zone version sequence for ReBAC consistency tokens."""
 
@@ -226,6 +231,7 @@ class ReBACVersionSequenceModel(Base):
 
     __table_args__: tuple = ()
 
+
 class FileSystemVersionSequenceModel(Base):
     """Per-zone version sequence for filesystem consistency tokens (Issue #1187)."""
 
@@ -238,6 +244,7 @@ class FileSystemVersionSequenceModel(Base):
     )
 
     __table_args__: tuple = ()
+
 
 class ReBACCheckCacheModel(Base):
     """Cache for ReBAC permission check results."""
@@ -280,6 +287,7 @@ class ReBACCheckCacheModel(Base):
         ),
     )
 
+
 class TigerResourceMapModel(Base):
     """Maps resource UUIDs to int64 IDs for Roaring Bitmap compatibility."""
 
@@ -301,6 +309,7 @@ class TigerResourceMapModel(Base):
 
     def __repr__(self) -> str:
         return f"<TigerResourceMapModel({self.resource_int_id}: {self.resource_type}:{self.resource_id})>"
+
 
 class TigerCacheModel(Base):
     """Stores pre-materialized permissions as Roaring Bitmaps."""
@@ -356,6 +365,7 @@ class TigerCacheModel(Base):
             f"{self.permission} {self.resource_type}, rev={self.revision})>"
         )
 
+
 class TigerCacheQueueModel(Base):
     """Queue for async background updates of Tiger Cache."""
 
@@ -387,6 +397,7 @@ class TigerCacheQueueModel(Base):
             f"<TigerCacheQueueModel(queue_id={self.queue_id}, "
             f"{self.subject_type}:{self.subject_id}, status={self.status})>"
         )
+
 
 class TigerDirectoryGrantsModel(Base):
     """Tracks directory-level permission grants for Leopard-style expansion."""
@@ -443,6 +454,7 @@ class TigerDirectoryGrantsModel(Base):
             f"{self.subject_type}:{self.subject_id}, "
             f"dir={self.directory_path}, status={self.expansion_status})>"
         )
+
 
 class AdminBypassAuditModel(Base):
     """Immutable audit log for admin/system bypass events (P0-4)."""

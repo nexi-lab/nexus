@@ -4,6 +4,7 @@ All litellm calls are mocked at the boundary to test provider behavior
 without network access.
 """
 
+
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
@@ -35,9 +36,11 @@ def _make_config(**overrides: Any) -> LLMConfig:
     defaults.update(overrides)
     return LLMConfig(**defaults)
 
+
 def _make_messages(text: str = "Hello") -> list[Message]:
     """Create a simple message list for testing."""
     return [Message(role=MessageRole.USER, content=[TextContent(text=text)])]
+
 
 def _mock_model_response(
     content: str = "Test response",
@@ -76,6 +79,7 @@ def _mock_model_response(
     mock.__getitem__ = lambda self, key: mock.get(key)
     return mock
 
+
 @pytest.fixture()
 def provider() -> LiteLLMProvider:
     """Create a LiteLLMProvider with mocked model info."""
@@ -90,6 +94,7 @@ def provider() -> LiteLLMProvider:
         mock_litellm.supports_vision.return_value = True
         p = LiteLLMProvider(_make_config())
     return p
+
 
 class TestLiteLLMProviderInit:
     """Test provider initialization."""
@@ -117,6 +122,7 @@ class TestLiteLLMProviderInit:
             p = LiteLLMProvider(_make_config(model="unknown-model"))
         assert p.config.max_input_tokens == 4096
 
+
 class TestFunctionCallingDetection:
     """Test model capability detection."""
 
@@ -137,6 +143,7 @@ class TestFunctionCallingDetection:
             mock_litellm.supports_vision.return_value = False
             p = LiteLLMProvider(_make_config(model="gpt-4o", native_tool_calling=False))
         assert p.is_function_calling_active() is False
+
 
 class TestComplete:
     """Test synchronous completion."""
@@ -160,6 +167,7 @@ class TestComplete:
         provider.complete(_make_messages())
 
         assert len(provider.metrics.response_latencies) == 1
+
 
 class TestCompleteAsync:
     """Test async completion."""
@@ -195,6 +203,7 @@ class TestCompleteAsync:
         with pytest.raises(LLMCancellationError):
             await provider.complete_async(_make_messages(), cancellation_token=cancel_token)
 
+
 class TestStream:
     """Test sync streaming."""
 
@@ -213,6 +222,7 @@ class TestStream:
         chunks = list(provider.stream(_make_messages()))
 
         assert chunks == ["Hello", " world"]
+
 
 class TestStreamAsync:
     """Test async streaming."""
@@ -239,6 +249,7 @@ class TestStreamAsync:
             result.append(chunk)
 
         assert result == ["Async", " response"]
+
 
 class TestCountTokens:
     """Test token counting with caching."""
@@ -288,6 +299,7 @@ class TestCountTokens:
             p.count_tokens(_make_messages("msg3"))
             assert len(p._token_count_cache) == 2
 
+
 class TestCostCalculation:
     """Test cost calculation."""
 
@@ -324,6 +336,7 @@ class TestCostCalculation:
         assert cost == 0.0
         assert provider.cost_metric_supported is False
 
+
 class TestFormatMessages:
     """Test message formatting."""
 
@@ -344,6 +357,7 @@ class TestFormatMessages:
             assert msg.cache_enabled is False
             assert msg.vision_enabled is False
             assert msg.function_calling_enabled is False
+
 
 class TestCachingPrompt:
     """Test prompt caching behavior."""
@@ -368,6 +382,7 @@ class TestCachingPrompt:
             p = LiteLLMProvider(_make_config(model=model, caching_prompt=False))
         assert p.is_caching_prompt_active() is False
 
+
 class TestVision:
     """Test vision support."""
 
@@ -384,6 +399,7 @@ class TestVision:
             p = LiteLLMProvider(_make_config(disable_vision=True))
         assert p.vision_is_active() is False
 
+
 class TestResetMetrics:
     """Test metrics reset."""
 
@@ -394,6 +410,7 @@ class TestResetMetrics:
         provider.reset_metrics()
         assert provider.metrics.accumulated_cost == 0.0
         assert len(provider._token_count_cache) == 0
+
 
 class TestCleanup:
     """Test async cleanup."""
@@ -409,6 +426,7 @@ class TestCleanup:
 
         assert task.cancelled() or task.done()
         assert len(provider._active_tasks) == 0
+
 
 class TestLiteLLMResponse:
     """Test LiteLLMResponse wrapper."""
@@ -456,6 +474,7 @@ class TestLiteLLMResponse:
         mock_resp = MagicMock()
         resp = LiteLLMResponse(mock_resp, 0.0)
         assert resp.raw_response is mock_resp
+
 
 class TestFromConfig:
     """Test factory method."""

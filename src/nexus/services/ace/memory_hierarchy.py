@@ -18,6 +18,7 @@ References:
     - SimpleMem Paper: https://arxiv.org/abs/2601.02553 (recursive consolidation)
 """
 
+
 import json
 import logging
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class HierarchyLevel:
     """Represents a level in the memory hierarchy."""
@@ -47,6 +49,7 @@ class HierarchyLevel:
     level: int
     memories: list[MemoryModel]
     cluster_count: int = 0
+
 
 @dataclass
 class HierarchyResult:
@@ -63,6 +66,7 @@ class HierarchyResult:
         """Return count of memories at each level."""
         return {level: len(hl.memories) for level, hl in self.levels.items()}
 
+
 @dataclass
 class HierarchyRetrievalResult:
     """Result of hierarchy-aware retrieval."""
@@ -71,6 +75,7 @@ class HierarchyRetrievalResult:
     abstracts_used: int
     atomics_used: int
     expanded_from_abstracts: int
+
 
 class HierarchicalMemoryManager:
     """Manages hierarchical memory abstraction.
@@ -88,7 +93,7 @@ class HierarchicalMemoryManager:
 
     def __init__(
         self,
-        consolidation_engine: "ConsolidationEngine",
+        consolidation_engine: ConsolidationEngine,
         session: Session,
         zone_id: str = "root",
     ):
@@ -565,9 +570,10 @@ class HierarchicalMemoryManager:
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:limit]
 
+
 # Synchronous wrapper for non-async contexts
 def build_hierarchy(
-    consolidation_engine: "ConsolidationEngine",
+    consolidation_engine: ConsolidationEngine,
     session: Session,
     memories: list[MemoryModel] | None = None,
     memory_ids: list[str] | None = None,

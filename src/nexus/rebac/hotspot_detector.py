@@ -13,6 +13,7 @@ References:
     - JuiceFS: --prefetch for read patterns
 """
 
+
 import asyncio
 import logging
 import threading
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class HotspotConfig:
@@ -47,6 +49,7 @@ class HotspotConfig:
     prefetch_interval_seconds: int = 10
     cleanup_interval_seconds: int = 60
 
+
 @dataclass
 class HotspotEntry:
     """A hot permission path entry."""
@@ -68,6 +71,7 @@ class HotspotEntry:
             self.resource_type,
             self.zone_id,
         )
+
 
 class HotspotDetector:
     """Track and detect frequently accessed permission paths.
@@ -263,7 +267,7 @@ class HotspotDetector:
 
     def get_prefetch_candidates(
         self,
-        tiger_cache: "TigerCache",
+        tiger_cache: TigerCache,
         cache_ttl: int = 300,
     ) -> list[HotspotEntry]:
         """Get hot entries that should be prefetched before expiry.
@@ -353,6 +357,7 @@ class HotspotDetector:
             self._hot_entries_detected = 0
             self._prefetches_triggered = 0
 
+
 class HotspotPrefetcher:
     """Background worker that proactively warms hot cache entries.
 
@@ -363,8 +368,8 @@ class HotspotPrefetcher:
     def __init__(
         self,
         detector: HotspotDetector,
-        tiger_cache: "TigerCache",
-        tiger_updater: "TigerCacheUpdater",
+        tiger_cache: TigerCache,
+        tiger_updater: TigerCacheUpdater,
         config: HotspotConfig | None = None,
     ):
         """Initialize hotspot prefetcher.
@@ -480,10 +485,11 @@ class HotspotPrefetcher:
             "detector_stats": self._detector.get_stats(),
         }
 
+
 async def hotspot_prefetch_task(
     detector: HotspotDetector,
-    tiger_cache: "TigerCache",
-    tiger_updater: "TigerCacheUpdater",
+    tiger_cache: TigerCache,
+    tiger_updater: TigerCacheUpdater,
     config: HotspotConfig | None = None,
 ) -> None:
     """Background task: Run hotspot prefetcher (Issue #921).

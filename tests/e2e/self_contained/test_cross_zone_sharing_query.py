@@ -4,6 +4,7 @@ Tests the _get_cross_zone_shared_paths() method on SearchService which queries
 rebac_tuples for files shared across zone boundaries.
 """
 
+
 import sqlite3
 import tempfile
 from collections.abc import Generator
@@ -17,6 +18,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Minimal ReBAC manager fake for cross-zone sharing query
 # ---------------------------------------------------------------------------
+
 
 class FakeReBACManager:
     """Minimal fake that provides _connection(), _create_cursor(), _fix_sql_placeholders().
@@ -107,9 +109,11 @@ class FakeReBACManager:
     def close(self) -> None:
         self._db.close()
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
     """Create a minimal SearchService with a fake metadata store and ReBAC manager."""
@@ -128,19 +132,23 @@ def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
         yield svc
         metadata_store.close()
 
+
 @pytest.fixture
 def rebac() -> Generator[FakeReBACManager, None, None]:
     mgr = FakeReBACManager()
     yield mgr
     mgr.close()
 
+
 @pytest.fixture
 def search_svc(rebac: FakeReBACManager) -> Generator[Any, None, None]:
     yield from _make_search_service(rebac)
 
+
 # ===========================================================================
 # Tests
 # ===========================================================================
+
 
 class TestCrossZoneSharingQuery:
     """Tests for SearchService._get_cross_zone_shared_paths()."""

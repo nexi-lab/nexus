@@ -6,6 +6,7 @@ against a real SQLite backend.
 Issue #1139: Event Replay.
 """
 
+
 import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime
@@ -25,11 +26,13 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 def temp_dir(tmp_path: Path) -> Path:
     return tmp_path
 
+
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "events_test.db")
     yield rs
     rs.close()
+
 
 @pytest.fixture
 def app(record_store: SQLAlchemyRecordStore) -> FastAPI:
@@ -45,10 +48,12 @@ def app(record_store: SQLAlchemyRecordStore) -> FastAPI:
 
     return test_app
 
+
 @pytest.fixture
 def client(app: FastAPI) -> Generator[TestClient, None, None]:
     with TestClient(app) as c:
         yield c
+
 
 def _seed_events(session_factory: Any, count: int) -> list[str]:
     """Insert count events with sequential sequence_numbers."""
@@ -72,9 +77,11 @@ def _seed_events(session_factory: Any, count: int) -> list[str]:
         session.commit()
     return op_ids
 
+
 # =========================================================================
 # REST /api/v2/events/replay
 # =========================================================================
+
 
 class TestReplayEndpoint:
     def test_empty_table(self, client: TestClient) -> None:
@@ -205,9 +212,11 @@ class TestReplayEndpoint:
         assert "timestamp" in event
         assert "sequence_number" in event
 
+
 # =========================================================================
 # SSE /api/v2/events/stream — header check only (no blocking stream reads)
 # =========================================================================
+
 
 class TestStreamEndpointHeaders:
     def test_stream_response_has_correct_media_type_and_headers(self) -> None:

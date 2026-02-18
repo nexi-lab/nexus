@@ -5,6 +5,7 @@ Service-layer concern: citation extraction depends on document-reading
 orchestration, not on the LLM brick itself.
 """
 
+
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -28,6 +29,7 @@ class Citation:
 
     end_offset: int | None = None
     """End character offset in the document."""
+
 
 @dataclass
 class DocumentReadResult:
@@ -57,7 +59,7 @@ class DocumentReadResult:
     @classmethod
     def from_cached(
         cls, cached_response: str, chunks: list[dict] | None = None
-    ) -> "DocumentReadResult":
+    ) -> DocumentReadResult:
         """Create result from cached response.
 
         Args:
@@ -94,6 +96,7 @@ class DocumentReadResult:
             cached=True,
         )
 
+
 def _get_chunk_attr(chunk: Any, key: str, default: Any = None) -> Any:
     """Get attribute from dict or ChunkLike object.
 
@@ -102,6 +105,7 @@ def _get_chunk_attr(chunk: Any, key: str, default: Any = None) -> Any:
     if isinstance(chunk, dict):
         return chunk.get(key, default)
     return getattr(chunk, key, default)
+
 
 class CitationExtractor:
     """Extracts citations from LLM responses."""

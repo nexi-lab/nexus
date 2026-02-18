@@ -77,6 +77,24 @@ class TestDescribeChain:
         assert local_backend.describe() == "local"
 
 # ===========================================================================
+# describe() Chain Tests (Issue #1449)
+# ===========================================================================
+
+
+class TestDescribeChain:
+    """Smoke tests for describe() on CachingBackendWrapper in e2e context."""
+
+    def test_cached_backend_describe(self, cached_backend: CachingBackendWrapper) -> None:
+        assert cached_backend.describe() == "cache → local"
+
+    def test_cached_backend_name(self, cached_backend: CachingBackendWrapper) -> None:
+        assert cached_backend.name == "cached(local)"
+
+    def test_leaf_backend_describe(self, local_backend: LocalBackend) -> None:
+        assert local_backend.describe() == "local"
+
+
+# ===========================================================================
 # Correctness Tests
 # ===========================================================================
 

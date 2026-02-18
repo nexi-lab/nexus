@@ -19,6 +19,7 @@ Layer 2 in the dual-track event system:
 - Layer 2: Distributed event bus (this module) - Block 2
 """
 
+
 import asyncio
 import json
 import logging
@@ -31,6 +32,7 @@ from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
 
 @runtime_checkable
 class PubSubClientProtocol(Protocol):
@@ -53,6 +55,7 @@ class PubSubClientProtocol(Protocol):
         """Get backend info/stats."""
         ...
 
+
 def _utcnow_naive() -> datetime:
     """Get current UTC time as a naive datetime (no timezone info).
 
@@ -60,6 +63,7 @@ def _utcnow_naive() -> datetime:
     so we need naive datetimes. This avoids the deprecated datetime.utcnow().
     """
     return datetime.now(UTC).replace(tzinfo=None)
+
 
 class FileEventType(StrEnum):
     """Types of file system events."""
@@ -75,6 +79,7 @@ class FileEventType(StrEnum):
     SYNC_TO_BACKEND_COMPLETED = "sync_to_backend_completed"
     SYNC_TO_BACKEND_FAILED = "sync_to_backend_failed"
     CONFLICT_DETECTED = "conflict_detected"
+
 
 @dataclass
 class FileEvent:
@@ -136,7 +141,7 @@ class FileEvent:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "FileEvent":
+    def from_dict(cls, data: dict[str, Any]) -> FileEvent:
         """Create FileEvent from dictionary."""
         return cls(
             type=data["type"],
@@ -152,7 +157,7 @@ class FileEvent:
         )
 
     @classmethod
-    def from_json(cls, json_str: str | bytes) -> "FileEvent":
+    def from_json(cls, json_str: str | bytes) -> FileEvent:
         """Deserialize from JSON string."""
         if isinstance(json_str, bytes):
             json_str = json_str.decode("utf-8")
@@ -161,9 +166,9 @@ class FileEvent:
     @classmethod
     def from_file_change(
         cls,
-        change: Any,  # FileChange from services/watch/file_watcher.py (avoid circular import)
+        change: Any,  # FileChange from file_watcher.py (avoid circular import)
         zone_id: str | None = None,
-    ) -> "FileEvent":
+    ) -> FileEvent:
         """Create FileEvent from Layer 1 FileChange.
 
         Maps ChangeType to FileEventType:
@@ -173,7 +178,7 @@ class FileEvent:
         - RENAMED → FILE_RENAME
 
         Args:
-            change: FileChange from services/watch/file_watcher.py
+            change: FileChange from file_watcher.py
             zone_id: Optional zone ID to associate
 
         Returns:
@@ -257,6 +262,7 @@ class FileEvent:
 
         return False
 
+
 @dataclass
 class AckableEvent:
     """Wrapper around FileEvent with acknowledgment semantics.
@@ -286,9 +292,11 @@ class AckableEvent:
         if self._in_progress_fn:
             await self._in_progress_fn()
 
+
 # =============================================================================
 # Abstract Interface (Protocol)
 # =============================================================================
+
 
 @runtime_checkable
 class EventBusProtocol(Protocol):
@@ -367,6 +375,7 @@ class EventBusProtocol(Protocol):
             AckableEvent objects with ack/nack support
         """
         ...
+
 
 class EventBusBase(ABC):
     """Abstract base class for event bus implementations.
@@ -659,9 +668,11 @@ class EventBusBase(ABC):
         }
         return mapping.get(op_type, op_type)
 
+
 # =============================================================================
 # Redis Pub/Sub Implementation
 # =============================================================================
+
 
 class RedisEventBus(EventBusBase):
     """Redis Pub/Sub implementation of the event bus with PG SSOT.
@@ -970,9 +981,11 @@ class RedisEventBus(EventBusBase):
             "ssot_enabled": self._session_factory is not None,
         }
 
+
 # =============================================================================
 # Factory
 # =============================================================================
+
 
 def create_event_bus(
     backend: str = "redis",

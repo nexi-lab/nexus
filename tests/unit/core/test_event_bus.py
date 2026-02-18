@@ -10,6 +10,7 @@ Tests cover:
 Related: Issue #1106 Block 2
 """
 
+
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -29,6 +30,7 @@ from nexus.core.event_bus import (
 # FileEventType Tests
 # =============================================================================
 
+
 class TestFileEventType:
     """Tests for FileEventType enum."""
 
@@ -45,9 +47,11 @@ class TestFileEventType:
         assert isinstance(FileEventType.FILE_WRITE.value, str)
         assert FileEventType.FILE_WRITE.value == "file_write"
 
+
 # =============================================================================
 # FileEvent Tests
 # =============================================================================
+
 
 class TestFileEvent:
     """Tests for FileEvent dataclass."""
@@ -216,6 +220,7 @@ class TestFileEvent:
         assert event.type == "file_write"
         assert event.path == "/inbox/test.txt"
 
+
 class TestFileEventFromFileChange:
     """Tests for FileEvent.from_file_change() conversion from Layer 1."""
 
@@ -324,6 +329,7 @@ class TestFileEventFromFileChange:
         event = FileEvent.from_file_change(change, zone_id="my-zone")
 
         assert event.zone_id == "my-zone"
+
 
 class TestFileEventPathMatching:
     """Tests for FileEvent path pattern matching."""
@@ -441,9 +447,11 @@ class TestFileEventPathMatching:
         assert event.matches_path_pattern("/other/test.txt") is False
         assert event.matches_path_pattern("/inbox/other.txt") is False
 
+
 # =============================================================================
 # RedisEventBus Tests (Mocked)
 # =============================================================================
+
 
 @pytest.fixture
 def mock_redis_client():
@@ -453,6 +461,7 @@ def mock_redis_client():
     client.health_check = AsyncMock(return_value=True)
     client.get_info = AsyncMock(return_value={"status": "ok"})
     return client
+
 
 @pytest.fixture
 def mock_pubsub():
@@ -464,6 +473,7 @@ def mock_pubsub():
     pubsub.aclose = AsyncMock()  # New async close method
     pubsub.get_message = AsyncMock(return_value=None)
     return pubsub
+
 
 class TestRedisEventBus:
     """Tests for RedisEventBus with mocked Redis."""
@@ -711,9 +721,11 @@ class TestRedisEventBus:
         assert stats["status"] == "running"
         assert stats["channel_prefix"] == "nexus:events"
 
+
 # =============================================================================
 # Factory and Singleton Tests
 # =============================================================================
+
 
 class TestEventBusFactory:
     """Tests for event bus factory function."""
@@ -735,6 +747,7 @@ class TestEventBusFactory:
         with pytest.raises(ValueError, match="Unsupported event bus backend"):
             create_event_bus(backend="unknown", redis_client=mock_redis_client)
 
+
 class TestEventBusProtocol:
     """Tests for EventBusProtocol compliance."""
 
@@ -753,9 +766,11 @@ class TestEventBusProtocol:
         assert hasattr(bus, "health_check")
         assert hasattr(bus, "subscribe")  # New subscribe method
 
+
 # =============================================================================
 # Subscribe Method Tests
 # =============================================================================
+
 
 class TestSubscribeMethod:
     """Tests for the subscribe() async generator method."""
@@ -873,9 +888,11 @@ class TestSubscribeMethod:
         assert len(received) == 1
         assert received[0].path == "/test/file.txt"
 
+
 # =============================================================================
 # Error Recovery Tests
 # =============================================================================
+
 
 class TestErrorRecovery:
     """Tests for error handling and recovery scenarios."""
@@ -957,9 +974,11 @@ class TestErrorRecovery:
         result = await bus.health_check()
         assert result is False
 
+
 # =============================================================================
 # AckableEvent Tests (Issue #1331)
 # =============================================================================
+
 
 class TestAckableEvent:
     """Tests for AckableEvent acknowledgment semantics."""
@@ -1040,9 +1059,11 @@ class TestAckableEvent:
         assert ackable.event is event
         assert ackable.event.path == "/test/file.txt"
 
+
 # =============================================================================
 # Extended Factory Tests (Issue #1331)
 # =============================================================================
+
 
 class TestEventBusFactoryExtended:
     """Extended factory tests including NATS backend."""

@@ -7,6 +7,7 @@ All search backends produce dicts with the same shape; this module provides
 build_semantic_result() to eliminate the 5x duplication.
 """
 
+
 from typing import Any
 
 
@@ -62,6 +63,7 @@ def build_semantic_result(
     if vector_score is not None:
         result["vector_score"] = vector_score
     return result
+
 
 def build_result_from_row(row: Any, *, score_abs: bool = False) -> dict[str, Any]:
     """Build a result dict from a SQLAlchemy row.

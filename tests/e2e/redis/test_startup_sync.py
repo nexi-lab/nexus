@@ -31,6 +31,7 @@ def _utcnow_naive() -> datetime:
     """Get current UTC time as naive datetime for PostgreSQL compatibility."""
     return datetime.now(UTC).replace(tzinfo=None)
 
+
 def is_postgres_available():
     """Check if PostgreSQL test database is available."""
     db_url = os.environ.get("NEXUS_DATABASE_URL")
@@ -45,6 +46,7 @@ def is_postgres_available():
         return True
     except Exception:
         return False
+
 
 def is_redis_available():
     """Check if Redis/Dragonfly is available."""
@@ -63,6 +65,7 @@ def is_redis_available():
     except Exception:
         return False
 
+
 pytestmark = [
     pytest.mark.skipif(
         not is_postgres_available(),
@@ -73,6 +76,7 @@ pytestmark = [
         reason="Redis not available (set NEXUS_REDIS_URL)",
     ),
 ]
+
 
 @pytest.fixture
 def db_session_factory():
@@ -127,6 +131,7 @@ def db_session_factory():
 
     return sessionmaker(bind=engine)
 
+
 @pytest.fixture
 def clean_db(db_session_factory):
     """Clean database before and after test."""
@@ -144,6 +149,7 @@ def clean_db(db_session_factory):
     _clean()
     yield
     _clean()
+
 
 class TestStartupSyncBasic:
     """Basic startup_sync tests."""
@@ -359,6 +365,7 @@ class TestStartupSyncBasic:
         finally:
             await client.disconnect()
 
+
 class TestStartupSyncCrossPlatform:
     """Cross-platform startup_sync tests (Windows + Linux)."""
 
@@ -514,6 +521,7 @@ import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
 
+
 def _utcnow_naive() -> datetime:
     """Get current UTC time as naive datetime for PostgreSQL compatibility."""
     return datetime.now(UTC).replace(tzinfo=None)
@@ -616,6 +624,7 @@ asyncio.run(sync_and_create())
             await event_bus.stop()
         finally:
             await client.disconnect()
+
 
 class TestEventBusLockIntegration:
     """Tests for Event Bus + Lock integration."""
@@ -752,6 +761,7 @@ asyncio.run(subscribe_and_wait())
             if linux_proc.poll() is None:
                 linux_proc.terminate()
                 linux_proc.wait(timeout=5)
+
 
 class TestStartupSyncConcurrentWrites:
     """Tests for startup_sync with concurrent writes."""

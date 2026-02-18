@@ -4,6 +4,7 @@ Creates the appropriate exporter based on EventStreamConfig.exporter selection.
 Each exporter is an optional dependency; import failures are caught and logged.
 """
 
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -13,7 +14,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-def create_exporter(config: "EventStreamConfig") -> "EventStreamExporterProtocol | None":
+
+def create_exporter(config: EventStreamConfig) -> EventStreamExporterProtocol | None:
     """Create an exporter instance based on configuration.
 
     Returns None if the exporter's optional dependency is not installed.

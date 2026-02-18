@@ -4,6 +4,7 @@ Tests delegation to NexusFS for file ops, metadata, ReBAC,
 hierarchy, routing, and session access.
 """
 
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +15,7 @@ from nexus.services.gateway import NexusFSGateway
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def mock_fs():
@@ -51,10 +53,12 @@ def mock_fs():
     fs.backend = MagicMock()
     return fs
 
+
 @pytest.fixture
 def gateway(mock_fs):
     """Create a NexusFSGateway with mock NexusFS."""
     return NexusFSGateway(mock_fs)
+
 
 @pytest.fixture
 def context():
@@ -67,9 +71,11 @@ def context():
         is_admin=False,
     )
 
+
 # =============================================================================
 # Initialization
 # =============================================================================
+
 
 class TestGatewayInit:
     """Tests for NexusFSGateway construction."""
@@ -79,9 +85,11 @@ class TestGatewayInit:
         gw = NexusFSGateway(mock_fs)
         assert gw._fs is mock_fs
 
+
 # =============================================================================
 # File Operations
 # =============================================================================
+
 
 class TestFileOperations:
     """Tests for file operation delegation."""
@@ -133,9 +141,11 @@ class TestFileOperations:
         assert gateway.exists("/test/file.txt", context=context) is True
         mock_fs.exists.assert_called_once()
 
+
 # =============================================================================
 # Metadata Operations
 # =============================================================================
+
 
 class TestMetadataOperations:
     """Tests for metadata operation delegation."""
@@ -184,9 +194,11 @@ class TestMetadataOperations:
         gw = NexusFSGateway(mock_fs)
         assert gw.metadata_list("/test") == []
 
+
 # =============================================================================
 # ReBAC Operations
 # =============================================================================
+
 
 class TestReBACOperations:
     """Tests for ReBAC permission delegation."""
@@ -237,9 +249,11 @@ class TestReBACOperations:
         """rebac_manager property returns the manager."""
         assert gateway.rebac_manager is mock_fs._rebac_manager
 
+
 # =============================================================================
 # Hierarchy Operations
 # =============================================================================
+
 
 class TestHierarchyOperations:
     """Tests for hierarchy operation delegation."""
@@ -276,9 +290,11 @@ class TestHierarchyOperations:
         gw = NexusFSGateway(mock_fs)
         assert gw.remove_parent_tuples("/test") == 0
 
+
 # =============================================================================
 # Router / Session / Backend Properties
 # =============================================================================
+
 
 class TestProperties:
     """Tests for property access."""
@@ -301,9 +317,11 @@ class TestProperties:
         """backend returns NexusFS backend."""
         assert gateway.backend is mock_fs.backend
 
+
 # =============================================================================
 # Search Operations
 # =============================================================================
+
 
 class TestSearchOperations:
     """Tests for search-related delegation."""
@@ -344,9 +362,11 @@ class TestSearchOperations:
         gateway.record_read_if_tracking(context, "file", "/test/a.txt")
         mock_fs._record_read_if_tracking.assert_called_once()
 
+
 # =============================================================================
 # Cache Invalidation
 # =============================================================================
+
 
 class TestCacheInvalidation:
     """Tests for cache invalidation."""
@@ -365,9 +385,11 @@ class TestCacheInvalidation:
         gw = NexusFSGateway(mock_fs)
         gw.invalidate_metadata_cache("/a")  # Should not raise
 
+
 # =============================================================================
 # Mount Operations
 # =============================================================================
+
 
 class TestMountOperations:
     """Tests for mount listing and path resolution."""

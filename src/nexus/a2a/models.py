@@ -9,7 +9,7 @@ schema generation.
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -207,16 +207,6 @@ class AgentProvider(BaseModel):
 
     organization: str
     url: str | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-class AgentInterface(BaseModel):
-    """A supported transport interface advertised in the Agent Card (v1.0)."""
-
-    url: str
-    protocol_binding: str  # "JSONRPC", "GRPC", "HTTP+JSON"
-    protocol_version: str  # "1.0"
-    tenant: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 

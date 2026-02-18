@@ -6,6 +6,7 @@ plus an async generator for SSE streaming with poll-based tail.
 Shares filter logic with OperationLogger._apply_filters() where possible.
 """
 
+
 import base64
 import json
 import logging
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class EventRecord:
@@ -52,6 +54,7 @@ class EventRecord:
             result["sequence_number"] = self.sequence_number
         return result
 
+
 @dataclass(frozen=True)
 class ReplayResult:
     """Result of a replay query with cursor pagination."""
@@ -60,9 +63,11 @@ class ReplayResult:
     next_cursor: str | None
     has_more: bool
 
+
 def _encode_cursor(seq: int) -> str:
     """Encode a sequence_number into an opaque cursor string."""
     return base64.urlsafe_b64encode(json.dumps({"s": seq}).encode()).decode()
+
 
 def _decode_cursor(cursor: str) -> int | None:
     """Decode a cursor string back to sequence_number. Returns None on invalid."""
@@ -71,6 +76,7 @@ def _decode_cursor(cursor: str) -> int | None:
         return int(data["s"])
     except Exception:
         return None
+
 
 def _record_from_row(row: Any) -> EventRecord:
     """Convert an OperationLogModel row to an EventRecord."""
@@ -87,10 +93,11 @@ def _record_from_row(row: Any) -> EventRecord:
         sequence_number=row.sequence_number,
     )
 
+
 class EventReplayService:
     """Service for replaying and streaming historical events from operation_log."""
 
-    def __init__(self, session_factory: "Callable[..., Any]") -> None:
+    def __init__(self, session_factory: Callable[..., Any]) -> None:
         self._session_factory = session_factory
 
     def replay(
@@ -233,14 +240,9 @@ class EventReplayService:
 
             # Apply operation_id cursor (composite: created_at + operation_id)
             if cursor:
-                cursor_stmt = select(OperationLogModel).where(
-                    OperationLogModel.operation_id == cursor
-                )
-                if zone_id is not None:
-                    cursor_stmt = cursor_stmt.where(
-                        OperationLogModel.zone_id == zone_id
-                    )
-                cursor_op = session.execute(cursor_stmt).scalar_one_or_none()
+                cursor_op = session.execute(
+                    select(OperationLogModel).where(OperationLogModel.operation_id == cursor)
+                ).scalar_one_or_none()
                 if cursor_op:
                     stmt = stmt.where(
                         (OperationLogModel.created_at < cursor_op.created_at)

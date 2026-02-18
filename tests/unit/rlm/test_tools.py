@@ -8,6 +8,7 @@ Tests verify:
 - Output formatting
 """
 
+
 from unittest.mock import MagicMock, patch
 
 from nexus.rlm.tools import (

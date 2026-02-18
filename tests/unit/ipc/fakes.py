@@ -4,6 +4,7 @@ These satisfy the Protocol interfaces defined in ``nexus.ipc.protocols``
 without any real I/O, enabling fast, isolated unit tests.
 """
 
+
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
@@ -72,6 +73,7 @@ class InMemoryVFS:
     async def exists(self, path: str, zone_id: str) -> bool:
         return (path, zone_id) in self._files or (path, zone_id) in self._dirs
 
+
 class InMemoryStorageDriver:
     """In-memory IPC storage driver for testing.
 
@@ -133,6 +135,7 @@ class InMemoryStorageDriver:
     async def exists(self, path: str, zone_id: str) -> bool:
         return (path, zone_id) in self._files or (path, zone_id) in self._dirs
 
+
 class InMemoryEventPublisher:
     """In-memory event publisher fake for testing."""
 
@@ -145,6 +148,7 @@ class InMemoryEventPublisher:
             raise ConnectionError("EventBus unavailable")
         self.published.append((channel, data))
 
+
 class InMemoryHotPathPublisher:
     """Captures published hot-path messages for assertion."""
 
@@ -156,6 +160,7 @@ class InMemoryHotPathPublisher:
         if self._should_fail:
             raise ConnectionError("NATS unavailable")
         self.published.append((subject, data))
+
 
 class InMemoryHotPathSubscriber:
     """Feeds messages to hot listener for testing.

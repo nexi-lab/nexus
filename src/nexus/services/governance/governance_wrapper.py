@@ -7,6 +7,7 @@ PolicyEnforcedPayment (Lego Architecture Mechanism 2).
 Wrapper chain: GovernanceEnforcedPayment → PolicyEnforcedPayment → CreditsPaymentProtocol
 """
 
+
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class GovernanceBlockedError(Exception):
     """Raised when a transaction is blocked by a governance constraint."""
 
@@ -27,12 +29,14 @@ class GovernanceBlockedError(Exception):
         super().__init__(message)
         self.edge_id = edge_id
 
+
 class GovernanceApprovalRequired(Exception):
     """Raised when a transaction requires governance approval."""
 
     def __init__(self, message: str, *, edge_id: str | None = None) -> None:
         super().__init__(message)
         self.edge_id = edge_id
+
 
 class GovernanceEnforcedPayment:
     """Wraps a PaymentProtocol with governance constraint checks.
@@ -49,9 +53,9 @@ class GovernanceEnforcedPayment:
 
     def __init__(
         self,
-        inner: "PaymentProtocol",
-        graph_service: "GovernanceGraphProtocol",
-        anomaly_service: "AnomalyServiceProtocol",
+        inner: PaymentProtocol,
+        graph_service: GovernanceGraphProtocol,
+        anomaly_service: AnomalyServiceProtocol,
     ) -> None:
         self._inner = inner
         self._graph_service = graph_service
@@ -66,7 +70,7 @@ class GovernanceEnforcedPayment:
         """Delegate to inner protocol."""
         return self._inner.can_handle(to, metadata)
 
-    async def transfer(self, request: "ProtocolTransferRequest") -> "ProtocolTransferResult":
+    async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult:
         """Execute transfer with governance enforcement.
 
         Pre-check: governance constraint check (~1ms).

@@ -11,6 +11,7 @@ Extracted from:
     - tiger_cache.py (TigerCache, ResourceMapCache)
 """
 
+
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -91,6 +92,7 @@ _PERM_COUNT_VALID = text("""
     WHERE expires_at > :now
 """)
 
+
 # ---------------------------------------------------------------------------
 # SQL Queries — Tiger Cache (tiger_cache table)
 # ---------------------------------------------------------------------------
@@ -143,9 +145,11 @@ _RESMAP_BULK_GET = text("""
     )
 """)
 
+
 # ===========================================================================
 # PostgresPermissionCache
 # ===========================================================================
+
 
 class PostgresPermissionCache:
     """PostgreSQL-backed permission cache using rebac_check_cache table.
@@ -158,7 +162,7 @@ class PostgresPermissionCache:
 
     def __init__(
         self,
-        engine: "Engine",
+        engine: Engine,
         ttl: int = 300,
         denial_ttl: int = 60,
     ):
@@ -330,9 +334,11 @@ class PostgresPermissionCache:
             "valid_entries": count,
         }
 
+
 # ===========================================================================
 # PostgresTigerCache
 # ===========================================================================
+
 
 class PostgresTigerCache:
     """PostgreSQL-backed Tiger cache using tiger_cache table.
@@ -343,7 +349,7 @@ class PostgresTigerCache:
     Stores pre-materialized Roaring Bitmaps for O(1) permission filtering.
     """
 
-    def __init__(self, engine: "Engine"):
+    def __init__(self, engine: Engine):
         self._engine = engine
 
     async def get_bitmap(
@@ -436,9 +442,11 @@ class PostgresTigerCache:
         except Exception:
             return False
 
+
 # ===========================================================================
 # PostgresResourceMapCache
 # ===========================================================================
+
 
 class PostgresResourceMapCache:
     """PostgreSQL-backed resource map cache using tiger_resource_map table.
@@ -453,7 +461,7 @@ class PostgresResourceMapCache:
     Protocol interface is accepted but not used in queries.
     """
 
-    def __init__(self, engine: "Engine"):
+    def __init__(self, engine: Engine):
         self._engine = engine
 
     async def get_int_id(

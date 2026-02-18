@@ -6,6 +6,7 @@ Skip if dependencies not available or Docker is down.
 Issue #1138: Event Stream Export.
 """
 
+
 import os
 
 import pytest
@@ -15,6 +16,7 @@ from nexus.core.event_bus import FileEvent, FileEventType
 # Skip if testcontainers or gcloud-aio-pubsub not installed
 pytest.importorskip("testcontainers")
 pytest.importorskip("gcloud.aio.pubsub")
+
 
 def _docker_available() -> bool:
     """Check if Docker daemon is accessible."""
@@ -26,7 +28,9 @@ def _docker_available() -> bool:
     except Exception:
         return False
 
+
 pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker daemon not running")
+
 
 @pytest.fixture(scope="module")
 def pubsub_emulator():
@@ -44,11 +48,13 @@ def pubsub_emulator():
     yield container
     container.stop()
 
+
 @pytest.fixture
 def pubsub_host(pubsub_emulator) -> str:
     host = pubsub_emulator.get_container_host_ip()
     port = pubsub_emulator.get_exposed_port(8085)
     return f"http://{host}:{port}"
+
 
 @pytest.fixture(autouse=True)
 def set_emulator_env(pubsub_host: str):
@@ -61,6 +67,7 @@ def set_emulator_env(pubsub_host: str):
     else:
         os.environ.pop("PUBSUB_EMULATOR_HOST", None)
 
+
 @pytest.fixture
 def exporter():
     from nexus.services.event_log.exporters.config import PubSubExporterConfig
@@ -72,6 +79,7 @@ def exporter():
     )
     return PubSubExporter(config)
 
+
 def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent:
     return FileEvent(
         type=FileEventType.FILE_WRITE,
@@ -79,6 +87,7 @@ def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent
         zone_id=zone_id,
         event_id=event_id,
     )
+
 
 @pytest.mark.asyncio
 class TestPubSubExporter:

@@ -8,6 +8,7 @@ Rewritten for Issue #1469: driver now uses RecordStoreABC session_factory
 instead of raw asyncpg.
 """
 
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -25,6 +26,7 @@ from nexus.storage.models.ipc_message import IPCMessageModel  # noqa: F401 — r
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def session_factory():
     """Create an in-memory SQLite engine + session factory with tables.
@@ -41,14 +43,17 @@ def session_factory():
     factory = sessionmaker(bind=engine)
     return factory
 
+
 @pytest.fixture
 def driver(session_factory):
     """Create a RecordStoreStorageDriver with test session factory."""
     return RecordStoreStorageDriver(session_factory=session_factory)
 
+
 # ---------------------------------------------------------------------------
 # Seed helpers
 # ---------------------------------------------------------------------------
+
 
 def _seed_file(session_factory, path: str, data: bytes, zone_id: str = "zone1") -> None:
     """Insert a file row directly for test setup."""
@@ -65,6 +70,7 @@ def _seed_file(session_factory, path: str, data: bytes, zone_id: str = "zone1") 
             )
         )
         session.commit()
+
 
 def _seed_dir(session_factory, path: str, zone_id: str = "zone1") -> None:
     """Insert a directory marker directly for test setup."""
@@ -83,9 +89,11 @@ def _seed_dir(session_factory, path: str, zone_id: str = "zone1") -> None:
         )
         session.commit()
 
+
 # ---------------------------------------------------------------------------
 # Helper path function tests
 # ---------------------------------------------------------------------------
+
 
 class TestHelperFunctions:
     """Tests for _parent_dir and _basename utilities."""
@@ -108,9 +116,11 @@ class TestHelperFunctions:
     def test_basename_single(self) -> None:
         assert _basename("file.txt") == "file.txt"
 
+
 # ---------------------------------------------------------------------------
 # Read tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStoreStorageDriverRead:
     """Tests for read operations."""
@@ -135,9 +145,11 @@ class TestRecordStoreStorageDriverRead:
         with pytest.raises(FileNotFoundError, match="No such file"):
             await driver.read("/agents/bob/inbox", "zone1")
 
+
 # ---------------------------------------------------------------------------
 # Write tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStoreStorageDriverWrite:
     """Tests for write operations."""
@@ -157,9 +169,11 @@ class TestRecordStoreStorageDriverWrite:
         result = await driver.read("/agents/bob/inbox/msg.json", "zone1")
         assert result == b"new"
 
+
 # ---------------------------------------------------------------------------
 # List dir tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStoreStorageDriverListDir:
     """Tests for list_dir operations."""
@@ -187,9 +201,11 @@ class TestRecordStoreStorageDriverListDir:
 
         assert result == []  # Empty dir
 
+
 # ---------------------------------------------------------------------------
 # Count dir tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStoreStorageDriverCountDir:
     """Tests for count_dir operations."""
@@ -219,9 +235,11 @@ class TestRecordStoreStorageDriverCountDir:
         with pytest.raises(FileNotFoundError, match="No such directory"):
             await driver.count_dir("/nonexistent", "zone1")
 
+
 # ---------------------------------------------------------------------------
 # Rename tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStoreStorageDriverRename:
     """Tests for rename operations."""
@@ -247,9 +265,11 @@ class TestRecordStoreStorageDriverRename:
         with pytest.raises(FileNotFoundError, match="No such file"):
             await driver.rename("/nonexistent", "/dst", "zone1")
 
+
 # ---------------------------------------------------------------------------
 # Mkdir tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStoreStorageDriverMkdir:
     """Tests for mkdir operations."""
@@ -267,9 +287,11 @@ class TestRecordStoreStorageDriverMkdir:
 
         assert await driver.exists("/agents/bob", "zone1") is True
 
+
 # ---------------------------------------------------------------------------
 # Exists tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStoreStorageDriverExists:
     """Tests for exists operations."""
@@ -304,9 +326,11 @@ class TestRecordStoreStorageDriverExists:
 
         assert result is True
 
+
 # ---------------------------------------------------------------------------
 # Zone isolation tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStoreStorageDriverZoneIsolation:
     """Tests that zone_id properly isolates data."""

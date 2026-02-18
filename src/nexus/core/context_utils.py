@@ -16,6 +16,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 def get_zone_id(context: Any) -> str:
     """
     Extract zone_id from context with default fallback.
@@ -36,6 +37,7 @@ def get_zone_id(context: Any) -> str:
     if context and hasattr(context, "zone_id") and context.zone_id:
         return str(context.zone_id)
     return "root"
+
 
 def get_user_identity(context: Any) -> tuple[str, str | None]:
     """
@@ -71,6 +73,7 @@ def get_user_identity(context: Any) -> tuple[str, str | None]:
         or getattr(context, "user", None)
     )
     return (subject_type, subject_id)
+
 
 def get_database_url(obj: Any, context: Any = None) -> str:  # noqa: ARG001
     """
@@ -119,6 +122,7 @@ def get_database_url(obj: Any, context: Any = None) -> str:  # noqa: ARG001
         )
 
     return database_url
+
 
 def resolve_skill_base_path(context: Any) -> str:
     """

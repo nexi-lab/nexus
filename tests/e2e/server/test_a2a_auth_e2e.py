@@ -42,6 +42,20 @@ def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
     finally:
         pipe.close()
 
+def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
+    """Read lines from a subprocess pipe (daemon thread)."""
+    try:
+        for raw in iter(pipe.readline, b""):
+            decoded = raw.decode(errors="replace")
+            lines.append(decoded)
+            if ready and "Application startup complete" in decoded:
+                ready.set()
+    except ValueError:
+        pass
+    finally:
+        pipe.close()
+
+
 @pytest.fixture(scope="function")
 def auth_server(isolated_db, tmp_path):
     """Start nexus serve WITH --api-key for auth-enabled testing."""

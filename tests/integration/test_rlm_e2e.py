@@ -9,6 +9,7 @@ validating:
 - X-API-Version header is present on v2 responses
 """
 
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

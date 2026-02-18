@@ -85,6 +85,7 @@ class MockBlobConnector(BaseBlobStorageConnector, CacheConnectorMixin):
         """Create directory marker."""
         pass  # Not needed for tests
 
+
 class TestBatchGetVersions:
     """Test batch_get_versions() method."""
 
@@ -157,6 +158,7 @@ class TestBatchGetVersions:
 
         # Should return empty dict
         assert result == {}
+
 
 class TestBulkDownloadBlobs:
     """Test _bulk_download_blobs() method."""
@@ -249,6 +251,7 @@ class TestBulkDownloadBlobs:
         # Should return empty dict
         assert result == {}
 
+
 class TestBatchWriteToCache:
     """Test batch_write_to_cache() method."""
 
@@ -326,6 +329,7 @@ class TestBatchWriteToCache:
         # Should return empty list
         assert result == []
 
+
 class TestBatchReadFromBackend:
     """Test batch_read_from_backend() integration."""
 
@@ -396,7 +400,9 @@ class TestBatchReadFromBackend:
         # (but in parallel, not sequential)
         assert backend.download_count == 50
 
+
 # === GCS batch_read_content tests (#1626) ===
+
 
 class MockGCSBackend(Backend):
     """Mock GCS backend for testing batch_read_content.
@@ -482,6 +488,7 @@ class MockGCSBackend(Backend):
     def is_directory(self, path, context=None) -> HandlerResponse[bool]:
         return HandlerResponse.ok(data=False, backend_name="gcs")
 
+
 class TestGCSBatchReadContent:
     """Test GCS-style CAS batch_read_content with parallel ThreadPoolExecutor."""
 
@@ -550,7 +557,9 @@ class TestGCSBatchReadContent:
         assert len(result) == 1  # dict deduplicates keys
         assert result[h1] == b"dedup"
 
+
 # === S3 batch_read_content tests (#1626) ===
+
 
 class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
     """Mock S3-like connector for testing batch_read_content with per-file contexts.
@@ -650,6 +659,7 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
                 result[hash_key] = file_content
 
         return result
+
 
 class TestS3BatchReadContent:
     """Test S3-style batch_read_content with per-file contexts."""
@@ -764,7 +774,9 @@ class TestS3BatchReadContent:
         assert backend.read_count == 20
         assert all(v is not None for v in result.values())
 
+
 # === Backend base class contexts parameter tests (#1626) ===
+
 
 class TestBatchReadContentContextsParam:
     """Test the new contexts parameter on Backend.batch_read_content."""

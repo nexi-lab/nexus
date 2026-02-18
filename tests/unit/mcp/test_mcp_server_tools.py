@@ -4,6 +4,7 @@ This test suite covers all tools, resources, prompts, and server creation scenar
 for the Nexus MCP server implementation.
 """
 
+
 import json
 from unittest.mock import Mock, patch
 
@@ -15,13 +16,16 @@ from nexus.mcp.server import create_mcp_server
 # HELPER FUNCTIONS
 # ============================================================================
 
+
 def get_tool(server, tool_name: str):
     """Helper to get a tool from the MCP server."""
     return server._tool_manager._tools[tool_name]
 
+
 def get_prompt(server, prompt_name: str):
     """Helper to get a prompt from the MCP server."""
     return server._prompt_manager._prompts[prompt_name]
+
 
 def get_resource_template(server, uri_pattern: str):
     """Helper to get a resource template from the MCP server."""
@@ -31,13 +35,16 @@ def get_resource_template(server, uri_pattern: str):
             return template
     raise KeyError(f"Resource template with pattern '{uri_pattern}' not found")
 
+
 def tool_exists(server, tool_name: str) -> bool:
     """Check if a tool exists in the server."""
     return tool_name in server._tool_manager._tools
 
+
 # ============================================================================
 # FIXTURES
 # ============================================================================
+
 
 @pytest.fixture
 def mock_nx_basic():
@@ -64,6 +71,7 @@ def mock_nx_basic():
     )
     return nx
 
+
 @pytest.fixture
 def mock_nx_with_memory():
     """Create mock NexusFS with memory system."""
@@ -83,6 +91,7 @@ def mock_nx_with_memory():
 
     return nx
 
+
 @pytest.fixture
 def mock_nx_with_workflows():
     """Create mock NexusFS with workflow system."""
@@ -98,6 +107,7 @@ def mock_nx_with_workflows():
     nx.workflows.execute = Mock(return_value={"status": "success", "output": "done"})
 
     return nx
+
 
 @pytest.fixture
 def mock_nx_with_search():
@@ -115,6 +125,7 @@ def mock_nx_with_search():
     nx.semantic_search = AsyncMock(side_effect=mock_semantic_search)
 
     return nx
+
 
 @pytest.fixture
 def mock_nx_with_sandbox():
@@ -149,15 +160,19 @@ def mock_nx_with_sandbox():
 
     return nx
 
+
 @pytest.fixture
 def mock_nx_no_sandbox():
     """Create mock NexusFS without sandbox support."""
     nx = Mock()
     nx.read = Mock(return_value=b"test")
     nx.write = Mock()
+
+    # No sandbox support
     nx.sandbox_available = False
 
     return nx
+
 
 @pytest.fixture
 def mock_nx_full():
@@ -203,9 +218,11 @@ def mock_nx_full():
 
     return nx
 
+
 # ============================================================================
 # FILE OPERATIONS TESTS
 # ============================================================================
+
 
 class TestFileOperationTools:
     """Test suite for file operation tools."""
@@ -365,9 +382,11 @@ class TestFileOperationTools:
         info = json.loads(result)
         assert info["is_directory"] is True
 
+
 # ============================================================================
 # EDIT FILE TOOL TESTS
 # ============================================================================
+
 
 class TestEditFileTool:
     """Test suite for nexus_edit_file tool."""
@@ -515,9 +534,11 @@ class TestEditFileTool:
         assert "Error editing file" in result
         assert "Connection refused" in result
 
+
 # ============================================================================
 # DIRECTORY OPERATIONS TESTS
 # ============================================================================
+
 
 class TestDirectoryOperationTools:
     """Test suite for directory operation tools."""
@@ -575,9 +596,11 @@ class TestDirectoryOperationTools:
         assert "Error" in result
         assert "not found" in result.lower() or "removed" in result.lower()
 
+
 # ============================================================================
 # SEARCH TOOLS TESTS
 # ============================================================================
+
 
 class TestSearchTools:
     """Test suite for search tools."""
@@ -710,9 +733,11 @@ class TestSearchTools:
         assert "Error in semantic search" in result
         assert "Search service down" in result
 
+
 # ============================================================================
 # MEMORY TOOLS TESTS
 # ============================================================================
+
 
 class TestMemoryTools:
     """Test suite for memory tools."""
@@ -819,9 +844,11 @@ class TestMemoryTools:
         assert "Error querying memory" in result
         assert "Query failed" in result
 
+
 # ============================================================================
 # WORKFLOW TOOLS TESTS
 # ============================================================================
+
 
 class TestWorkflowTools:
     """Test suite for workflow tools."""
@@ -908,9 +935,11 @@ class TestWorkflowTools:
         assert "Error executing workflow" in result
         assert "Invalid workflow" in result
 
+
 # ============================================================================
 # SANDBOX TOOLS TESTS
 # ============================================================================
+
 
 class TestSandboxAvailability:
     """Test suite for sandbox availability detection."""
@@ -952,6 +981,7 @@ class TestSandboxAvailability:
 
     def test_sandbox_detection_handles_missing_attribute(self, mock_nx_basic):
         """Test sandbox detection gracefully handles missing sandbox_available."""
+        # getattr with default=False should handle missing attribute
         mock_nx_basic.sandbox_available = False
 
         # Should not raise, sandbox tools should just not be registered
@@ -959,6 +989,7 @@ class TestSandboxAvailability:
 
         list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
+
 
 class TestSandboxTools:
     """Test suite for sandbox execution tools."""
@@ -1162,9 +1193,11 @@ class TestSandboxTools:
         assert "Error stopping sandbox" in result
         assert "Sandbox not found" in result
 
+
 # ============================================================================
 # RESOURCES AND PROMPTS TESTS
 # ============================================================================
+
 
 class TestResources:
     """Test suite for MCP resource endpoints."""
@@ -1231,6 +1264,7 @@ class TestResources:
         assert "Error reading resource" in result
         assert "File not found" in result
 
+
 class TestPrompts:
     """Test suite for MCP prompt templates."""
 
@@ -1260,9 +1294,11 @@ class TestPrompts:
         assert "nexus_read_file" in result
         assert "nexus_store_memory" in result
 
+
 # ============================================================================
 # SERVER CREATION TESTS
 # ============================================================================
+
 
 class TestServerCreation:
     """Test suite for server creation scenarios."""

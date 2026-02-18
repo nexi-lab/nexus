@@ -16,11 +16,13 @@ remote RaftClient). No "remote federation proxy" scenario exists.
 See: docs/architecture/federation-memo.md §6.9
 """
 
+
 import logging
 from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
 
 class NexusFederation:
     """Orchestrate zone sharing and joining across nodes.

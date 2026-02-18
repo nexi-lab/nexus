@@ -4,11 +4,12 @@ These tests verify the context building functionality for LLM prompts,
 including adaptive retrieval depth based on query complexity (Issue #1021).
 """
 
+
 from dataclasses import dataclass
 
 import pytest
 
-from nexus.services.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
+from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
 
 
 @dataclass
@@ -21,6 +22,7 @@ class MockSearchResult:
     score: float | None
     start_offset: int | None = None
     end_offset: int | None = None
+
 
 class TestContextBuilder:
     """Test ContextBuilder functionality."""
@@ -140,6 +142,7 @@ class TestContextBuilder:
         builder.build_context_with_budget(chunks, model_context_window=8000)
         assert builder.max_context_tokens == original_max
 
+
 class TestFormatSources:
     """Test format_sources static method."""
 
@@ -185,6 +188,7 @@ class TestFormatSources:
         result = ContextBuilder.format_sources(chunks)
         assert "1. /doc.txt" in result
         assert "relevance" not in result
+
 
 class TestQueryComplexityEstimation:
     """Test query complexity estimation (Issue #1021)."""
@@ -272,6 +276,7 @@ class TestQueryComplexityEstimation:
             "Compare Python Django Flask performance"
         )
         assert multiple_score > single_score, "Multiple entities should increase complexity"
+
 
 class TestDynamicKCalculation:
     """Test dynamic k calculation (Issue #1021)."""

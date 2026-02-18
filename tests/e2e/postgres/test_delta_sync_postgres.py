@@ -16,6 +16,7 @@ Usage:
     pytest tests/integration/test_delta_sync_postgres.py -v --tb=short
 """
 
+
 import os
 from datetime import UTC, datetime
 
@@ -35,6 +36,7 @@ DB_URL = os.environ.get(
     "postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_test",
 )
 
+
 def is_postgres_available() -> bool:
     """Check if PostgreSQL test database is available."""
     try:
@@ -46,14 +48,17 @@ def is_postgres_available() -> bool:
     except Exception:
         return False
 
+
 pytestmark = pytest.mark.skipif(
     not is_postgres_available(),
     reason="PostgreSQL not available (start with: docker compose --profile test up -d postgres-test)",
 )
 
+
 # ============================================================================
 # Fixtures
 # ============================================================================
+
 
 @pytest.fixture()
 def pg_engine():
@@ -69,15 +74,18 @@ def pg_engine():
     BackendChangeLogModel.__table__.drop(engine, checkfirst=True)
     engine.dispose()
 
+
 @pytest.fixture()
 def pg_session_factory(pg_engine):
     """Create a session factory bound to the test engine."""
     return sessionmaker(bind=pg_engine)
 
+
 @pytest.fixture()
 def store(pg_session_factory):
     """Create a ChangeLogStore backed by real PostgreSQL."""
     return ChangeLogStore(pg_session_factory)
+
 
 @pytest.fixture(autouse=True)
 def clean_table(pg_session_factory):
@@ -89,9 +97,11 @@ def clean_table(pg_session_factory):
     finally:
         session.close()
 
+
 # ============================================================================
 # Tests
 # ============================================================================
+
 
 class TestChangeLogStorePostgres:
     """Test ChangeLogStore against real PostgreSQL."""

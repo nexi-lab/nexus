@@ -12,6 +12,7 @@ Usage:
     versioning.rollback("mem_123", version=1)
 """
 
+
 import builtins
 import difflib
 import logging
@@ -24,6 +25,7 @@ from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)
+
 
 class MemoryVersioning:
     """Version tracking operations for memories (#1184, #1188).
@@ -487,8 +489,6 @@ class MemoryVersioning:
             MemoryModel.invalid_at.isnot(None),
             MemoryModel.invalid_at <= threshold,
         )
-        if self._context and self._context.zone_id is not None:
-            stmt = stmt.where(MemoryModel.zone_id == self._context.zone_id)
         session = self._session_factory()
         try:
             old_memories = list(session.execute(stmt).scalars().all())

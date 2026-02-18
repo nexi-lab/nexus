@@ -15,6 +15,7 @@ Security Note: This service handles all permission and access control logic.
 Changes require security review before deployment.
 """
 
+
 import asyncio
 import logging
 from collections.abc import Callable
@@ -32,6 +33,7 @@ T = TypeVar("T")
 if TYPE_CHECKING:
     from nexus.rebac.circuit_breaker import AsyncCircuitBreaker
     from nexus.rebac.manager import ReBACManager
+
 
 class ReBACService(ReBACShareMixin):
     """Independent ReBAC service extracted from NexusFS.
@@ -86,10 +88,10 @@ class ReBACService(ReBACShareMixin):
 
     def __init__(
         self,
-        rebac_manager: "ReBACManager | None",
+        rebac_manager: ReBACManager | None,
         enforce_permissions: bool = True,
         enable_audit_logging: bool = True,
-        circuit_breaker: "AsyncCircuitBreaker | None" = None,
+        circuit_breaker: AsyncCircuitBreaker | None = None,
         file_reader: Callable | None = None,
     ):
         """Initialize ReBAC service.
@@ -834,7 +836,6 @@ class ReBACService(ReBACShareMixin):
                 relation=relation,
                 relation_in=relation_in,
                 object=object,
-                zone_id=_zone_id,
             )
 
         return await self._run_in_thread(_list_tuples_sync)

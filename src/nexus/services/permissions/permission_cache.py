@@ -11,6 +11,7 @@ Extracted from PermissionEnforcer to enable reuse across
 _check_rebac_batched() and filter_list() code paths.
 """
 
+
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class PermissionCacheCoordinator:
     """Owns all permission caching for the permission enforcer.
 
@@ -33,11 +35,11 @@ class PermissionCacheCoordinator:
 
     def __init__(
         self,
-        rebac_manager: "ReBACManager | None" = None,
+        rebac_manager: ReBACManager | None = None,
         *,
-        boundary_cache: "PermissionBoundaryCache | None" = None,
+        boundary_cache: PermissionBoundaryCache | None = None,
         enable_boundary_cache: bool = True,
-        hotspot_detector: "HotspotDetector | None" = None,
+        hotspot_detector: HotspotDetector | None = None,
         enable_hotspot_tracking: bool = True,
         bitmap_completeness_ttl: float = 3600.0,
         bitmap_completeness_maxsize: int = 4096,
@@ -79,11 +81,11 @@ class PermissionCacheCoordinator:
         )
 
     @property
-    def boundary_cache(self) -> "PermissionBoundaryCache | None":
+    def boundary_cache(self) -> PermissionBoundaryCache | None:
         return self._boundary_cache
 
     @property
-    def hotspot_detector(self) -> "HotspotDetector | None":
+    def hotspot_detector(self) -> HotspotDetector | None:
         return self._hotspot_detector
 
     # =========================================================================

@@ -22,6 +22,7 @@ class MockSimpleConnector:
     def _read_content_from_backend(self, path, context=None):
         return self.files.get(path)
 
+
 class MockBlobConnector:
     """Connector with blob storage support."""
 
@@ -42,6 +43,7 @@ class MockBlobConnector:
     def _read_content_from_backend(self, path, context=None):
         blob_path = self._get_blob_path(path)
         return self.blobs.get(blob_path)
+
 
 class TestParseContent:
     def test_returns_none_when_parser_not_available(self):
@@ -68,6 +70,7 @@ class TestParseContent:
         result = svc.parse_content("/test/Makefile", b"content")
         assert result == (None, None, None)
 
+
 class TestReadContentFromBackend:
     def test_blob_download(self):
         connector = MockBlobConnector()
@@ -91,6 +94,7 @@ class TestReadContentFromBackend:
         svc = BackendIOService(connector)
         result = svc.read_content_from_backend("missing.txt")
         assert result is None
+
 
 class TestBatchReadFromBackend:
     def test_bulk_download_for_blob_connector(self):
@@ -134,6 +138,7 @@ class TestBatchReadFromBackend:
         results = svc.batch_read_from_backend(["a.txt", "b.txt"])
         assert len(results) == 1
         assert results["a.txt"] == b"aaa"
+
 
 class TestGenerateEmbeddings:
     def test_delegates_to_connector(self):

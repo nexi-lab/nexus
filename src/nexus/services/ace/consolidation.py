@@ -18,7 +18,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.llm.message import Message, MessageRole
@@ -184,7 +183,7 @@ class ConsolidationEngine:
             List of consolidation results
         """
         # Query candidate memories
-        stmt = select(MemoryModel).where(
+        query = self.session.query(MemoryModel).filter(
             MemoryModel.agent_id == self.agent_id,
             MemoryModel.importance <= importance_max,
             MemoryModel.consolidated_from.is_(None),  # Not already consolidated
@@ -192,24 +191,24 @@ class ConsolidationEngine:
 
         # Ownership filters (match _query_candidate_memories)
         if self.user_id:
-            stmt = stmt.where(MemoryModel.user_id == self.user_id)
+            query = query.filter(MemoryModel.user_id == self.user_id)
         if self.zone_id:
-            stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
 
         if memory_type:
-            stmt = stmt.filter_by(memory_type=memory_type)
+            query = query.filter_by(memory_type=memory_type)
         if scope:
-            stmt = stmt.filter_by(scope=scope)
+            query = query.filter_by(scope=scope)
 
         # v0.8.0: Namespace filtering
         if namespace:
-            stmt = stmt.filter_by(namespace=namespace)
+            query = query.filter_by(namespace=namespace)
         elif namespace_prefix:
             safe_prefix = namespace_prefix.replace("%", r"\%").replace("_", r"\_")
-            stmt = stmt.where(MemoryModel.namespace.like(f"{safe_prefix}%"))
+            query = query.filter(MemoryModel.namespace.like(f"{safe_prefix}%"))
 
-        stmt = stmt.order_by(MemoryModel.created_at.desc()).limit(limit)
-        memories = self.session.execute(stmt).scalars().all()
+        query = query.order_by(MemoryModel.created_at.desc()).limit(limit)
+        memories = query.all()
 
         if len(memories) < 2:
             return []
@@ -242,12 +241,12 @@ class ConsolidationEngine:
         Returns:
             Memory data dictionary or None if not found
         """
-        stmt = select(MemoryModel).filter_by(memory_id=memory_id)
+        query = self.session.query(MemoryModel).filter_by(memory_id=memory_id)
         if self.user_id:
-            stmt = stmt.where(MemoryModel.user_id == self.user_id)
+            query = query.filter(MemoryModel.user_id == self.user_id)
         if self.zone_id:
-            stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
-        memory = self.session.execute(stmt).scalars().first()
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
+        memory = query.first()
         if not memory:
             return None
 
@@ -602,15 +601,15 @@ Provide only the consolidated summary, no additional commentary.
             return []
 
         # Batch query with ownership filter
-        stmt = select(MemoryModel).where(
+        query = self.session.query(MemoryModel).filter(
             MemoryModel.memory_id.in_(memory_ids),
         )
         if self.user_id:
-            stmt = stmt.where(MemoryModel.user_id == self.user_id)
+            query = query.filter(MemoryModel.user_id == self.user_id)
         if self.zone_id:
-            stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
 
-        memories = list(self.session.execute(stmt).scalars().all())
+        memories = query.all()
 
         return self._models_to_vectors(memories)
 
@@ -635,7 +634,7 @@ Provide only the consolidated summary, no additional commentary.
         Returns:
             List of MemoryVector objects.
         """
-        stmt = select(MemoryModel).where(
+        query = self.session.query(MemoryModel).filter(
             MemoryModel.agent_id == self.agent_id,
             MemoryModel.importance <= importance_max,
             MemoryModel.consolidated_from.is_(None),  # Not already consolidated
@@ -643,16 +642,16 @@ Provide only the consolidated summary, no additional commentary.
         )
 
         if self.user_id:
-            stmt = stmt.where(MemoryModel.user_id == self.user_id)
+            query = query.filter(MemoryModel.user_id == self.user_id)
         if self.zone_id:
-            stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
         if memory_type:
-            stmt = stmt.filter_by(memory_type=memory_type)
+            query = query.filter_by(memory_type=memory_type)
         if namespace:
-            stmt = stmt.filter_by(namespace=namespace)
+            query = query.filter_by(namespace=namespace)
 
-        stmt = stmt.order_by(MemoryModel.created_at.desc()).limit(limit)
-        memories = list(self.session.execute(stmt).scalars().all())
+        query = query.order_by(MemoryModel.created_at.desc()).limit(limit)
+        memories = query.all()
 
         # Build MemoryVectors directly — no second DB round-trip
         return self._models_to_vectors(memories)
@@ -760,11 +759,7 @@ Provide only the consolidated summary, no additional commentary.
                 )
 
                 # Persist to database
-                memory = (
-                    self.session.execute(select(MemoryModel).filter_by(memory_id=old.memory_id))
-                    .scalars()
-                    .first()
-                )
+                memory = self.session.query(MemoryModel).filter_by(memory_id=old.memory_id).first()
                 if memory:
                     memory.embedding = json.dumps(embeddings[batch_idx])
                     memory.embedding_model = getattr(embedding_provider, "model", "unknown")

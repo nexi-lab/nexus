@@ -4,6 +4,7 @@ Handles pgvector vector search, pg_textsearch BM25, and ts_rank fallback.
 Extracted from vector_db.py to isolate backend-specific logic.
 """
 
+
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
 
 def init_postgresql(conn: Any, hnsw_config: Any) -> tuple[bool, bool]:
     """Initialize PostgreSQL with pgvector and pg_textsearch.
@@ -108,15 +110,17 @@ def init_postgresql(conn: Any, hnsw_config: Any) -> tuple[bool, bool]:
 
     return vec_available, bm25_available
 
-def postgres_store_embedding(session: "Session", chunk_id: str, embedding: list[float]) -> None:
+
+def postgres_store_embedding(session: Session, chunk_id: str, embedding: list[float]) -> None:
     """Store embedding as pgvector array."""
     session.execute(
         text("UPDATE document_chunks SET embedding = :embedding WHERE chunk_id = :chunk_id"),
         {"embedding": embedding, "chunk_id": chunk_id},
     )
 
+
 def postgres_vector_search(
-    session: "Session",
+    session: Session,
     embedding: list[float],
     limit: int,
     path_filter: str | None,
@@ -156,8 +160,9 @@ def postgres_vector_search(
 
     return [build_result_from_row(row) for row in results]
 
+
 def postgres_keyword_search(
-    session: "Session",
+    session: Session,
     query: str,
     limit: int,
     path_filter: str | None,
@@ -168,8 +173,9 @@ def postgres_keyword_search(
         return _postgres_bm25_search(session, query, limit, path_filter)
     return _postgres_tsrank_search(session, query, limit, path_filter)
 
+
 def _postgres_bm25_search(
-    session: "Session",
+    session: Session,
     query: str,
     limit: int,
     path_filter: str | None,
@@ -205,8 +211,9 @@ def _postgres_bm25_search(
 
     return [build_result_from_row(row, score_abs=True) for row in results]
 
+
 def _postgres_tsrank_search(
-    session: "Session",
+    session: Session,
     query: str,
     limit: int,
     path_filter: str | None,

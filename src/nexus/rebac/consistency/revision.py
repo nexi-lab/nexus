@@ -16,6 +16,7 @@ Usage:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
+
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
+
 
 class ConnectionHelper(Protocol):
     """Protocol for database connection helpers.
@@ -45,9 +47,10 @@ class ConnectionHelper(Protocol):
         """Convert ? placeholders to %s for PostgreSQL."""
         ...
 
+
 def increment_version_token(
-    engine: "Engine",
-    conn_helper: "ConnectionHelper",
+    engine: Engine,
+    conn_helper: ConnectionHelper,
     zone_id: str = "root",
 ) -> str:
     """Atomically increment and return the version token for a zone.
@@ -123,7 +126,8 @@ def increment_version_token(
         conn.commit()
         return f"v{version}"
 
-def get_zone_revision_for_grant(engine: "Engine", zone_id: str) -> int:
+
+def get_zone_revision_for_grant(engine: Engine, zone_id: str) -> int:
     """Get current zone revision for consistency during expansion.
 
     This prevents the "new enemy" problem: files created after the grant

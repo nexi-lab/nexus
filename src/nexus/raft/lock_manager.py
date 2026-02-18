@@ -11,6 +11,7 @@ References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
 """
 
+
 import asyncio
 import logging
 import uuid
@@ -29,11 +30,13 @@ logger = logging.getLogger(__name__)
 # Monotonically increasing fence token counter (per-process)
 _fence_token_counter: int = 0
 
+
 def _next_fence_token() -> int:
     """Generate the next monotonically increasing fence token."""
     global _fence_token_counter  # noqa: PLW0603
     _fence_token_counter += 1
     return _fence_token_counter
+
 
 class RaftLockManager(LockManagerBase):
     """Raft-based distributed locking with strong consistency.
@@ -328,9 +331,11 @@ class RaftLockManager(LockManagerBase):
             logger.warning(f"Raft lock manager health check failed: {e}")
             return False
 
+
 # =============================================================================
 # Factory and Singleton Management
 # =============================================================================
+
 
 def create_lock_manager(
     raft_store: LockStoreProtocol | None = None,
@@ -352,8 +357,10 @@ def create_lock_manager(
         raise ValueError("raft_store is required")
     return RaftLockManager(raft_store)
 
+
 # Singleton instance for shared use
 _distributed_lock_manager: LockManagerBase | None = None
+
 
 def get_distributed_lock_manager() -> LockManagerBase | None:
     """Get the global distributed lock manager instance.
@@ -362,6 +369,7 @@ def get_distributed_lock_manager() -> LockManagerBase | None:
         LockManagerBase instance if initialized, None otherwise
     """
     return _distributed_lock_manager
+
 
 def set_distributed_lock_manager(manager: LockManagerBase | None) -> None:
     """Set the global distributed lock manager instance.

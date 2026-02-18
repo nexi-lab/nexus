@@ -10,6 +10,7 @@ Key refactoring (Issue #1521):
 - Moved to services/ as an orchestration concern (Issue 1)
 """
 
+
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from nexus.llm.provider import LLMProvider
     from nexus.search.semantic import SemanticSearch
 
+
 @dataclass
 class ReadChunk:
     """Simple chunk from direct file reading that satisfies ChunkLike."""
@@ -36,6 +38,7 @@ class ReadChunk:
     score: float | None = None
     start_offset: int | None = None
     end_offset: int | None = None
+
 
 class LLMDocumentReader:
     """LLM-powered document reading.
@@ -49,9 +52,9 @@ class LLMDocumentReader:
 
     def __init__(
         self,
-        nx: "NexusFilesystem",
-        provider: "LLMProvider",
-        search: "SemanticSearch | None" = None,
+        nx: NexusFilesystem,
+        provider: LLMProvider,
+        search: SemanticSearch | None = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ):

@@ -1,5 +1,6 @@
 """Tests for RLM types and error hierarchy."""
 
+
 import pytest
 
 from nexus.rlm.types import (

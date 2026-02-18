@@ -9,6 +9,7 @@ Convention (Issue #1291):
 - Do NOT use isinstance(obj, Protocol) in production hot paths.
 """
 
+
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 

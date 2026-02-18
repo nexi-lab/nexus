@@ -12,6 +12,7 @@ References:
     - Issue #1287: Extract NexusFS domain services from god object
 """
 
+
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -51,7 +52,6 @@ class ReputationProtocol(Protocol):
         agent_id: str,
         context: str = "general",
         window: str = "all_time",
-        zone_id: str | None = None,
     ) -> Any | None:
         """Get materialized reputation score for an agent.
 
@@ -76,7 +76,6 @@ class ReputationProtocol(Protocol):
     def get_feedback_for_exchange(
         self,
         exchange_id: str,
-        zone_id: str | None = None,
     ) -> list[Any]:
         """Get all feedback events for an exchange.
 
@@ -132,7 +131,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    def get_dispute(self, dispute_id: str, zone_id: str | None = None) -> Any | None:
+    def get_dispute(self, dispute_id: str) -> Any | None:
         """Get a dispute by ID.
 
         Returns:

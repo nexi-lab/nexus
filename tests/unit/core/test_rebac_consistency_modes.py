@@ -39,6 +39,7 @@ class TestConsistencyModeEnum:
         assert "at_least_as_fresh" in modes
         assert "fully_consistent" in modes
 
+
 class TestConsistencyRequirement:
     """Tests for ConsistencyRequirement dataclass."""
 
@@ -87,6 +88,7 @@ class TestConsistencyRequirement:
         req = ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
         assert req.to_legacy_level() == ConsistencyLevel.STRONG
 
+
 class TestWriteResult:
     """Tests for WriteResult dataclass."""
 
@@ -99,6 +101,7 @@ class TestWriteResult:
         assert result.revision == 42
         assert result.consistency_token == "v42"
         assert result.written_at_ms == 1.5
+
 
 class TestReBACPermissionCacheRevisionCheck:
     """Tests for revision-aware cache lookup (Issue #1081)."""

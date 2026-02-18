@@ -8,6 +8,7 @@ Triggered by AGENT_REGISTERED events from the EventBus — zero
 coupling to the AgentRegistry kernel component.
 """
 
+
 import json
 import logging
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ from nexus.ipc.conventions import (
 from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
+
 
 class AgentProvisioner:
     """Creates IPC directory structure for newly registered agents.

@@ -16,6 +16,7 @@ Covers:
 - ShareLinkService: 6 async methods (direct pass-through)
 """
 
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -27,6 +28,7 @@ from nexus.core.permissions import OperationContext
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def mock_fs():
@@ -47,6 +49,7 @@ def mock_fs():
     fs.share_link_service = MagicMock()
     return fs
 
+
 @pytest.fixture
 def context():
     """Standard operation context."""
@@ -58,9 +61,11 @@ def context():
         is_admin=False,
     )
 
+
 # =============================================================================
 # VersionService Delegation (4 async methods)
 # =============================================================================
+
 
 class TestVersionServiceDelegation:
     """Tests for NexusFS → VersionService delegation."""
@@ -104,9 +109,11 @@ class TestVersionServiceDelegation:
             "/file.txt", 1, 2, "metadata", None
         )
 
+
 # =============================================================================
 # ReBACService Delegation (8 async methods with parameter renaming)
 # =============================================================================
+
 
 class TestReBACServiceDelegation:
     """Tests for NexusFS → ReBACService delegation with parameter transformation."""
@@ -241,9 +248,11 @@ class TestReBACServiceDelegation:
         assert result == ns
         mock_fs.rebac_service.get_namespace.assert_called_once_with(object_type="file")
 
+
 # =============================================================================
 # MCPService Delegation (5 async methods with _context→context renaming)
 # =============================================================================
+
 
 class TestMCPServiceDelegation:
     """Tests for NexusFS → MCPService delegation."""
@@ -313,9 +322,11 @@ class TestMCPServiceDelegation:
             context=context,
         )
 
+
 # =============================================================================
 # SkillService Delegation (10 sync methods with result wrapping)
 # =============================================================================
+
 
 class TestSkillServiceDelegation:
     """Tests for NexusFS → SkillService delegation with result wrapping."""
@@ -429,9 +440,11 @@ class TestSkillServiceDelegation:
             tier=None,
         )
 
+
 # =============================================================================
 # LLMService Delegation (4 methods)
 # =============================================================================
+
 
 class TestLLMServiceDelegation:
     """Tests for NexusFS → LLMService delegation."""
@@ -473,9 +486,11 @@ class TestLLMServiceDelegation:
             max_context_tokens=5000,
         )
 
+
 # =============================================================================
 # OAuthService Delegation (7 async methods with _context→context renaming)
 # =============================================================================
+
 
 class TestOAuthServiceDelegation:
     """Tests for NexusFS → OAuthService delegation."""
@@ -541,9 +556,11 @@ class TestOAuthServiceDelegation:
             context=context,
         )
 
+
 # =============================================================================
 # SearchService Delegation (4 sync + 2 async)
 # =============================================================================
+
 
 class TestSearchServiceDelegation:
     """Tests for NexusFS → SearchService delegation."""
@@ -628,9 +645,11 @@ class TestSearchServiceDelegation:
         result = asyncio.run(mock_fs.asemantic_search_index(path="/data", recursive=False))
         assert result == stats
 
+
 # =============================================================================
 # ShareLinkService Delegation (6 async methods)
 # =============================================================================
+
 
 class TestShareLinkServiceDelegation:
     """Tests for NexusFS → ShareLinkService delegation."""
@@ -733,9 +752,11 @@ class TestShareLinkServiceDelegation:
             context=context,
         )
 
+
 # =============================================================================
 # MountService Async Delegation (key methods)
 # =============================================================================
+
 
 class TestMountServiceDelegation:
     """Tests for NexusFS → MountService async delegation."""

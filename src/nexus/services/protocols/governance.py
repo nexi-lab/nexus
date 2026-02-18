@@ -19,6 +19,7 @@ References:
     - Issue #1287: Extract NexusFS domain services from god object
 """
 
+
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -65,7 +66,6 @@ class GovernanceProtocol(Protocol):
         self,
         alert_id: str,
         resolved_by: str,
-        zone_id: str | None = None,
     ) -> Any | None:
         """Mark an anomaly alert as resolved.
 
@@ -129,7 +129,7 @@ class GovernanceProtocol(Protocol):
         """
         ...
 
-    async def remove_constraint(self, edge_id: str, zone_id: str | None = None) -> bool:
+    async def remove_constraint(self, edge_id: str) -> bool:
         """Remove a constraint by edge ID.
 
         Returns:

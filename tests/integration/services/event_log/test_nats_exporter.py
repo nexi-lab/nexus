@@ -6,6 +6,7 @@ Skip if dependencies not available or Docker is down.
 Issue #1138: Event Stream Export.
 """
 
+
 import pytest
 
 from nexus.core.event_bus import FileEvent, FileEventType
@@ -13,6 +14,7 @@ from nexus.core.event_bus import FileEvent, FileEventType
 # Skip if testcontainers or nats not installed
 pytest.importorskip("testcontainers")
 nats_mod = pytest.importorskip("nats")
+
 
 def _docker_available() -> bool:
     """Check if Docker daemon is accessible."""
@@ -24,7 +26,9 @@ def _docker_available() -> bool:
     except Exception:
         return False
 
+
 pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker daemon not running")
+
 
 @pytest.fixture(scope="module")
 def nats_container():
@@ -38,11 +42,13 @@ def nats_container():
     yield container
     container.stop()
 
+
 @pytest.fixture
 def nats_url(nats_container) -> str:
     host = nats_container.get_container_host_ip()
     port = nats_container.get_exposed_port(4222)
     return f"nats://{host}:{port}"
+
 
 @pytest.fixture
 def exporter(nats_url: str):
@@ -56,6 +62,7 @@ def exporter(nats_url: str):
     )
     return NatsExporter(config)
 
+
 def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent:
     return FileEvent(
         type=FileEventType.FILE_WRITE,
@@ -63,6 +70,7 @@ def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent
         zone_id=zone_id,
         event_id=event_id,
     )
+
 
 @pytest.mark.asyncio
 class TestNatsExporter:

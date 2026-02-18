@@ -11,6 +11,7 @@ Architecture Decisions:
     - Issue 13A: Dedicated thread pool (returns 503 when full)
 """
 
+
 import json
 import logging
 from collections.abc import AsyncIterator

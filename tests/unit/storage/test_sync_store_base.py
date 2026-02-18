@@ -9,6 +9,7 @@ Tests cover:
 - _with_session: commit on success, rollback on error, close always, no factory
 """
 
+
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,11 +21,13 @@ from nexus.storage.sync_store_base import SyncStoreBase
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_session(dialect_name: str = "sqlite") -> MagicMock:
     """Build a mock SQLAlchemy session."""
     session = MagicMock()
     session.bind.dialect.name = dialect_name
     return session
+
 
 @pytest.fixture
 def sqlite_store() -> SyncStoreBase:
@@ -32,20 +35,24 @@ def sqlite_store() -> SyncStoreBase:
     session = _make_session("sqlite")
     return SyncStoreBase(lambda: session)
 
+
 @pytest.fixture
 def pg_store() -> SyncStoreBase:
     """SyncStoreBase backed by a PostgreSQL session."""
     session = _make_session("postgresql")
     return SyncStoreBase(lambda: session)
 
+
 @pytest.fixture
 def no_session_store() -> SyncStoreBase:
     """SyncStoreBase with no session factory."""
     return SyncStoreBase(None)
 
+
 # ===========================================================================
 # __init__
 # ===========================================================================
+
 
 class TestInit:
     """Tests for SyncStoreBase initialization."""
@@ -59,9 +66,11 @@ class TestInit:
         store = SyncStoreBase(MagicMock())
         assert store._is_postgres is None
 
+
 # ===========================================================================
 # _get_session
 # ===========================================================================
+
 
 class TestGetSession:
     """Tests for _get_session."""
@@ -73,9 +82,11 @@ class TestGetSession:
     def test_returns_none_without_factory(self, no_session_store):
         assert no_session_store._get_session() is None
 
+
 # ===========================================================================
 # _detect_dialect
 # ===========================================================================
+
 
 class TestDetectDialect:
     """Tests for _detect_dialect."""
@@ -113,9 +124,11 @@ class TestDetectDialect:
         store._detect_dialect()
         session.close.assert_called_once()
 
+
 # ===========================================================================
 # _dialect_insert
 # ===========================================================================
+
 
 class TestDialectInsert:
     """Tests for _dialect_insert."""
@@ -145,9 +158,11 @@ class TestDialectInsert:
         stmt = store._dialect_insert(table)
         assert isinstance(stmt, PgInsert)
 
+
 # ===========================================================================
 # _dialect_upsert
 # ===========================================================================
+
 
 class TestDialectUpsert:
     """Tests for _dialect_upsert."""
@@ -212,9 +227,11 @@ class TestDialectUpsert:
             )
             session.execute.assert_called_once()
 
+
 # ===========================================================================
 # _with_session context manager
 # ===========================================================================
+
 
 class TestWithSession:
     """Tests for _with_session context manager."""

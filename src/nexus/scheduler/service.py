@@ -12,6 +12,7 @@ The SchedulerService is the main entry point for task scheduling. It:
 Related: Issue #1212, #1274
 """
 
+
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class SchedulerService:
     """High-level scheduler service implementing SchedulerProtocol.
 
@@ -56,8 +58,8 @@ class SchedulerService:
         *,
         queue: TaskQueue | None = None,
         db_pool: Any = None,
-        credits_service: "CreditsService | None" = None,
-        state_emitter: "AgentStateEmitter | None" = None,
+        credits_service: CreditsService | None = None,
+        state_emitter: AgentStateEmitter | None = None,
         fair_share: FairShareCounter | None = None,
         use_hrrn: bool = True,
     ) -> None:
@@ -75,7 +77,7 @@ class SchedulerService:
     # SchedulerProtocol — 8 methods
     # =========================================================================
 
-    async def submit(self, request: "AgentRequest") -> str:
+    async def submit(self, request: AgentRequest) -> str:
         """Submit an AgentRequest, auto-classify, and enqueue.
 
         Returns:
@@ -113,7 +115,7 @@ class SchedulerService:
         task = await self.submit_task(submission)
         return task.id
 
-    async def next(self, *, executor_id: str | None = None) -> "AgentRequest | None":
+    async def next(self, *, executor_id: str | None = None) -> AgentRequest | None:
         """Dequeue the next task and return as AgentRequest."""
         task = await self.dequeue_next(executor_id=executor_id)
         if task is None:
@@ -167,7 +169,7 @@ class SchedulerService:
         if task is not None:
             self._fair_share.record_complete(task.agent_id)
 
-    async def classify(self, request: "AgentRequest") -> str:
+    async def classify(self, request: AgentRequest) -> str:
         """Classify an AgentRequest into a PriorityClass."""
         try:
             tier = PriorityTier(request.priority)
@@ -344,7 +346,7 @@ class SchedulerService:
     # Astraea internal methods (Issue #1274)
     # =========================================================================
 
-    async def _on_agent_state_change(self, event: "AgentStateEvent") -> None:
+    async def _on_agent_state_change(self, event: AgentStateEvent) -> None:
         """Handle agent state transitions — update executor_state in DB."""
         logger.info(
             "Agent state change: %s %s -> %s",

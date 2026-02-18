@@ -10,6 +10,7 @@ Phases:
     4. DSL rules (recipient, time window, metadata, amount range)
 """
 
+
 import asyncio
 import logging
 from decimal import Decimal
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class PolicyEnforcedPayment:
     """Wraps a PaymentProtocol with spending policy enforcement.
 
@@ -38,8 +40,8 @@ class PolicyEnforcedPayment:
 
     def __init__(
         self,
-        inner: "PaymentProtocol",
-        policy_service: "SpendingPolicyService",
+        inner: PaymentProtocol,
+        policy_service: SpendingPolicyService,
     ) -> None:
         self._inner = inner
         self._policy_service = policy_service

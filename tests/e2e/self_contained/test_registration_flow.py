@@ -8,6 +8,7 @@ Tests the full flow:
 5. Revoke old key → immediately unusable
 """
 
+
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -28,9 +29,11 @@ def _utcnow_naive() -> datetime:
     """UTC naive datetime for tests — matches key_service._utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def engine() -> Any:
@@ -43,9 +46,11 @@ def engine() -> Any:
     Base.metadata.create_all(engine)
     return engine
 
+
 @pytest.fixture
 def session_factory(engine: Any) -> Any:
     return sessionmaker(bind=engine)
+
 
 @pytest.fixture
 def mock_oauth_crypto() -> MagicMock:
@@ -65,18 +70,22 @@ def mock_oauth_crypto() -> MagicMock:
     mock.decrypt_token.side_effect = decrypt
     return mock
 
+
 @pytest.fixture
 def crypto(mock_oauth_crypto: MagicMock) -> IdentityCrypto:
     return IdentityCrypto(oauth_crypto=mock_oauth_crypto)
+
 
 @pytest.fixture
 def key_service(session_factory: Any, crypto: IdentityCrypto) -> KeyService:
     record_store = SimpleNamespace(session_factory=session_factory)
     return KeyService(record_store=record_store, crypto=crypto, cache_ttl=0)
 
+
 # ---------------------------------------------------------------------------
 # Golden-Path Integration Test
 # ---------------------------------------------------------------------------
+
 
 class TestRegistrationGoldenPath:
     """Full registration + identity lifecycle."""

@@ -37,20 +37,12 @@ class TupleRepository:
     manager layer which handles cache invalidation and other cross-cutting
     concerns.
 
-    Supports read/write separation (Issue #725):
-    - ``read_engine`` is used for read-only queries (permission checks, lookups)
-    - ``engine`` is used for writes (INSERT/DELETE/UPDATE + increment_zone_revision)
-    - When no ``read_engine`` is provided, falls back to ``engine`` for all operations
-
     Args:
-        engine: SQLAlchemy database engine for write operations (SQLite or PostgreSQL)
-        read_engine: Optional separate engine for read-only operations (Issue #725).
-                    Defaults to ``engine`` when not provided.
+        engine: SQLAlchemy database engine (SQLite or PostgreSQL)
     """
 
-    def __init__(self, engine: Engine, read_engine: Engine | None = None) -> None:
+    def __init__(self, engine: Engine) -> None:
         self.engine = engine
-        self.read_engine = read_engine or engine
 
         # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
         # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
@@ -100,33 +92,29 @@ class TupleRepository:
                 logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
-    def connection(self, *, readonly: bool = False) -> Generator[Any, None, None]:
+    def connection(self) -> Generator[Any, None, None]:
         """Context manager for database connections.
 
         Uses engine.connect() which properly goes through the connection pool
         and respects pool_pre_ping for automatic stale connection detection.
 
-        Args:
-            readonly: If True, uses ``read_engine`` and skips commit (Issue #725).
-                     If False (default), uses ``engine`` and commits on success.
-
         Usage:
-            with repo.connection() as conn:       # write path
+            with repo.connection() as conn:
                 cursor = repo.create_cursor(conn)
                 cursor.execute(...)
-
-            with repo.connection(readonly=True) as conn:  # read path
-                cursor = repo.create_cursor(conn)
-                cursor.execute(...)
+                conn.commit()
         """
-        target_engine = self.read_engine if readonly else self.engine
+        from sqlalchemy import text
 
-        with target_engine.connect() as sa_conn:
+        with self.engine.connect() as sa_conn:
+            # Fix PostgreSQL prepared statement performance issue (#683)
+            if self.engine.dialect.name == "postgresql":
+                sa_conn.execute(text("SET plan_cache_mode = 'force_custom_plan'"))
+
             dbapi_conn = sa_conn.connection.dbapi_connection
             try:
                 yield dbapi_conn
-                if not readonly:
-                    sa_conn.commit()
+                sa_conn.commit()
             except Exception:
                 sa_conn.rollback()
                 raise
@@ -215,7 +203,6 @@ class TupleRepository:
         """Get current revision for a zone (read-only, no increment).
 
         Used for revision-based cache key generation (Issue #909).
-        Uses read_engine for read replica support (Issue #725).
 
         Args:
             zone_id: Zone ID (defaults to "root")
@@ -225,8 +212,10 @@ class TupleRepository:
             Current revision number (0 if zone has no writes yet)
         """
         effective_zone = zone_id or "root"
-        if conn is not None:
-            # Reuse provided connection
+        should_close = conn is None
+        if conn is None:
+            conn = self.get_connection()
+        try:
             cursor = self.create_cursor(conn)
             cursor.execute(
                 self.fix_sql_placeholders(
@@ -236,18 +225,9 @@ class TupleRepository:
             )
             row = cursor.fetchone()
             return int(row["current_version"]) if row else 0
-
-        # Use read_engine for standalone reads (Issue #725)
-        with self.connection(readonly=True) as rconn:
-            cursor = self.create_cursor(rconn)
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-            return int(row["current_version"]) if row else 0
+        finally:
+            if should_close:
+                self.close_connection(conn)
 
     def increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
         """Increment and return the new revision for a zone.
@@ -496,7 +476,7 @@ class TupleRepository:
         Returns:
             List of (subject_type, subject_id, subject_relation) tuples
         """
-        with self.connection(readonly=True) as conn:
+        with self.connection() as conn:
             cursor = self.create_cursor(conn)
 
             if zone_id is None:
@@ -561,7 +541,7 @@ class TupleRepository:
                 relation,
             )
 
-        with self.connection(readonly=True) as conn:
+        with self.connection() as conn:
             cursor = self.create_cursor(conn)
 
             cursor.execute(
@@ -607,7 +587,7 @@ class TupleRepository:
                 obj,
             )
 
-        with self.connection(readonly=True) as conn:
+        with self.connection() as conn:
             cursor = self.create_cursor(conn)
 
             cursor.execute(
@@ -643,7 +623,7 @@ class TupleRepository:
         Returns:
             List of (subject_type, subject_id) tuples
         """
-        with self.connection(readonly=True) as conn:
+        with self.connection() as conn:
             cursor = self.create_cursor(conn)
 
             cursor.execute(

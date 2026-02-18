@@ -4,6 +4,7 @@ Validates that FileReaderProtocol is runtime_checkable, mock implementations
 satisfy isinstance checks, and all method contracts are correct.
 """
 
+
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -15,6 +16,7 @@ from nexus.search.protocols import FileReaderProtocol
 # =============================================================================
 # Protocol structural checks
 # =============================================================================
+
 
 class TestFileReaderProtocolStructure:
     """Verify FileReaderProtocol is runtime_checkable and well-formed."""
@@ -41,9 +43,11 @@ class TestFileReaderProtocolStructure:
     def test_has_get_content_hash(self) -> None:
         assert hasattr(FileReaderProtocol, "get_content_hash")
 
+
 # =============================================================================
 # Mock implementation
 # =============================================================================
+
 
 class MockFileReader:
     """Minimal mock satisfying FileReaderProtocol."""
@@ -89,6 +93,7 @@ class MockFileReader:
             return None
         return f"hash-{len(content)}"
 
+
 class TestMockSatisfiesProtocol:
     """Verify MockFileReader passes isinstance check."""
 
@@ -96,9 +101,11 @@ class TestMockSatisfiesProtocol:
         reader = MockFileReader()
         assert isinstance(reader, FileReaderProtocol)
 
+
 # =============================================================================
 # Method contract tests
 # =============================================================================
+
 
 class TestReadText:
     """Test read_text() method contract."""
@@ -114,6 +121,7 @@ class TestReadText:
         with pytest.raises(FileNotFoundError):
             reader.read_text("/nonexistent.py")
 
+
 class TestGetSearchableText:
     """Test get_searchable_text() method contract."""
 
@@ -126,6 +134,7 @@ class TestGetSearchableText:
         reader = MockFileReader()
         result = reader.get_searchable_text("/nonexistent.py")
         assert result is None
+
 
 class TestListFiles:
     """Test list_files() method contract."""
@@ -146,6 +155,7 @@ class TestListFiles:
         result = reader.list_files("/", recursive=True)
         assert len(result) >= 1
 
+
 class TestGetSession:
     """Test get_session() context manager contract."""
 
@@ -154,6 +164,7 @@ class TestGetSession:
         with reader.get_session() as session:
             assert session is not None
             assert isinstance(session, dict)
+
 
 class TestGetPathId:
     """Test get_path_id() method contract."""
@@ -168,6 +179,7 @@ class TestGetPathId:
         result = reader.get_path_id("/nonexistent.py")
         assert result is None
 
+
 class TestGetContentHash:
     """Test get_content_hash() method contract."""
 
@@ -181,15 +193,18 @@ class TestGetContentHash:
         result = reader.get_content_hash("/nonexistent.py")
         assert result is None
 
+
 # =============================================================================
 # Negative tests — incomplete implementations
 # =============================================================================
+
 
 class IncompleteFileReader:
     """Missing most methods — should NOT satisfy protocol."""
 
     def read_text(self, path: str) -> str:
         return ""
+
 
 class TestIncompleteImplementation:
     """Objects missing methods should not satisfy the protocol."""

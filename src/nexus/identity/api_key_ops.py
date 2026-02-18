@@ -4,6 +4,7 @@ Extracted from server.auth.database_key to allow services layer
 to manage API keys without importing from the server layer.
 """
 
+
 import hashlib
 import hmac
 import logging
@@ -21,6 +22,7 @@ API_KEY_PREFIX = "sk-"
 API_KEY_MIN_LENGTH = 32
 HMAC_SALT = "nexus-api-key-v1"
 
+
 def hash_api_key(key: str) -> str:
     """Hash API key using HMAC-SHA256 with versioned salt.
 
@@ -36,6 +38,7 @@ def hash_api_key(key: str) -> str:
         hashlib.sha256,
     ).hexdigest()
 
+
 def validate_key_format(key: str) -> bool:
     """Validate API key format (prefix + minimum length).
 
@@ -49,8 +52,9 @@ def validate_key_format(key: str) -> bool:
         return False
     return len(key) >= API_KEY_MIN_LENGTH
 
+
 def create_api_key(
-    session: "Session",
+    session: Session,
     user_id: str,
     name: str,
     subject_type: str = "user",
@@ -109,7 +113,8 @@ def create_api_key(
 
     return (api_key.key_id, raw_key)
 
-def revoke_api_key(session: "Session", key_id: str) -> bool:
+
+def revoke_api_key(session: Session, key_id: str) -> bool:
     """Revoke an API key by key_id.
 
     Args:

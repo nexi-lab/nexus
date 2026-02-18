@@ -9,6 +9,7 @@ Verifies:
 - Cross-module wiring (search → context_builder, ace → protocol)
 """
 
+
 import importlib
 
 import pytest
@@ -16,6 +17,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # 1. Import path validation
 # ---------------------------------------------------------------------------
+
 
 class TestImportPaths:
     """Verify all import paths resolve correctly after the move."""
@@ -46,6 +48,38 @@ class TestImportPaths:
         assert LLMDocumentReader is not None
         assert ReadChunk is not None
 
+    def test_backward_compat_stubs(self) -> None:
+        """Old import paths still work via backward-compat stubs."""
+        from nexus.llm.citation import (
+            Citation,
+            CitationExtractor,
+            DocumentReadResult,
+        )
+        from nexus.llm.context_builder import (
+            AdaptiveRetrievalConfig,
+            ChunkLike,
+            ContextBuilder,
+        )
+        from nexus.llm.document_reader import LLMDocumentReader
+
+        assert Citation is not None
+        assert CitationExtractor is not None
+        assert DocumentReadResult is not None
+        assert AdaptiveRetrievalConfig is not None
+        assert ChunkLike is not None
+        assert ContextBuilder is not None
+        assert LLMDocumentReader is not None
+
+    def test_stub_and_service_are_same_objects(self) -> None:
+        """Backward-compat stubs return the exact same class objects."""
+        from nexus.llm.citation import Citation as C1
+        from nexus.llm.context_builder import ContextBuilder as CB1
+        from nexus.services.llm_citation import Citation as C2
+        from nexus.services.llm_context_builder import ContextBuilder as CB2
+
+        assert C1 is C2
+        assert CB1 is CB2
+
     def test_brick_level_exports(self) -> None:
         """LLM brick __init__ exports core types (not orchestration)."""
         from nexus.llm import (
@@ -72,9 +106,11 @@ class TestImportPaths:
         assert LLMBrickManifest is not None
         assert verify_imports is not None
 
+
 # ---------------------------------------------------------------------------
 # 2. Protocol compliance
 # ---------------------------------------------------------------------------
+
 
 class TestProtocolCompliance:
     """Verify protocol contracts are satisfied."""
@@ -104,9 +140,11 @@ class TestProtocolCompliance:
         assert LLMProviderProtocol is not None
         assert LLMServiceProtocol is not None
 
+
 # ---------------------------------------------------------------------------
 # 3. Brick manifest
 # ---------------------------------------------------------------------------
+
 
 class TestBrickManifest:
     """Verify LLM brick manifest and import validation."""
@@ -158,9 +196,11 @@ class TestBrickManifest:
         assert "nexus.llm.exceptions" in status
         assert "nexus.llm.cancellation" in status
 
+
 # ---------------------------------------------------------------------------
 # 4. Cross-module wiring
 # ---------------------------------------------------------------------------
+
 
 class TestCrossModuleWiring:
     """Verify cross-module imports resolve without circular dependencies."""
@@ -198,9 +238,11 @@ class TestCrossModuleWiring:
         finally:
             sys.modules.update(saved)
 
+
 # ---------------------------------------------------------------------------
 # 5. Provider caching in LLMService
 # ---------------------------------------------------------------------------
+
 
 class TestProviderCaching:
     """Verify LLMService caches providers by config hash."""
@@ -214,9 +256,11 @@ class TestProviderCaching:
         assert isinstance(service._provider_cache, dict)
         assert len(service._provider_cache) == 0
 
+
 # ---------------------------------------------------------------------------
 # 6. Context builder with ChunkLike
 # ---------------------------------------------------------------------------
+
 
 class TestContextBuilderIntegration:
     """Verify ContextBuilder works with different ChunkLike implementations."""
@@ -285,9 +329,11 @@ class TestContextBuilderIntegration:
         assert len(citations) == 1
         assert citations[0].path == "/docs/api.md"
 
+
 # ---------------------------------------------------------------------------
 # 7. Performance validation
 # ---------------------------------------------------------------------------
+
 
 class TestPerformanceValidation:
     """Basic performance checks for import times."""

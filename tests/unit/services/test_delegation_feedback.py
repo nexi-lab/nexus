@@ -9,6 +9,7 @@ Tests that complete_delegation() correctly:
 6. Raises on already-completed delegation
 """
 
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -40,11 +41,13 @@ def _make_record(
         zone_id=zone_id,
     )
 
+
 @pytest.fixture()
 def mock_reputation_service():
     service = MagicMock()
     service.submit_feedback.return_value = MagicMock()
     return service
+
 
 @pytest.fixture()
 def delegation_service(mock_reputation_service):
@@ -55,6 +58,7 @@ def delegation_service(mock_reputation_service):
         reputation_service=mock_reputation_service,
     )
     return service
+
 
 class TestCompleteDelegation:
     def test_complete_delegation_success_submits_positive_feedback(

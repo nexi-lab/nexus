@@ -152,9 +152,7 @@ async def watch_for_changes(
         context = get_operation_context(_auth_result)
 
     try:
-        change = await nexus_fs.events_service.wait_for_changes(
-            path=path, timeout=timeout, _context=context
-        )
+        change = await nexus_fs.wait_for_changes(path=path, timeout=timeout, _context=context)
         if change is None:
             return {"changes": [], "timeout": True}
         return {"changes": [change], "timeout": False}

@@ -54,6 +54,7 @@ class PermissionEnforcer:
     def __init__(
         self,
         metadata_store: Any = None,
+        acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
         rebac_manager: ReBACManager | None = None,
         entity_registry: Any = None,  # Entity registry (reserved for future use)
         router: Any = None,  # PathRouter for backend object type resolution
@@ -77,6 +78,7 @@ class PermissionEnforcer:
 
         Args:
             metadata_store: Metadata store for file lookup (optional)
+            acl_store: Deprecated, ignored (kept for backward compatibility)
             rebac_manager: ReBAC manager for relationship-based permissions
             entity_registry: Entity registry (reserved for future use)
             router: PathRouter for resolving backend object types (v0.5.0+)
@@ -135,6 +137,17 @@ class PermissionEnforcer:
             self.rebac_manager.register_boundary_cache_invalidator(
                 callback_id,
                 self._boundary_cache.invalidate_permission_change,
+            )
+
+        # Warn if ACL store is provided (deprecated)
+        if acl_store is not None:
+            import warnings
+
+            warnings.warn(
+                "acl_store parameter is deprecated and will be removed in v0.7.0. "
+                "Use ReBAC for all permissions.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
     def invalidate_cache(

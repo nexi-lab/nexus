@@ -19,6 +19,7 @@ Usage:
     missing_fk_indexes = monitor.find_missing_fk_indexes()
 """
 
+
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class QueryStats:
@@ -42,6 +44,7 @@ class QueryStats:
     max_time_ms: float
     rows: int
 
+
 @dataclass
 class MissingFKIndex:
     """Information about a missing foreign key index."""
@@ -50,6 +53,7 @@ class MissingFKIndex:
     fk_column: str
     referenced_table: str
     referenced_column: str
+
 
 @dataclass
 class TableStats:
@@ -62,6 +66,7 @@ class TableStats:
     last_autoanalyze: str | None
     dead_tuples: int
     live_tuples: int
+
 
 # Shared SELECT column list for pg_stat_statements queries (DRY — Issue #762)
 _STAT_COLUMNS = (
@@ -85,6 +90,7 @@ _QUERY_SLOW_AVERAGE = text(
     " WHERE mean_exec_time > :min_mean_time ORDER BY mean_exec_time DESC LIMIT :limit"
 )
 
+
 def _row_to_query_stats(row: Any) -> QueryStats:
     """Convert a pg_stat_statements result row to a QueryStats dataclass."""
     return QueryStats(
@@ -97,6 +103,7 @@ def _row_to_query_stats(row: Any) -> QueryStats:
         rows=row.rows,
     )
 
+
 class PgMonitor:
     """PostgreSQL monitoring utilities.
 
@@ -106,7 +113,7 @@ class PgMonitor:
     Based on Supabase Postgres Best Practices guide.
     """
 
-    def __init__(self, session: "Session"):
+    def __init__(self, session: Session):
         """Initialize the monitor with a SQLAlchemy session.
 
         Args:

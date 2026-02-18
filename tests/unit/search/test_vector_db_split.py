@@ -7,6 +7,7 @@ These are characterization tests — they document current behavior
 before the vector_db split refactoring.
 """
 
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ import pytest
 # =============================================================================
 # VectorDatabase construction and init
 # =============================================================================
+
 
 class TestVectorDatabaseConstruction:
     """Test VectorDatabase constructor and basic properties."""
@@ -51,9 +53,11 @@ class TestVectorDatabaseConstruction:
         assert vdb.hnsw_config.m == 16
         assert vdb.hnsw_config.ef_construction == 64
 
+
 # =============================================================================
 # SQLite init path
 # =============================================================================
+
 
 class TestSQLiteInitPath:
     """Test VectorDatabase._init_sqlite behavior (mocked)."""
@@ -86,9 +90,11 @@ class TestSQLiteInitPath:
         with pytest.raises(ValueError, match="Unsupported database type"):
             vdb.initialize()
 
+
 # =============================================================================
 # store_embedding
 # =============================================================================
+
 
 class TestStoreEmbedding:
     """Test store_embedding for both backends."""
@@ -134,9 +140,11 @@ class TestStoreEmbedding:
         assert params["chunk_id"] == "chunk-1"
         assert params["embedding"] == [0.1, 0.2, 0.3]
 
+
 # =============================================================================
 # Result dict shape
 # =============================================================================
+
 
 class TestResultDictShape:
     """Verify the result dict shape from search methods."""
@@ -206,9 +214,11 @@ class TestResultDictShape:
         with pytest.raises(ValueError, match="Unsupported database type"):
             vdb.vector_search(session, [0.1, 0.2], limit=10)
 
+
 # =============================================================================
 # _run_sync helper
 # =============================================================================
+
 
 class TestRunSync:
     """Test the _run_sync() helper for sync/async bridging."""
@@ -232,9 +242,11 @@ class TestRunSync:
         result = _run_sync(async_identity("hello"))
         assert result == "hello"
 
+
 # =============================================================================
 # VectorDatabase properties
 # =============================================================================
+
 
 class TestVectorDatabaseProperties:
     """Test VectorDatabase direct property access."""

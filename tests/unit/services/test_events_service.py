@@ -6,6 +6,7 @@ and cache invalidation.
 All async service methods are tested via asyncio.run().
 """
 
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
@@ -18,6 +19,7 @@ from nexus.services.events_service import EventsService
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def mock_backend_passthrough():
@@ -33,12 +35,14 @@ def mock_backend_passthrough():
     backend.unlock = MagicMock(return_value=True)
     return backend
 
+
 @pytest.fixture
 def mock_backend_remote():
     """Create a mock non-passthrough backend (distributed mode)."""
     backend = MagicMock()
     backend.is_passthrough = False
     return backend
+
 
 @pytest.fixture
 def mock_event_bus():
@@ -49,6 +53,7 @@ def mock_event_bus():
     bus.wait_for_event = AsyncMock(return_value=None)
     bus.subscribe = AsyncMock()
     return bus
+
 
 @pytest.fixture
 def mock_lock_manager():
@@ -61,6 +66,7 @@ def mock_lock_manager():
     mgr.extend = AsyncMock(return_value=extend_result)
     return mgr
 
+
 @pytest.fixture
 def mock_file_watcher():
     """Create a mock file watcher."""
@@ -71,12 +77,14 @@ def mock_file_watcher():
     watcher.stop = MagicMock()
     return watcher
 
+
 @pytest.fixture
 def mock_metadata_cache():
     """Create a mock metadata cache."""
     cache = MagicMock()
     cache.invalidate_path = MagicMock()
     return cache
+
 
 @pytest.fixture
 def context():
@@ -89,9 +97,11 @@ def context():
         is_admin=False,
     )
 
+
 # =============================================================================
 # Initialization
 # =============================================================================
+
 
 class TestEventsServiceInit:
     """Tests for EventsService construction."""
@@ -101,6 +111,7 @@ class TestEventsServiceInit:
         mock_backend_passthrough,
         mock_event_bus,
         mock_lock_manager,
+        mock_file_watcher,
         mock_metadata_cache,
     ):
         """Service stores all injected dependencies."""
@@ -108,13 +119,14 @@ class TestEventsServiceInit:
             backend=mock_backend_passthrough,
             event_bus=mock_event_bus,
             lock_manager=mock_lock_manager,
+            file_watcher=mock_file_watcher,
             zone_id="z1",
             metadata_cache=mock_metadata_cache,
         )
         assert svc._backend is mock_backend_passthrough
         assert svc._event_bus is mock_event_bus
         assert svc._lock_manager is mock_lock_manager
-        assert svc._file_watcher is None  # lazy-initialized, not injected
+        assert svc._file_watcher is mock_file_watcher
         assert svc._zone_id == "z1"
         assert svc._metadata_cache is mock_metadata_cache
 
@@ -128,9 +140,11 @@ class TestEventsServiceInit:
         assert svc._metadata_cache is None
         assert svc._cache_invalidation_started is False
 
+
 # =============================================================================
 # Infrastructure detection
 # =============================================================================
+
 
 class TestInfrastructureDetection:
     """Tests for layer detection methods."""
@@ -165,9 +179,11 @@ class TestInfrastructureDetection:
         svc = EventsService(backend=mock_backend_remote)
         assert svc._has_distributed_locks() is False
 
+
 # =============================================================================
 # Zone ID resolution
 # =============================================================================
+
 
 class TestZoneIdResolution:
     """Tests for _get_zone_id helper."""
@@ -187,19 +203,19 @@ class TestZoneIdResolution:
         svc = EventsService(backend=mock_backend_remote)
         assert svc._get_zone_id(None) == "root"
 
+
 # =============================================================================
 # File watcher lazy init
 # =============================================================================
 
+
 class TestFileWatcherLazyInit:
     """Tests for _get_file_watcher lazy initialization."""
 
-    def test_lazy_creates_watcher(self, mock_backend_passthrough):
-        """Lazy-creates FileWatcher for passthrough backend."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        watcher = svc._get_file_watcher()
-        assert watcher is not None
-        assert svc._file_watcher is watcher
+    def test_returns_injected_watcher(self, mock_backend_passthrough, mock_file_watcher):
+        """Returns injected watcher if available."""
+        svc = EventsService(backend=mock_backend_passthrough, file_watcher=mock_file_watcher)
+        assert svc._get_file_watcher() is mock_file_watcher
 
     def test_raises_for_non_passthrough(self, mock_backend_remote):
         """Raises NotImplementedError for non-passthrough backend."""
@@ -207,9 +223,11 @@ class TestFileWatcherLazyInit:
         with pytest.raises(NotImplementedError, match="PassthroughBackend"):
             svc._get_file_watcher()
 
+
 # =============================================================================
 # Advisory Locking — Distributed
 # =============================================================================
+
 
 class TestDistributedLocking:
     """Tests for locking via distributed lock manager."""
@@ -248,9 +266,11 @@ class TestDistributedLocking:
         assert result is True
         mock_lock_manager.extend.assert_called_once()
 
+
 # =============================================================================
 # Advisory Locking — Same-Box
 # =============================================================================
+
 
 class TestSameBoxLocking:
     """Tests for locking via PassthroughBackend."""
@@ -275,9 +295,11 @@ class TestSameBoxLocking:
         result = asyncio.run(svc.extend_lock("lock-123", path="/data/file.txt"))
         assert result is True
 
+
 # =============================================================================
 # Locking — No Infrastructure
 # =============================================================================
+
 
 class TestLockingNoInfrastructure:
     """Tests for locking when no lock infrastructure is available."""
@@ -300,9 +322,11 @@ class TestLockingNoInfrastructure:
         with pytest.raises(NotImplementedError, match="No lock manager"):
             asyncio.run(svc.extend_lock("lock-123", path="/data/file.txt"))
 
+
 # =============================================================================
 # wait_for_changes — No Infrastructure
 # =============================================================================
+
 
 class TestWaitForChangesNoInfra:
     """Tests for wait_for_changes when no event source is available."""
@@ -313,9 +337,11 @@ class TestWaitForChangesNoInfra:
         with pytest.raises(NotImplementedError, match="No event source"):
             asyncio.run(svc.wait_for_changes("/data"))
 
+
 # =============================================================================
 # wait_for_changes — Distributed
 # =============================================================================
+
 
 class TestWaitForChangesDistributed:
     """Tests for wait_for_changes with distributed event bus."""
@@ -336,9 +362,11 @@ class TestWaitForChangesDistributed:
         result = asyncio.run(svc.wait_for_changes("/data"))
         assert result == {"type": "write", "path": "/data/file.txt"}
 
+
 # =============================================================================
 # Cache invalidation
 # =============================================================================
+
 
 class TestCacheInvalidation:
     """Tests for cache invalidation logic."""
@@ -383,9 +411,11 @@ class TestCacheInvalidation:
         svc._stop_cache_invalidation()
         assert svc._cache_invalidation_started is False
 
+
 # =============================================================================
 # locked() context manager
 # =============================================================================
+
 
 class TestLockedContextManager:
     """Tests for the locked() async context manager."""

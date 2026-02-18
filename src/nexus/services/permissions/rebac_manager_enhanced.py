@@ -24,6 +24,7 @@ Usage:
     # Automatically enforces timeout, fan-out, and memory limits
 """
 
+
 import json
 import logging
 import threading
@@ -89,9 +90,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 # ============================================================================
 # Enhanced ReBAC Manager (All P0 Fixes Integrated)
 # ============================================================================
+
 
 class EnhancedReBACManager(ReBACManager):
     """ReBAC Manager with all P0 fixes integrated.
@@ -110,7 +113,7 @@ class EnhancedReBACManager(ReBACManager):
 
     def __init__(
         self,
-        engine: "Engine",
+        engine: Engine,
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
         enforce_zone_isolation: bool = True,

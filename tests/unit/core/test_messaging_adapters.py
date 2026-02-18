@@ -1,5 +1,6 @@
 """Unit tests for A2A <-> IPC message adapters."""
 
+
 from nexus.a2a.messaging_adapters import (
     a2a_message_to_envelope,
     envelope_to_a2a_message,
@@ -67,6 +68,7 @@ class TestA2AToEnvelope:
         )
         assert env.ttl_seconds == 3600
 
+
 class TestEnvelopeToA2A:
     def test_basic(self) -> None:
         env = MessageEnvelope(
@@ -128,6 +130,7 @@ class TestEnvelopeToA2A:
         # Explicit role overrides payload role
         msg = envelope_to_a2a_message(env, role="agent")
         assert msg.role == "agent"
+
 
 class TestRoundtrip:
     def test_a2a_to_envelope_to_a2a(self) -> None:

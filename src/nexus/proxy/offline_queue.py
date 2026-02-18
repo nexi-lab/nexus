@@ -3,6 +3,7 @@
 Uses SQLAlchemy async ORM with aiosqlite for crash-safe persistence.
 """
 
+
 import json
 import os
 import time
@@ -32,6 +33,7 @@ class QueuedOperation:
     payload_ref: str | None
     retry_count: int
     created_at: float
+
 
 class OfflineQueue:
     """Persistent offline operation queue backed by SQLAlchemy async ORM.

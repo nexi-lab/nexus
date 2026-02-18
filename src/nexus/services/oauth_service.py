@@ -11,6 +11,7 @@ Phase 2: Core Refactoring (Issue #988, Task 2.6)
 Extracted from: nexus_fs_oauth.py (1,116 lines)
 """
 
+
 import builtins
 import json
 import logging
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
     from nexus.core.permissions import OperationContext
+
 
 class PKCEStateStore:
     """PKCE state store backed by CacheStoreABC.
@@ -39,7 +41,7 @@ class PKCEStateStore:
 
     def __init__(
         self,
-        cache_store: "CacheStoreABC | None" = None,
+        cache_store: CacheStoreABC | None = None,
         ttl: int = 600,
     ) -> None:
         self._cache_store = cache_store
@@ -74,6 +76,7 @@ class PKCEStateStore:
         Not available with CacheStoreABC — returns -1 when backed by external store.
         """
         return -1
+
 
 class OAuthService:
     """Independent OAuth service extracted from NexusFS.
@@ -165,7 +168,7 @@ class OAuthService:
     @rpc_expose(description="List all available OAuth providers")
     async def oauth_list_providers(
         self,
-        context: "OperationContext | None" = None,  # noqa: ARG002 - Required by RPC protocol
+        context: OperationContext | None = None,  # noqa: ARG002 - Required by RPC protocol
     ) -> builtins.list[dict[str, Any]]:
         """List all available OAuth providers from configuration.
 
@@ -298,7 +301,7 @@ class OAuthService:
         state: str | None = None,
         redirect_uri: str | None = None,
         code_verifier: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Exchange OAuth authorization code for tokens and store credentials.
 
@@ -447,7 +450,7 @@ class OAuthService:
         self,
         provider: str | None = None,
         include_revoked: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all OAuth credentials for the current user.
 
@@ -539,7 +542,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Revoke an OAuth credential.
 
@@ -613,7 +616,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Test if an OAuth credential is valid and can be refreshed.
 
@@ -718,7 +721,7 @@ class OAuthService:
         self,
         provider: str,
         redirect_url: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Connect to an MCP provider using Klavis hosted OAuth.
 
@@ -1125,7 +1128,7 @@ class OAuthService:
         provider: str,
         user_email: str,
         zone_id: str,
-        context: "OperationContext | None",
+        context: OperationContext | None,
         *,
         action: str = "access",
     ) -> None:
@@ -1169,7 +1172,7 @@ class OAuthService:
             OAuthProviderFactory instance
         """
         if self._oauth_factory is None:
-            from nexus.auth.oauth_factory import OAuthProviderFactory
+            from nexus.server.auth.oauth_factory import OAuthProviderFactory
 
             # Get config if available
             oauth_config = None
@@ -1189,8 +1192,8 @@ class OAuthService:
             TokenManager instance
         """
         if self._token_manager is None:
-            from nexus.auth.token_manager import TokenManager
             from nexus.core.context_utils import get_database_url
+            from nexus.server.auth.token_manager import TokenManager
 
             # Use centralized database URL resolution
             db_path = get_database_url(self.nexus_fs) if self.nexus_fs else None
@@ -1432,6 +1435,7 @@ class OAuthService:
             logger.warning(f"Failed to fetch user email from provider {provider_name}: {e}")
 
         return None
+
 
 # =============================================================================
 # Phase 2 Extraction: Complete ✅

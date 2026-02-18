@@ -7,6 +7,7 @@ for backward compatibility.
 Part of: #1628 (Split CacheConnectorMixin into focused units)
 """
 
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -21,6 +22,7 @@ MAX_FULL_TEXT_SIZE: int = 10 * 1024 * 1024
 
 # Summary size for large files (default 100KB)
 SUMMARY_SIZE: int = 100 * 1024
+
 
 @dataclass
 class SyncResult:
@@ -39,6 +41,7 @@ class SyncResult:
             f"skipped={self.files_skipped}, bytes={self.bytes_synced}, "
             f"embeddings={self.embeddings_generated}, errors={len(self.errors)})"
         )
+
 
 @dataclass
 class CacheEntry:
@@ -85,7 +88,7 @@ class CacheEntry:
         content_bytes: bytes,
         content_hash: str,
         now: datetime | None = None,
-    ) -> "CacheEntry":
+    ) -> CacheEntry:
         """Create a CacheEntry from L1 content hit (get_content result)."""
         now = now or datetime.now(UTC)
         return cls(
@@ -109,7 +112,7 @@ class CacheEntry:
         content_hash: str,
         original_size: int,
         now: datetime | None = None,
-    ) -> "CacheEntry":
+    ) -> CacheEntry:
         """Create a CacheEntry from L1 metadata hit (get result)."""
         now = now or datetime.now(UTC)
         return cls(
@@ -132,7 +135,7 @@ class CacheEntry:
         meta: dict,
         content_text: str | None = None,
         content_binary_raw: bytes | None = None,
-    ) -> "CacheEntry":
+    ) -> CacheEntry:
         """Create a CacheEntry from disk metadata sidecar."""
         return cls(
             cache_id="",
@@ -169,7 +172,7 @@ class CacheEntry:
         cache_id: str = "",
         max_cache_file_size: int = MAX_CACHE_FILE_SIZE,
         now: datetime | None = None,
-    ) -> "CacheEntry":
+    ) -> CacheEntry:
         """Create a CacheEntry from a write operation."""
         now = now or datetime.now(UTC)
         return cls(
@@ -187,6 +190,7 @@ class CacheEntry:
             parsed_from=parsed_from,
             parse_metadata=parse_metadata,
         )
+
 
 @dataclass
 class CachedReadResult:

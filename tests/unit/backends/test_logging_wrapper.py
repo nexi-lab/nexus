@@ -12,6 +12,7 @@ Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping (Mechanism 2)
 """
 
+
 import logging
 from unittest.mock import MagicMock, PropertyMock
 
@@ -24,6 +25,7 @@ from nexus.core.response import HandlerResponse
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_inner() -> MagicMock:
@@ -43,14 +45,17 @@ def mock_inner() -> MagicMock:
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
     return mock
 
+
 @pytest.fixture
 def logged(mock_inner: MagicMock) -> LoggingBackendWrapper:
     """Create a LoggingBackendWrapper wrapping the mock inner."""
     return LoggingBackendWrapper(inner=mock_inner)
 
+
 # ---------------------------------------------------------------------------
 # describe() Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDescribe:
     def test_describe_single(self, logged: LoggingBackendWrapper) -> None:
@@ -61,9 +66,11 @@ class TestDescribe:
         wrapper = LoggingBackendWrapper(inner=mock_inner)
         assert wrapper.describe() == "logging → cache → s3"
 
+
 # ---------------------------------------------------------------------------
 # Content Operation Logging Tests
 # ---------------------------------------------------------------------------
+
 
 class TestContentOperationLogs:
     """Content operations should log at DEBUG with structured fields."""
@@ -117,9 +124,11 @@ class TestContentOperationLogs:
         assert "content_exists" in caplog.records[0].message
         assert "exists=True" in caplog.records[0].message
 
+
 # ---------------------------------------------------------------------------
 # Directory Operation Logging Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDirectoryOperationLogs:
     def test_mkdir_logs(
@@ -142,9 +151,11 @@ class TestDirectoryOperationLogs:
         assert "rmdir" in caplog.records[0].message
         assert "recursive=True" in caplog.records[0].message
 
+
 # ---------------------------------------------------------------------------
 # Lifecycle Logging Tests (INFO level)
 # ---------------------------------------------------------------------------
+
 
 class TestLifecycleLogs:
     """Connect/disconnect should log at INFO, not DEBUG."""
@@ -169,9 +180,11 @@ class TestLifecycleLogs:
         assert caplog.records[0].levelno == logging.INFO
         assert "disconnect" in caplog.records[0].message
 
+
 # ---------------------------------------------------------------------------
 # Delegation Correctness Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDelegationCorrectness:
     """LoggingBackendWrapper should not alter return values or arguments."""

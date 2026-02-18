@@ -7,6 +7,7 @@ importing from the server layer.
 These are pure data types with no dependencies beyond the standard library.
 """
 
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -31,6 +32,7 @@ class RPCErrorCode(Enum):
     VALIDATION_ERROR = -32005
     CONFLICT = -32006  # Optimistic concurrency conflict
 
+
 @dataclass
 class RPCRequest:
     """JSON-RPC request."""
@@ -41,7 +43,7 @@ class RPCRequest:
     params: dict[str, Any] | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RPCRequest":
+    def from_dict(cls, data: dict[str, Any]) -> RPCRequest:
         """Create request from dict."""
         return cls(
             jsonrpc=data.get("jsonrpc", "2.0"),
@@ -59,6 +61,7 @@ class RPCRequest:
             result["params"] = self.params
         return result
 
+
 @dataclass
 class RPCResponse:
     """JSON-RPC response."""
@@ -69,7 +72,7 @@ class RPCResponse:
     error: dict[str, Any] | None = None
 
     @classmethod
-    def success(cls, request_id: str | int | None, result: Any) -> "RPCResponse":
+    def success(cls, request_id: str | int | None, result: Any) -> RPCResponse:
         """Create success response."""
         return cls(id=request_id, result=result, error=None)
 
@@ -81,7 +84,7 @@ class RPCResponse:
         message: str,
         data: Any = None,
         is_expected: bool = False,
-    ) -> "RPCResponse":
+    ) -> RPCResponse:
         """Create error response.
 
         Args:

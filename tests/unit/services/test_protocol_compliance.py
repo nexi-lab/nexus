@@ -19,6 +19,7 @@ Usage::
 Parameterized tests for all 8 domain protocols are included below.
 """
 
+
 import inspect
 
 import pytest
@@ -47,6 +48,7 @@ def _get_protocol_methods(protocol: type) -> dict[str, inspect.Signature]:
             # Some built-in methods can't be introspected
             continue
     return methods
+
 
 def assert_protocol_compliance(
     impl_class: type,
@@ -95,15 +97,23 @@ def assert_protocol_compliance(
                 impl_is_async = inspect.iscoroutinefunction(
                     impl_attr
                 ) or inspect.isasyncgenfunction(impl_attr)
-                # Async generators (async def + yield) are compatible with
-                # sync protocol stubs returning AsyncIterator (def -> AsyncIterator).
-                impl_is_asyncgen = inspect.isasyncgenfunction(impl_attr)
-                if proto_is_async != impl_is_async and not impl_is_asyncgen:
-                    proto_kind = "async" if proto_is_async else "sync"
-                    impl_kind = "async" if impl_is_async else "sync"
-                    errors.append(
-                        f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
-                    )
+                if proto_is_async != impl_is_async:
+                    # Allow: sync protocol with AsyncIterator return + async generator impl.
+                    # Protocols can't express async generators (no yield in stub body),
+                    # so the correct typing is `def f(...) -> AsyncIterator[T]: ...`
+                    # while the implementation uses `async def f(...) -> AsyncIterator[T]: yield`.
+                    impl_is_asyncgen = inspect.isasyncgenfunction(impl_attr)
+                    ret = proto_sig.return_annotation
+                    ret_str = str(ret)
+                    is_async_iter_return = "AsyncIterator" in ret_str or "AsyncGenerator" in ret_str
+                    if impl_is_asyncgen and not proto_is_async and is_async_iter_return:
+                        pass  # Compatible: async generator satisfies sync protocol with async return
+                    else:
+                        proto_kind = "async" if proto_is_async else "sync"
+                        impl_kind = "async" if impl_is_async else "sync"
+                        errors.append(
+                            f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
+                        )
 
         if not check_signatures:
             continue
@@ -137,6 +147,7 @@ def assert_protocol_compliance(
         raise AssertionError(
             f"{impl_class.__name__} does not comply with {protocol.__name__}:\n  - {error_list}"
         )
+
 
 # =========================================================================
 # Parameterized compliance tests for all 8 domain protocols
@@ -194,23 +205,17 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "WatchProtocol",
         "nexus.services.protocols.watch",
-        "nexus.services.events_service.EventsService",
+        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # wait_for_changes method match
     ),
     (
         "LockProtocol",
         "nexus.services.protocols.lock",
-        "nexus.services.events_service.EventsService",
+        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # lock/extend_lock/unlock methods match
     ),
-    # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
-    (
-        "SnapshotServiceProtocol",
-        "nexus.services.protocols.snapshot",
-        "nexus.services.snapshot.service.TransactionalSnapshotService",
-        True,
-    ),
 ]
+
 
 def _try_import(module_path: str, class_name: str) -> type | None:
     """Attempt to import a class, returning None on failure."""
@@ -221,6 +226,7 @@ def _try_import(module_path: str, class_name: str) -> type | None:
         return getattr(module, class_name)
     except (ImportError, AttributeError):
         return None
+
 
 @pytest.mark.parametrize(
     "protocol_name,protocol_module,impl_path,expect_pass",
@@ -250,12 +256,14 @@ def test_service_protocol_compliance(
 
     assert_protocol_compliance(impl_cls, protocol_cls)
 
+
 # =========================================================================
 # Protocol file import cleanliness (Issue #1291)
 # =========================================================================
 
 _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
+    ("context_manifest", "nexus/services/protocols/context_manifest.py"),
     ("event_log", "nexus/services/protocols/event_log.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
@@ -270,11 +278,14 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("skills", "nexus/services/protocols/skills.py"),
     ("vfs_router", "nexus/core/protocols/vfs_router.py"),
     ("watch", "nexus/services/protocols/watch.py"),
-    ("snapshot", "nexus/services/protocols/snapshot.py"),
+    ("vfs_core", "nexus/core/protocols/vfs_core.py"),
+    ("content_service", "nexus/core/protocols/content_service.py"),
+    ("revision_service", "nexus/core/protocols/revision_service.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files
 _ALLOWED_LEAF_MODULES = {"nexus.constants"}
+
 
 @pytest.mark.parametrize(
     "name,rel_path",

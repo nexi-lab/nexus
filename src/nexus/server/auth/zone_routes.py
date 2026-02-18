@@ -9,29 +9,30 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from nexus.auth.providers.database_local import DatabaseLocalAuth
-from nexus.auth.zone_helpers import (
-    create_zone,
-    normalize_to_slug,
-    suggest_zone_id,
-    validate_zone_id,
-)
 from nexus.server.auth.auth_routes import (
     get_auth_provider,
     get_authenticated_user,
     get_nexus_instance,
 )
+from nexus.server.auth.database_local import DatabaseLocalAuth
 from nexus.server.auth.user_helpers import (
     add_user_to_zone,
     get_user_by_id,
     get_user_zones,
     user_belongs_to_zone,
 )
+from nexus.server.auth.zone_helpers import (
+    create_zone,
+    normalize_to_slug,
+    suggest_zone_id,
+    validate_zone_id,
+)
 from nexus.storage.models import ZoneModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/zones", tags=["zones"])
+
 
 # Request/Response Models
 class CreateZoneRequest(BaseModel):
@@ -48,6 +49,7 @@ class CreateZoneRequest(BaseModel):
     domain: str | None = Field(None, description="Domain (e.g., company.com)")
     description: str | None = Field(None, description="Optional description")
 
+
 class ZoneResponse(BaseModel):
     """Zone information response."""
 
@@ -59,11 +61,13 @@ class ZoneResponse(BaseModel):
     created_at: str
     updated_at: str
 
+
 class ZoneListResponse(BaseModel):
     """List of zones."""
 
     zones: list[ZoneResponse]
     total: int
+
 
 @router.post("", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
 async def create_zone_endpoint(
@@ -158,6 +162,7 @@ async def create_zone_endpoint(
                 detail=str(e),
             ) from e
 
+
 @router.get("/{zone_id}", response_model=ZoneResponse)
 async def get_zone(
     zone_id: str,
@@ -213,13 +218,14 @@ async def get_zone(
             updated_at=zone.updated_at.isoformat(),
         )
 
+
 @router.get("", response_model=ZoneListResponse)
 async def list_zones(
     user_info: tuple[str, str] = Depends(get_authenticated_user),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
     limit: int = 100,
     offset: int = 0,
-) -> "ZoneListResponse":
+) -> ZoneListResponse:
     """List zones the authenticated user belongs to.
 
     Global admins can see all zones. Regular users only see zones

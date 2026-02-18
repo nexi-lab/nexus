@@ -6,6 +6,7 @@ directory, making them discoverable through the skills system.
 Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 """
 
+
 import json
 import logging
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem
 
 logger = logging.getLogger(__name__)
+
 
 # Built-in Nexus MCP tools with their documentation
 NEXUS_TOOLS: list[dict[str, Any]] = [
@@ -548,6 +550,7 @@ NEXUS_TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+
 class MCPToolExporter:
     """Export Nexus MCP tools to Skills format.
 
@@ -567,7 +570,7 @@ class MCPToolExporter:
     # Output path for exported tools
     OUTPUT_PATH = "/skills/system/mcp-tools/nexus/"
 
-    def __init__(self, filesystem: "NexusFilesystem | None" = None):
+    def __init__(self, filesystem: NexusFilesystem | None = None):
         """Initialize exporter.
 
         Args:

@@ -20,6 +20,7 @@ References:
     - Issue #1459: Decompose ReBAC module
 """
 
+
 from typing import Any, Protocol, runtime_checkable
 
 

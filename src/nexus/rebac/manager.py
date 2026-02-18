@@ -128,20 +128,17 @@ class ReBACManager:
         enable_graph_limits: bool = True,
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
-        read_engine: Engine | None = None,
     ):
         """Initialize ReBAC manager.
 
         Args:
-            engine: SQLAlchemy database engine (primary/write)
+            engine: SQLAlchemy database engine
             cache_ttl_seconds: Cache TTL in seconds (default: 5 minutes)
             max_depth: Maximum graph traversal depth (default: 50 hops)
             enforce_zone_isolation: Enable zone isolation checks (default: True)
             enable_graph_limits: Enable graph limit enforcement (default: True)
             enable_leopard: Enable Leopard transitive closure index (default: True)
             enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True)
-            read_engine: Optional separate engine for read-only operations (Issue #725).
-                        Defaults to ``engine`` when not provided.
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
@@ -151,8 +148,8 @@ class ReBACManager:
         self._namespaces_initialized = False
         self._tuple_version: int = 0
 
-        # Compose TupleRepository for data access delegation (Issue #725: read/write split)
-        self._repo = TupleRepository(engine, read_engine=read_engine)
+        # Compose TupleRepository for data access delegation
+        self._repo = TupleRepository(engine)
 
         # Compose graph traversal and expand engines
         self._computer = PermissionComputer(self._repo, self.get_namespace, max_depth)
@@ -559,7 +556,7 @@ class ReBACManager:
 
         from nexus.core.rebac import WILDCARD_SUBJECT
 
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
             # Check 1: Direct subject match (zone-scoped)
             cursor.execute(
@@ -1090,7 +1087,7 @@ class ReBACManager:
         Returns:
             List of tuple dictionaries
         """
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -1136,7 +1133,7 @@ class ReBACManager:
         Returns:
             List of cross-zone share tuples
         """
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
@@ -1195,7 +1192,7 @@ class ReBACManager:
         """
         from nexus.core.rebac import WILDCARD_SUBJECT
 
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -2042,7 +2039,7 @@ class ReBACManager:
         self, relation: str, obj: Entity, zone_id: str
     ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object (zone-scoped)."""
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -2074,7 +2071,7 @@ class ReBACManager:
         self, subject: Entity, permission: str, obj: Entity, zone_id: str
     ) -> bool | None:
         """Get cached permission check result (zone-aware cache key)."""
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -2761,7 +2758,7 @@ class ReBACManager:
 
         Returns None if cache entry is older than max_age_seconds.
         """
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             min_computed_at = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
@@ -3339,14 +3336,9 @@ class ReBACManager:
         return self._repo.increment_zone_revision(zone_id, conn)
 
     @contextmanager
-    def _connection(self, *, readonly: bool = False) -> Any:
-        """Context manager for database connections. Delegates to TupleRepository (Issue #1459).
-
-        Args:
-            readonly: If True, uses the read engine and skips commit (Issue #725).
-                     Use for pure SELECT operations (permission checks, cache lookups).
-        """
-        with self._repo.connection(readonly=readonly) as conn:
+    def _connection(self) -> Any:
+        """Context manager for database connections. Delegates to TupleRepository (Issue #1459)."""
+        with self._repo.connection() as conn:
             yield conn
 
     def _create_cursor(self, conn: Any) -> Any:
@@ -3561,7 +3553,7 @@ class ReBACManager:
 
         from nexus.core.rebac import NamespaceConfig
 
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -5064,7 +5056,7 @@ class ReBACManager:
 
         logger = logging.getLogger(__name__)
 
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             # For simplicity, fetch all tuples (can be optimized later)
@@ -5363,7 +5355,7 @@ class ReBACManager:
                 return l1_result
 
         # L1 miss - check L2 (database) cache
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -6121,7 +6113,7 @@ class ReBACManager:
             stats["l1_stats"] = None
 
         # L2 cache stats (query database)
-        with self._connection(readonly=True) as conn:
+        with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             # Count total entries in L2 cache

@@ -7,6 +7,7 @@ Tests the complete export workflow including:
 - Reading bundle contents
 """
 
+
 import tarfile
 import tempfile
 from pathlib import Path
@@ -33,6 +34,7 @@ def temp_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
+
 @pytest.fixture
 def nexus_fs(temp_dir):
     """Create NexusFS instance with test data."""
@@ -55,6 +57,7 @@ def nexus_fs(temp_dir):
 
     yield fs
     fs.close()
+
 
 class TestZoneExportService:
     """Tests for ZoneExportService."""
@@ -119,6 +122,7 @@ class TestZoneExportService:
 
         # Bundle should be smaller without content
         assert output_path.stat().st_size < 5000  # Small metadata-only bundle
+
 
 class TestBundleReader:
     """Tests for BundleReader."""
@@ -198,6 +202,7 @@ class TestBundleReader:
             assert "manifest.json" in contents
             assert "metadata/files.jsonl" in contents
 
+
 class TestValidateBundle:
     """Tests for bundle validation."""
 
@@ -238,6 +243,7 @@ class TestValidateBundle:
         assert is_valid is False
         assert len(errors) > 0
 
+
 class TestInspectBundle:
     """Tests for bundle inspection."""
 
@@ -258,6 +264,7 @@ class TestInspectBundle:
         assert info["include_content"] is True
         assert "bundle_id" in info
         assert "export_timestamp" in info
+
 
 class TestExportConvenienceFunction:
     """Tests for export_zone_bundle convenience function."""

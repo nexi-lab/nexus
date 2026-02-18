@@ -32,6 +32,7 @@ Usage:
     await factory.shutdown()
 """
 
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class CacheFactory:
     """Factory for creating cache instances based on configuration.
 
@@ -72,7 +74,7 @@ class CacheFactory:
         self,
         settings: CacheSettings,
         cache_store: CacheStoreABC | None = None,
-        record_store: "RecordStoreABC | None" = None,
+        record_store: RecordStoreABC | None = None,
     ):
         """Initialize cache factory.
 
@@ -281,11 +283,11 @@ class CacheFactory:
 
     def create_caching_wrapper(
         self,
-        inner: "Backend",
-        config: "CacheWrapperConfig | None" = None,
+        inner: Backend,
+        config: CacheWrapperConfig | None = None,
         *,
         enable_logging: bool = False,
-    ) -> "CachingBackendWrapper":
+    ) -> CachingBackendWrapper:
         """Create a CachingBackendWrapper for the given backend.
 
         Wires the wrapper with this factory's CacheStoreABC for L2 distributed
@@ -329,7 +331,7 @@ class CacheFactory:
             cache_store=cache_store,
         )
 
-    async def __aenter__(self) -> "CacheFactory":
+    async def __aenter__(self) -> CacheFactory:
         """Async context manager entry."""
         await self.initialize()
         return self
@@ -338,14 +340,16 @@ class CacheFactory:
         """Async context manager exit."""
         await self.shutdown()
 
+
 # Global factory instance for dependency injection
-_cache_factory: "CacheFactory | None" = None
+_cache_factory: CacheFactory | None = None
+
 
 async def init_cache_factory(
     settings: CacheSettings,
     cache_store: CacheStoreABC | None = None,
-    record_store: "RecordStoreABC | None" = None,
-) -> "CacheFactory":
+    record_store: RecordStoreABC | None = None,
+) -> CacheFactory:
     """Initialize the global cache factory.
 
     Args:
@@ -358,6 +362,7 @@ async def init_cache_factory(
     await _cache_factory.initialize()
     return _cache_factory
 
+
 async def shutdown_cache_factory() -> None:
     """Shutdown the global cache factory."""
     global _cache_factory
@@ -365,7 +370,8 @@ async def shutdown_cache_factory() -> None:
         await _cache_factory.shutdown()
         _cache_factory = None
 
-def get_cache_factory() -> "CacheFactory":
+
+def get_cache_factory() -> CacheFactory:
     """Get the global cache factory instance."""
     if not _cache_factory:
         raise RuntimeError("Cache factory not initialized. Call init_cache_factory() first.")

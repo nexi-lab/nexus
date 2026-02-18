@@ -46,6 +46,27 @@ def validate_scope_prefix(prefix: str | None) -> None:
     if "/.." in prefix or "/../" in prefix or prefix.endswith("/.."):
         raise InvalidPrefixError(f"scope_prefix must not contain '..': {prefix!r}")
 
+def validate_scope_prefix(prefix: str | None) -> None:
+    """Validate scope_prefix at system boundary.
+
+    Rejects malformed prefixes that could cause path-traversal or
+    matching bugs in _matches_prefix().
+
+    Raises:
+        InvalidPrefixError: If prefix is empty, relative, or malformed.
+    """
+    if prefix is None:
+        return
+    if not prefix:
+        raise InvalidPrefixError("scope_prefix must not be empty string")
+    if not prefix.startswith("/"):
+        raise InvalidPrefixError(f"scope_prefix must be absolute (start with /): {prefix!r}")
+    if "//" in prefix:
+        raise InvalidPrefixError(f"scope_prefix must not contain '//': {prefix!r}")
+    if "/.." in prefix or "/../" in prefix or prefix.endswith("/.."):
+        raise InvalidPrefixError(f"scope_prefix must not contain '..': {prefix!r}")
+
+
 @dataclass(frozen=True)
 class GrantSpec:
     """A single grant to materialize as a ReBAC tuple.

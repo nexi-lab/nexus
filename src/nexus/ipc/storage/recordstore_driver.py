@@ -10,6 +10,7 @@ Same pattern as the former ``PGEventLog`` (removed in Issue #1241).
 Issue: #1243, #1469
 """
 
+
 import asyncio
 import logging
 from typing import Any
@@ -20,6 +21,7 @@ from nexus.storage.models.ipc_message import IPCMessageModel
 
 logger = logging.getLogger(__name__)
 
+
 def _parent_dir(path: str) -> str:
     """Extract parent directory from a path."""
     parts = path.rstrip("/").rsplit("/", 1)
@@ -27,9 +29,11 @@ def _parent_dir(path: str) -> str:
         return "/"
     return parts[0] if parts[0] else "/"
 
+
 def _basename(path: str) -> str:
     """Extract filename/dirname from a path."""
     return path.rstrip("/").rsplit("/", 1)[-1]
+
 
 def _dialect_insert(session: Any) -> Any:
     """Return the dialect-specific ``insert()`` function.
@@ -45,6 +49,7 @@ def _dialect_insert(session: Any) -> Any:
     from sqlalchemy.dialects import sqlite
 
     return sqlite.insert
+
 
 class RecordStoreStorageDriver:
     """Stores IPC messages via RecordStoreABC.

@@ -1,5 +1,6 @@
 """Skill audit logging and compliance tracking."""
 
+
 import logging
 import uuid
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from nexus.skills.exceptions import SkillValidationError
 
 logger = logging.getLogger(__name__)
 
+
 class AuditAction(StrEnum):
     """Types of auditable actions for skills."""
 
@@ -20,6 +22,7 @@ class AuditAction(StrEnum):
     PUBLISHED = "published"
     DELETED = "deleted"
     UPDATED = "updated"
+
 
 @dataclass
 class AuditLogEntry:
@@ -47,6 +50,7 @@ class AuditLogEntry:
 
         if not isinstance(self.action, AuditAction):
             raise SkillValidationError(f"action must be AuditAction, got {type(self.action)}")
+
 
 class SkillAuditLogger:
     """Audit logger for skill operations.

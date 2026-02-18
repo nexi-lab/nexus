@@ -11,6 +11,7 @@ This mixin provides all file listing functionality:
 Extracted from: search_service.py (2,265 lines -> ~660 remaining)
 """
 
+
 import builtins
 import logging
 import time

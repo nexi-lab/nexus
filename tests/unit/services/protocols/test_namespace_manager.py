@@ -1,5 +1,6 @@
 """Tests for NamespaceManagerProtocol and NamespaceMount (Issue #1383)."""
 
+
 import dataclasses
 
 import pytest
@@ -10,6 +11,7 @@ from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 # ---------------------------------------------------------------------------
 # NamespaceMount frozen dataclass tests
 # ---------------------------------------------------------------------------
+
 
 class TestNamespaceMount:
     """Verify NamespaceMount is a proper frozen, slots dataclass."""
@@ -50,9 +52,11 @@ class TestNamespaceMount:
         mount = NamespaceMount(virtual_path="", subject_type="", subject_id="", zone_id="")
         assert mount.virtual_path == ""
 
+
 # ---------------------------------------------------------------------------
 # Protocol structural tests
 # ---------------------------------------------------------------------------
+
 
 class TestNamespaceManagerProtocol:
     """Verify the protocol is runtime-checkable and has expected methods."""
@@ -66,9 +70,11 @@ class TestNamespaceManagerProtocol:
         }
         assert expected <= actual
 
+
 # ---------------------------------------------------------------------------
 # Conformance test against existing NamespaceManager
 # ---------------------------------------------------------------------------
+
 
 class TestNamespaceManagerConformance:
     """Verify existing NamespaceManager has the methods the protocol expects."""

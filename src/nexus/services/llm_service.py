@@ -10,6 +10,7 @@ Phase 2: Core Refactoring (Issue #988, Task 2.9)
 Extracted from: nexus_fs_llm.py (286 lines)
 """
 
+
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from nexus.llm.provider import LLMProvider
     from nexus.services.llm_citation import DocumentReadResult
     from nexus.services.llm_document_reader import LLMDocumentReader
+
 
 class LLMService:
     """Independent LLM service extracted from NexusFS.
@@ -79,19 +81,14 @@ class LLMService:
     def __init__(
         self,
         nexus_fs: Any | None = None,
-        *,
-        semantic_search_engine: Any | None = None,
     ):
         """Initialize LLM service.
 
         Args:
             nexus_fs: NexusFS instance for filesystem operations and search
-            semantic_search_engine: Injected search engine via DI (Issue #684).
-                Set after construction when search is initialized lazily.
         """
         self.nexus_fs = nexus_fs
         self._provider_cache: dict[str, Any] = {}
-        self._semantic_search_engine = semantic_search_engine
 
         logger.info("[LLMService] Initialized")
 
@@ -109,7 +106,7 @@ class LLMService:
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: "LLMProvider | None" = None,
+        provider: LLMProvider | None = None,
     ) -> str:
         """Read document with LLM and return answer.
 
@@ -181,8 +178,8 @@ class LLMService:
         search_mode: str = "semantic",
         search_limit: int = 10,
         include_citations: bool = True,
-        provider: "LLMProvider | None" = None,
-    ) -> "DocumentReadResult":
+        provider: LLMProvider | None = None,
+    ) -> DocumentReadResult:
         """Read document with LLM and return detailed result.
 
         Returns full DocumentReadResult with answer, citations, sources,
@@ -263,7 +260,7 @@ class LLMService:
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: "LLMProvider | None" = None,
+        provider: LLMProvider | None = None,
     ) -> AsyncIterator[str]:
         """Stream document reading response.
 
@@ -331,12 +328,12 @@ class LLMService:
     @rpc_expose(description="Create an LLM document reader for advanced usage")
     def create_llm_reader(
         self,
-        provider: "LLMProvider | None" = None,
+        provider: LLMProvider | None = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
-    ) -> "LLMDocumentReader":
+    ) -> LLMDocumentReader:
         """Create an LLM document reader for advanced usage.
 
         Factory method that creates an LLMDocumentReader instance for users
@@ -413,12 +410,12 @@ class LLMService:
 
     def _get_llm_reader(
         self,
-        provider: "LLMProvider | None" = None,
+        provider: LLMProvider | None = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
-    ) -> "LLMDocumentReader":
+    ) -> LLMDocumentReader:
         """Get or create LLM document reader.
 
         Internal helper that creates an LLMDocumentReader with proper
@@ -479,8 +476,10 @@ class LLMService:
                 provider = LiteLLMProvider(config)
                 self._provider_cache[cache_key] = provider
 
-        # Get semantic search if available (Issue #684: prefer DI over kernel access)
-        search = self._semantic_search_engine
+        # Get semantic search if available
+        search = None
+        if self.nexus_fs and hasattr(self.nexus_fs, "semantic_search_engine"):
+            search = self.nexus_fs.semantic_search_engine
 
         # Create document reader
         if self.nexus_fs is None:
@@ -493,6 +492,7 @@ class LLMService:
             system_prompt=system_prompt,
             max_context_tokens=max_context_tokens,
         )
+
 
 # =============================================================================
 # Phase 2 Extraction Progress

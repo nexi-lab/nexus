@@ -381,6 +381,7 @@ class TestPermissionBoundaryCache:
 
         assert len(errors) == 0, f"Thread safety errors: {errors}"
 
+
 class TestPermissionBoundaryCacheIntegration:
     """Integration tests with PermissionEnforcer."""
 

@@ -7,6 +7,7 @@ Provides:
 Both share the EventReplayService for consistent filtering and pagination.
 """
 
+
 import asyncio
 import contextlib
 import json
@@ -29,6 +30,7 @@ router = APIRouter(prefix="/api/v2/events", tags=["events-v2"])
 _sse_connections: dict[str, int] = {}  # zone_id -> active count
 _sse_lock = asyncio.Lock()
 
+
 async def _acquire_sse_slot(zone_id: str, max_per_zone: int) -> bool:
     """Try to acquire an SSE connection slot for a zone."""
     async with _sse_lock:
@@ -38,12 +40,14 @@ async def _acquire_sse_slot(zone_id: str, max_per_zone: int) -> bool:
         _sse_connections[zone_id] = current + 1
         return True
 
+
 async def _release_sse_slot(zone_id: str) -> None:
     """Release an SSE connection slot for a zone."""
     async with _sse_lock:
         current = _sse_connections.get(zone_id, 0)
         if current > 0:
             _sse_connections[zone_id] = current - 1
+
 
 def _get_replay_service(request: Request) -> Any:
     """Get or create the EventReplayService from app state."""
@@ -61,6 +65,7 @@ def _get_replay_service(request: Request) -> Any:
     request.app.state.replay_service = service
     return service
 
+
 def _get_stream_config(request: Request) -> dict[str, Any]:  # noqa: ARG001
     """Get SSE configuration from app state or env."""
     import os
@@ -71,9 +76,11 @@ def _get_stream_config(request: Request) -> dict[str, Any]:  # noqa: ARG001
         "keepalive_s": float(os.getenv("NEXUS_SSE_KEEPALIVE", "15")),
     }
 
+
 # =============================================================================
 # REST replay endpoint
 # =============================================================================
+
 
 @router.get("/replay", tags=["events-v2"])
 async def replay_events(
@@ -127,9 +134,11 @@ async def replay_events(
         logger.error("Event replay query error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to replay events") from e
 
+
 # =============================================================================
 # SSE streaming endpoint
 # =============================================================================
+
 
 @router.get("/stream", tags=["events-v2"])
 async def stream_events(

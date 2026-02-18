@@ -12,6 +12,7 @@ References:
     - Issue #1287: Extract NexusFS domain services from god object
 """
 
+
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -47,7 +48,7 @@ class OperationLogProtocol(Protocol):
         """
         ...
 
-    def get_operation(self, operation_id: str, zone_id: str | None = None) -> Any | None:
+    def get_operation(self, operation_id: str) -> Any | None:
         """Get operation by ID.
 
         Returns:

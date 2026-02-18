@@ -5,10 +5,12 @@ into the service layer, per KERNEL-ARCHITECTURE.md requirement that
 routers be thin adapters with no business logic.
 """
 
+
 import logging
 from typing import Any, cast
 
 logger = logging.getLogger(__name__)
+
 
 class DaemonSemanticSearchWrapper:
     """Wraps search daemon as SemanticSearch interface for GraphEnhancedRetriever."""
@@ -49,6 +51,7 @@ class DaemonSemanticSearchWrapper:
             )
             for r in results
         ]
+
 
 async def graph_enhanced_search(
     query: str,

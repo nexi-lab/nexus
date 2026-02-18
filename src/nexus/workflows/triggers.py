@@ -22,9 +22,11 @@ class TriggerFactory(Protocol):
         self, config: dict[str, Any], *, glob_match: GlobMatchFn | None = None
     ) -> "BaseTrigger": ...
 
+
 logger = logging.getLogger(__name__)
 
 _fnmatch_warned = False
+
 
 def _default_glob_match(path: str, patterns: list[str]) -> bool:
     """Fallback glob match using stdlib fnmatch (no Rust dependency)."""
@@ -36,6 +38,7 @@ def _default_glob_match(path: str, patterns: list[str]) -> bool:
         )
         _fnmatch_warned = True
     return any(fnmatch.fnmatch(path, p) for p in patterns)
+
 
 class BaseTrigger(ABC):
     """Base class for workflow triggers."""
@@ -60,6 +63,7 @@ class BaseTrigger(ABC):
         """Get the file pattern for this trigger."""
         return self.config.get("pattern")
 
+
 class FileWriteTrigger(BaseTrigger):
     """Trigger on file write events."""
 
@@ -71,6 +75,7 @@ class FileWriteTrigger(BaseTrigger):
         file_path = event_context.get("file_path", "")
         return self._glob_match(file_path, [self.pattern])
 
+
 class FileDeleteTrigger(BaseTrigger):
     """Trigger on file delete events."""
 
@@ -81,6 +86,7 @@ class FileDeleteTrigger(BaseTrigger):
     def matches(self, event_context: dict[str, Any]) -> bool:
         file_path = event_context.get("file_path", "")
         return self._glob_match(file_path, [self.pattern])
+
 
 class FileRenameTrigger(BaseTrigger):
     """Trigger on file rename events."""
@@ -95,6 +101,7 @@ class FileRenameTrigger(BaseTrigger):
         return self._glob_match(old_path, [self.pattern]) or self._glob_match(
             new_path, [self.pattern]
         )
+
 
 class MetadataChangeTrigger(BaseTrigger):
     """Trigger on metadata change events."""
@@ -113,6 +120,7 @@ class MetadataChangeTrigger(BaseTrigger):
 
         return not (self.metadata_key and changed_key != self.metadata_key)
 
+
 class ScheduleTrigger(BaseTrigger):
     """Trigger on a schedule (cron-like)."""
 
@@ -124,6 +132,7 @@ class ScheduleTrigger(BaseTrigger):
     def matches(self, _event_context: dict[str, Any]) -> bool:
         return False
 
+
 class WebhookTrigger(BaseTrigger):
     """Trigger via HTTP webhook."""
 
@@ -134,6 +143,7 @@ class WebhookTrigger(BaseTrigger):
     def matches(self, event_context: dict[str, Any]) -> bool:
         return event_context.get("webhook_id") == self.webhook_id
 
+
 class ManualTrigger(BaseTrigger):
     """Manual trigger (via CLI/API)."""
 
@@ -143,6 +153,7 @@ class ManualTrigger(BaseTrigger):
     def matches(self, _event_context: dict[str, Any]) -> bool:
         return True
 
+
 # Built-in trigger registry
 BUILTIN_TRIGGERS: dict[TriggerType, TriggerFactory] = {
     TriggerType.FILE_WRITE: FileWriteTrigger,
@@ -151,8 +162,9 @@ BUILTIN_TRIGGERS: dict[TriggerType, TriggerFactory] = {
     TriggerType.METADATA_CHANGE: MetadataChangeTrigger,
     TriggerType.SCHEDULE: ScheduleTrigger,
     TriggerType.WEBHOOK: WebhookTrigger,
-    TriggerType.MANUAL: "ManualTrigger",
+    TriggerType.MANUAL: ManualTrigger,
 }
+
 
 class TriggerManager:
     """Manages workflow triggers and event routing."""

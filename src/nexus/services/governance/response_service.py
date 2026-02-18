@@ -4,6 +4,7 @@ Issue #1359 Phase 4: Automatic throttling based on fraud scores,
 agent suspension with appeal workflow, reputation integration.
 """
 
+
 import json
 import logging
 import uuid
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class ResponseService:
     """Manages governance response actions.
 
@@ -48,10 +50,10 @@ class ResponseService:
 
     def __init__(
         self,
-        session_factory: "Callable[[], AsyncSession]",
-        anomaly_service: "AnomalyServiceProtocol | None" = None,
-        collusion_service: "CollusionServiceProtocol | None" = None,
-        graph_service: "GovernanceGraphProtocol | None" = None,
+        session_factory: Callable[[], AsyncSession],
+        anomaly_service: AnomalyServiceProtocol | None = None,
+        collusion_service: CollusionServiceProtocol | None = None,
+        graph_service: GovernanceGraphProtocol | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._anomaly_service = anomaly_service
@@ -182,13 +184,12 @@ class ResponseService:
         self,
         suspension_id: str,
         reason: str,
-        zone_id: str | None = None,
     ) -> SuspensionRecord:
         """File an appeal for a suspension.
 
         Uses the shared ApprovalWorkflow for state management.
         """
-        record = await self._get_suspension(suspension_id, zone_id=zone_id)
+        record = await self._get_suspension(suspension_id)
         if record is None:
             msg = f"Suspension {suspension_id!r} not found"
             raise KeyError(msg)
@@ -226,14 +227,13 @@ class ResponseService:
         suspension_id: str,
         approved: bool,
         decided_by: str,
-        zone_id: str | None = None,
     ) -> SuspensionRecord:
         """Decide on a suspension appeal.
 
         If approved: remove BLOCK constraint, set appeal_status=approved.
         If rejected: set appeal_status=rejected.
         """
-        record = await self._get_suspension(suspension_id, zone_id=zone_id)
+        record = await self._get_suspension(suspension_id)
         if record is None:
             msg = f"Suspension {suspension_id!r} not found"
             raise KeyError(msg)
@@ -277,7 +277,7 @@ class ResponseService:
             for c in constraints:
                 metadata = c.metadata or {}
                 if str(metadata.get("constraint_type", "")) == ConstraintType.BLOCK:
-                    await self._graph_service.remove_constraint(c.edge_id, zone_id=record.zone_id)
+                    await self._graph_service.remove_constraint(c.edge_id)
 
         if logger.isEnabledFor(logging.INFO):
             logger.info(
@@ -312,7 +312,7 @@ class ResponseService:
 
             return [_suspension_model_to_domain(m) for m in models]
 
-    async def _get_suspension(self, suspension_id: str, zone_id: str | None = None) -> SuspensionRecord | None:
+    async def _get_suspension(self, suspension_id: str) -> SuspensionRecord | None:
         """Get a suspension by ID."""
         from sqlalchemy import select
 
@@ -320,8 +320,6 @@ class ResponseService:
 
         async with self._session_factory() as session:
             stmt = select(SuspensionModel).where(SuspensionModel.id == suspension_id)
-            if zone_id is not None:
-                stmt = stmt.where(SuspensionModel.zone_id == zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
 
@@ -358,8 +356,6 @@ class ResponseService:
             stmt = select(SuspensionModel).where(
                 SuspensionModel.id == record.suspension_id,
             )
-            if record.zone_id is not None:
-                stmt = stmt.where(SuspensionModel.zone_id == record.zone_id)
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:
@@ -392,6 +388,7 @@ class ResponseService:
 
         async with self._session_factory() as session, session.begin():
             session.add(model)
+
 
 def _suspension_model_to_domain(model: Any) -> SuspensionRecord:
     """Convert SuspensionModel to domain SuspensionRecord."""

@@ -17,6 +17,7 @@ Example:
     >>> connections = await manager.list_connections()
 """
 
+
 import json
 import logging
 import os
@@ -35,10 +36,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class MCPConnectionError(Exception):
     """Error during MCP connection."""
 
     pass
+
 
 @dataclass
 class MCPConnection:
@@ -73,7 +76,7 @@ class MCPConnection:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MCPConnection":
+    def from_dict(cls, data: dict[str, Any]) -> MCPConnection:
         """Create from dictionary."""
         return cls(
             provider=data["provider"],
@@ -86,6 +89,7 @@ class MCPConnection:
             backend_type=data.get("backend_type"),
             backend_config=data.get("backend_config"),
         )
+
 
 class MCPConnectionManager:
     """Unified manager for MCP connections (Klavis + local).
@@ -105,7 +109,7 @@ class MCPConnectionManager:
 
     def __init__(
         self,
-        filesystem: "NexusFilesystem | None" = None,
+        filesystem: NexusFilesystem | None = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
     ):

@@ -14,6 +14,7 @@ Design reference:
     - Issue #1449: Recursive Protocol wrapping + describe() for composition chains
 """
 
+
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from nexus.backends.backend import HandlerStatusResponse
     from nexus.core.permissions import OperationContext
     from nexus.core.response import HandlerResponse
+
 
 class DelegatingBackend(Backend):
     """Base class for wrappers that implement the same Backend Protocol.
@@ -96,33 +98,33 @@ class DelegatingBackend(Backend):
     # === Content Operations (delegate to inner) ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[str]":
+        self, content: bytes, context: OperationContext | None = None
+    ) -> HandlerResponse[str]:
         return self._inner.write_content(content, context=context)
 
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bytes]:
         return self._inner.read_content(content_hash, context=context)
 
     def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[None]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[None]:
         return self._inner.delete_content(content_hash, context=context)
 
     def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bool]:
         return self._inner.content_exists(content_hash, context=context)
 
     def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[int]:
         return self._inner.get_content_size(content_hash, context=context)
 
     def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[int]:
         return self._inner.get_ref_count(content_hash, context=context)
 
     # === Directory Operations (delegate to inner) ===
@@ -132,35 +134,35 @@ class DelegatingBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[None]:
         return self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[None]:
         return self._inner.rmdir(path, recursive=recursive, context=context)
 
     def is_directory(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
+        self, path: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bool]:
         return self._inner.is_directory(path, context=context)
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         return self._inner.list_dir(path, context=context)
 
     # === Connection Lifecycle (delegate to inner) ===
 
-    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
+    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         return self._inner.connect(context=context)
 
-    def disconnect(self, context: "OperationContext | None" = None) -> None:
+    def disconnect(self, context: OperationContext | None = None) -> None:
         self._inner.disconnect(context=context)
 
-    def check_connection(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
+    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         return self._inner.check_connection(context=context)
 
     # === Fallback for any remaining/future Backend methods ===

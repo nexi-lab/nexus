@@ -31,6 +31,7 @@ class TestConstants:
     def test_summary_size(self):
         assert SUMMARY_SIZE == 100 * 1024
 
+
 class TestSyncResult:
     """Test SyncResult dataclass."""
 
@@ -49,6 +50,7 @@ class TestSyncResult:
         assert "scanned=10" in r
         assert "synced=5" in r
         assert "errors=2" in r
+
 
 class TestCacheEntryLazyLoading:
     """Test CacheEntry lazy loading behavior."""
@@ -92,6 +94,7 @@ class TestCacheEntryLazyLoading:
         assert entry._content_binary == b"direct"
         assert entry._content_binary_raw is None
 
+
 class TestCacheEntryFromL1Content:
     """Test CacheEntry.from_l1_content() factory."""
 
@@ -114,6 +117,7 @@ class TestCacheEntryFromL1Content:
         after = datetime.now(UTC)
         assert before <= entry.synced_at <= after
 
+
 class TestCacheEntryFromL1Metadata:
     """Test CacheEntry.from_l1_metadata() factory."""
 
@@ -126,6 +130,7 @@ class TestCacheEntryFromL1Metadata:
         assert entry.content_binary is None
         assert entry.cached_size == 0
         assert entry.stale is False
+
 
 class TestCacheEntryFromDiskMeta:
     """Test CacheEntry.from_disk_meta() factory."""
@@ -176,6 +181,7 @@ class TestCacheEntryFromDiskMeta:
         assert entry.parsed_from is None
         assert entry.parse_metadata is None
 
+
 class TestCacheEntryFromWrite:
     """Test CacheEntry.from_write() factory."""
 
@@ -219,6 +225,7 @@ class TestCacheEntryFromWrite:
         )
         # Content too large — should not be stored in _content_binary
         assert entry.content_binary is None
+
 
 class TestCachedReadResult:
     """Test CachedReadResult dataclass."""

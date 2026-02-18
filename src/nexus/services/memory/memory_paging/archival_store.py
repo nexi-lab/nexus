@@ -247,7 +247,10 @@ class ArchivalStore:
                 results: list[tuple[MemoryModel, float]] = []
                 for row in rows:
                     if row.similarity >= threshold:
-                        memory = session.get(MemoryModel, row.memory_id)
+                        mem_query = session.query(MemoryModel).filter_by(memory_id=row.memory_id)
+                        if self.zone_id is not None:
+                            mem_query = mem_query.filter(MemoryModel.zone_id == self.zone_id)
+                        memory = mem_query.first()
                         if memory:
                             results.append((memory, float(row.similarity)))
                 return results

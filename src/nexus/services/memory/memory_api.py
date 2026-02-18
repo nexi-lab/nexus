@@ -474,6 +474,7 @@ class Memory:
                         session=self.session,
                         new_memory_id=memory.memory_id,
                         results=evolution_result,
+                        zone_id=self.zone_id,
                     )
             except Exception:
                 import logging

@@ -657,6 +657,7 @@ def apply_evolution_results(
     session: Session,
     new_memory_id: str,
     results: EvolutionDetectionResult,
+    zone_id: str | None = None,
 ) -> None:
     """Apply detected evolution relationships to the database.
 
@@ -668,6 +669,7 @@ def apply_evolution_results(
         session: Database session.
         new_memory_id: ID of the newly created memory.
         results: Evolution detection results.
+        zone_id: Zone ID for multi-tenant isolation.
     """
     if not results.relationships:
         return
@@ -685,6 +687,7 @@ def apply_evolution_results(
                 session=session,
                 new_memory_id=new_memory_id,
                 target_memory_id=rel.target_memory_id,
+                zone_id=zone_id,
             )
 
         elif rel.relationship_type == "EXTENDS":
@@ -695,6 +698,7 @@ def apply_evolution_results(
                 memory_id=rel.target_memory_id,
                 field_name="extended_by_ids",
                 value=new_memory_id,
+                zone_id=zone_id,
             )
 
         elif rel.relationship_type == "DERIVES":
@@ -708,7 +712,10 @@ def apply_evolution_results(
         updates["derived_from_ids"] = json.dumps(derives_targets)
 
     if updates:
-        new_memory = session.get(MemoryModel, new_memory_id)
+        query = session.query(MemoryModel).filter_by(memory_id=new_memory_id)
+        if zone_id is not None:
+            query = query.filter(MemoryModel.zone_id == zone_id)
+        new_memory = query.first()
         if new_memory:
             for key, value in updates.items():
                 setattr(new_memory, key, value)
@@ -719,6 +726,7 @@ def _apply_updates_relationship(
     session: Session,
     new_memory_id: str,
     target_memory_id: str,
+    zone_id: str | None = None,
 ) -> None:
     """Apply an UPDATES relationship (supersedes pattern).
 
@@ -728,11 +736,19 @@ def _apply_updates_relationship(
         session: Database session.
         new_memory_id: ID of the new memory.
         target_memory_id: ID of the target (superseded) memory.
+        zone_id: Zone ID for multi-tenant isolation.
     """
     from datetime import UTC, datetime
 
-    new_memory = session.get(MemoryModel, new_memory_id)
-    target_memory = session.get(MemoryModel, target_memory_id)
+    new_query = session.query(MemoryModel).filter_by(memory_id=new_memory_id)
+    if zone_id is not None:
+        new_query = new_query.filter(MemoryModel.zone_id == zone_id)
+    new_memory = new_query.first()
+
+    target_query = session.query(MemoryModel).filter_by(memory_id=target_memory_id)
+    if zone_id is not None:
+        target_query = target_query.filter(MemoryModel.zone_id == zone_id)
+    target_memory = target_query.first()
 
     if not new_memory or not target_memory:
         return
@@ -752,6 +768,7 @@ def _append_to_json_array(
     memory_id: str,
     field_name: str,
     value: str,
+    zone_id: str | None = None,
 ) -> None:
     """Append a value to a JSON array field on a memory.
 
@@ -760,8 +777,12 @@ def _append_to_json_array(
         memory_id: Memory ID to update.
         field_name: Name of the JSON array field.
         value: Value to append.
+        zone_id: Zone ID for multi-tenant isolation.
     """
-    memory = session.get(MemoryModel, memory_id)
+    query = session.query(MemoryModel).filter_by(memory_id=memory_id)
+    if zone_id is not None:
+        query = query.filter(MemoryModel.zone_id == zone_id)
+    memory = query.first()
     if not memory:
         return
 

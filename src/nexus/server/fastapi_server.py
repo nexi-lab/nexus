@@ -791,7 +791,8 @@ async def lifespan(_app: FastAPI) -> Any:
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        _app.state.nexus_fs._service_extras.get("chunked_upload_service")
+        getattr(_app.state.nexus_fs, "_brick_services", None)
+        and _app.state.nexus_fs._brick_services.chunked_upload_service
         if _app.state.nexus_fs
         else None
     )
@@ -845,8 +846,9 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #726: Wire circuit breaker from factory for health endpoint access
     if _app.state.nexus_fs:
-        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
-            "rebac_circuit_breaker"
+        _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
+        _app.state.rebac_circuit_breaker = (
+            _brk.rebac_circuit_breaker if _brk else None
         )
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
@@ -1494,7 +1496,8 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        _sys = getattr(nexus_fs, "_system_services", None)
+        obs_sub = getattr(_sys, "observability_subsystem", None)
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except ImportError:

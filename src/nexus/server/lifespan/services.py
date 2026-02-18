@@ -495,8 +495,8 @@ async def _startup_scheduler(app: FastAPI) -> None:
 
         # Wire hook cleanup handler into state emitter (Issue #1257)
         _nx = getattr(app.state, "nexus_fs", None)
-        _svc = getattr(_nx, "services", None) if _nx else None
-        scoped_hook_engine = getattr(_svc, "scoped_hook_engine", None) if _svc else None
+        _sys = getattr(_nx, "_system_services", None) if _nx else None
+        scoped_hook_engine = getattr(_sys, "scoped_hook_engine", None) if _sys else None
         if scoped_hook_engine is not None:
             from nexus.services.hook_engine import create_agent_cleanup_handler
 

@@ -1303,6 +1303,12 @@ def create_app(
     app.state.version_service = getattr(nexus_fs, "version_service", None)
     app.state.mount_service = getattr(nexus_fs, "mount_service", None)
     app.state.hook_pipeline = getattr(nexus_fs, "_hook_pipeline", None)
+    app.state.workspace_manager = getattr(nexus_fs, "_workspace_manager", None)
+    app.state.hierarchy_manager = getattr(nexus_fs, "_hierarchy_manager", None)
+    app.state.audit_store = getattr(nexus_fs, "_audit_store", None)
+    app.state.record_store = getattr(nexus_fs, "_record_store", None)
+    app.state.snapshot_service = getattr(nexus_fs, "_snapshot_service", None)
+    app.state.task_queue_service = getattr(nexus_fs, "task_queue_service", None)
 
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(

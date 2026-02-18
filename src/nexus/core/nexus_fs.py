@@ -809,56 +809,6 @@ class NexusFS(  # type: ignore[misc]
             timeout = 15.0 if is_test else 5.0
             self._tiger_worker_thread.join(timeout=timeout)
 
-    def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
-        """
-        Dynamically load and register custom parsers from configuration.
-
-        Args:
-            parser_configs: List of parser configurations, each containing:
-                - module: Python module path (e.g., "my_parsers.csv_parser")
-                - class: Parser class name (e.g., "CSVParser")
-                - priority: Optional priority (default: 50)
-                - enabled: Optional enabled flag (default: True)
-        """
-        import importlib
-
-        for config in parser_configs:
-            # Skip disabled parsers
-            if not config.get("enabled", True):
-                continue
-
-            try:
-                module_path = config.get("module")
-                class_name = config.get("class")
-
-                if not module_path or not class_name:
-                    continue
-
-                # Dynamically import the module
-                module = importlib.import_module(module_path)
-
-                # Get the parser class
-                parser_class = getattr(module, class_name)
-
-                # Get priority (default: 50)
-                priority = config.get("priority", 50)
-
-                # Instantiate the parser with priority
-                parser_instance = parser_class(priority=priority)
-
-                # Register with registry
-                self.parser_registry.register(parser_instance)
-
-            except (ImportError, AttributeError, TypeError, ValueError) as e:
-                # Skip parsers that fail to load due to config or import errors
-                # This prevents config errors from breaking the entire system
-                import logging
-
-                parser_id = (
-                    f"{module_path}.{class_name}" if module_path and class_name else "unknown"
-                )
-                logging.warning(f"Failed to load parser {parser_id}: {e}")
-
     @property
     def memory(self) -> Any:
         """Get Memory API instance for agent memory management.

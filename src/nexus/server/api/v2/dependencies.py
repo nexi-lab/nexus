@@ -130,6 +130,54 @@ async def get_mount_service(request: Request) -> Any:
     return service
 
 
+async def get_workspace_manager(request: Request) -> Any:
+    """Get WorkspaceManager instance from app state (Issue #2033)."""
+    service = getattr(request.app.state, "workspace_manager", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="WorkspaceManager not initialized")
+    return service
+
+
+async def get_hierarchy_manager_service(request: Request) -> Any:
+    """Get HierarchyManager instance from app state (Issue #2033)."""
+    service = getattr(request.app.state, "hierarchy_manager", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="HierarchyManager not initialized")
+    return service
+
+
+async def get_audit_store(request: Request) -> Any:
+    """Get AuditStore instance from app state (Issue #2033)."""
+    store = getattr(request.app.state, "audit_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="AuditStore not initialized")
+    return store
+
+
+async def get_record_store(request: Request) -> Any:
+    """Get RecordStore instance from app state (Issue #2033)."""
+    store = getattr(request.app.state, "record_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="RecordStore not initialized")
+    return store
+
+
+async def get_snapshot_service(request: Request) -> Any:
+    """Get SnapshotService instance from app state (Issue #2033)."""
+    service = getattr(request.app.state, "snapshot_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="SnapshotService not initialized")
+    return service
+
+
+async def get_task_queue_service(request: Request) -> Any:
+    """Get TaskQueueService instance from app state (Issue #2033)."""
+    service = getattr(request.app.state, "task_queue_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="TaskQueueService not initialized")
+    return service
+
+
 # =============================================================================
 # ACE manager dependencies
 # =============================================================================

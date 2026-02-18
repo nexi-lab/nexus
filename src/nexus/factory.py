@@ -1106,8 +1106,15 @@ def create_nexus_services(
     # --- Start background threads post-construction ---
     _start_background_services(kernel, system)
 
+    # --- VFS Hook Pipeline (Issue #2033, Phase 5) ---
+    from nexus.core.vfs_hooks import VFSHookPipeline as _VFSHookPipeline
+
+    hook_pipeline = _VFSHookPipeline()
+
     # --- Assemble KernelServices ---
     return _KernelServices(
+        # VFS hooks
+        hook_pipeline=hook_pipeline,
         # Kernel tier
         router=router,
         rebac_manager=kernel["rebac_manager"],

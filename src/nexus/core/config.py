@@ -173,6 +173,9 @@ class KernelServices:
     async_namespace_manager: Any = None
     async_vfs_router: Any = None
 
+    # VFS Hook Pipeline (Issue #2033, Phase 4)
+    hook_pipeline: Any = None
+
     # Pre-built domain services (Issue #1519, 4B)
     # When set, _wire_services() uses these instead of building internally.
     # Enables factory pre-wiring and test-time mock injection.

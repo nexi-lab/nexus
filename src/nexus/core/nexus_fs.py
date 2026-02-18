@@ -292,6 +292,11 @@ class NexusFS(  # type: ignore[misc]
             self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
+        # VFS Hook Pipeline (Issue #2033, Phase 4/5)
+        from nexus.core.vfs_hooks import VFSHookPipeline
+
+        self._hook_pipeline: VFSHookPipeline = svc.hook_pipeline or VFSHookPipeline()
+
         # Wire self-dependent services (require self reference)
         self._wire_services()
 

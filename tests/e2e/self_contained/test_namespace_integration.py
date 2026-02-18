@@ -73,6 +73,8 @@ def permission_enforcer(
 def alice_context() -> OperationContext:
     """Operation context for user alice."""
     return OperationContext(
+        user="alice",
+        groups=[],
         subject_type="user",
         subject_id="alice",
         zone_id="test",
@@ -83,6 +85,8 @@ def alice_context() -> OperationContext:
 def bob_context() -> OperationContext:
     """Operation context for user bob."""
     return OperationContext(
+        user="bob",
+        groups=[],
         subject_type="user",
         subject_id="bob",
         zone_id="test",
@@ -93,10 +97,12 @@ def bob_context() -> OperationContext:
 def admin_context() -> OperationContext:
     """Operation context for admin user."""
     return OperationContext(
+        user="admin",
+        groups=[],
         subject_type="user",
         subject_id="admin",
         zone_id="test",
-        require_admin=True,
+        is_admin=True,
     )
 
 

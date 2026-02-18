@@ -36,8 +36,8 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
     from nexus.cache.base import TigerCacheProtocol
+    from nexus.rebac.manager import EnhancedReBACManager
     from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 

@@ -1331,6 +1331,7 @@ def create_app(
     app.state.chunked_upload_service = None
     app.state.delegation_service = None
     app.state.reputation_service = None
+    app.state.rlm_service = None  # Issue #1306: RLM inference brick
 
     # Initialize subscription manager if we have a metadata store
     try:

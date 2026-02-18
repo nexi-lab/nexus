@@ -854,16 +854,16 @@ class NexusFS(  # type: ignore[misc]
         agent = None
 
         if context is None:
-            user = getattr(self._default_context, "user", None)
+            user = getattr(self._default_context, "user_id", None)
             agent = self._default_context.agent_id
         elif hasattr(context, "agent_id"):
             user = getattr(context, "user_id", None)
             agent = context.agent_id
         elif isinstance(context, dict):
-            user = context.get("user_id") or context.get("user")
+            user = context.get("user_id")
             agent = context.get("agent_id")
         else:
-            user = getattr(self._default_context, "user", None)
+            user = getattr(self._default_context, "user_id", None)
             agent = self._default_context.agent_id
 
         # Build combined string showing both user and agent
@@ -929,7 +929,7 @@ class NexusFS(  # type: ignore[misc]
     @property
     def user_id(self) -> str | None:
         """Default user_id from the instance context."""
-        return getattr(self._default_context, "user", None)
+        return getattr(self._default_context, "user_id", None)
 
     def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration.
@@ -3531,7 +3531,7 @@ class NexusFS(  # type: ignore[misc]
         if not context:
             return None
         if isinstance(context, dict):
-            return context.get("user_id") or context.get("user")
+            return context.get("user_id") or context.get("user_id")
         return getattr(context, "user_id", None)
 
     def _create_agent_config_data(
@@ -6316,7 +6316,7 @@ class NexusFS(  # type: ignore[misc]
             # Agent workflow: always get valid sandbox for user+agent
             sandbox = nx.sandbox_get_or_create(
                 name=f"{user_id},{agent_id}",
-                context={"user": user_id, "agent_id": agent_id}
+                context={"user_id": user_id, "agent_id": agent_id}
             )
             sandbox_id = sandbox["sandbox_id"]  # Always valid!
         """
@@ -6919,7 +6919,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Construct from subject_type + subject_id
             subject_type = context.get("subject_type", "user")
-            subject_id = context.get("subject_id") or context.get("user")
+            subject_id = context.get("subject_id") or context.get("user_id")
             if subject_id:
                 return (subject_type, subject_id)
 
@@ -6982,7 +6982,7 @@ class NexusFS(  # type: ignore[misc]
         elif isinstance(context, dict):
             # Create OperationContext from dict
             op_context = OperationContext(
-                user_id=context.get("user", "unknown"),
+                user_id=context.get("user_id", "unknown"),
                 groups=context.get("groups", []),
                 zone_id=context.get("zone_id"),
                 is_admin=context.get("is_admin", False),

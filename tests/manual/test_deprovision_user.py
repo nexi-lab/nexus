@@ -83,7 +83,7 @@ def main() -> None:
 
     # Create admin context
     admin_context = OperationContext(
-        user="admin",
+        user_id="admin",
         groups=[],
         zone_id="test_zone",
         is_admin=True,

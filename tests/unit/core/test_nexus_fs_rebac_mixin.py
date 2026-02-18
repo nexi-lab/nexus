@@ -101,7 +101,7 @@ class TestGetSubjectFromContext:
         from nexus.core.permissions import OperationContext
 
         context = OperationContext(
-            user="charlie",
+            user_id="charlie",
             groups=["admins"],
             subject_type="user",
             subject_id="charlie",

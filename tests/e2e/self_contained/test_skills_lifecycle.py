@@ -112,7 +112,6 @@ def nexus_fs(isolated_db, tmp_path):
 def admin_context():
     """Create an admin operation context."""
     return OperationContext(
-        user="admin",
         user_id="admin",
         agent_id=None,
         subject_type="user",
@@ -130,7 +129,6 @@ def admin_context():
 def user_context():
     """Create a regular user operation context."""
     return OperationContext(
-        user="testuser",
         user_id="testuser",
         agent_id=None,
         subject_type="user",

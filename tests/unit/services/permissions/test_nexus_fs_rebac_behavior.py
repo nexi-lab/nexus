@@ -202,7 +202,7 @@ class TestCheckSharePermission:
         resource = ("file", "/test/doc.txt")
         # Pass OperationContext directly
         context = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
         )
@@ -218,7 +218,7 @@ class TestCheckSharePermission:
         resource = ("file", "/test/doc.txt")
         # Pass OperationContext directly
         context = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             is_system=True,
         )
@@ -236,7 +236,7 @@ class TestCheckSharePermission:
 
         resource = ("workspace", "project1")
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
         )
 
@@ -259,7 +259,7 @@ class TestCheckSharePermission:
 
         resource = ("group", "developers")
         context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
         )
 

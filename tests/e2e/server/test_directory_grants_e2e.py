@@ -120,7 +120,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
 
     # Create admin context for tests
     admin_context = OperationContext(
-        user="admin",
+        user_id="admin",
         groups=["admins"],
         zone_id="root",
         is_admin=True,
@@ -178,7 +178,7 @@ class TestDirectoryGrantExpansion:
 
         # Create admin context with zone_id
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -240,7 +240,7 @@ class TestDirectoryGrantExpansion:
         from nexus.core.permissions import OperationContext
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -282,7 +282,7 @@ class TestDirectoryGrantExpansion:
         from nexus.core.permissions import OperationContext
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,

@@ -27,7 +27,7 @@ class TestAdminCapabilitiesField:
     def test_admin_capabilities_can_be_set(self):
         """Admin capabilities can be provided at creation."""
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*", "admin:write:*", "admin:delete:*"},
@@ -41,7 +41,7 @@ class TestAdminCapabilitiesField:
     def test_admin_capabilities_stored_as_set(self):
         """Admin capabilities should be stored as a set (not list)."""
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*", "admin:write:*"},
@@ -56,7 +56,7 @@ class TestAdminCapabilitiesField:
     def test_admin_capabilities_can_be_empty_for_admin(self):
         """Admin user can have empty capabilities (uses ReBAC instead)."""
         ctx = OperationContext(
-            user="admin", groups=["admins"], is_admin=True, admin_capabilities=set()
+            user_id="admin", groups=["admins"], is_admin=True, admin_capabilities=set()
         )
 
         assert ctx.is_admin is True
@@ -65,7 +65,7 @@ class TestAdminCapabilitiesField:
     def test_regular_user_can_have_capabilities(self):
         """Regular users can also have capabilities (for testing/special cases)."""
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             is_admin=False,
             admin_capabilities={"admin:read:*"},  # Has capability but not admin
@@ -116,7 +116,7 @@ class TestRequestIdField:
         request_id = "trace-abc-123"
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -133,7 +133,7 @@ class TestOperationContextP04Fields:
     def test_context_with_all_p04_fields(self):
         """Test creating context with all P0-4 fields."""
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="org_acme",
             agent_id="agent_001",
@@ -153,7 +153,7 @@ class TestOperationContextP04Fields:
     def test_admin_capabilities_with_zone_context(self):
         """Admin capabilities work with multi-zone context."""
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="zone_alpha",
             is_admin=True,
@@ -196,7 +196,7 @@ class TestOperationContextBackwardCompatibility:
     def test_get_subject_still_works(self):
         """The get_subject() method should still work with P0-4 fields."""
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",

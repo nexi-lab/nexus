@@ -54,9 +54,8 @@ def connector(local_folder: Path) -> LocalConnectorBackend:
 def context() -> OperationContext:
     """Create a basic operation context."""
     return OperationContext(
-        user="test_user",
-        groups=[],
         user_id="test_user",
+        groups=[],
         zone_id="test_zone",
     )
 
@@ -653,9 +652,8 @@ class TestConcurrentAccess:
 
         def read_file(i: int) -> tuple[int, bool, bytes]:
             ctx = OperationContext(
-                user=f"user_{i}",
-                groups=[],
                 user_id=f"user_{i}",
+                groups=[],
                 zone_id="test",
             )
             ctx.backend_path = "concurrent.txt"
@@ -678,9 +676,8 @@ class TestConcurrentAccess:
 
         def write_file(i: int) -> tuple[int, bool]:
             ctx = OperationContext(
-                user=f"user_{i}",
-                groups=[],
                 user_id=f"user_{i}",
+                groups=[],
                 zone_id="test",
             )
             ctx.backend_path = f"concurrent_{i}.txt"

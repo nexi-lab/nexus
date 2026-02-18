@@ -409,7 +409,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         )
 
         # --- Directory Visibility Cache ---
-        from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
+        from nexus.rebac.cache.visibility import DirectoryVisibilityCache
 
         dir_visibility_cache = DirectoryVisibilityCache(
             tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
@@ -585,7 +585,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     namespace_manager: Any = None
     async_namespace_manager: Any = None
     try:
-        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
+        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.services.permissions.namespace_factory import (
             create_namespace_manager as _create_ns_manager,
         )

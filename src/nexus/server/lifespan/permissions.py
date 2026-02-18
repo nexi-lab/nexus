@@ -60,7 +60,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
         # Issue #940: Initialize AsyncNexusFS with permission enforcement
         try:
             from nexus.core.async_nexus_fs import AsyncNexusFS
-            from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+            from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
             backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
             tenant_id = os.getenv("NEXUS_TENANT_ID", "default")

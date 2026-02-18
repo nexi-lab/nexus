@@ -12,11 +12,13 @@ Key features:
 - Multi-provider support (Google, Microsoft, etc.)
 - Zone isolation
 - Immutable secrets audit logging
-- In-memory token caching (30s TTL)
+- CacheStoreABC-based token caching (30s TTL)
 - Per-credential refresh rate limiting (30s cooldown)
 
 Issue #997: OAuth token rotation and secrets audit logging.
 """
+
+from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -25,10 +27,12 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from cachetools import TTLCache
 from sqlalchemy import select
+
+if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
 
 from nexus.core.exceptions import AuthenticationError
 from nexus.raft.zone_manager import ROOT_ZONE_ID
@@ -45,9 +49,6 @@ _REFRESH_COOLDOWN_SECONDS = 30
 
 # Token cache TTL in seconds
 _TOKEN_CACHE_TTL_SECONDS = 30
-
-# Lock TTL: locks auto-expire after this many seconds of inactivity
-_LOCK_TTL_SECONDS = 300
 
 # Timeout for OAuth provider refresh calls (prevents indefinite lock holding)
 _PROVIDER_REFRESH_TIMEOUT_SECONDS = 30
@@ -84,6 +85,7 @@ class TokenManager:
         encryption_key: str | None = None,
         audit_logger: Any | None = None,
         session_factory: Any | None = None,
+        cache_store: CacheStoreABC | None = None,
     ):
         """Initialize token manager.
 
@@ -95,6 +97,7 @@ class TokenManager:
             session_factory: Optional SQLAlchemy sessionmaker. When provided,
                 reuses the app-level connection pool instead of creating a
                 separate engine (Issue #1597).
+            cache_store: CacheStoreABC for token caching (optional, degrades gracefully).
         """
         if session_factory is not None:
             self.SessionLocal = session_factory
@@ -123,16 +126,16 @@ class TokenManager:
         self._audit_logger = audit_logger
         self._rotation_store = TokenRotationStore()
 
-        # In-memory cache: (provider, user_email, zone_id) -> access_token
-        self._token_cache: TTLCache[tuple[str, str, str], str] = TTLCache(
-            maxsize=1024, ttl=_TOKEN_CACHE_TTL_SECONDS
-        )
+        # CacheStoreABC for token caching (degrades gracefully when None)
+        self._cache_store = cache_store
+        self._cache_ttl = _TOKEN_CACHE_TTL_SECONDS
 
         # Per-credential asyncio lock prevents concurrent refresh races.
-        # TTLCache auto-evicts stale locks to prevent unbounded memory growth.
-        self._refresh_locks: TTLCache[tuple[str, str, str], asyncio.Lock] = TTLCache(
-            maxsize=2048, ttl=_LOCK_TTL_SECONDS
-        )
+        self._refresh_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+
+    def _token_cache_key(self, provider: str, user_email: str, zone_id: str) -> str:
+        """Zone-scoped cache key for OAuth token caching."""
+        return f"oauth:token:{provider}:{user_email}:{zone_id}"
 
     def register_provider(self, provider_name: str, provider: OAuthProvider) -> None:
         """Register an OAuth provider."""
@@ -208,7 +211,7 @@ class TokenManager:
                     token_family_id=existing.token_family_id,
                     ip_address=ip_address,
                 )
-                self._invalidate_cache(provider, user_email, zone_id)
+                await self._invalidate_cache(provider, user_email, zone_id)
                 return str(existing.credential_id)
             else:
                 token_family_id = str(uuid.uuid4())
@@ -256,7 +259,7 @@ class TokenManager:
         """Get a valid access token (with automatic refresh and rotation).
 
         Flow:
-        1. Check in-memory cache
+        1. Check CacheStoreABC cache
         2. Acquire per-credential lock (prevents concurrent refresh races)
         3. Double-check cache (another coroutine may have populated it)
         4. Retrieve credential from database
@@ -269,22 +272,24 @@ class TokenManager:
             zone_id = ROOT_ZONE_ID
 
         # Check cache first (fast path — no lock needed)
-        cache_key = (provider, user_email, zone_id)
-        cached = self._token_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        cache_key_str = self._token_cache_key(provider, user_email, zone_id)
+        if self._cache_store is not None:
+            cached_raw = await self._cache_store.get(cache_key_str)
+            if cached_raw is not None:
+                return cached_raw.decode()
 
         # Per-credential lock prevents concurrent refresh races.
-        # Get-or-create pattern for TTLCache-based locks.
-        lock = self._refresh_locks.get(cache_key)
+        lock_key = (provider, user_email, zone_id)
+        lock = self._refresh_locks.get(lock_key)
         if lock is None:
             lock = asyncio.Lock()
-            self._refresh_locks[cache_key] = lock
+            self._refresh_locks[lock_key] = lock
         async with lock:
             # Double-check cache (another coroutine may have refreshed while we waited)
-            cached = self._token_cache.get(cache_key)
-            if cached is not None:
-                return cached
+            if self._cache_store is not None:
+                cached_raw = await self._cache_store.get(cache_key_str)
+                if cached_raw is not None:
+                    return cached_raw.decode()
 
             with self.SessionLocal() as session:
                 stmt = select(OAuthCredentialModel).where(
@@ -311,7 +316,12 @@ class TokenManager:
                             f"Refresh rate limited for {provider}:{user_email}, "
                             f"returning current token"
                         )
-                        self._token_cache[cache_key] = credential.access_token
+                        if self._cache_store is not None:
+                            await self._cache_store.set(
+                                cache_key_str,
+                                credential.access_token.encode(),
+                                ttl=self._cache_ttl,
+                            )
                         return credential.access_token
 
                     logger.info(f"Token expired for {provider}:{user_email}, refreshing...")
@@ -357,7 +367,7 @@ class TokenManager:
                                     session, model.token_family_id
                                 )
                                 session.commit()
-                                self._invalidate_cache(provider, user_email, zone_id)
+                                await self._invalidate_cache(provider, user_email, zone_id)
                                 self._log_audit(
                                     "token_reuse_detected",
                                     provider,
@@ -432,7 +442,12 @@ class TokenManager:
                 audit_rotation_counter = model.rotation_counter
 
                 # Populate cache
-                self._token_cache[cache_key] = credential.access_token
+                if self._cache_store is not None:
+                    await self._cache_store.set(
+                        cache_key_str,
+                        credential.access_token.encode(),
+                        ttl=self._cache_ttl,
+                    )
 
             # Audit logging AFTER session close — best-effort, non-blocking
             if refreshed:
@@ -559,7 +574,7 @@ class TokenManager:
                 token_family_id=audit_family_id,
                 ip_address=ip_address,
             )
-            self._invalidate_cache(provider, user_email, zone_id)
+            await self._invalidate_cache(provider, user_email, zone_id)
             return True
 
     async def list_credentials(
@@ -646,10 +661,10 @@ class TokenManager:
             last = last.replace(tzinfo=UTC)
         return datetime.now(UTC) - last < timedelta(seconds=_REFRESH_COOLDOWN_SECONDS)
 
-    def _invalidate_cache(self, provider: str, user_email: str, zone_id: str) -> None:
-        """Remove a token from the in-memory cache."""
-        cache_key = (provider, user_email, zone_id)
-        self._token_cache.pop(cache_key, None)
+    async def _invalidate_cache(self, provider: str, user_email: str, zone_id: str) -> None:
+        """Remove a token from the cache."""
+        if self._cache_store is not None:
+            await self._cache_store.delete(self._token_cache_key(provider, user_email, zone_id))
 
     def _log_audit(
         self,

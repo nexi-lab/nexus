@@ -113,6 +113,9 @@ EXPECTED_MODELS = [
     "DeadLetterModel",
     # Transactional Snapshots (Issue #1752)
     "TransactionSnapshotModel",
+    "SnapshotEntryModel",
+    # Context Branching (Issue #1315)
+    "ContextBranchModel",
 ]
 
 

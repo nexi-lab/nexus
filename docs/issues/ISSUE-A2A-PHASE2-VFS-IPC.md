@@ -21,6 +21,22 @@ Integrate the A2A (Agent-to-Agent) protocol with Nexus VFS by mapping A2A tasks 
 
 ---
 
+> **Architectural Note (2026-02-17):** This document covers two distinct concerns that
+> should not be conflated:
+>
+> 1. **Kernel DT_PIPE inode** (Steps 1, 4 below) — a same-node, SPSC ring buffer IPC
+>    primitive (~5μs latency, lock-free). This is a **kernel** construct, analogous to
+>    Unix pipes. Tracked in task #6 / GitHub #23.
+>
+> 2. **A2A Agent Messaging** (Steps 2, 3 below) — a **service-layer** concern requiring
+>    cross-node, multi-queue fan-out with high availability (NATS JetStream / Kafka class
+>    technology). Tracked in task #708.
+>
+> The ring buffer provides the kernel-level transport that A2A messaging is built ON TOP
+> of (same-node fast path), but the two are architecturally separate: kernel vs services.
+
+---
+
 ## Current State (Phase 1)
 
 ✅ **Implemented in #1256**:

@@ -49,6 +49,7 @@ class DatabaseTaskStore:
             stacklevel=2,
         )
         self._session_factory = record_store.session_factory
+        self._executor = None  # Use default thread pool executor
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:
         """Run a sync function in the dedicated DB thread pool.

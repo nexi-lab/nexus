@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import APIKeyModel, Base, OAuthAPIKeyModel, UserModel
 

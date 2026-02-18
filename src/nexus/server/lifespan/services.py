@@ -35,6 +35,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     _startup_delegation_service(app)
     _startup_sandbox_auth(app)
     _startup_transactional_snapshot(app)
+    _startup_rlm_service(app)
 
     # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app)
@@ -89,6 +90,15 @@ async def shutdown_services(app: FastAPI) -> None:
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
+    # Shutdown RLM thread pool (Issue #1306)
+    rlm_service = getattr(app.state, "rlm_service", None)
+    if rlm_service is not None:
+        try:
+            rlm_service.shutdown()
+            logger.info("[RLM] Thread pool shut down")
+        except Exception as e:
+            logger.warning("[RLM] Error shutting down thread pool: %s", e, exc_info=True)
+
     # SandboxManager cleanup
     if app.state.sandbox_auth_service:
         logger.info(
@@ -139,7 +149,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             app.state.agent_registry = AgentRegistry(
                 session_factory=app.state.nexus_fs.SessionLocal,
@@ -337,12 +347,48 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
 
 def _startup_transactional_snapshot(app: FastAPI) -> None:
     """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
-    svc = getattr(app.state.nexus_fs, "_transactional_snapshot_service", None) if app.state.nexus_fs else None
+    svc = getattr(app.state.nexus_fs, "_snapshot_service", None) if app.state.nexus_fs else None
     app.state.transactional_snapshot_service = svc
     if svc is not None:
         logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
     else:
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
+
+
+def _startup_rlm_service(app: FastAPI) -> None:
+    """Initialize RLM inference service (Issue #1306).
+
+    Requires SandboxAuthService (for SandboxManager) and an LLM provider.
+    Falls back gracefully if either is unavailable — the /api/v2/rlm/infer
+    endpoint will return 503.
+    """
+    sandbox_auth = getattr(app.state, "sandbox_auth_service", None)
+    if sandbox_auth is None:
+        logger.debug("[RLM] SandboxAuthService not available, RLM service skipped")
+        return
+
+    sandbox_mgr = getattr(sandbox_auth, "_sandbox_manager", None)
+    if sandbox_mgr is None:
+        logger.debug("[RLM] SandboxManager not available, RLM service skipped")
+        return
+
+    llm_provider = getattr(app.state.nexus_fs, "_llm_provider", None)
+
+    try:
+        from nexus.rlm.service import RLMInferenceService
+
+        nexus_api_url = os.environ.get("NEXUS_API_URL", "http://localhost:2026")
+        max_concurrent = int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8"))
+
+        app.state.rlm_service = RLMInferenceService(
+            sandbox_manager=sandbox_mgr,
+            llm_provider=llm_provider,
+            nexus_api_url=nexus_api_url,
+            max_concurrent=max_concurrent,
+        )
+        logger.info("[RLM] RLMInferenceService initialized (max_concurrent=%d)", max_concurrent)
+    except Exception as e:
+        logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
 
 
 def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:

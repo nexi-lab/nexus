@@ -14,11 +14,13 @@ import pytest
 
 from nexus.rebac.manager import (
     ConsistencyLevel,
-    ConsistencyMode,
-    ConsistencyRequirement,
     WriteResult,
 )
 from nexus.rebac.rebac_cache import ReBACPermissionCache
+from nexus.rebac.types import (
+    ConsistencyMode,
+    ConsistencyRequirement,
+)
 
 
 class TestConsistencyModeEnum:

@@ -167,7 +167,7 @@ class FileEvent:
     @classmethod
     def from_file_change(
         cls,
-        change: Any,  # FileChange from file_watcher.py (avoid circular import)
+        change: Any,  # FileChange from services/watch/file_watcher.py (avoid circular import)
         zone_id: str | None = None,
     ) -> FileEvent:
         """Create FileEvent from Layer 1 FileChange.
@@ -179,7 +179,7 @@ class FileEvent:
         - RENAMED → FILE_RENAME
 
         Args:
-            change: FileChange from file_watcher.py
+            change: FileChange from services/watch/file_watcher.py
             zone_id: Optional zone ID to associate
 
         Returns:

@@ -9,6 +9,7 @@ import pytest
 from freezegun import freeze_time
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -29,8 +30,10 @@ def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=False,  # Disable permissions for basic functionality tests
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(
+            enforce=False
+        ),  # Disable permissions for basic functionality tests
     )
     yield nx
     nx.close()
@@ -46,8 +49,10 @@ def test_init_creates_directories(temp_dir: Path) -> None:
         backend=LocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=False,  # Disable permissions for basic functionality tests
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(
+            enforce=False
+        ),  # Disable permissions for basic functionality tests
     )
 
     assert data_dir.exists()
@@ -358,8 +363,10 @@ def test_context_manager(temp_dir: Path) -> None:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=False,  # Disable permissions for basic functionality test
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(
+            enforce=False
+        ),  # Disable permissions for basic functionality test
     ) as nx:
         nx.write("/test.txt", content)
         result = nx.read("/test.txt")

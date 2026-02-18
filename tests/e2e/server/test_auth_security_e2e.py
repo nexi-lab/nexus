@@ -27,6 +27,7 @@ from starlette.testclient import TestClient
 
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
@@ -101,7 +102,7 @@ def _create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=enforce_permissions,
+        permissions=PermissionConfig(enforce=enforce_permissions),
         is_admin=False,
     )
 

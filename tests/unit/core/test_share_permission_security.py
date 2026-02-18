@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -36,8 +37,8 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),
     )
 
     # Grant admin ownership of root directory for tests
@@ -453,8 +454,8 @@ class TestHelperMethodIntegration:
             backend=LocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:

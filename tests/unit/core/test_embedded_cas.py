@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -29,8 +30,10 @@ def embedded_cas(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,  # Disable auto-parsing for unit tests
-        enforce_permissions=False,  # Disable permissions for basic functionality tests
+        parsing=ParseConfig(auto_parse=False),  # Disable auto-parsing for unit tests
+        permissions=PermissionConfig(
+            enforce=False
+        ),  # Disable permissions for basic functionality tests
     )
     yield emb
     emb.close()

@@ -61,6 +61,7 @@ def main():
         # ── Setup: Create NexusFS via factory (fully wired services) ─────
         from nexus.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.backends.local import LocalBackend
+        from nexus.core.config import PermissionConfig
         from nexus.factory import create_nexus_fs
         from nexus.rebac.namespace_factory import create_namespace_manager
         from nexus.server.fastapi_server import create_app
@@ -75,9 +76,9 @@ def main():
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            allow_admin_bypass=True,
-            enforce_zone_isolation=False,
+            permissions=PermissionConfig(
+                enforce=True, allow_admin_bypass=True, enforce_zone_isolation=False
+            ),
         )
 
         # ── Wire namespace manager (dcache + L3 + event-driven invalidation) ──

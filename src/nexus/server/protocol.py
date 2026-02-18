@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from nexus.core.rpc_decorator import rpc_expose  # noqa: F401
-
 # Issue #1519, 1A: RPC types extracted to core/rpc_types.py so core/ modules
 # (rpc_transport, rpc_codec) can use them without importing from server/.
 # Re-exported here for backward compatibility.

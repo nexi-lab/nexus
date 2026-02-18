@@ -18,8 +18,8 @@ from nexus.core.hash_fast import hash_content
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
+    from nexus.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
-    from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     CacheConfig,
@@ -991,7 +991,7 @@ class NexusFS(  # type: ignore[misc]
         Consolidates 7 deferred import sites (Issue #1291).
         """
         if self._entity_registry is None:
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
         return self._entity_registry
@@ -1150,7 +1150,7 @@ class NexusFS(  # type: ignore[misc]
         # P0-4: Zone boundary security check (Issue #819)
         # Even admins need zone boundary checks (unless they have MANAGE_ZONES capability)
         if ctx.is_admin and self._permission_enforcer:
-            from nexus.services.permissions.permissions_enhanced import AdminCapability
+            from nexus.rebac.permissions_enhanced import AdminCapability
 
             # Extract zone from path (format: /zone/{zone_id}/...)
             path_zone_id = None

@@ -430,11 +430,12 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    link = (
-                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
-                        .scalars()
-                        .first()
+                    revoke_stmt = select(ShareLinkModel).where(
+                        ShareLinkModel.link_id == link_id
                     )
+                    if zone_id:
+                        revoke_stmt = revoke_stmt.where(ShareLinkModel.zone_id == zone_id)
+                    link = session.execute(revoke_stmt).scalars().first()
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
@@ -638,11 +639,14 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    link = (
-                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
-                        .scalars()
-                        .first()
+                    logs_link_stmt = select(ShareLinkModel).where(
+                        ShareLinkModel.link_id == link_id
                     )
+                    if zone_id:
+                        logs_link_stmt = logs_link_stmt.where(
+                            ShareLinkModel.zone_id == zone_id
+                        )
+                    link = session.execute(logs_link_stmt).scalars().first()
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True

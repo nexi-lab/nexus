@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from nexus import NexusFilesystem
 else:
     from nexus.core.filesystem import NexusFilesystem
+from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -36,7 +37,6 @@ from nexus.core.exceptions import (
 )
 from nexus.core.filters import is_os_metadata_file
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,

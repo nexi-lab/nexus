@@ -292,11 +292,14 @@ class MemoryVersioning:
             latest_memory.updated_at = datetime.now(UTC)
 
             # Atomically increment version at database level
-            session.execute(
+            update_stmt = (
                 update(MemoryModel)
                 .where(MemoryModel.memory_id == latest_memory_id)
                 .values(current_version=MemoryModel.current_version + 1)
             )
+            if self._context.zone_id is not None:
+                update_stmt = update_stmt.where(MemoryModel.zone_id == self._context.zone_id)
+            session.execute(update_stmt)
             session.refresh(latest_memory)
 
             # Create version history entry for the rollback

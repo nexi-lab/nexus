@@ -1,5 +1,6 @@
 """Cache management commands - warmup, stats, clear (Issue #1076)."""
 
+
 import asyncio
 from typing import Any
 
@@ -18,6 +19,7 @@ def register_commands(cli: click.Group) -> None:
     """Register all cache management commands."""
     cli.add_command(cache_group)
 
+
 @click.group(name="cache")
 def cache_group() -> None:
     """Cache management commands.
@@ -25,6 +27,7 @@ def cache_group() -> None:
     Manage cache warming, statistics, and clearing.
     """
     pass
+
 
 @cache_group.command(name="warmup")
 @click.argument("path", type=str, default="/", required=False)
@@ -78,7 +81,7 @@ def warmup(
         nx = get_filesystem(backend_config)
 
         # Import here to avoid circular imports
-        from nexus.cache.warmer import (
+        from nexus.server.cache_warmer import (
             CacheWarmer,
             WarmupConfig,
             get_file_access_tracker,
@@ -143,6 +146,7 @@ def warmup(
     except Exception as e:
         handle_error(e)
 
+
 @cache_group.command(name="stats")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @add_backend_options
@@ -202,7 +206,7 @@ def stats(
                 cache_stats["dir_visibility_cache"] = dvc.get_metrics()
 
         # File access tracker stats
-        from nexus.cache.warmer import get_file_access_tracker
+        from nexus.server.cache_warmer import get_file_access_tracker
 
         tracker = get_file_access_tracker()
         cache_stats["file_access_tracker"] = tracker.get_stats()
@@ -230,6 +234,7 @@ def stats(
 
     except Exception as e:
         handle_error(e)
+
 
 @cache_group.command(name="clear")
 @click.option("--metadata", is_flag=True, help="Clear metadata cache")
@@ -332,7 +337,7 @@ def clear(
 
         # Clear file access tracker
         if clear_all:
-            from nexus.cache.warmer import get_file_access_tracker
+            from nexus.server.cache_warmer import get_file_access_tracker
 
             tracker = get_file_access_tracker()
             tracker.clear()
@@ -347,6 +352,7 @@ def clear(
 
     except Exception as e:
         handle_error(e)
+
 
 @cache_group.command(name="hot")
 @click.option("-n", "--limit", type=int, default=20, help="Number of hot files to show")
@@ -368,7 +374,7 @@ def hot(
         nexus cache hot --user alice
     """
     try:
-        from nexus.cache.warmer import get_file_access_tracker
+        from nexus.server.cache_warmer import get_file_access_tracker
 
         tracker = get_file_access_tracker()
         hot_files = tracker.get_hot_files(

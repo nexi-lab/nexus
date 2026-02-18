@@ -1514,6 +1514,14 @@ def create_nexus_fs(
     parsers_brick = ParsersBrick(parsing_config=parsing)
     _parse_fn = parsers_brick.create_parse_fn()
 
+    # Create CacheBrick — owns all cache domain services (Issue #1524)
+    from nexus.cache.brick import CacheBrick
+
+    _cache_brick = CacheBrick(
+        cache_store=cache_store,
+        record_store=record_store,
+    )
+
     # Create content cache (Issue #657)
     _content_cache = None
     if cache is not None and cache.enable_content_cache and backend.has_root_path is True:
@@ -1545,6 +1553,9 @@ def create_nexus_fs(
         provider_registry=parsers_brick.provider_registry,
         vfs_lock_manager=_vfs_lock_manager,
     )
+
+    # Attach CacheBrick to NexusFS for server layer access (Issue #1524)
+    nx._cache_brick = _cache_brick  # type: ignore[attr-defined]
 
     # Post-construction I/O (mount restoration, etc.)
     _post_init(nx)

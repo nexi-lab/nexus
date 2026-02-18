@@ -359,6 +359,28 @@ class TigerResourceMap:
 
         return result
 
+    def resolve_ids_to_paths(self, int_ids: list[int], resource_type: str = "file") -> list[str]:
+        """Resolve integer IDs to resource paths, filtering by type.
+
+        Thread-safe. Returns paths for IDs that match the given resource_type.
+        Used by PermissionEnforcer to build the accessible paths list for
+        Rust-accelerated prefix matching (Issue #1565).
+
+        Args:
+            int_ids: List of integer IDs from a Roaring Bitmap
+            resource_type: Filter to this resource type (default: "file")
+
+        Returns:
+            List of resource paths (resource_id strings) matching the type
+        """
+        paths: list[str] = []
+        with self._lock:
+            for int_id in int_ids:
+                info = self._int_to_uuid.get(int_id)
+                if info and info[0] == resource_type:
+                    paths.append(info[1])
+        return paths
+
     def clear_cache(self) -> None:
         """Clear in-memory cache."""
         with self._lock:

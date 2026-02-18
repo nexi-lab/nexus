@@ -75,7 +75,7 @@ class TestCacheWarmerLogging:
 
     def test_no_silent_swallowers_in_warmer(self) -> None:
         """warmer.py should not have except Exception: pass."""
-        from nexus.cache import warmer
+        from nexus.server import cache_warmer as warmer
 
         found, line = _has_silent_swallower(inspect.getsource(warmer))
         assert not found, f"Silent swallower found at line {line}"

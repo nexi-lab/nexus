@@ -362,41 +362,29 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
-    # Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)
-    # Provides optimized connection pooling for permission/tiger caches
+    # Initialize CacheBrick for Dragonfly/Redis or NullCacheStore fallback (Issue #1524)
+    # CacheBrick owns all cache domain services with lifecycle management
     try:
-        from nexus.cache.factory import init_cache_factory
-        from nexus.cache.settings import CacheSettings
+        cache_brick = getattr(_app.state.nexus_fs, "_cache_brick", None)
+        if cache_brick is not None:
+            await cache_brick.start()
+            _app.state.cache_factory = cache_brick  # Backward-compat alias
+            logger.info("CacheBrick started (Issue #1524)")
 
-        cache_settings = CacheSettings.from_env()
-
-        # Pass RecordStore for SQL-backed cache fallback when CacheStoreABC is not available
-        record_store = getattr(_app.state.nexus_fs, "_record_store", None)
-
-        _app.state.cache_factory = await init_cache_factory(
-            cache_settings, record_store=record_store
-        )
-        logger.info(
-            f"Cache factory initialized with {_app.state.cache_factory.backend_name} backend"
-        )
-
-        # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
-        # This enables L1 (memory) -> L2 (CacheStore) -> L3 (RecordStore) caching
-        if _app.state.cache_factory.has_cache_store:
+            # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
             tiger_cache = getattr(
                 getattr(_app.state.nexus_fs, "_rebac_manager", None),
                 "_tiger_cache",
                 None,
             )
-            if tiger_cache:
-                dragonfly_tiger = _app.state.cache_factory.get_tiger_cache()
-                tiger_cache.set_dragonfly_cache(dragonfly_tiger)
+            if tiger_cache and cache_brick.tiger_cache is not None:
+                tiger_cache.set_dragonfly_cache(cache_brick.tiger_cache)
                 logger.info(
                     "[TIGER] Dragonfly L2 cache wired up - "
-                    "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
+                    "L1 (memory) -> L2 (CacheBrick) -> L3 (PostgreSQL)"
                 )
     except Exception as e:
-        logger.warning(f"Failed to initialize cache factory: {e}")
+        logger.warning(f"Failed to initialize CacheBrick: {e}")
 
     # Event Log WAL for durable event persistence (Issue #1397)
     # Service-layer concern: WAL-first durability for EventBus, not a kernel pillar.
@@ -1166,11 +1154,11 @@ async def lifespan(_app: FastAPI) -> Any:
     if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
         _app.state.nexus_fs.close()
 
-    # Shutdown cache factory (Issue #1075)
+    # Shutdown CacheBrick (Issue #1524, replaces #1075 cache_factory)
     if hasattr(_app.state, "cache_factory") and _app.state.cache_factory:
         try:
-            await _app.state.cache_factory.shutdown()
-            logger.info("Cache factory stopped")
+            await _app.state.cache_factory.stop()
+            logger.info("CacheBrick stopped")
         except Exception as e:
             logger.warning(f"Error shutting down cache factory: {e}")
 

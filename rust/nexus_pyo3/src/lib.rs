@@ -7,6 +7,7 @@ mod glob;
 mod hash;
 mod io;
 mod lock;
+mod prefix;
 mod rebac;
 mod search;
 mod simd;
@@ -31,6 +32,10 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     // File I/O
     m.add_function(wrap_pyfunction!(io::read_file, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_files_bulk, m)?)?;
+    // Path prefix matching (Issue #1565)
+    m.add_function(wrap_pyfunction!(prefix::any_path_starts_with, m)?)?;
+    m.add_function(wrap_pyfunction!(prefix::batch_prefix_check, m)?)?;
+    m.add_function(wrap_pyfunction!(prefix::filter_paths_by_prefix, m)?)?;
     // Tiger Cache Roaring Bitmap
     m.add_function(wrap_pyfunction!(bitmap::filter_paths_with_tiger_cache, m)?)?;
     m.add_function(wrap_pyfunction!(

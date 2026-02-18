@@ -665,7 +665,7 @@ def non_admin_context():
     from nexus.core.permissions import OperationContext
 
     return OperationContext(
-        user="regular_user",
+        user_id="regular_user",
         groups=[],
         zone_id="test-zone",
         is_admin=False,
@@ -737,7 +737,7 @@ class TestNonAdminSyncPermissions:
         backend, _ = local_connector_mount
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test-zone",
             is_admin=True,

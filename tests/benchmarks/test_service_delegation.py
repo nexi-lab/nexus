@@ -99,7 +99,7 @@ def mock_gateway():
 def context():
     """Standard operation context for benchmarks."""
     return OperationContext(
-        user="bench_user",
+        user_id="bench_user",
         groups=["bench_group"],
         zone_id="bench_zone",
         is_system=False,
@@ -351,7 +351,7 @@ class TestContextExtractionOverhead:
         """Benchmark OperationContext creation."""
         benchmark(
             OperationContext,
-            user="bench_user",
+            user_id="bench_user",
             groups=["group1", "group2"],
             zone_id="zone1",
             is_system=False,

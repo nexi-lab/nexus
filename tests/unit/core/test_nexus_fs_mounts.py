@@ -242,7 +242,7 @@ class TestAddMount:
 
         # Use admin context to bypass permission check (testing permission grant, not check)
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -544,7 +544,7 @@ class TestSyncMount:
 
         # Use admin context to bypass permission check (testing sync functionality)
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",
@@ -571,7 +571,7 @@ class TestMountPermissionEnforcement:
 
         # Non-admin user without write permission on /mnt
         context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -598,7 +598,7 @@ class TestMountPermissionEnforcement:
 
         # First create mount as admin
         admin_context = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -614,7 +614,7 @@ class TestMountPermissionEnforcement:
 
         # Non-admin user tries to remove without permission
         user_context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -636,7 +636,7 @@ class TestMountPermissionEnforcement:
 
         # First create mount as admin
         admin_context = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -652,7 +652,7 @@ class TestMountPermissionEnforcement:
 
         # Non-admin user tries to sync without permission
         user_context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -674,7 +674,7 @@ class TestMountPermissionEnforcement:
 
         # First create mount as admin
         admin_context = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -690,7 +690,7 @@ class TestMountPermissionEnforcement:
 
         # Non-admin user tries to get mount without permission
         user_context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -743,7 +743,7 @@ class TestGrantMountOwnerPermission:
         from nexus.core.permissions import OperationContext
 
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -844,7 +844,7 @@ class TestMountContextUtilsIntegration:
 
         # Use admin context to bypass permission check (testing context_utils usage)
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -880,7 +880,7 @@ class TestMountContextUtilsIntegration:
 
         # Use admin context to bypass permission check (testing remove functionality)
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",

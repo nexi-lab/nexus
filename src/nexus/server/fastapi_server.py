@@ -1872,7 +1872,7 @@ def _register_routes(app: FastAPI) -> None:
             from nexus.core.permissions import OperationContext
 
             context = OperationContext(
-                user="system",
+                user_id="system",
                 groups=[],
                 zone_id=zone_id,
                 subject_type="system",
@@ -2393,8 +2393,6 @@ def _get_memory_api_with_context(context: Any) -> Any:
             context_dict["zone_id"] = context.zone_id
         if hasattr(context, "user_id") and context.user_id:
             context_dict["user_id"] = context.user_id
-        elif hasattr(context, "user") and context.user:
-            context_dict["user_id"] = context.user
         if hasattr(context, "agent_id") and context.agent_id:
             context_dict["agent_id"] = context.agent_id
 

@@ -380,7 +380,7 @@ class SkillImporter:
 
         if tier == "personal":
             # Personal: /zone/{tid}/user/{uid}/skill/{skill_name}/
-            user_id = context.user_id or getattr(context, "user", None)
+            user_id = context.user_id
             if not user_id:
                 raise ValueError("user_id required for personal tier skills")
             return f"/zone/{zone_id}/user/{user_id}/skill/{skill_name}/"
@@ -391,7 +391,7 @@ class SkillImporter:
 
         # Legacy user tier support (for backward compatibility)
         if tier == "user":
-            user_id = context.user_id or getattr(context, "user", None)
+            user_id = context.user_id
             if user_id:
                 return f"/skills/users/{user_id}/{skill_name}/"
             return f"/skills/user/{skill_name}/"

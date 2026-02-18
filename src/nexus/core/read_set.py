@@ -741,7 +741,7 @@ def enable_read_tracking(ctx: OperationContext, zone_id: str | None = None) -> N
 
     Example:
         >>> from nexus.core.read_set import enable_read_tracking
-        >>> ctx = OperationContext(user="alice", groups=[], zone_id="org1")
+        >>> ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
         >>> enable_read_tracking(ctx)
         >>> ctx.track_reads
         True

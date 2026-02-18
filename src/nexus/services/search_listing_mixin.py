@@ -417,7 +417,7 @@ class SearchListingMixin:
                     )
             if not has_permission:
                 raise PermissionDeniedError(
-                    f"Access denied: User '{context.user}' does not have "
+                    f"Access denied: User '{context.user_id}' does not have "
                     f"TRAVERSE permission for '{path}'"
                 )
 
@@ -430,7 +430,7 @@ class SearchListingMixin:
             from nexus.core.permissions import OperationContext
 
             list_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path
+                user_id="anonymous", groups=[], backend_path=route.backend_path
             )
 
         # Issue #901: Parallel directory traversal for 5-10x speedup

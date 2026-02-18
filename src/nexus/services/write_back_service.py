@@ -107,7 +107,7 @@ class WriteBackService:
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._metrics = WriteBackMetrics()
         # Pre-built system context template — avoids UUID generation per-operation
-        self._system_ctx = OperationContext(user="system", groups=[], is_system=True)
+        self._system_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         self._running = False
         self._poll_task: asyncio.Task[None] | None = None
         self._subscribe_task: asyncio.Task[None] | None = None

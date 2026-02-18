@@ -505,7 +505,7 @@ async def setup_zone(
                 )
 
             admin_context = OperationContext(
-                user="system",
+                user_id="system",
                 groups=[],
                 zone_id=zone_id,
                 is_admin=True,
@@ -1375,7 +1375,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             nx = get_nexus_instance()
             if nx:
                 admin_context = OperationContext(
-                    user="system",
+                    user_id="system",
                     groups=[],
                     zone_id=zone_id,
                     is_admin=True,

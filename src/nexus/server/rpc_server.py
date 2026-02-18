@@ -196,7 +196,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                             "subject_id": context.subject_id,
                             "zone_id": context.zone_id,
                             "is_admin": context.is_admin,
-                            "user": context.user,  # For backward compatibility
+                            "user_id": context.user_id,
                         },
                     )
                 else:
@@ -411,7 +411,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         }
 
                     return OperationContext(
-                        user=user_id,  # Owner (human user) - LEGACY field
+                        user_id=user_id,
                         agent_id=agent_id,  # v0.5.0: Agent identity (if present)
                         subject_type=subject_type,  # Subject for permission checks
                         subject_id=subject_id,  # Subject ID for permission checks
@@ -430,7 +430,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 from nexus.core.permissions import OperationContext
 
                 return OperationContext(
-                    user=parts[1],  # Required
+                    user_id=parts[1],
                     subject_type=parts[0],
                     subject_id=parts[1],
                     groups=[],

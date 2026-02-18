@@ -1133,7 +1133,7 @@ class SyncService:
                 from nexus.core.permissions import OperationContext
 
                 size_context = OperationContext(
-                    user="system",
+                    user_id="system",
                     groups=[],
                     is_system=True,
                     backend_path=backend_path,

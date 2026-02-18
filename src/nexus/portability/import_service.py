@@ -44,7 +44,7 @@ def _create_import_context() -> OperationContext:
     from nexus.core.permissions import OperationContext
 
     return OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         is_admin=True,
         is_system=True,  # System operations bypass all checks

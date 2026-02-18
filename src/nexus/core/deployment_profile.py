@@ -39,6 +39,7 @@ BRICK_SCHEDULER = "scheduler"
 
 # Infrastructure bricks
 BRICK_CACHE = "cache"
+BRICK_IPC = "ipc"
 BRICK_OBSERVABILITY = "observability"
 BRICK_UPLOADS = "uploads"
 BRICK_RESILIENCY = "resiliency"
@@ -68,6 +69,7 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_PERMISSIONS,
         BRICK_SCHEDULER,
         BRICK_CACHE,
+        BRICK_IPC,
         BRICK_OBSERVABILITY,
         BRICK_UPLOADS,
         BRICK_RESILIENCY,
@@ -141,6 +143,7 @@ _LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
         BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_CACHE,
+        BRICK_IPC,
         BRICK_SCHEDULER,
     }
 )

@@ -949,6 +949,40 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except Exception as _tq_exc:
         logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
+    # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
+    ipc_storage_driver: Any = None
+    ipc_vfs_driver: Any = None
+    ipc_provisioner: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.ipc.driver import IPCVFSDriver
+            from nexus.ipc.provisioning import AgentProvisioner
+            from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+
+            ipc_storage_driver = RecordStoreStorageDriver(
+                session_factory=ctx.session_factory,
+            )
+
+            _ipc_zone = ctx.zone_id or "root"
+            ipc_vfs_driver = IPCVFSDriver(
+                storage=ipc_storage_driver,
+                zone_id=_ipc_zone,
+            )
+
+            # Mount at /agents in the PathRouter (higher priority than default /)
+            ctx.router.add_mount("/agents", ipc_vfs_driver, priority=10)
+
+            ipc_provisioner = AgentProvisioner(
+                storage=ipc_storage_driver,
+                zone_id=_ipc_zone,
+            )
+            logger.debug(
+                "[BOOT:BRICK] IPC brick created (zone=%s, storage=RecordStoreStorageDriver)",
+                _ipc_zone,
+            )
+        except Exception as _ipc_exc:
+            logger.warning("[BOOT:BRICK] IPC brick unavailable: %s", _ipc_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -961,6 +995,9 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
         "task_queue_service": task_queue_service,
+        "ipc_storage_driver": ipc_storage_driver,
+        "ipc_vfs_driver": ipc_vfs_driver,
+        "ipc_provisioner": ipc_provisioner,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1163,6 +1200,10 @@ def create_nexus_services(
         api_key_creator=brick_dict["api_key_creator"],
         snapshot_service=brick_dict["snapshot_service"],
         task_queue_service=brick_dict["task_queue_service"],
+        # IPC Brick (Issue #1727, LEGO §8)
+        ipc_storage_driver=brick_dict["ipc_storage_driver"],
+        ipc_vfs_driver=brick_dict["ipc_vfs_driver"],
+        ipc_provisioner=brick_dict["ipc_provisioner"],
     )
 
     return kernel_services, system_services, brick_services

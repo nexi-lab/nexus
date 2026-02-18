@@ -3128,6 +3128,103 @@ class NexusFS(  # type: ignore[misc]
             zone_id=ctx.zone_id or self._default_context.zone_id,
         )
 
+    # === Transactional Snapshot Operations (Issue #1752) ===
+
+    @rpc_expose(description="Begin transactional snapshot")
+    def snapshot_begin(
+        self,
+        paths: list[str],
+        agent_id: str | None = None,
+        zone_id: str = "root",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Begin a transactional snapshot for the specified paths.
+
+        Args:
+            paths: Virtual paths to snapshot
+            agent_id: Agent ID (defaults to context agent)
+            zone_id: Zone ID
+
+        Returns:
+            Dict with 'snapshot_id' key
+        """
+        if self._snapshot_service is None:
+            raise RuntimeError("Transactional snapshot service not available")
+        ctx = context or self._default_context
+        resolved_agent = agent_id or ctx.agent_id or "default"
+        import asyncio
+
+        sid = asyncio.get_event_loop().run_until_complete(
+            self._snapshot_service.begin(
+                agent_id=resolved_agent,
+                paths=paths,
+                zone_id=zone_id,
+                context=ctx,
+            )
+        )
+        return {"snapshot_id": sid.id}
+
+    @rpc_expose(description="Commit transactional snapshot")
+    def snapshot_commit(
+        self,
+        snapshot_id: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, str]:
+        """Commit a snapshot — changes become permanent.
+
+        Args:
+            snapshot_id: Snapshot UUID to commit
+        """
+        if self._snapshot_service is None:
+            raise RuntimeError("Transactional snapshot service not available")
+        import asyncio
+
+        from nexus.services.protocols.transactional_snapshot import SnapshotId
+
+        asyncio.get_event_loop().run_until_complete(
+            self._snapshot_service.commit(SnapshotId(id=snapshot_id), context=context)
+        )
+        return {"status": "committed", "snapshot_id": snapshot_id}
+
+    @rpc_expose(description="Rollback transactional snapshot")
+    def snapshot_rollback(
+        self,
+        snapshot_id: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Rollback a snapshot — restore paths to pre-snapshot state.
+
+        Args:
+            snapshot_id: Snapshot UUID to rollback
+
+        Returns:
+            Dict with rollback result (reverted, conflicts, deleted, stats)
+        """
+        if self._snapshot_service is None:
+            raise RuntimeError("Transactional snapshot service not available")
+        import asyncio
+
+        from nexus.services.protocols.transactional_snapshot import SnapshotId
+
+        result = asyncio.get_event_loop().run_until_complete(
+            self._snapshot_service.rollback(SnapshotId(id=snapshot_id), context=context)
+        )
+        return {
+            "snapshot_id": result.snapshot_id,
+            "reverted": result.reverted,
+            "conflicts": [
+                {
+                    "path": c.path,
+                    "snapshot_hash": c.snapshot_hash,
+                    "current_hash": c.current_hash,
+                    "reason": c.reason,
+                }
+                for c in result.conflicts
+            ],
+            "deleted": result.deleted,
+            "stats": result.stats,
+        }
+
     # ===== Workspace Registry Management =====
 
     @rpc_expose()

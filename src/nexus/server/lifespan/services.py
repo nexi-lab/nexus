@@ -34,6 +34,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     _startup_reputation_service(app)
     _startup_delegation_service(app)
     _startup_sandbox_auth(app)
+    _startup_transactional_snapshot(app)
     _startup_rlm_service(app)
 
     # Agent background tasks depend on agent_registry
@@ -228,8 +229,6 @@ def _startup_reputation_service(app: FastAPI) -> None:
 
         app.state.reputation_service = ReputationService(
             session_factory=app.state.nexus_fs.SessionLocal,
-            cache_maxsize=10_000,
-            cache_ttl=60,
         )
         logger.info("[REPUTATION] ReputationService initialized (singleton)")
     except Exception as e:
@@ -342,6 +341,16 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         logger.warning(
             "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
         )
+
+
+def _startup_transactional_snapshot(app: FastAPI) -> None:
+    """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
+    svc = getattr(app.state.nexus_fs, "_snapshot_service", None) if app.state.nexus_fs else None
+    app.state.transactional_snapshot_service = svc
+    if svc is not None:
+        logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
+    else:
+        logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
 
 
 def _startup_rlm_service(app: FastAPI) -> None:

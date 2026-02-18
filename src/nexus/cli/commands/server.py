@@ -517,12 +517,6 @@ def unmount(mount_point: str) -> None:
     help="Admin username for initialization (default: admin)",
 )
 @click.option(
-    "--async/--no-async",
-    "use_async",
-    default=True,
-    help="Use async FastAPI server (default: enabled, 10-50x throughput improvement)",
-)
-@click.option(
     "--enable-memory-paging/--no-memory-paging",
     "enable_memory_paging",
     default=True,
@@ -549,7 +543,6 @@ def serve(
     init: bool,
     reset: bool,
     admin_user: str,
-    use_async: bool,
     enable_memory_paging: bool,
     memory_main_capacity: int,
     memory_recall_max_age_hours: float,
@@ -681,9 +674,6 @@ def serve(
             console.print(f"[yellow]⚠️  Could not check port status: {e}[/yellow]")
 
         console.print()
-
-        # Import server components
-        from nexus.server.rpc_server import NexusRPCServer
 
         # Determine authentication configuration first (needed for permissions logic)
         has_auth = bool(auth_type or api_key)
@@ -1451,43 +1441,27 @@ def serve(
         console.print()
         console.print("[green]Press Ctrl+C to stop server[/green]")
 
-        if use_async:
-            # Use FastAPI async server
-            from nexus.server.fastapi_server import create_app, run_server
+        from nexus.server.fastapi_server import create_app, run_server
 
-            console.print()
-            console.print("[bold cyan]🚀 Using FastAPI async server[/bold cyan]")
-            console.print("  [dim]10-50x throughput improvement under concurrent load[/dim]")
+        console.print()
+        console.print("[bold cyan]🚀 Using FastAPI async server[/bold cyan]")
+        console.print("  [dim]10-50x throughput improvement under concurrent load[/dim]")
 
-            # Get database URL for async operations
-            database_url = os.getenv("NEXUS_DATABASE_URL")
+        # Get database URL for async operations
+        database_url = os.getenv("NEXUS_DATABASE_URL")
 
-            app = create_app(
-                nexus_fs=nx,  # type: ignore[arg-type]
-                api_key=api_key,
-                auth_provider=auth_provider,
-                database_url=database_url,
-                data_dir=backend_config.data_dir,
-            )
+        app = create_app(
+            nexus_fs=nx,  # type: ignore[arg-type]
+            api_key=api_key,
+            auth_provider=auth_provider,
+            database_url=database_url,
+            data_dir=backend_config.data_dir,
+        )
 
-            # Start background sync for connector mounts (non-blocking)
-            start_background_mount_sync(nx)
+        # Start background sync for connector mounts (non-blocking)
+        start_background_mount_sync(nx)
 
-            run_server(app, host=host, port=port, log_level="info")
-        else:
-            # Use traditional ThreadingHTTPServer
-            server = NexusRPCServer(
-                nexus_fs=nx,
-                host=host,
-                port=port,
-                api_key=api_key,
-                auth_provider=auth_provider,
-            )
-
-            # Start background sync for connector mounts (non-blocking)
-            start_background_mount_sync(nx)
-
-            server.serve_forever()
+        run_server(app, host=host, port=port, log_level="info")
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped by user[/yellow]")

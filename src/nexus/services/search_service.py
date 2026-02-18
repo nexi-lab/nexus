@@ -211,6 +211,24 @@ class SearchService(SemanticSearchMixin):
                     )
         return self._list_thread_pool
 
+    def _get_namespace_prefixes(self) -> tuple[str, ...]:
+        """Get known namespace prefixes from router (dynamic) or fallback (static)."""
+        if self.router and hasattr(self.router, "_namespaces"):
+            return tuple(f"{ns}/" for ns in self.router._namespaces)
+        return ("workspace/", "shared/", "external/", "system/", "archives/")
+
+    def _should_prepend_recursive_wildcard(self, pattern: str) -> bool:
+        """Check if glob pattern needs **/ prefix for implicit recursive search.
+
+        Returns True when the pattern looks like a relative multi-level path
+        (e.g., "models/file.py") that should match anywhere in the tree.
+        Returns False when the pattern already specifies a root namespace
+        (e.g., "workspace/file.py") or is already recursive/absolute.
+        """
+        if "**" in pattern or pattern.startswith("/") or "/" not in pattern:
+            return False
+        return not pattern.startswith(self._get_namespace_prefixes())
+
     def close(self) -> None:
         """Release resources held by the search service."""
         if self._thread_pool is not None:
@@ -1449,14 +1467,7 @@ class SearchService(SemanticSearchMixin):
             path = path + "/"
         if path == "/":
             full_pattern = pattern
-            if (
-                "**" not in full_pattern
-                and not full_pattern.startswith("/")
-                and not full_pattern.startswith(
-                    ("workspace/", "shared/", "external/")
-                )  # Issue #1572
-                and "/" in full_pattern
-            ):
+            if self._should_prepend_recursive_wildcard(full_pattern):
                 full_pattern = "**/" + full_pattern
         else:
             base_path = path[1:] if path.startswith("/") else path
@@ -1558,14 +1569,7 @@ class SearchService(SemanticSearchMixin):
                     search_path = search_path + "/"
                 if search_path == "/":
                     full_pattern = pattern
-                    if (
-                        "**" not in full_pattern
-                        and not full_pattern.startswith("/")
-                        and not full_pattern.startswith(
-                            ("workspace/", "shared/", "external/")
-                        )  # Issue #1572
-                        and "/" in full_pattern
-                    ):
+                    if self._should_prepend_recursive_wildcard(full_pattern):
                         full_pattern = "**/" + full_pattern
                 else:
                     base_path = search_path[1:] if search_path.startswith("/") else search_path

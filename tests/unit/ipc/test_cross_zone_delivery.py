@@ -135,9 +135,7 @@ class FakePermissionChecker:
 # ── Fixtures ───────────────────────────────────────────────────────────
 
 
-async def _provision_agent(
-    storage: InMemoryStorageDriver, agent_id: str, zone_id: str
-) -> None:
+async def _provision_agent(storage: InMemoryStorageDriver, agent_id: str, zone_id: str) -> None:
     """Set up IPC directory structure for an agent in the given zone."""
     for subdir in ("inbox", "outbox", "processed", "dead_letter"):
         await storage.mkdir(f"/agents/{agent_id}/{subdir}", zone_id)

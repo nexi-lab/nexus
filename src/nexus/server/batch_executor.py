@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
 
 # Default per-operation timeout in seconds.
+# Issue #2071: Sourced from ProfileTuning.network.default_http_timeout at runtime.
+# Kept as module-level fallback for callers without DI tuning.
 DEFAULT_OPERATION_TIMEOUT = 30.0
 
 

@@ -798,7 +798,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 
 #### Recommended Changes
 
-1. **SPLIT P9** (EventsProtocol) → `WatchProtocol` (wait_for_changes) + `LockProtocol` (lock/extend/unlock)
+1. ~~**SPLIT P9**~~ ✓ Done — `WatchProtocol` (`services/protocols/watch.py`) + `LockProtocol` (`services/protocols/lock.py`)
 2. **DEPRECATE P22** (ContextManifestProtocol) — scenario was eliminated; protocol is orchestration, not a true Ops ABC
 3. **EXTEND P20** (AnomalyDetectorProtocol) → `GovernanceProtocol` (add collusion, trust, suspension methods)
 4. **CREATE 8 new Protocols** for missing scenarios (S3, S21-S28)
@@ -818,8 +818,8 @@ Map each surviving scenario (S1-S28) to its canonical Ops ABC (existing or propo
 | **S5** Content Sharing | **P11** ShareLinkProtocol | EXISTS | Service | EXACT | Capability URL CRUD + access logs |
 | **S6** Credential Management | **P12** OAuthProtocol | EXISTS | Service | EXACT | OAuth flow + credential CRUD + MCP connect |
 | **S7** Permission (ReBAC) | **P8** PermissionProtocol | EXISTS | Service | EXACT | 6 core Zanzibar APIs |
-| **S8** File Watching | *(split from P9)* **WatchProtocol** | NEEDS SPLIT | Service | — | Extract `wait_for_changes` from EventsProtocol |
-| **S9** Advisory Locking | *(split from P9)* **LockProtocol** | NEEDS SPLIT | Service | — | Extract `lock/extend_lock/unlock` from EventsProtocol |
+| **S8** File Watching | **WatchProtocol** (split from P9) | EXISTS | Service | EXACT | `services/protocols/watch.py` — inotify-style long-poll |
+| **S9** Advisory Locking | **LockProtocol** (split from P9) | EXISTS | Service | EXACT | `services/protocols/lock.py` — flock-style advisory locks |
 | **S10** Agent Lifecycle | **P14** AgentRegistryProtocol | EXISTS | Service | EXACT | 6 methods: register/get/transition/heartbeat/list/unregister |
 | **S11** Agent Scheduling | **P15** SchedulerProtocol | EXISTS | Service | EXACT | 4 methods: submit/next/cancel/pending_count |
 | **S12** Skill Management | **P16** SkillsProtocol | EXISTS | Service | EXACT | 9 methods: share/discover/subscribe/load/export |
@@ -906,3 +906,30 @@ Tier assignment per KERNEL-ARCHITECTURE.md (three swap tiers):
 - IPC Protocols (I1-I3): keep as brick-local subsets — not primary Ops ABCs
 - NexusFilesystem (F1): keep as composite facade for skills runtime — verified by protocol compat test
 - P2 + P3 + P4 composition: correct ISP pattern — keep all three levels
+
+---
+
+## APPENDIX A: Transport & Infrastructure Details
+
+### A.1 gRPC Proto Services (System Tier)
+
+> SSOT: Proto files in `proto/` define all RPC services.
+
+| Proto Service | Proto File | Scope | Purpose |
+|---------------|-----------|-------|---------|
+| `ZoneTransportService` | `proto/nexus/raft/transport.proto` | Internal | Node-to-node Raft messages (StepMessage, ReplicateEntries) |
+| `ZoneApiService` | `proto/nexus/raft/transport.proto` | Internal | Client-facing zone ops (Propose, Query, GetClusterInfo, JoinZone, InviteZone) |
+| `ExchangeService` | `proto/nexus/exchange/v1/exchange.proto` | External | Agent Exchange API — identity (4 RPCs), payment (8 RPCs), audit (5 RPCs). REST-only Phase 1; Connect-RPC Phase 2/3. |
+
+Named `Zone*` to match `ZoneConsensus` (Rust). IPC Agent Messaging (`src/nexus/ipc/`) uses VFS as transport — see S29.
+
+### A.2 EventBus Backends (User Space Tier)
+
+| Backend | Module | Durability | Notes |
+|---------|--------|-----------|-------|
+| `RedisEventBus` | `services/event_bus/redis.py` | Best-effort (PG operation_log is SSOT) | Current default; Dragonfly/Redis pub/sub |
+| `NatsEventBus` | `services/event_bus/nats.py` | Durable (JetStream ack/nack) | Preferred long-term; 7-day retention |
+| `InMemoryEventBus` | *(not yet implemented)* | Ephemeral | Needed for kernel-only/embedded mode |
+
+All should route through `CacheStoreABC` pub/sub rather than direct client access.
+Federation gap: EventBus is currently zone-local — cross-zone propagation not yet designed.

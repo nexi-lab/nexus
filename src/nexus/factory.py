@@ -1196,7 +1196,7 @@ def _create_distributed_infra(
 
         # Initialize event bus
         if dist.event_bus_backend == "nats":
-            from nexus.core.event_bus import create_event_bus
+            from nexus.services.event_bus.factory import create_event_bus
 
             event_bus = create_event_bus(
                 backend="nats",
@@ -1214,7 +1214,7 @@ def _create_distributed_infra(
             event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
-                from nexus.core.event_bus import RedisEventBus
+                from nexus.services.event_bus.redis import RedisEventBus
 
                 event_client = DragonflyClient(url=event_url_resolved)
                 event_bus = RedisEventBus(

@@ -370,7 +370,8 @@ class TestEventBusIntegration:
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.event_bus import FileEvent, FileEventType, RedisEventBus
+        from nexus.core.event_bus import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
 
         # Connect to Redis on port 7899
         redis_client = DragonflyClient(url="redis://127.0.0.1:1778")
@@ -416,7 +417,8 @@ class TestEventBusIntegration:
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.event_bus import FileEvent, FileEventType, RedisEventBus
+        from nexus.core.event_bus import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
 
         # Connect to Redis on port 7899
         redis_client = DragonflyClient(url="redis://127.0.0.1:1778")

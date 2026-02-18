@@ -371,7 +371,7 @@ class MCPService:
     async def mcp_unmount(
         self,
         name: str,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Unmount an MCP server.
 

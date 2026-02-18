@@ -923,6 +923,16 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except Exception as _tq_exc:
         logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
+    # --- AdminStoreService (violationfix #129: kernel must not import ORM models) ---
+    admin_store: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.services.admin_store import AdminStoreService
+
+            admin_store = AdminStoreService(session_factory=ctx.session_factory)
+        except ImportError as _admin_exc:
+            logger.debug("[BOOT:BRICK] AdminStoreService unavailable: %s", _admin_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -935,6 +945,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
         "task_queue_service": task_queue_service,
+        "admin_store": admin_store,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1119,6 +1130,7 @@ def create_nexus_services(
         api_key_creator=brick["api_key_creator"],
         snapshot_service=brick["snapshot_service"],
         task_queue_service=brick["task_queue_service"],
+        admin_store=brick["admin_store"],
     )
 
 

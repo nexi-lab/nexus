@@ -26,13 +26,13 @@ from nexus.core.permissions import (
 from nexus.rebac.manager import (
     CheckResult,
     ConsistencyLevel,
-    ConsistencyMode,
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,
     WriteResult,
 )
+from nexus.rebac.types import ConsistencyMode
 
 # ---------------------------------------------------------------------------
 # Helpers

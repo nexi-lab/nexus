@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from nexus.core.rebac import NamespaceConfig
-    from nexus.rebac.tiger_cache import TigerCache
+    from nexus.rebac.cache.tiger import TigerCache
 
 logger = logging.getLogger(__name__)
 
@@ -661,7 +661,7 @@ class BulkPermissionChecker:
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
     ) -> bool:
         """Phase 2a: Try Rust acceleration. Returns True if successful."""
-        from nexus.rebac.rebac_fast import (
+        from nexus.rebac.utils.fast import (
             check_permissions_bulk_with_fallback,
             is_rust_available,
         )
@@ -821,7 +821,7 @@ class BulkPermissionChecker:
             if result:
                 try:
                     resource_int_id = self._tiger_cache._resource_map.get_or_create_int_id(
-                        obj[0], obj[1], zone_id
+                        obj[0], obj[1]
                     )
                     if resource_int_id > 0:
                         group_key = (subject[0], subject[1], permission, obj[0], zone_id)

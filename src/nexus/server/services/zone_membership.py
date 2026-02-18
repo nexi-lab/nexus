@@ -10,12 +10,7 @@ part of the server composition layer (not a standalone brick).
 from __future__ import annotations
 
 import contextlib
-from datetime import UTC, datetime
 from typing import Any
-
-from sqlalchemy.orm import Session
-
-from nexus.storage.models import UserModel
 
 # ==============================================================================
 # ReBAC Group Naming Helpers
@@ -243,84 +238,3 @@ def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool
             return cursor.fetchone() is not None
     except Exception:
         return False
-
-
-# ==============================================================================
-# Default Zone Selection
-# ==============================================================================
-
-
-def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
-    """Get user's default zone.
-
-    Priority:
-    1. User's session preference (stored in session/cookie) - TODO
-    2. First zone in membership list
-    3. None if user has no zones
-    """
-    zone_ids = get_user_zones(rebac_manager, user_id)
-    if not zone_ids:
-        return None
-    return zone_ids[0]
-
-
-def require_zone_context(
-    rebac_manager: Any,
-    user_id: str,
-    zone_id: str | None,
-    session: Session,
-    auto_create: bool = False,
-) -> str:
-    """Require zone context for operation.
-
-    If zone_id not provided, use default zone.
-
-    Raises:
-        ValueError: If user has no zone memberships and auto_create=False
-    """
-    if zone_id:
-        if not user_belongs_to_zone(rebac_manager, user_id, zone_id):
-            raise ValueError(f"User {user_id} does not belong to zone {zone_id}")
-        return zone_id
-
-    default_zone = get_user_default_zone(rebac_manager, user_id, session)
-    if default_zone:
-        return default_zone
-
-    if auto_create:
-        raise ValueError(
-            f"User {user_id} has no zone memberships. Auto-create not yet implemented."
-        )
-    else:
-        raise ValueError(f"User {user_id} has no zone memberships")
-
-
-# ==============================================================================
-# User Soft Delete
-# ==============================================================================
-
-
-def soft_delete_user(session: Session, user_id: str) -> UserModel | None:
-    """Soft delete a user (sets is_active=0 and deleted_at=now())."""
-    user = session.get(UserModel, user_id)
-    if not user:
-        return None
-
-    user.is_active = 0
-    user.deleted_at = datetime.now(UTC)
-    session.add(user)
-    session.flush()
-    return user
-
-
-def restore_user(session: Session, user_id: str) -> UserModel | None:
-    """Restore a soft-deleted user (sets is_active=1 and deleted_at=None)."""
-    user = session.get(UserModel, user_id)
-    if not user:
-        return None
-
-    user.is_active = 1
-    user.deleted_at = None
-    session.add(user)
-    session.flush()
-    return user

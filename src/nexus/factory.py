@@ -668,13 +668,30 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
 
+    # --- Hook Engine chain: PluginHooks → AsyncHookEngine → ScopedHookEngine (Issue #1257) ---
+    scoped_hook_engine: Any = None
+    try:
+        from nexus.plugins.async_hooks import AsyncHookEngine
+        from nexus.plugins.hooks import PluginHooks
+        from nexus.services.hook_engine import ScopedHookEngine
+
+        plugin_hooks = PluginHooks()
+        async_hook_engine = AsyncHookEngine(inner=plugin_hooks)
+        scoped_hook_engine = ScopedHookEngine(inner=async_hook_engine)
+        logger.debug("[BOOT:SYSTEM] ScopedHookEngine created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] ScopedHookEngine unavailable: %s", exc)
+
     # --- Brick Lifecycle Manager (Issue #1704) ---
     brick_lifecycle_manager: Any = None
     try:
         from nexus.services.brick_lifecycle import BrickLifecycleManager
 
-        brick_lifecycle_manager = BrickLifecycleManager()
-        logger.debug("[BOOT:SYSTEM] BrickLifecycleManager created")
+        brick_lifecycle_manager = BrickLifecycleManager(hook_engine=scoped_hook_engine)
+        logger.debug(
+            "[BOOT:SYSTEM] BrickLifecycleManager created (hook_engine=%s)",
+            "enabled" if scoped_hook_engine else "disabled",
+        )
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
 
@@ -691,6 +708,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
+        "scoped_hook_engine": scoped_hook_engine,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1103,6 +1121,7 @@ def create_nexus_services(
         async_vfs_router=system["async_vfs_router"],
         resiliency_manager=system["resiliency_manager"],
         brick_lifecycle_manager=system.get("brick_lifecycle_manager"),
+        scoped_hook_engine=system.get("scoped_hook_engine"),
         # Brick tier
         overlay_resolver=None,
         wallet_provisioner=brick["wallet_provisioner"],

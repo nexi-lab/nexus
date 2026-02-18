@@ -32,6 +32,7 @@ import uuid
 
 import pytest
 
+from nexus.core.config import CacheConfig, DistributedConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -122,12 +123,10 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
             metadata_store=RaftMetadataStore.embedded(str(db_path_agent1).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent1),
             is_admin=True,  # Bypass router access checks
-            enforce_permissions=False,  # Disable permissions for testing
-            enforce_zone_isolation=False,  # Disable zone isolation for testing
+            permissions=PermissionConfig(enforce=False, enforce_zone_isolation=False),
             zone_id="test",  # Explicit zone for consistent event routing
-            enable_content_cache=True,  # Enable cache with invalidation
-            enable_metadata_cache=True,  # Enable cache with invalidation
-            enable_distributed_locks=True,  # Uses Raft-based locks via RaftMetadataStore
+            cache=CacheConfig(enable_content_cache=True, enable_metadata_cache=True),
+            distributed=DistributedConfig(enable_locks=True),
         )
 
     # Use shared event bus (same Redis connection = events propagate)
@@ -164,12 +163,10 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
             metadata_store=RaftMetadataStore.embedded(str(db_path_agent2).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent2),
             is_admin=True,  # Bypass router access checks
-            enforce_permissions=False,  # Disable permissions for testing
-            enforce_zone_isolation=False,  # Disable zone isolation for testing
+            permissions=PermissionConfig(enforce=False, enforce_zone_isolation=False),
             zone_id="test",  # Explicit zone for consistent event routing
-            enable_content_cache=True,  # Enable cache with invalidation
-            enable_metadata_cache=True,  # Enable cache with invalidation
-            enable_distributed_locks=True,  # Uses Raft-based locks via RaftMetadataStore
+            cache=CacheConfig(enable_content_cache=True, enable_metadata_cache=True),
+            distributed=DistributedConfig(enable_locks=True),
         )
 
     # Use shared event bus (same Redis connection = events propagate)

@@ -14,6 +14,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -44,7 +45,7 @@ def app_and_key(tmp_path):
         metadata_store=metadata_store,
         record_store=record_store,
         is_admin=True,
-        enable_tiger_cache=False,
+        permissions=PermissionConfig(enable_tiger_cache=False),
     )
 
     api_key = "test-observability-key"

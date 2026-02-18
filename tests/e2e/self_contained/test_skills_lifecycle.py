@@ -13,6 +13,7 @@ import zipfile
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -101,7 +102,7 @@ def nexus_fs(isolated_db, tmp_path):
             )
         ),
         record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
-        enforce_permissions=False,  # Disable permissions for testing
+        permissions=PermissionConfig(enforce=False),  # Disable permissions for testing
     )
     yield nx
     nx.close()

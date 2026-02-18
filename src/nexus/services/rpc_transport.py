@@ -122,7 +122,7 @@ class NexusRPCTransport:
             RPCError: Server returned an error response
         """
         # Import codec and protocol types from core/ (Issue #1519, 1A)
-        from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
+        from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
         from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
 
         request = RPCRequest(

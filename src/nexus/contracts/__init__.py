@@ -54,6 +54,7 @@ from nexus.contracts.exceptions import (
     ValidationError,
 )
 from nexus.contracts.registry import BaseRegistry, BrickInfo, BrickRegistry
+from nexus.contracts.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
 from nexus.contracts.types import (
     ContextIdentity,
     OperationContext,
@@ -62,6 +63,10 @@ from nexus.contracts.types import (
 )
 
 __all__ = [
+    # RPC codec
+    "RPCEncoder",
+    "decode_rpc_message",
+    "encode_rpc_message",
     # Registry
     "BaseRegistry",
     "BrickInfo",

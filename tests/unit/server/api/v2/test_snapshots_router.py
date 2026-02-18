@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core.metadata import FileMetadata
 from nexus.server.api.v2.routers.snapshots import router
 from nexus.services.transactional_snapshot import TransactionalSnapshotService
 from nexus.storage.models._base import Base

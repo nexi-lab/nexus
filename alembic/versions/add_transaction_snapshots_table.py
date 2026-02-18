@@ -18,7 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_transaction_snapshots"
-down_revision: Union[str, Sequence[str], None] = "add_seq_number_dlq"
+down_revision: Union[str, Sequence[str], None] = "101ea1909580"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

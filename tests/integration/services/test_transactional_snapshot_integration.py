@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core.metadata import FileMetadata
 from nexus.services.protocols.transactional_snapshot import (
     OverlappingTransactionError,
     TransactionConfig,

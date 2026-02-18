@@ -44,7 +44,7 @@ from nexus.storage.models.transactional_snapshot import TransactionSnapshotModel
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class TransactionalSnapshotService:
 
     def __init__(
         self,
-        metadata_store: FileMetadataProtocol,
+        metadata_store: MetastoreABC,
         session_factory: Callable[..., Any],
         event_log: Any | None = None,
         config: TransactionConfig | None = None,
@@ -455,7 +455,7 @@ def _serialize_metadata(meta: Any) -> str:
 
 def _deserialize_to_metadata(ps: PathSnapshot) -> Any:
     """Reconstruct a FileMetadata-like object from PathSnapshot."""
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
     if ps.metadata_json:
         data = json.loads(ps.metadata_json)

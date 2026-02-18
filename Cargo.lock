@@ -687,6 +687,7 @@ dependencies = [
  "blake3",
  "bloomfilter",
  "crc32fast",
+ "criterion",
  "dashmap",
  "encoding_rs",
  "globset",

@@ -65,7 +65,7 @@ def gateway(mock_fs):
 def context():
     """Standard operation context."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_system=False,

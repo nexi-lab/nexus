@@ -74,7 +74,7 @@ def mount_service(mock_router, mock_mount_manager, mock_nexus_fs):
 def operation_context():
     """Standard operation context for tests."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_system=False,
@@ -186,7 +186,7 @@ class TestListMounts:
         mock_nexus_fs.rebac_check.return_value = False
 
         admin_ctx = OperationContext(
-            user="admin_user",
+            user_id="admin_user",
             groups=[],
             zone_id="test_zone",
             is_admin=True,

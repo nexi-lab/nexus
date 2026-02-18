@@ -1023,7 +1023,7 @@ class NexusFSCoreMixin:
             from nexus.core.permissions import OperationContext
 
             read_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
         # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
@@ -1974,7 +1974,7 @@ class NexusFSCoreMixin:
             from nexus.core.permissions import OperationContext
 
             context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
         content_hash = route.backend.write_content(content, context=context).unwrap()
 
@@ -1992,7 +1992,7 @@ class NexusFSCoreMixin:
         # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
         # Issue #920: Set owner_id for O(1) permission checks (only on new files)
         ctx = context if context is not None else self._default_context
-        owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user)
+        owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
 
         metadata = FileMetadata(
             path=path,
@@ -2072,8 +2072,8 @@ class NexusFSCoreMixin:
             # Owner can still access file immediately via owner_id fast-path
             try:
                 deferred_buffer.queue_hierarchy(path, ctx.zone_id or "root")
-                if meta is None and ctx.user and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.zone_id or "root")
+                if meta is None and ctx.user_id and not ctx.is_system:
+                    deferred_buffer.queue_owner_grant(ctx.user_id, path, ctx.zone_id or "root")
             except Exception as e:
                 logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
         else:
@@ -2095,18 +2095,18 @@ class NexusFSCoreMixin:
             # Issue #548: Grant direct_owner permission to the user who created the file
             if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
                 try:
-                    if ctx.user and not ctx.is_system:
+                    if ctx.user_id and not ctx.is_system:
                         logger.debug(
-                            f"write: Granting direct_owner permission to {ctx.user} for {path}"
+                            f"write: Granting direct_owner permission to {ctx.user_id} for {path}"
                         )
                         self._rebac_manager.rebac_write(
-                            subject=("user", ctx.user),
+                            subject=("user", ctx.user_id),
                             relation="direct_owner",
                             object=("file", path),
                             zone_id=ctx.zone_id or "root",
                         )
                         logger.debug(
-                            f"write: Granted direct_owner permission to {ctx.user} for {path}"
+                            f"write: Granted direct_owner permission to {ctx.user_id} for {path}"
                         )
                 except Exception as e:
                     logger.warning(
@@ -2772,7 +2772,7 @@ class NexusFSCoreMixin:
         if (
             hasattr(self, "_rebac_manager")
             and self._rebac_manager
-            and ctx.user
+            and ctx.user_id
             and not ctx.is_system
         ):
             # Collect all owner grants needed for new files
@@ -2782,7 +2782,7 @@ class NexusFSCoreMixin:
                 if is_new_file:
                     owner_grants.append(
                         {
-                            "subject": ("user", ctx.user),
+                            "subject": ("user", ctx.user_id),
                             "relation": "direct_owner",
                             "object": ("file", path),
                             "zone_id": zone_id_for_perms,
@@ -3555,7 +3555,7 @@ class NexusFSCoreMixin:
                     has_permission = self._has_descendant_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]
                 if not has_permission:
                     raise PermissionError(
-                        f"Access denied: User '{ctx.user}' does not have TRAVERSE "
+                        f"Access denied: User '{ctx.user_id}' does not have TRAVERSE "
                         f"permission for '{path}'"
                     )
         else:

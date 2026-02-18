@@ -28,7 +28,7 @@ class TestAsyncPermissionEnforcer:
     async def test_check_permission_system_bypass(self) -> None:
         """Test that system context bypasses all checks."""
         enforcer = AsyncPermissionEnforcer()
-        context = OperationContext(user="system", groups=[], is_system=True)
+        context = OperationContext(user_id="system", groups=[], is_system=True)
 
         result = await enforcer.check_permission("/test.txt", Permission.READ, context)
         assert result is True
@@ -37,7 +37,7 @@ class TestAsyncPermissionEnforcer:
     async def test_check_permission_admin_bypass(self) -> None:
         """Test that admin context bypasses all checks."""
         enforcer = AsyncPermissionEnforcer()
-        context = OperationContext(user="admin", groups=[], is_admin=True)
+        context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         result = await enforcer.check_permission("/test.txt", Permission.WRITE, context)
         assert result is True
@@ -46,7 +46,7 @@ class TestAsyncPermissionEnforcer:
     async def test_check_permission_no_rebac_permissive(self) -> None:
         """Test that without ReBAC manager, permissions are permissive."""
         enforcer = AsyncPermissionEnforcer()
-        context = OperationContext(user="alice", groups=[])
+        context = OperationContext(user_id="alice", groups=[])
 
         result = await enforcer.check_permission("/test.txt", Permission.READ, context)
         assert result is True
@@ -55,7 +55,7 @@ class TestAsyncPermissionEnforcer:
     async def test_filter_paths_empty(self) -> None:
         """Test filtering empty path list."""
         enforcer = AsyncPermissionEnforcer()
-        context = OperationContext(user="alice", groups=[])
+        context = OperationContext(user_id="alice", groups=[])
 
         result = await enforcer.filter_paths_by_permission([], context)
         assert result == []
@@ -64,7 +64,7 @@ class TestAsyncPermissionEnforcer:
     async def test_filter_paths_system_bypass(self) -> None:
         """Test that system context gets all paths."""
         enforcer = AsyncPermissionEnforcer()
-        context = OperationContext(user="system", groups=[], is_system=True)
+        context = OperationContext(user_id="system", groups=[], is_system=True)
         paths = ["/a.txt", "/b.txt", "/c.txt"]
 
         result = await enforcer.filter_paths_by_permission(paths, context)
@@ -74,7 +74,7 @@ class TestAsyncPermissionEnforcer:
     async def test_filter_paths_admin_bypass(self) -> None:
         """Test that admin context gets all paths."""
         enforcer = AsyncPermissionEnforcer()
-        context = OperationContext(user="admin", groups=[], is_admin=True)
+        context = OperationContext(user_id="admin", groups=[], is_admin=True)
         paths = ["/a.txt", "/b.txt", "/c.txt"]
 
         result = await enforcer.filter_paths_by_permission(paths, context)
@@ -84,7 +84,7 @@ class TestAsyncPermissionEnforcer:
     async def test_filter_paths_no_rebac_permissive(self) -> None:
         """Test that without ReBAC manager, all paths are returned."""
         enforcer = AsyncPermissionEnforcer()
-        context = OperationContext(user="alice", groups=[])
+        context = OperationContext(user_id="alice", groups=[])
         paths = ["/a.txt", "/b.txt", "/c.txt"]
 
         result = await enforcer.filter_paths_by_permission(paths, context)

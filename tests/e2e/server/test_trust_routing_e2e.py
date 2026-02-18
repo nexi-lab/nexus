@@ -78,8 +78,6 @@ def agent_registry(session_factory, entity_registry):
 def reputation_service(session_factory):
     return ReputationService(
         session_factory=session_factory,
-        cache_maxsize=100,
-        cache_ttl=0,  # no caching for test determinism
     )
 
 

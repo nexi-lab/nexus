@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 import types
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -37,7 +36,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import sqlalchemy as sa
-from cachetools import TTLCache
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
@@ -95,12 +93,11 @@ class StaleAgentError(Exception):
         )
 
 
-# Sentinel for cache miss (distinguishes "agent not found" from "not cached")
-_CACHE_MISS = object()
-
-
 class AgentRegistry:
     """Agent registry with lifecycle state machine and session generation counters.
+
+    Federation-safe: no process-local caches or locks.
+    All reads go directly to the database.
 
     Heartbeat buffering is delegated to :class:`HeartbeatBuffer` (Issue #1589).
     Database operations use session-per-operation pattern (no held sessions).
@@ -109,8 +106,6 @@ class AgentRegistry:
         session_factory: SQLAlchemy sessionmaker for database access.
         entity_registry: Optional EntityRegistry for backward compatibility bridge.
         flush_interval: Seconds between heartbeat buffer flushes (default: 60).
-        cache_maxsize: Max entries in the get() TTLCache (default: 5000).
-        cache_ttl: TTL in seconds for cached records (default: 10).
         max_buffer_size: Hard cap on heartbeat buffer entries (default: 50_000).
     """
 
@@ -119,22 +114,10 @@ class AgentRegistry:
         session_factory: sessionmaker[Session],
         entity_registry: Any = None,
         flush_interval: int = 60,
-        cache_maxsize: int = 5000,
-        cache_ttl: int = 10,
         max_buffer_size: int = 50_000,
     ) -> None:
         self._session_factory = session_factory
         self._entity_registry = entity_registry
-        self._known_agents: TTLCache[str, bool] = TTLCache(maxsize=10_000, ttl=3600)
-        self._lock = threading.Lock()  # protects _known_agents only
-        # TTLCache for get() lookups to avoid per-request DB hits.
-        # cachetools.TTLCache is NOT thread-safe — all access must be
-        # synchronized via _cache_lock (see cachetools docs & issue #294).
-        self._cache_lock = threading.Lock()
-        self._record_cache: TTLCache[str, AgentRecord | None] = TTLCache(
-            maxsize=cache_maxsize,
-            ttl=cache_ttl,
-        )
         # Heartbeat buffer composed via DI (Issue #1589)
         self._heartbeat_buffer = HeartbeatBuffer(
             flush_callback=self._flush_to_db,
@@ -235,10 +218,6 @@ class AgentRegistry:
 
             record = self._model_to_record(model)
 
-        # Track known agents for heartbeat fast-path
-        with self._lock:
-            self._known_agents[agent_id] = True
-
         # Bridge: also register in entity_registry if available
         if self._entity_registry is not None:
             try:
@@ -266,36 +245,21 @@ class AgentRegistry:
     def get(self, agent_id: str) -> AgentRecord | None:
         """Get an agent record by ID.
 
-        Uses a TTLCache to avoid per-request DB hits. Cache is invalidated
-        on transition() and unregister(). All cache access is synchronized
-        via _cache_lock (cachetools.TTLCache is NOT thread-safe).
-
         Args:
             agent_id: Agent identifier.
 
         Returns:
             AgentRecord if found, None otherwise.
         """
-        with self._cache_lock:
-            cached = self._record_cache.get(agent_id, _CACHE_MISS)
-        if cached is not _CACHE_MISS:
-            return cast("AgentRecord | None", cached)
-
         with self._get_session() as session:
             model = session.execute(
                 select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
             ).scalar_one_or_none()
 
             if model is None:
-                with self._cache_lock:
-                    self._record_cache[agent_id] = None
                 return None
 
-            record = self._model_to_record(model)
-
-        with self._cache_lock:
-            self._record_cache[agent_id] = record
-        return record
+            return self._model_to_record(model)
 
     def transition(
         self,
@@ -394,10 +358,6 @@ class AgentRegistry:
                 context_manifest=tuple(manifest_list),
             )
 
-        # Invalidate cache after transition
-        with self._cache_lock:
-            self._record_cache.pop(agent_id, None)
-
         logger.debug(
             "[AGENT-REG] Transition %s: %s -> %s (gen %d -> %d)",
             agent_id,
@@ -424,26 +384,15 @@ class AgentRegistry:
         is flushed to DB when the flush_interval elapses. This reduces write
         amplification from frequent heartbeats.
 
-        On the first call for a given agent_id, verifies existence via DB.
-        Subsequent calls use a TTLCache of known agent IDs for fast-path
-        (single-acquisition, Decision #2B).
-
         Args:
             agent_id: Agent identifier.
 
         Raises:
             ValueError: If agent not found.
         """
-        # Single-acquisition fast path for known agents
-        with self._lock:
-            known = agent_id in self._known_agents
-
-        if not known:
-            record = self.get(agent_id)
-            if record is None:
-                raise ValueError(f"Agent '{agent_id}' not found")
-            with self._lock:
-                self._known_agents[agent_id] = True
+        record = self.get(agent_id)
+        if record is None:
+            raise ValueError(f"Agent '{agent_id}' not found")
 
         self._heartbeat_buffer.record(agent_id)
 
@@ -580,12 +529,8 @@ class AgentRegistry:
                 )
                 raise
 
-        # Remove from heartbeat buffer, known agents, and record cache
+        # Remove from heartbeat buffer
         self._heartbeat_buffer.remove(agent_id)
-        with self._lock:
-            self._known_agents.pop(agent_id, None)
-        with self._cache_lock:
-            self._record_cache.pop(agent_id, None)
 
         logger.debug("[AGENT-REG] Unregistered agent %s", agent_id)
         return True
@@ -633,10 +578,6 @@ class AgentRegistry:
                 select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
             ).scalar_one()
             record = self._model_to_record(refreshed)
-
-        # Invalidate cache
-        with self._cache_lock:
-            self._record_cache.pop(agent_id, None)
 
         logger.debug(
             "[AGENT-REG] Updated manifest for agent %s (%d sources)",

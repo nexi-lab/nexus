@@ -70,7 +70,7 @@ def get_user_identity(context: Any) -> tuple[str, str | None]:
     subject_id = (
         getattr(context, "subject_id", None)
         or getattr(context, "user_id", None)
-        or getattr(context, "user", None)
+        or getattr(context, "user_id", None)
     )
     return (subject_type, subject_id)
 

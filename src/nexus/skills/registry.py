@@ -91,7 +91,7 @@ class SkillRegistry:
             paths["zone"] = f"/zone/{zone_id}/skill/"
 
             # Check user_id first (v0.5.0+), then fall back to user (legacy field)
-            user_id = context.user_id or getattr(context, "user", None)
+            user_id = context.user_id
             if user_id:
                 # Personal skills: /zone/{tid}/user/{uid}/skill/
                 paths["personal"] = f"/zone/{zone_id}/user/{user_id}/skill/"

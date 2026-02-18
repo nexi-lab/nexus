@@ -82,7 +82,7 @@ class AuditLogEntry:
 
     timestamp: str
     request_id: str
-    user: str
+    user_id: str
     zone_id: str | None
     path: str
     permission: str
@@ -96,7 +96,7 @@ class AuditLogEntry:
         return {
             "timestamp": self.timestamp,
             "request_id": self.request_id,
-            "user": self.user,
+            "user_id": self.user_id,
             "zone_id": self.zone_id,
             "path": self.path,
             "permission": self.permission,
@@ -302,7 +302,7 @@ class AuditStore:
                     str(uuid.uuid4()),
                     entry.timestamp,
                     entry.request_id,
-                    entry.user,
+                    entry.user_id,
                     entry.zone_id,
                     entry.path,
                     entry.permission,

@@ -105,19 +105,19 @@ class TestGetSubjectFromContext:
 
         assert result == ("agent", "bob")
 
-    def test_dict_with_user_key_fallback(self):
-        """Falls back to 'user' key in dict when subject fields are missing."""
+    def test_dict_with_user_id_key(self):
+        """Extracts from 'user_id' key in dict when subject fields are missing."""
         fs = MockNexusFS()
-        context = {"user": "charlie"}
+        context = {"user_id": "charlie"}
 
         result = fs._get_subject_from_context(context)
 
         assert result == ("user", "charlie")
 
-    def test_dict_with_subject_type_without_id_uses_user(self):
-        """Uses 'user' field as subject_id when subject_id is missing."""
+    def test_dict_with_subject_type_without_id_uses_user_id(self):
+        """Uses 'user_id' field as subject_id when subject_id is missing."""
         fs = MockNexusFS()
-        context = {"subject_type": "agent", "user": "dave"}
+        context = {"subject_type": "agent", "user_id": "dave"}
 
         result = fs._get_subject_from_context(context)
 
@@ -159,7 +159,7 @@ class TestGetSubjectFromContext:
         """Extracts subject from object with only user attribute."""
         fs = MockNexusFS()
         mock_context = Mock(spec=["user"])
-        mock_context.user = "eve"
+        mock_context.user_id = "eve"
 
         result = fs._get_subject_from_context(mock_context)
 
@@ -202,7 +202,7 @@ class TestCheckSharePermission:
         resource = ("file", "/test/doc.txt")
         # Pass OperationContext directly
         context = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
         )
@@ -218,7 +218,7 @@ class TestCheckSharePermission:
         resource = ("file", "/test/doc.txt")
         # Pass OperationContext directly
         context = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             is_system=True,
         )
@@ -236,7 +236,7 @@ class TestCheckSharePermission:
 
         resource = ("workspace", "project1")
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
         )
 
@@ -259,7 +259,7 @@ class TestCheckSharePermission:
 
         resource = ("group", "developers")
         context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
         )
 

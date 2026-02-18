@@ -45,7 +45,6 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from cachetools import TTLCache as _TTLCache
 from fuse import FuseOSError, Operations
 
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
@@ -301,16 +300,6 @@ class NexusFUSEOperations(Operations):
             except Exception as e:
                 logger.warning(f"[FUSE] Failed to initialize LocalDiskCache: {e}")
 
-        # Initialize readdir cache for faster directory listing (P2-B: bounded TTLCache)
-        # Caches directory contents with short TTL to avoid repeated network calls.
-        # Issue #1305: Key is (path, subject_type, subject_id) when context is set,
-        # so different agents get isolated cache entries.
-        dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
-        self._dir_cache: _TTLCache[str | tuple[str, str, str], list[str]] = _TTLCache(
-            maxsize=1024, ttl=dir_cache_ttl
-        )
-        self._dir_cache_lock = threading.RLock()
-
         # Initialize readahead manager for sequential read optimization (Issue #1073)
         # Proactively prefetches data to warm L1/L2 caches
         self._readahead: ReadaheadManager | None = None
@@ -430,17 +419,6 @@ class NexusFUSEOperations(Operations):
         except Exception as e:
             logger.warning(f"[FUSE-{op_name}] Rust failed: {e}, using Python")
             return (False, None)
-
-    def _dir_cache_key(self, path: str) -> str | tuple[str, str, str]:
-        """Build context-aware dir cache key (Issue #1305).
-
-        When a context is set, includes (subject_type, subject_id) so different
-        agents get isolated cache entries. Without context, uses plain path.
-        """
-        if self._context is not None:
-            subj_type, subj_id = self._context.get_subject()
-            return (path, subj_type, subj_id)
-        return path
 
     def _check_namespace_visible(self, path: str) -> None:
         """Pre-flight namespace visibility check for mutating operations (Issue #1305).
@@ -759,17 +737,6 @@ class NexusFUSEOperations(Operations):
         """
         start_time = time.time()
 
-        # Check readdir cache first (fast path, P2-B: TTLCache handles expiry)
-        # Issue #1305: Use context-aware key so different agents get isolated caches
-        cache_key = self._dir_cache_key(path)
-        with self._dir_cache_lock:
-            cached_entries = self._dir_cache.get(cache_key)
-        if cached_entries is not None:
-            logger.info(
-                f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
-            )
-            return cached_entries
-
         logger.info(f"[FUSE-PERF] readdir START: path={path}")
 
         # Standard directory entries
@@ -788,8 +755,6 @@ class NexusFUSEOperations(Operations):
                 f"[FUSE-PERF] readdir DONE via RUST: path={path}, "
                 f"{len(entries)} entries, {elapsed:.3f}s"
             )
-            with self._dir_cache_lock:
-                self._dir_cache[cache_key] = entries
             return entries
 
         # List files in directory (non-recursive) - returns list[dict] with details
@@ -874,10 +839,6 @@ class NexusFUSEOperations(Operations):
         logger.info(
             f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, {total_elapsed:.3f}s total"
         )
-
-        # Cache the result for subsequent calls (P2-B: TTLCache, context-aware key)
-        with self._dir_cache_lock:
-            self._dir_cache[cache_key] = entries
 
         return entries
 

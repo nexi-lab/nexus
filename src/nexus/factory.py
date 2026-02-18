@@ -92,6 +92,7 @@ class _BootContext:
     enable_write_buffer: bool | None
     resiliency_raw: dict[str, Any] | None
     db_url: str
+    profile_tuning: Any  # ProfileTuning (Issue #2071)
 
 
 # =========================================================================
@@ -510,7 +511,12 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         if use_buffer:
             from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
 
-            write_observer = BufferedRecordStoreSyncer(ctx.session_factory)
+            _st = ctx.profile_tuning.storage
+            write_observer = BufferedRecordStoreSyncer(
+                ctx.session_factory,
+                flush_interval_ms=_st.write_buffer_flush_ms,
+                max_buffer_size=_st.write_buffer_max_size,
+            )
         else:
             from nexus.storage.record_store_syncer import RecordStoreSyncer
 
@@ -668,13 +674,30 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
 
+    # --- Hook Engine chain: PluginHooks → AsyncHookEngine → ScopedHookEngine (Issue #1257) ---
+    scoped_hook_engine: Any = None
+    try:
+        from nexus.plugins.async_hooks import AsyncHookEngine
+        from nexus.plugins.hooks import PluginHooks
+        from nexus.services.hook_engine import ScopedHookEngine
+
+        plugin_hooks = PluginHooks()
+        async_hook_engine = AsyncHookEngine(inner=plugin_hooks)
+        scoped_hook_engine = ScopedHookEngine(inner=async_hook_engine)
+        logger.debug("[BOOT:SYSTEM] ScopedHookEngine created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] ScopedHookEngine unavailable: %s", exc)
+
     # --- Brick Lifecycle Manager (Issue #1704) ---
     brick_lifecycle_manager: Any = None
     try:
         from nexus.services.brick_lifecycle import BrickLifecycleManager
 
-        brick_lifecycle_manager = BrickLifecycleManager()
-        logger.debug("[BOOT:SYSTEM] BrickLifecycleManager created")
+        brick_lifecycle_manager = BrickLifecycleManager(hook_engine=scoped_hook_engine)
+        logger.debug(
+            "[BOOT:SYSTEM] BrickLifecycleManager created (hook_engine=%s)",
+            "enabled" if scoped_hook_engine else "disabled",
+        )
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
 
@@ -691,6 +714,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
+        "scoped_hook_engine": scoped_hook_engine,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1028,9 +1052,9 @@ def create_nexus_services(
     from nexus.core.config import PermissionConfig as _PermissionConfig
 
     # --- Profile-based brick gating (Issue #1389) ---
-    if enabled_bricks is None:
-        from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.core.deployment_profile import DeploymentProfile
 
+    if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
 
     def _brick_on(name: str) -> bool:
@@ -1042,6 +1066,18 @@ def create_nexus_services(
         20,
         sorted(enabled_bricks),
     )
+
+    # --- Performance tuning (Issue #2071) ---
+    import os
+
+    from nexus.core.performance_tuning import resolve_profile_tuning
+
+    _profile_str = os.environ.get("NEXUS_PROFILE", "full")
+    try:
+        _factory_profile = DeploymentProfile(_profile_str)
+    except ValueError:
+        _factory_profile = DeploymentProfile.FULL
+    _profile_tuning = resolve_profile_tuning(_factory_profile)
 
     perm = permissions or _PermissionConfig()
     cache_cfg = cache or _CacheConfig()
@@ -1063,6 +1099,7 @@ def create_nexus_services(
         enable_write_buffer=enable_write_buffer,
         resiliency_raw=resiliency_raw,
         db_url=getattr(record_store, "database_url", ""),
+        profile_tuning=_profile_tuning,
     )
 
     # --- Tier 0: KERNEL (fatal on failure) ---
@@ -1103,6 +1140,7 @@ def create_nexus_services(
         async_vfs_router=system["async_vfs_router"],
         resiliency_manager=system["resiliency_manager"],
         brick_lifecycle_manager=system.get("brick_lifecycle_manager"),
+        scoped_hook_engine=system.get("scoped_hook_engine"),
         # Brick tier
         overlay_resolver=None,
         wallet_provisioner=brick["wallet_provisioner"],
@@ -1158,7 +1196,7 @@ def _create_distributed_infra(
 
         # Initialize event bus
         if dist.event_bus_backend == "nats":
-            from nexus.core.event_bus import create_event_bus
+            from nexus.services.event_bus.factory import create_event_bus
 
             event_bus = create_event_bus(
                 backend="nats",
@@ -1176,7 +1214,7 @@ def _create_distributed_infra(
             event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
-                from nexus.core.event_bus import RedisEventBus
+                from nexus.services.event_bus.redis import RedisEventBus
 
                 event_client = DragonflyClient(url=event_url_resolved)
                 event_bus = RedisEventBus(

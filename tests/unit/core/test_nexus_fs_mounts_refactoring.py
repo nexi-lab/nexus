@@ -184,7 +184,7 @@ class TestSyncMountContext:
     def test_sync_mount_context_with_operation_context(self) -> None:
         """Test creating SyncMountContext with operation context."""
         op_context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -352,7 +352,7 @@ class TestSyncMountIntegration:
 
         # Create operation context (with admin to bypass permission check on sync)
         op_context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",

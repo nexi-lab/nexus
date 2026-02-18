@@ -266,7 +266,7 @@ class TestEnableReadTrackingStandalone:
         from nexus.contracts.types import OperationContext
         from nexus.core.read_set import enable_read_tracking
 
-        ctx = OperationContext(user="alice", groups=[], zone_id="org1")
+        ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
         enable_read_tracking(ctx)
         assert ctx.track_reads is True
         assert ctx.read_set is not None
@@ -276,7 +276,7 @@ class TestEnableReadTrackingStandalone:
         from nexus.contracts.types import OperationContext
         from nexus.core.read_set import enable_read_tracking
 
-        ctx = OperationContext(user="alice", groups=[], zone_id="org1")
+        ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
         enable_read_tracking(ctx, zone_id="custom_zone")
         assert ctx.read_set.zone_id == "custom_zone"
 
@@ -284,6 +284,6 @@ class TestEnableReadTrackingStandalone:
         from nexus.contracts.types import OperationContext
         from nexus.core.read_set import enable_read_tracking
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
         enable_read_tracking(ctx)
         assert ctx.read_set.zone_id == "root"

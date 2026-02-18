@@ -235,6 +235,14 @@ class TestEdge06_DelegationChain:
         )
         assert result.worker_agent_id == "worker_b"
 
+        # Register worker_b in entity_registry so it can be found as a coordinator
+        entity_registry.register_entity(
+            entity_type="agent",
+            entity_id="worker_b",
+            parent_type="user",
+            parent_id="alice",
+        )
+
         # B tries to delegate to C → should fail
         with pytest.raises(DelegationChainError, match="cannot sub-delegate"):
             delegation_service.delegate(
@@ -261,6 +269,14 @@ class TestEdge06_DelegationChain:
             can_sub_delegate=True,
         )
         assert result_b.worker_agent_id == "worker_chain_b"
+
+        # Register worker_chain_b in entity_registry so it can be found as a coordinator
+        entity_registry.register_entity(
+            entity_type="agent",
+            entity_id="worker_chain_b",
+            parent_type="user",
+            parent_id="alice",
+        )
 
         # B delegates to C → should succeed
         result_c = delegation_service.delegate(
@@ -442,6 +458,14 @@ class TestDelegationChainTrace:
             worker_name="Chain B",
             delegation_mode=DelegationMode.COPY,
             can_sub_delegate=True,
+        )
+
+        # Register chain_worker_b in entity_registry so it can be found as a coordinator
+        entity_registry.register_entity(
+            entity_type="agent",
+            entity_id="chain_worker_b",
+            parent_type="user",
+            parent_id="alice",
         )
 
         result_c = delegation_service.delegate(

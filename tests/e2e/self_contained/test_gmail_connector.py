@@ -105,9 +105,8 @@ def gmail_backend(mock_gmail_service, tmp_path):
 def operation_context():
     """Create an operation context for testing."""
     return OperationContext(
-        user="test@example.com",
-        groups=[],
         user_id="test@example.com",
+        groups=[],
         zone_id="root",
     )
 

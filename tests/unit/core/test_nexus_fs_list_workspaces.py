@@ -165,7 +165,7 @@ class TestListWorkspacesFiltering:
         ]
 
         # Some contexts use 'user' instead of 'user_id'
-        ctx = SimpleNamespace(user="alice", zone_id="root")
+        ctx = SimpleNamespace(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 1

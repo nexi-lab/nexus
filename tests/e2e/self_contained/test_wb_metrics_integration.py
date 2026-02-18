@@ -20,6 +20,16 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+# Check if native Raft module is available (required for RaftMetadataStore.embedded)
+try:
+    from nexus.raft import Metastore
+
+    _raft_available = Metastore is not None
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft Metastore not available")
+
 # All 9 metric families emitted by WriteBufferCollector
 _EXPECTED_WB_METRICS = [
     "nexus_write_buffer_events_enqueued_total",

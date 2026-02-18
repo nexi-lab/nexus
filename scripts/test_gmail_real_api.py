@@ -109,7 +109,9 @@ def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
         )
 
         # Create operation context
-        context = OperationContext(user=user_email, groups=[], zone_id="default", backend_path="")
+        context = OperationContext(
+            user_id=user_email, groups=[], zone_id="default", backend_path=""
+        )
 
         # Get Gmail service
         print("\n=== Fetching OAuth Tokens ===")

@@ -258,7 +258,7 @@ def test_in_process_thread_exhaustion(
 
         # Create a test user context
         context = OperationContext(
-            user="test_user",
+            user_id="test_user",
             groups=[],
             zone_id="root",
             subject_type="user",
@@ -374,7 +374,7 @@ async def test_async_thread_exhaustion(
 
         # Create test user context
         context = OperationContext(
-            user="test_user",
+            user_id="test_user",
             groups=[],
             zone_id="root",
             subject_type="user",

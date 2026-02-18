@@ -310,7 +310,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     agent_generation = auth_result.get("agent_generation")
 
     return OperationContext(
-        user=user_id,
+        user_id=user_id,
         agent_id=agent_id,
         subject_type=subject_type,
         subject_id=subject_id,

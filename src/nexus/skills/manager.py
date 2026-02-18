@@ -330,7 +330,7 @@ class SkillManager:
         owner_id = (
             creator_id
             or (context.user_id if context else None)
-            or (context.user if context else None)
+            or (context.user_id if context else None)
             or "anonymous"
         )
         await self._create_skill_permissions(
@@ -466,7 +466,7 @@ class SkillManager:
         owner_type = "user"
         owner_id = (
             (context.user_id if context else None)
-            or (context.user if context else None)
+            or (context.user_id if context else None)
             or "anonymous"
         )
         await self._create_skill_permissions(

@@ -212,7 +212,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Create default context
         self._default_context = OperationContext(
-            user="anonymous",
+            user_id="anonymous",
             groups=[],
             zone_id=ROOT_ZONE_ID,
             agent_id=None,
@@ -854,16 +854,16 @@ class NexusFS(  # type: ignore[misc]
         agent = None
 
         if context is None:
-            user = getattr(self._default_context, "user", None)
+            user = getattr(self._default_context, "user_id", None)
             agent = self._default_context.agent_id
         elif hasattr(context, "agent_id"):
-            user = getattr(context, "user", None) or getattr(context, "user_id", None)
+            user = getattr(context, "user_id", None)
             agent = context.agent_id
         elif isinstance(context, dict):
-            user = context.get("user_id") or context.get("user")
+            user = context.get("user_id")
             agent = context.get("agent_id")
         else:
-            user = getattr(self._default_context, "user", None)
+            user = getattr(self._default_context, "user_id", None)
             agent = self._default_context.agent_id
 
         # Build combined string showing both user and agent
@@ -929,7 +929,7 @@ class NexusFS(  # type: ignore[misc]
     @property
     def user_id(self) -> str | None:
         """Default user_id from the instance context."""
-        return getattr(self._default_context, "user", None)
+        return getattr(self._default_context, "user_id", None)
 
     def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration.
@@ -955,7 +955,7 @@ class NexusFS(  # type: ignore[misc]
             session=session,
             backend=self.backend,
             zone_id=ctx.zone_id or self._default_context.zone_id,
-            user_id=ctx.user or self._default_context.user,
+            user_id=ctx.user_id or self._default_context.user_id,
             agent_id=ctx.agent_id or self._default_context.agent_id,
             entity_registry=self._entity_registry,
         )
@@ -977,7 +977,7 @@ class NexusFS(  # type: ignore[misc]
             context = {}
 
         return OperationContext(
-            user=context.get("user_id", "system"),
+            user_id=context.get("user_id", "system"),
             groups=context.get("groups", []),
             zone_id=context.get("zone_id"),
             agent_id=context.get("agent_id"),
@@ -1176,12 +1176,12 @@ class NexusFS(  # type: ignore[misc]
         # This significantly speeds up operations like skill imports (82s -> ~10s)
         if ctx.is_admin or ctx.is_system:
             logger.debug(
-                f"_check_permission: SKIPPED (admin/system bypass) - path={path}, permission={permission.name}, user={ctx.user}"
+                f"_check_permission: SKIPPED (admin/system bypass) - path={path}, permission={permission.name}, user={ctx.user_id}"
             )
             return
 
         logger.debug(
-            f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, zone={getattr(ctx, 'zone_id', None)}"
+            f"_check_permission: path={path}, permission={permission.name}, user={ctx.user_id}, zone={getattr(ctx, 'zone_id', None)}"
         )
 
         # Fix #332: Virtual parsed views (e.g., report_parsed.pdf.md) should inherit
@@ -1213,7 +1213,7 @@ class NexusFS(  # type: ignore[misc]
             else self.metadata.get(permission_path)
         )
         if file_meta and file_meta.owner_id:
-            subject_id = ctx.subject_id or ctx.user
+            subject_id = ctx.subject_id or ctx.user_id
             if file_meta.owner_id == subject_id:
                 logger.debug(
                     f"  -> OWNER FAST-PATH: {subject_id} owns {permission_path}, skipping ReBAC"
@@ -1226,7 +1226,7 @@ class NexusFS(  # type: ignore[misc]
 
         if not result:
             raise PermissionError(
-                f"Access denied: User '{ctx.user}' does not have {permission.name} "
+                f"Access denied: User '{ctx.user_id}' does not have {permission.name} "
                 f"permission for '{path}'"
             )
 
@@ -1423,16 +1423,16 @@ class NexusFS(  # type: ignore[misc]
         # Grant direct_owner permission to the user who created the directory
         # Note: Use 'direct_owner' (not 'owner') as the base relation.
         # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
-        if self._rebac_manager and ctx.user and not ctx.is_system:
+        if self._rebac_manager and ctx.user_id and not ctx.is_system:
             try:
-                logger.debug(f"mkdir: Granting direct_owner permission to {ctx.user} for {path}")
+                logger.debug(f"mkdir: Granting direct_owner permission to {ctx.user_id} for {path}")
                 self._rebac_manager.rebac_write(
-                    subject=("user", ctx.user),
+                    subject=("user", ctx.user_id),
                     relation="direct_owner",
                     object=("file", path),
                     zone_id=ctx.zone_id or "root",
                 )
-                logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user} for {path}")
+                logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user_id} for {path}")
             except Exception as e:
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
@@ -1485,7 +1485,7 @@ class NexusFS(  # type: ignore[misc]
                 context
                 if isinstance(context, OperationContext)
                 else OperationContext(
-                    user=context.user,
+                    user_id=context.user_id,
                     groups=context.groups,
                     zone_id=context.zone_id or zone_id,
                     agent_id=context.agent_id or agent_id,
@@ -1496,7 +1496,7 @@ class NexusFS(  # type: ignore[misc]
             )
         elif subject is not None:
             ctx = OperationContext(
-                user=subject[1],
+                user_id=subject[1],
                 groups=[],
                 zone_id=zone_id,
                 agent_id=agent_id,
@@ -1509,7 +1509,7 @@ class NexusFS(  # type: ignore[misc]
                 self._default_context
                 if isinstance(self._default_context, OperationContext)
                 else OperationContext(
-                    user=self._default_context.user,
+                    user_id=self._default_context.user_id,
                     groups=self._default_context.groups,
                     zone_id=zone_id or self._default_context.zone_id,
                     agent_id=agent_id or self._default_context.agent_id,
@@ -1524,7 +1524,7 @@ class NexusFS(  # type: ignore[misc]
 
         logger = logging.getLogger(__name__)
         logger.debug(
-            f"rmdir: path={path}, recursive={recursive}, user={ctx.user}, is_admin={ctx.is_admin}"
+            f"rmdir: path={path}, recursive={recursive}, user={ctx.user_id}, is_admin={ctx.is_admin}"
         )
         self._check_permission(path, Permission.WRITE, ctx)
         logger.debug(f"  -> Permission check PASSED for rmdir on {path}")
@@ -2867,7 +2867,9 @@ class NexusFS(  # type: ignore[misc]
 
         # Read file content with system bypass for background parsing
         # Auto-parse is a system operation that should not be subject to user permissions
-        parse_ctx = OperationContext(user="system_parser", groups=[], zone_id=None, is_system=True)
+        parse_ctx = OperationContext(
+            user_id="system_parser", groups=[], zone_id=None, is_system=True
+        )
         content = self.read(path, context=parse_ctx)
 
         # Type narrowing: when return_metadata=False (default), result is bytes
@@ -2953,8 +2955,8 @@ class NexusFS(  # type: ignore[misc]
             description=description,
             tags=tags,
             created_by=created_by,
-            user_id=ctx.user
-            or self._default_context.user,  # v0.5.0: Pass user_id for permission check
+            user_id=ctx.user_id
+            or self._default_context.user_id,  # v0.5.0: Pass user_id for permission check
             agent_id=ctx.agent_id or self._default_context.agent_id,
             zone_id=ctx.zone_id or self._default_context.zone_id,  # v0.5.0: Use context zone_id
         )
@@ -2998,7 +3000,7 @@ class NexusFS(  # type: ignore[misc]
         return self._workspace_manager.restore_snapshot(
             workspace_path=workspace_path,
             snapshot_number=snapshot_number,
-            user_id=ctx.user,  # v0.5.0: Pass user_id from context
+            user_id=ctx.user_id,  # v0.5.0: Pass user_id from context
             agent_id=ctx.agent_id or self._default_context.agent_id,
             zone_id=ctx.zone_id or self._default_context.zone_id,
         )
@@ -3042,7 +3044,8 @@ class NexusFS(  # type: ignore[misc]
         return self._workspace_manager.list_snapshots(
             workspace_path=workspace_path,
             limit=limit,
-            user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
+            user_id=ctx.user_id
+            or self._default_context.user_id,  # v0.5.0: Pass user_id from context
             agent_id=ctx.agent_id or self._default_context.agent_id,
             zone_id=ctx.zone_id or self._default_context.zone_id,
         )
@@ -3091,7 +3094,8 @@ class NexusFS(  # type: ignore[misc]
         snapshots = self._workspace_manager.list_snapshots(
             workspace_path=workspace_path,
             limit=1000,
-            user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
+            user_id=ctx.user_id
+            or self._default_context.user_id,  # v0.5.0: Pass user_id from context
             agent_id=ctx.agent_id or self._default_context.agent_id,
             zone_id=ctx.zone_id or self._default_context.zone_id,
         )
@@ -3118,10 +3122,108 @@ class NexusFS(  # type: ignore[misc]
         return self._workspace_manager.diff_snapshots(
             snap_1_id,
             snap_2_id,
-            user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
+            user_id=ctx.user_id
+            or self._default_context.user_id,  # v0.5.0: Pass user_id from context
             agent_id=ctx.agent_id or self._default_context.agent_id,
             zone_id=ctx.zone_id or self._default_context.zone_id,
         )
+
+    # === Transactional Snapshot Operations (Issue #1752) ===
+
+    @rpc_expose(description="Begin transactional snapshot")
+    def snapshot_begin(
+        self,
+        paths: list[str],
+        agent_id: str | None = None,
+        zone_id: str = "root",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Begin a transactional snapshot for the specified paths.
+
+        Args:
+            paths: Virtual paths to snapshot
+            agent_id: Agent ID (defaults to context agent)
+            zone_id: Zone ID
+
+        Returns:
+            Dict with 'snapshot_id' key
+        """
+        if self._snapshot_service is None:
+            raise RuntimeError("Transactional snapshot service not available")
+        ctx = context or self._default_context
+        resolved_agent = agent_id or ctx.agent_id or "default"
+        import asyncio
+
+        sid = asyncio.get_event_loop().run_until_complete(
+            self._snapshot_service.begin(
+                agent_id=resolved_agent,
+                paths=paths,
+                zone_id=zone_id,
+                context=ctx,
+            )
+        )
+        return {"snapshot_id": sid.id}
+
+    @rpc_expose(description="Commit transactional snapshot")
+    def snapshot_commit(
+        self,
+        snapshot_id: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, str]:
+        """Commit a snapshot — changes become permanent.
+
+        Args:
+            snapshot_id: Snapshot UUID to commit
+        """
+        if self._snapshot_service is None:
+            raise RuntimeError("Transactional snapshot service not available")
+        import asyncio
+
+        from nexus.services.protocols.transactional_snapshot import SnapshotId
+
+        asyncio.get_event_loop().run_until_complete(
+            self._snapshot_service.commit(SnapshotId(id=snapshot_id), context=context)
+        )
+        return {"status": "committed", "snapshot_id": snapshot_id}
+
+    @rpc_expose(description="Rollback transactional snapshot")
+    def snapshot_rollback(
+        self,
+        snapshot_id: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Rollback a snapshot — restore paths to pre-snapshot state.
+
+        Args:
+            snapshot_id: Snapshot UUID to rollback
+
+        Returns:
+            Dict with rollback result (reverted, conflicts, deleted, stats)
+        """
+        if self._snapshot_service is None:
+            raise RuntimeError("Transactional snapshot service not available")
+        import asyncio
+
+        from nexus.services.protocols.transactional_snapshot import SnapshotId
+
+        result = asyncio.get_event_loop().run_until_complete(
+            self._snapshot_service.rollback(SnapshotId(id=snapshot_id), context=context)
+        )
+        return {
+            "snapshot_id": result.snapshot_id,
+            "reverted": result.reverted,
+            "conflicts": [
+                {
+                    "path": c.path,
+                    "snapshot_hash": c.snapshot_hash,
+                    "current_hash": c.current_hash,
+                    "reason": c.reason,
+                }
+                for c in result.conflicts
+            ],
+            "deleted": result.deleted,
+            "stats": result.stats,
+        }
 
     # ===== Workspace Registry Management =====
 
@@ -3353,7 +3455,7 @@ class NexusFS(  # type: ignore[misc]
         user_id = None
         zone_id = None
         if context is not None:
-            user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+            user_id = getattr(context, "user_id", None)
             zone_id = getattr(context, "zone_id", None)
 
         if not user_id or not zone_id:
@@ -3526,8 +3628,8 @@ class NexusFS(  # type: ignore[misc]
         if not context:
             return None
         if isinstance(context, dict):
-            return context.get("user_id") or context.get("user")
-        return getattr(context, "user_id", None) or getattr(context, "user", None)
+            return context.get("user_id") or context.get("user_id")
+        return getattr(context, "user_id", None)
 
     def _create_agent_config_data(
         self,
@@ -4767,7 +4869,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Use admin context for provisioning
         admin_context = context or OperationContext(
-            user=user_id,
+            user_id=user_id,
             groups=[],
             zone_id=zone_id,
             is_admin=True,
@@ -5105,7 +5207,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Use admin context for deprovisioning
         admin_context = context or OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             zone_id=zone_id or "system",
             is_admin=True,
@@ -5159,7 +5261,7 @@ class NexusFS(  # type: ignore[misc]
             # Update context with proper zone_id
             if zone_id:
                 admin_context = OperationContext(
-                    user="system",
+                    user_id="system",
                     groups=[],
                     zone_id=zone_id,
                     is_admin=True,
@@ -5846,7 +5948,7 @@ class NexusFS(  # type: ignore[misc]
             traj_mgr = TrajectoryManager(
                 session,
                 self.backend,
-                ctx.user or "system",
+                ctx.user_id or "system",
                 ctx.agent_id or self._default_context.agent_id,
                 ctx.zone_id or self._default_context.zone_id,
             )
@@ -5886,7 +5988,7 @@ class NexusFS(  # type: ignore[misc]
             playbook_mgr = PlaybookManager(
                 session,
                 self.backend,
-                ctx.user or "system",
+                ctx.user_id or "system",
                 ctx.agent_id or self._default_context.agent_id,
                 ctx.zone_id or self._default_context.zone_id,
             )
@@ -5914,7 +6016,7 @@ class NexusFS(  # type: ignore[misc]
             playbook_mgr = PlaybookManager(
                 session,
                 self.backend,
-                ctx.user or "system",
+                ctx.user_id or "system",
                 ctx.agent_id or self._default_context.agent_id,
                 ctx.zone_id or self._default_context.zone_id,
             )
@@ -5947,7 +6049,7 @@ class NexusFS(  # type: ignore[misc]
             playbook_mgr = PlaybookManager(
                 session,
                 self.backend,
-                ctx.user or "system",
+                ctx.user_id or "system",
                 ctx.agent_id or self._default_context.agent_id,
                 ctx.zone_id or self._default_context.zone_id,
             )
@@ -6045,7 +6147,7 @@ class NexusFS(  # type: ignore[misc]
         # Create sandbox (provider auto-selection happens in sandbox_manager)
         result: dict[Any, Any] = await self._sandbox_manager.create_sandbox(
             name=name,
-            user_id=ctx.user or "system",
+            user_id=ctx.user_id or "system",
             zone_id=ctx.zone_id or self._default_context.zone_id or "root",
             agent_id=ctx.agent_id,
             ttl_minutes=ttl_minutes,
@@ -6248,7 +6350,7 @@ class NexusFS(  # type: ignore[misc]
         # Determine filter values
         # If explicit filter parameters are provided and user is admin, use them
         # Otherwise filter by authenticated user
-        filter_user_id = user_id if (user_id is not None and ctx.is_admin) else ctx.user
+        filter_user_id = user_id if (user_id is not None and ctx.is_admin) else ctx.user_id
         filter_zone_id = zone_id if (zone_id is not None and ctx.is_admin) else ctx.zone_id
         filter_agent_id = agent_id if agent_id is not None else ctx.agent_id
 
@@ -6311,7 +6413,7 @@ class NexusFS(  # type: ignore[misc]
             # Agent workflow: always get valid sandbox for user+agent
             sandbox = nx.sandbox_get_or_create(
                 name=f"{user_id},{agent_id}",
-                context={"user": user_id, "agent_id": agent_id}
+                context={"user_id": user_id, "agent_id": agent_id}
             )
             sandbox_id = sandbox["sandbox_id"]  # Always valid!
         """
@@ -6323,7 +6425,7 @@ class NexusFS(  # type: ignore[misc]
 
         result: dict[Any, Any] = await self._sandbox_manager.get_or_create_sandbox(
             name=name,
-            user_id=ctx.user or "system",
+            user_id=ctx.user_id or "system",
             zone_id=ctx.zone_id or self._default_context.zone_id or "root",
             agent_id=ctx.agent_id,
             ttl_minutes=ttl_minutes,
@@ -6899,7 +7001,7 @@ class NexusFS(  # type: ignore[misc]
             >>> self._get_subject_from_context(context)
             ('user', 'alice')
 
-            >>> context = OperationContext(user="alice", groups=[])
+            >>> context = OperationContext(user_id="alice", groups=[])
             >>> self._get_subject_from_context(context)
             ('user', 'alice')
         """
@@ -6914,7 +7016,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Construct from subject_type + subject_id
             subject_type = context.get("subject_type", "user")
-            subject_id = context.get("subject_id") or context.get("user")
+            subject_id = context.get("subject_id") or context.get("user_id")
             if subject_id:
                 return (subject_type, subject_id)
 
@@ -6930,13 +7032,13 @@ class NexusFS(  # type: ignore[misc]
         # Fallback: construct from attributes
         if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
             subject_type = getattr(context, "subject_type", "user")
-            subject_id = getattr(context, "subject_id", None) or getattr(context, "user", None)
+            subject_id = getattr(context, "subject_id", None) or getattr(context, "user_id", None)
             if subject_id:
                 return (subject_type, subject_id)
 
         # Last resort: use user field
-        if hasattr(context, "user") and context.user:
-            return ("user", context.user)
+        if hasattr(context, "user_id") and context.user_id:
+            return ("user", context.user_id)
 
         return None
 
@@ -6977,7 +7079,7 @@ class NexusFS(  # type: ignore[misc]
         elif isinstance(context, dict):
             # Create OperationContext from dict
             op_context = OperationContext(
-                user=context.get("user", "unknown"),
+                user_id=context.get("user_id", "unknown"),
                 groups=context.get("groups", []),
                 zone_id=context.get("zone_id"),
                 is_admin=context.get("is_admin", False),
@@ -7007,14 +7109,14 @@ class NexusFS(  # type: ignore[misc]
             # This ensures groups, workspaces, and other resources are also protected
             # Check if user has ownership (execute permission) via ReBAC
             has_permission = self.rebac_check(
-                subject=self._get_subject_from_context(context) or ("user", op_context.user),
+                subject=self._get_subject_from_context(context) or ("user", op_context.user_id),
                 permission="owner",  # Only owners can manage permissions
                 object=resource,
                 context=context,
             )
             if not has_permission:
                 raise PermissionError(
-                    f"Access denied: User '{op_context.user}' does not have owner "
+                    f"Access denied: User '{op_context.user_id}' does not have owner "
                     f"permission to manage {resource[0]} '{resource[1]}'"
                 )
             return
@@ -7037,17 +7139,17 @@ class NexusFS(  # type: ignore[misc]
                     zone_id = op_context.zone_id
 
                 # Check if user is zone admin for this resource's zone
-                if zone_id and op_context.user:
+                if zone_id and op_context.user_id:
                     from nexus.core.zone_helpers import is_zone_admin
 
-                    if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
+                    if is_zone_admin(self._rebac_manager, op_context.user_id, zone_id):
                         # Zone admin can share resources in their zone
                         return
 
                 # Neither owner nor zone admin - deny
                 perm_name = required_permission.upper()
                 raise PermissionError(
-                    f"Access denied: User '{op_context.user}' does not have {perm_name} "
+                    f"Access denied: User '{op_context.user_id}' does not have {perm_name} "
                     f"permission to manage permissions on '{resource_path}'. "
                     f"Only owners or zone admins can share resources."
                 )

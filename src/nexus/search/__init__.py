@@ -200,7 +200,7 @@ SemanticSearchResult = BaseSearchResult  # Merged into BaseSearchResult (decisio
 AsyncSearchResult = BaseSearchResult  # Merged into BaseSearchResult
 
 
-class AsyncSemanticSearch:  # type: ignore[no-redef]
+class AsyncSemanticSearch:
     """Removed in Issue #2075. Use QueryService + IndexingService instead."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:  # noqa: ARG002

@@ -321,7 +321,8 @@ class SemanticSearchMixin:
 
         # Fallback: legacy
         if hasattr(self, "_async_search") and self._async_search is not None:
-            return await self._async_search.get_stats()
+            result: dict[str, Any] = await self._async_search.get_stats()
+            return result
 
         raise ValueError("Semantic search not properly initialized")
 

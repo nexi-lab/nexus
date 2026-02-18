@@ -111,7 +111,7 @@ def warmup(
                 # History-based warmup
                 console.print(f"[blue]Warming cache based on {user}'s access history...[/blue]")
                 stats = await warmer.warmup_from_history(
-                    user_id=user,
+                    user=user,
                     hours=hours,
                     max_files=max_files,
                     zone_id=zone_id,

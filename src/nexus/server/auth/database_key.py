@@ -193,6 +193,6 @@ class DatabaseAPIKeyAuth(AuthProvider):
         )
 
     @staticmethod
-    def revoke_key(session: Session, key_id: str) -> bool:
+    def revoke_key(session: Session, key_id: str, zone_id: str | None = None) -> bool:
         """Revoke an API key. Delegates to nexus.identity.api_key_ops."""
-        return revoke_api_key(session, key_id)
+        return revoke_api_key(session, key_id, zone_id=zone_id)

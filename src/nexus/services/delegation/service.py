@@ -320,7 +320,7 @@ class DelegationService:
         self._delete_worker_tuples(record.agent_id, record.zone_id)
 
         # Step 2: Revoke API key
-        self._revoke_worker_api_key(record.agent_id)
+        self._revoke_worker_api_key(record.agent_id, zone_id=record.zone_id)
 
         # Step 3: Unregister agent entity
         if self._agent_registry is None:
@@ -752,22 +752,21 @@ class DelegationService:
             worker_id,
         )
 
-    def _revoke_worker_api_key(self, worker_id: str) -> None:
+    def _revoke_worker_api_key(self, worker_id: str, zone_id: str | None = None) -> None:
         """Revoke all API keys for the worker agent."""
         from nexus.identity.api_key_ops import revoke_api_key
         from nexus.storage.models.auth import APIKeyModel
 
         with self._session() as session:
-            keys = (
-                session.query(APIKeyModel)
-                .filter(
-                    APIKeyModel.subject_type == "agent",
-                    APIKeyModel.subject_id == worker_id,
-                )
-                .all()
+            stmt = session.query(APIKeyModel).filter(
+                APIKeyModel.subject_type == "agent",
+                APIKeyModel.subject_id == worker_id,
             )
+            if zone_id is not None:
+                stmt = stmt.filter(APIKeyModel.zone_id == zone_id)
+            keys = stmt.all()
             for key in keys:
-                revoke_api_key(session, key.key_id)
+                revoke_api_key(session, key.key_id, zone_id=zone_id)
 
     def _update_delegation_status(self, delegation_id: str, status: DelegationStatus) -> None:
         """Update delegation record status (soft-delete pattern, Issue 8A)."""

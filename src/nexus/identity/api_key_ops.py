@@ -115,12 +115,13 @@ def create_api_key(
     return (api_key.key_id, raw_key)
 
 
-def revoke_api_key(session: Session, key_id: str) -> bool:
+def revoke_api_key(session: Session, key_id: str, zone_id: str | None = None) -> bool:
     """Revoke an API key by key_id.
 
     Args:
         session: SQLAlchemy session.
         key_id: Key ID to revoke.
+        zone_id: Optional zone_id for zone isolation.
 
     Returns:
         True if key was revoked, False if not found.
@@ -130,6 +131,8 @@ def revoke_api_key(session: Session, key_id: str) -> bool:
     from nexus.storage.models import APIKeyModel
 
     stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
+    if zone_id is not None:
+        stmt = stmt.where(APIKeyModel.zone_id == zone_id)
     api_key = session.scalar(stmt)
 
     if not api_key:

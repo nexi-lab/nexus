@@ -1,11 +1,15 @@
 """Unit tests for RPC protocol."""
 
+from __future__ import annotations
+
+import dataclasses
 from datetime import datetime
 
 import pytest
 
 from nexus.core.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import (
+    METHOD_PARAMS,
     RPCErrorCode,
     RPCRequest,
     RPCResponse,
@@ -207,3 +211,204 @@ class TestRPCErrorCode:
         assert RPCErrorCode.INVALID_PATH.value == -32002
         assert RPCErrorCode.INTERNAL_ERROR.value == -32603
         assert RPCErrorCode.PARSE_ERROR.value == -32700
+
+
+# ============================================================
+# ReBAC __post_init__ list→tuple conversion tests
+# ============================================================
+
+
+class TestRebacPostInit:
+    """Tests for __post_init__ list→tuple conversion in ReBAC Param classes."""
+
+    def test_rebac_create_converts_lists_to_tuples(self):
+        """RebacCreateParams should convert list args to tuples (JSON compat)."""
+        from nexus.server.protocol import RebacCreateParams
+
+        params = RebacCreateParams(
+            subject=["user", "alice"],  # type: ignore[arg-type]
+            relation="viewer",
+            object=["file", "/test.txt"],  # type: ignore[arg-type]
+        )
+        assert isinstance(params.subject, tuple)
+        assert isinstance(params.object, tuple)
+        assert params.subject == ("user", "alice")
+        assert params.object == ("file", "/test.txt")
+
+    def test_rebac_check_converts_lists_to_tuples(self):
+        """RebacCheckParams should convert list args to tuples."""
+        from nexus.server.protocol import RebacCheckParams
+
+        params = RebacCheckParams(
+            subject=["user", "bob"],  # type: ignore[arg-type]
+            permission="read",
+            object=["file", "/data.csv"],  # type: ignore[arg-type]
+        )
+        assert isinstance(params.subject, tuple)
+        assert isinstance(params.object, tuple)
+        assert params.subject == ("user", "bob")
+
+    def test_rebac_check_preserves_tuples(self):
+        """RebacCheckParams should leave real tuples unchanged."""
+        from nexus.server.protocol import RebacCheckParams
+
+        params = RebacCheckParams(
+            subject=("user", "carol"),
+            permission="write",
+            object=("file", "/doc.md"),
+        )
+        assert params.subject == ("user", "carol")
+        assert params.object == ("file", "/doc.md")
+
+    def test_rebac_expand_converts_object(self):
+        """RebacExpandParams converts object list→tuple."""
+        from nexus.server.protocol import RebacExpandParams
+
+        params = RebacExpandParams(
+            permission="read",
+            object=["file", "/shared"],  # type: ignore[arg-type]
+        )
+        assert isinstance(params.object, tuple)
+        assert params.object == ("file", "/shared")
+
+    def test_rebac_explain_converts_both(self):
+        """RebacExplainParams converts both subject and object."""
+        from nexus.server.protocol import RebacExplainParams
+
+        params = RebacExplainParams(
+            subject=["user", "dave"],  # type: ignore[arg-type]
+            permission="admin",
+            object=["zone", "z1"],  # type: ignore[arg-type]
+        )
+        assert isinstance(params.subject, tuple)
+        assert isinstance(params.object, tuple)
+
+    def test_rebac_list_tuples_converts_optional(self):
+        """RebacListTuplesParams converts optional tuple fields."""
+        from nexus.server.protocol import RebacListTuplesParams
+
+        params = RebacListTuplesParams(
+            subject=["user", "eve"],  # type: ignore[arg-type]
+            object=["file", "/x"],  # type: ignore[arg-type]
+        )
+        assert isinstance(params.subject, tuple)
+        assert isinstance(params.object, tuple)
+
+    def test_rebac_list_tuples_none_stays_none(self):
+        """RebacListTuplesParams leaves None fields as None."""
+        from nexus.server.protocol import RebacListTuplesParams
+
+        params = RebacListTuplesParams()
+        assert params.subject is None
+        assert params.object is None
+
+
+# ============================================================
+# Codegen consistency tests
+# ============================================================
+
+
+class TestCodegenConsistency:
+    """Verify generated Param classes match @rpc_expose signatures."""
+
+    def test_all_method_params_are_dataclasses(self):
+        """Every class in METHOD_PARAMS should be a dataclass."""
+        for method_name, param_class in METHOD_PARAMS.items():
+            assert dataclasses.is_dataclass(param_class), (
+                f"METHOD_PARAMS['{method_name}'] = {param_class.__name__} is not a dataclass"
+            )
+
+    def test_method_params_count(self):
+        """METHOD_PARAMS should have a reasonable number of entries."""
+        assert len(METHOD_PARAMS) >= 150, (
+            f"Expected at least 150 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
+        )
+
+    def test_method_params_names_are_strings(self):
+        """All keys in METHOD_PARAMS should be non-empty strings."""
+        for key in METHOD_PARAMS:
+            assert isinstance(key, str) and len(key) > 0
+
+    def test_override_classes_take_precedence(self):
+        """Manual override classes should override generated ones."""
+        from nexus.server._rpc_param_overrides import ReadParams as OverrideRead
+        from nexus.server.protocol import ReadParams
+
+        assert ReadParams is OverrideRead
+        assert hasattr(ReadParams, "return_url"), "ReadParams should have RPC-only return_url"
+        assert hasattr(ReadParams, "expires_in"), "ReadParams should have RPC-only expires_in"
+
+    def test_merged_method_params_has_both_generated_and_overrides(self):
+        """METHOD_PARAMS should contain both generated and override entries."""
+        # Generated entries
+        assert "write" in METHOD_PARAMS
+        assert "list" in METHOD_PARAMS
+        assert "grep" in METHOD_PARAMS
+        # Override entries
+        assert "read" in METHOD_PARAMS
+        assert "admin_create_key" in METHOD_PARAMS
+        assert "store_memory" in METHOD_PARAMS
+        assert "skills_create" in METHOD_PARAMS
+
+    def test_parse_method_params_works_for_all(self):
+        """parse_method_params should work for every METHOD_PARAMS entry (with defaults)."""
+        for method_name, param_class in METHOD_PARAMS.items():
+            fields = dataclasses.fields(param_class)
+            required = [
+                f
+                for f in fields
+                if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+            ]
+            if not required:
+                result = parse_method_params(method_name, {})
+                assert isinstance(result, param_class)
+
+
+# ============================================================
+# Parametrized coverage tests
+# ============================================================
+
+
+def _get_required_fields(param_class: type) -> list[dataclasses.Field]:  # type: ignore[type-arg]
+    """Get fields without defaults."""
+    return [
+        f
+        for f in dataclasses.fields(param_class)
+        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method_name", "param_class"),
+    sorted(METHOD_PARAMS.items()),
+    ids=sorted(METHOD_PARAMS.keys()),
+)
+def test_param_class_is_valid_dataclass(method_name: str, param_class: type) -> None:  # noqa: ARG001
+    """Every Param class should be a proper dataclass with a docstring."""
+    assert dataclasses.is_dataclass(param_class)
+    assert param_class.__doc__ is not None, f"{param_class.__name__} missing docstring"
+
+
+@pytest.mark.parametrize(
+    ("method_name", "param_class"),
+    sorted(METHOD_PARAMS.items()),
+    ids=sorted(METHOD_PARAMS.keys()),
+)
+def test_required_fields_raise_typeerror(method_name: str, param_class: type) -> None:  # noqa: ARG001
+    """Param classes with required fields should raise TypeError when called with no args."""
+    required = _get_required_fields(param_class)
+    if required:
+        with pytest.raises(TypeError):
+            param_class()  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("method_name", "param_class"),
+    sorted(METHOD_PARAMS.items()),
+    ids=sorted(METHOD_PARAMS.keys()),
+)
+def test_param_class_name_ends_with_params(method_name: str, param_class: type) -> None:  # noqa: ARG001
+    """Every Param class name should end with 'Params'."""
+    assert param_class.__name__.endswith("Params"), (
+        f"{param_class.__name__} does not end with 'Params'"
+    )

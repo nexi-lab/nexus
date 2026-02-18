@@ -20,7 +20,6 @@ from nexus.raft.zone_manager import ROOT_ZONE_ID
 if TYPE_CHECKING:
     from nexus.services.memory.memory_api import Memory
     from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     CacheConfig,
@@ -37,12 +36,16 @@ from nexus.core.export_import import (
     ImportResult,
 )
 from nexus.core.filesystem import NexusFilesystem
+from nexus.core.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
-from nexus.parsers import MarkItDownParser, ParserRegistry
-from nexus.parsers.types import ParseResult
+
+if TYPE_CHECKING:
+    from nexus.parsers.registry import ParserRegistry
+    from nexus.parsers.types import ParseResult
 
 # Phase 2: Service imports moved to _wire_services() as lazy imports (Issue #1519)
 # NexusFSReBACMixin import removed (Issue #1387)
@@ -73,7 +76,7 @@ class NexusFS(  # type: ignore[misc]
     def __init__(
         self,
         backend: Backend,
-        metadata_store: FileMetadataProtocol,
+        metadata_store: MetastoreABC,
         record_store: RecordStoreABC | None = None,
         cache_store: CacheStoreABC | None = None,
         *,
@@ -87,7 +90,7 @@ class NexusFS(  # type: ignore[misc]
         services: KernelServices | None = None,
         parse_fn: Any | None = None,
         content_cache: Any | None = None,
-        parser_registry: Any | None = None,
+        parser_registry: ParserRegistry | None = None,
         provider_registry: Any | None = None,
         vfs_lock_manager: Any | None = None,
     ):
@@ -95,7 +98,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             backend: Backend instance for file storage (LocalBackend, GCSBackend, etc.)
-            metadata_store: FileMetadataProtocol instance (RaftMetadataStore or custom)
+            metadata_store: MetastoreABC instance (RaftMetadataStore or custom)
             record_store: Optional RecordStoreABC for Services layer (ReBAC, Audit, etc.)
             cache_store: Optional CacheStoreABC for ephemeral KV+PubSub. Defaults to NullCacheStore.
             is_admin: Whether this instance has admin privileges (default: False)
@@ -107,7 +110,9 @@ class NexusFS(  # type: ignore[misc]
             parsing: File parsing config. Defaults to ParseConfig().
             services: Injected service dependencies. Defaults to KernelServices().
             parse_fn: Pre-built parse callback ``(bytes, str) -> bytes | None``
-                for virtual views. Created by factory.py via create_default_parse_fn().
+                for virtual views. Created by factory.py via ParsersBrick.create_parse_fn().
+            parser_registry: Injected ParserRegistry from ParsersBrick (Issue #1523).
+            provider_registry: Injected ProviderRegistry from ParsersBrick (Issue #1523).
         """
         # Apply defaults — config dataclasses are SSOT for default values
         cache = cache or CacheConfig()
@@ -149,7 +154,7 @@ class NexusFS(  # type: ignore[misc]
         self.backend = backend
 
         # Initialize metadata store (Task #14: Dependency Injection)
-        self.metadata: FileMetadataProtocol = metadata_store
+        self.metadata: MetastoreABC = metadata_store
 
         # Initialize record store (Task #14: Four Pillars)
         self._record_store = record_store
@@ -179,42 +184,27 @@ class NexusFS(  # type: ignore[misc]
         # Mount backend
         self.router.add_mount("/", self.backend, priority=0)
 
-        # Initialize parser registry — accept pre-built or create (Issue #657)
+        # Parser registries — injected by factory via ParsersBrick (Issue #1523)
         if parser_registry is not None:
             self.parser_registry = parser_registry
         else:
-            self.parser_registry = ParserRegistry()
-            self.parser_registry.register(MarkItDownParser())
+            # Fallback: create default registry for direct construction (tests, etc.)
+            from nexus.parsers.markitdown_parser import MarkItDownParser as _MkD
+            from nexus.parsers.registry import ParserRegistry as _PR
 
-        # Parse callback for virtual views — injected by factory.py (Issue #668)
-        self._virtual_view_parse_fn = parse_fn
+            self.parser_registry = _PR()
+            self.parser_registry.register(_MkD())
 
-        # Initialize provider registry — accept pre-built or create (Issue #657)
         if provider_registry is not None:
             self.provider_registry = provider_registry
         else:
-            from nexus.parsers.providers import ProviderRegistry
-            from nexus.parsers.providers.base import ProviderConfig
+            from nexus.parsers.providers.registry import ProviderRegistry as _PvR
 
-            self.provider_registry = ProviderRegistry()
+            self.provider_registry = _PvR()
+            self.provider_registry.auto_discover()
 
-            parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
-            if parse_providers:
-                configs = []
-                for p in parse_providers:
-                    configs.append(
-                        ProviderConfig(
-                            name=p.get("name", "unknown"),
-                            enabled=p.get("enabled", True),
-                            priority=p.get("priority", 50),
-                            api_key=p.get("api_key"),
-                            api_url=p.get("api_url"),
-                            supported_formats=p.get("supported_formats"),
-                        )
-                    )
-                self.provider_registry.auto_discover(configs)
-            else:
-                self.provider_registry.auto_discover()
+        # Parse callback for virtual views — injected by factory.py (Issue #668)
+        self._virtual_view_parse_fn = parse_fn
 
         # Track active parser threads for graceful shutdown
         self._parser_threads: list[threading.Thread] = []
@@ -292,18 +282,9 @@ class NexusFS(  # type: ignore[misc]
         # v0.8.0: Subscription manager for webhook notifications (set by server)
         self.subscription_manager: Any = None
 
-        # Issue #913: Track async event tasks to prevent memory leaks
-        self._event_tasks: set[asyncio.Task[Any]] = set()
-
-        # Issue #1106: File watcher for same-box event detection (lazy initialized)
-        self._file_watcher: Any = None
-
         # Distributed coordination clients (may be set by factory)
         self._coordination_client: Any = None
         self._event_client: Any = None
-
-        # Issue #1106: Auto-start flag for cache invalidation
-        self._cache_invalidation_started: bool = False
 
         # VFS lock manager — accept pre-built or create (Issue #657)
         if vfs_lock_manager is not None:
@@ -486,7 +467,6 @@ class NexusFS(  # type: ignore[misc]
                 backend=self.backend,
                 event_bus=self._event_bus,
                 lock_manager=self._lock_manager,
-                file_watcher=self._file_watcher,
                 zone_id=None,
                 metadata_cache=metadata_cache,
             )
@@ -9860,6 +9840,7 @@ class NexusFS(  # type: ignore[misc]
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
         context: OperationContext | None = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem."""
@@ -9869,6 +9850,7 @@ class NexusFS(  # type: ignore[misc]
             backend_config=backend_config,
             priority=priority,
             readonly=readonly,
+            io_profile=io_profile,
             context=context,
         )
 
@@ -10110,6 +10092,7 @@ class NexusFS(  # type: ignore[misc]
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -10122,6 +10105,7 @@ class NexusFS(  # type: ignore[misc]
             backend_config=backend_config,
             priority=priority,
             readonly=readonly,
+            io_profile=io_profile,
             owner_user_id=owner_user_id,
             zone_id=zone_id,
             description=description,

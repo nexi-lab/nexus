@@ -47,13 +47,13 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.config import (
         CacheConfig,
         DistributedConfig,
         KernelServices,
         PermissionConfig,
     )
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
     from nexus.storage.record_store import RecordStoreABC
@@ -908,6 +908,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         except ImportError as _admin_exc:
             logger.debug("[BOOT:BRICK] AdminStoreService unavailable: %s", _admin_exc)
 
+
     # --- TransactionalSnapshotService (Issue #1752) ---
     snapshot_service: Any = None
     try:
@@ -983,7 +984,7 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
 
 def create_nexus_services(
     record_store: RecordStoreABC,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     backend: Backend,
     router: PathRouter,
     *,
@@ -1011,7 +1012,7 @@ def create_nexus_services(
 
     Args:
         record_store: RecordStoreABC instance (provides engine + session_factory).
-        metadata_store: FileMetadataProtocol instance (for PermissionEnforcer).
+        metadata_store: MetastoreABC instance (for PermissionEnforcer).
         backend: Backend instance (for WorkspaceManager).
         router: PathRouter instance (for PermissionEnforcer object type resolution).
         permissions: Permission config (defaults from PermissionConfig()).
@@ -1112,7 +1113,7 @@ def create_nexus_services(
 
 def _create_distributed_infra(
     dist: DistributedConfig,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     session_factory: Any,
     coordination_url: str | None,
 ) -> tuple[Any, Any]:
@@ -1281,7 +1282,7 @@ def _post_init(nx: NexusFS) -> None:
 
 def create_nexus_fs(
     backend: Backend,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     record_store: RecordStoreABC | None = None,
     *,
     cache_store: Any = None,
@@ -1333,7 +1334,7 @@ def create_nexus_fs(
 
     Args:
         backend: Backend instance for file storage.
-        metadata_store: FileMetadataProtocol instance.
+        metadata_store: MetastoreABC instance.
         record_store: Optional RecordStoreABC. When provided, all services
             (ReBAC, Audit, Permissions, etc.) are created and injected.
         cache: CacheConfig object (or build from legacy flat params).
@@ -1444,6 +1445,24 @@ def create_nexus_fs(
             router.register_namespace(ns_config)
     router.add_mount("/", backend, priority=0)
 
+    # KERNEL-ARCHITECTURE §2: No CacheStore → EventBus disabled.
+    # When no real CacheStore is provided (None or NullCacheStore), disable
+    # EventBus to prevent creating a standalone Redis/Dragonfly connection
+    # for events that would violate the graceful-degradation invariant.
+    _has_real_cache = cache_store is not None
+    if _has_real_cache:
+        from nexus.core.cache_store import NullCacheStore as _NullCacheStore
+
+        if isinstance(cache_store, _NullCacheStore):
+            _has_real_cache = False
+    if not _has_real_cache:
+        _base_dist = distributed or _DistributedConfig()
+        if _base_dist.enable_events:
+            from dataclasses import replace as _dc_replace
+
+            distributed = _dc_replace(_base_dist, enable_events=False)
+            logger.debug("EventBus disabled: no CacheStore provided (KERNEL-ARCHITECTURE §2)")
+
     # Create services if record_store is provided and no pre-built services
     if services is None and record_store is not None:
         services = create_nexus_services(
@@ -1475,19 +1494,11 @@ def create_nexus_fs(
 
         services = _dc_replace(services, workflow_engine=workflow_engine)
 
-    # Create parse callback for virtual views (Issue #668: factory creates services)
-    from nexus.parsers import create_default_parse_fn
+    # Create ParsersBrick — owns both registries (Issue #1523)
+    from nexus.parsers.brick import ParsersBrick
 
-    _parse_fn = create_default_parse_fn()
-
-    # Create parser registry (Issue #657: factory builds infrastructure)
-    from nexus.parsers import MarkItDownParser, ParserRegistry
-
-    _parser_registry = ParserRegistry()
-    _parser_registry.register(MarkItDownParser())
-
-    # Create provider registry (Issue #657)
-    _provider_registry = _create_provider_registry(parsing)
+    parsers_brick = ParsersBrick(parsing_config=parsing)
+    _parse_fn = parsers_brick.create_parse_fn()
 
     # Create content cache (Issue #657)
     _content_cache = None
@@ -1516,8 +1527,8 @@ def create_nexus_fs(
         services=services,
         parse_fn=_parse_fn,
         content_cache=_content_cache,
-        parser_registry=_parser_registry,
-        provider_registry=_provider_registry,
+        parser_registry=parsers_brick.parser_registry,
+        provider_registry=parsers_brick.provider_registry,
         vfs_lock_manager=_vfs_lock_manager,
     )
 

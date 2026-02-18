@@ -18,8 +18,8 @@ NexusFS follows an **OS-inspired layered architecture**.
                           ↓ protocol interface
 ┌──────────────────────────────────────────────────────────────┐
 │  KERNEL                                                      │
-│  Minimal compilable unit. VFS, FileMetadataProtocol,         │
-│  MetastoreABC, ObjectStoreABC interface definitions.         │
+│  Minimal compilable unit. VFS, MetastoreABC,                 │
+│  ObjectStoreABC interface definitions.                       │
 └──────────────────────────────────────────────────────────────┘
                           ↓ dependency injection
 ┌──────────────────────────────────────────────────────────────┐
@@ -36,7 +36,7 @@ implementations via DI at startup.
 
 | Tier | Swap time | Nexus | Linux analogue |
 |------|-----------|-------|----------------|
-| Static kernel | Never | MetastoreABC, VFS `route()`, FileMetadataProtocol, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
+| Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
 | Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
 | Services | Runtime (load/unload) | 22 protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
@@ -136,19 +136,18 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 
 | Interface | Linux Analogue | Purpose |
 |-----------|---------------|---------|
-| `MetastoreABC` | block device | Ordered KV primitive |
-| `FileMetadataProtocol` | `struct inode_operations` | Typed FileMetadata CRUD over MetastoreABC |
+| `MetastoreABC` | `struct inode_operations` | Typed FileMetadata CRUD (the inode layer) |
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
 | `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
 
-`FileMetadataProtocol` is kernel because it IS the inode layer — the typed contract
-between VFS and Metastore. Without it, the kernel cannot describe files.
+`MetastoreABC` is kernel because it IS the inode layer — the typed contract
+between VFS and storage. Without it, the kernel cannot describe files.
 
 ### NexusFS — Syscall Dispatch Layer
 
 `NexusFS` is the kernel entry point, analogous to Linux's syscall layer (`sys_open`,
-`sys_read`). It wires VFSRouter + FileMetadataProtocol + ObjectStoreABC into
+`sys_read`). It wires VFSRouter + MetastoreABC + ObjectStoreABC into
 user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 **no service business logic** — services are accessed through `ServiceRegistry`
 (Phase 2) or thin delegation stubs (Phase 1).
@@ -157,11 +156,10 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 + services and wires them together. NexusFS receives pre-built dependencies via its
 constructor and never auto-creates services.
 
-> *Gap:* NexusFS still contains 2 event-related mixins (`NexusFSEventsMixin`,
-> `FileWatcher` — inotify/FSEvents, maps to `WatchProtocol` Service tier, not kernel;
-> Linux analogue: `fs/notify/`, not core VFS) and ~40 lazy service imports in
-> `_wire_services()`. Migration: extract → `services/watch/`, then replace
-> `KernelServices` dataclass with `ServiceRegistry`. Tracked by #573, #656, #706.
+> *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
+> `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
+> Remaining: ~40 lazy service imports in `_wire_services()` (#194), replace
+> `KernelServices` dataclass with `ServiceRegistry`.
 
 ### Service Protocols (`nexus.services.protocols`)
 

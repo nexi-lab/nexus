@@ -31,7 +31,6 @@ from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.admin_store import AdminStoreProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
-from nexus.services.protocols.governance import GovernanceProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -60,9 +59,7 @@ from nexus.services.protocols.oauth import OAuthProtocol
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
-from nexus.services.protocols.plugin import PluginProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
-from nexus.services.protocols.reputation import ReputationProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
@@ -76,7 +73,6 @@ from nexus.workflows.protocol import (
     LLMProviderProtocol,
     MetadataStoreProtocol,
     NexusOperationsProtocol,
-    WorkflowProtocol,
 )
 
 __all__ = [
@@ -88,7 +84,6 @@ __all__ = [
     "ChunkedUploadProtocol",
     "EventLogConfig",
     "EventLogProtocol",
-    "GovernanceProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
@@ -120,10 +115,8 @@ __all__ = [
     "ParseProtocol",
     "PaymentProtocol",
     "PermissionProtocol",
-    "PluginProtocol",
     "ProgressCallback",
     "ReBACBrickProtocol",
-    "ReputationProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
     "ShareLinkProtocol",
@@ -134,6 +127,5 @@ __all__ = [
     "SyncServiceProtocol",
     "TaskQueueProtocol",
     "WatchProtocol",
-    "WorkflowProtocol",
     "WriteBackProtocol",
 ]

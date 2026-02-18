@@ -7,7 +7,7 @@ use crate::error::NexusClientError;
 use log::debug;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, IF_NONE_MATCH};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// User information returned by whoami endpoint.
@@ -24,7 +24,7 @@ pub struct UserInfo {
 }
 
 /// File/directory entry from listing.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FileEntry {
     pub name: String,
     #[serde(rename = "type")]
@@ -38,7 +38,7 @@ pub struct FileEntry {
 }
 
 /// File metadata from stat.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FileMetadata {
     #[serde(default)]
     pub size: u64,
@@ -80,6 +80,7 @@ pub enum ReadResponse {
 }
 
 /// Nexus HTTP client.
+#[derive(Clone)]
 pub struct NexusClient {
     client: Client,
     base_url: String,
@@ -110,6 +111,7 @@ impl NexusClient {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))
+            .no_proxy()  // Disable proxy to avoid HTTP_PROXY interference
             .build()?;
 
         Ok(Self {

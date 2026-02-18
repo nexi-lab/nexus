@@ -33,7 +33,7 @@ from nexus.core.read_set import ReadSet, ReadSetRegistry
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 

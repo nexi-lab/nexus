@@ -760,15 +760,18 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         params: dict[str, Any] = {"paths": paths, "zone_id": zone_id}
         if agent_id is not None:
             params["agent_id"] = agent_id
-        return self._call_rpc("snapshot_begin", params)
+        result: dict[str, Any] = self._call_rpc("snapshot_begin", params)
+        return result
 
     def snapshot_commit(self, snapshot_id: str) -> dict[str, str]:
         """Commit a snapshot — changes become permanent."""
-        return self._call_rpc("snapshot_commit", {"snapshot_id": snapshot_id})
+        result: dict[str, str] = self._call_rpc("snapshot_commit", {"snapshot_id": snapshot_id})
+        return result
 
     def snapshot_rollback(self, snapshot_id: str) -> dict[str, Any]:
         """Rollback a snapshot — restore paths to pre-snapshot state."""
-        return self._call_rpc("snapshot_rollback", {"snapshot_id": snapshot_id})
+        result: dict[str, Any] = self._call_rpc("snapshot_rollback", {"snapshot_id": snapshot_id})
+        return result
 
     def __enter__(self) -> RemoteNexusFS:
         return self

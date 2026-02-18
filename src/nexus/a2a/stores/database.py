@@ -8,6 +8,7 @@ to ``serialization.py`` (Decision 3).
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -39,8 +40,6 @@ class DatabaseTaskStore:
     """
 
     def __init__(self, record_store: RecordStoreABC) -> None:
-        import warnings
-
         warnings.warn(
             "DatabaseTaskStore is deprecated. Use VFSTaskStore for "
             "filesystem-backed persistence (§17.6 convergence). "

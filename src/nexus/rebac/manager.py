@@ -33,15 +33,13 @@ from nexus.core.rebac import (
     NamespaceConfig,
 )
 from nexus.rebac.batch.bulk_checker import BulkPermissionChecker
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.cache.tiger.facade import TigerFacade
 from nexus.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
-from nexus.rebac.consistency.zone_manager import (
-    ZoneIsolationError,  # noqa: F401 — re-exported for backward compat
-    ZoneManager,
-)
+from nexus.rebac.consistency.zone_manager import ZoneManager
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.directory.expander import DirectoryExpander
 from nexus.rebac.graph.bulk_evaluator import (
@@ -59,7 +57,6 @@ from nexus.rebac.graph.bulk_evaluator import (
 from nexus.rebac.graph.expand import ExpandEngine
 from nexus.rebac.graph.traversal import PermissionComputer
 from nexus.rebac.graph.zone_traversal import ZoneAwareTraversal
-from nexus.rebac.rebac_cache import ReBACPermissionCache
 from nexus.rebac.rebac_fast import (
     check_permissions_bulk_with_fallback,
     is_rust_available,
@@ -75,7 +72,6 @@ from nexus.rebac.tuples.repository import TupleRepository
 from nexus.rebac.types import (
     CheckResult,
     ConsistencyLevel,
-    ConsistencyMode,  # noqa: F401 — re-exported for rebac_service + tests
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
@@ -88,7 +84,7 @@ from nexus.rebac.utils.zone import normalize_zone_id
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.rebac.leopard import LeopardIndex
+    from nexus.rebac.cache.leopard import LeopardIndex
     from nexus.rebac.rebac_iterator_cache import IteratorCache
     from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 
@@ -175,10 +171,6 @@ class ReBACManager:
 
         self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
-        # Backward-compat aliases for code accessing _conn_map / _pg_version directly
-        self._conn_map = self._repo._conn_map
-        self._pg_version = self._repo._pg_version
-
         # ── Enhanced initialization ──
         # Zone isolation (absorbed from ZoneAwareReBACManager — Phase 10)
         self.enforce_zone_isolation = enforce_zone_isolation
@@ -203,7 +195,7 @@ class ReBACManager:
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
         if enable_leopard:
-            from nexus.rebac.leopard import LeopardIndex
+            from nexus.rebac.cache.leopard import LeopardIndex
 
             self._leopard = LeopardIndex(
                 engine=engine,
@@ -282,7 +274,7 @@ class ReBACManager:
         )
 
         # Issue #922: Permission boundary cache for O(1) inheritance checks
-        from nexus.rebac.permission_boundary_cache import PermissionBoundaryCache
+        from nexus.rebac.cache.boundary import PermissionBoundaryCache
 
         self._boundary_cache: PermissionBoundaryCache = PermissionBoundaryCache()
 

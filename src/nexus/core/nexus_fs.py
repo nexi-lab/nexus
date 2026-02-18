@@ -8698,7 +8698,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
+        from nexus.rebac.cache.iterator import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -8827,7 +8827,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
+        from nexus.rebac.cache.iterator import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -10532,57 +10532,6 @@ class NexusFS(  # type: ignore[misc]
         # Wire search engine into LLMService (Issue #684: DI instead of kernel access)
         if hasattr(self, "llm_service") and self._semantic_search is not None:
             self.llm_service._semantic_search_engine = self._semantic_search
-
-    # Non-prefixed aliases (backward compat — remove in v0.8.0)
-    # Issue #1519, 8A: emit DeprecationWarning so callers get advance notice.
-
-    @property
-    def semantic_search(self) -> Any:  # type: ignore[override]
-        """Deprecated: use ``asemantic_search`` instead."""
-        import warnings
-
-        warnings.warn(
-            "semantic_search is deprecated, use asemantic_search(); will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.asemantic_search
-
-    @property
-    def semantic_search_index(self) -> Any:  # type: ignore[override]
-        """Deprecated: use ``asemantic_search_index`` instead."""
-        import warnings
-
-        warnings.warn(
-            "semantic_search_index is deprecated, use asemantic_search_index(); will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.asemantic_search_index
-
-    @property
-    def semantic_search_stats(self) -> Any:  # type: ignore[override]
-        """Deprecated: use ``asemantic_search_stats`` instead."""
-        import warnings
-
-        warnings.warn(
-            "semantic_search_stats is deprecated, use asemantic_search_stats(); will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.asemantic_search_stats
-
-    @property
-    def initialize_semantic_search(self) -> Any:  # type: ignore[override]
-        """Deprecated: use ``ainitialize_semantic_search`` instead."""
-        import warnings
-
-        warnings.warn(
-            "initialize_semantic_search is deprecated, use ainitialize_semantic_search(); will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.ainitialize_semantic_search
 
     # =========================================================================
     # ShareLinkService Delegation Methods (6 methods)

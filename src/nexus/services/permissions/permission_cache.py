@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 
 if TYPE_CHECKING:
+    from nexus.rebac.hotspot_detector import HotspotDetector
     from nexus.rebac.manager import ReBACManager
-    from nexus.services.permissions.hotspot_detector import HotspotDetector
     from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class PermissionCacheCoordinator:
         if hotspot_detector is not None:
             self._hotspot_detector = hotspot_detector
         elif enable_hotspot_tracking:
-            from nexus.services.permissions.hotspot_detector import HotspotDetector
+            from nexus.rebac.hotspot_detector import HotspotDetector
 
             self._hotspot_detector = HotspotDetector()
 

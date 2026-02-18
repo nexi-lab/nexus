@@ -611,10 +611,7 @@ class NexusFS(  # type: ignore[misc]
 
         Called automatically during __init__. Can be called manually to refresh.
         """
-        import logging
         import os
-
-        logger = logging.getLogger(__name__)
 
         # Check if optimizations are enabled (default: True)
         # Set NEXUS_DISABLE_PERF_OPTIMIZATIONS=true to disable
@@ -680,9 +677,7 @@ class NexusFS(  # type: ignore[misc]
         Environment:
             NEXUS_SYNC_TIGER_RESOURCE_MAP: Set to "false" to disable (default: true)
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         # Check if Tiger Cache is available
         if not hasattr(self, "_rebac_manager"):
@@ -738,11 +733,8 @@ class NexusFS(  # type: ignore[misc]
         To enable automatic queue processing, set:
             NEXUS_ENABLE_TIGER_WORKER=true
         """
-        import logging
         import os
         import threading
-
-        logger = logging.getLogger(__name__)
 
         # Queue processor is DISABLED by default (write-through handles normal ops)
         # Enable explicitly with NEXUS_ENABLE_TIGER_WORKER=true
@@ -1161,9 +1153,7 @@ class NexusFS(  # type: ignore[misc]
         Raises:
             PermissionError: If access is denied
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         # Skip if permission enforcement is disabled
         if not self._enforce_permissions:
@@ -1388,10 +1378,6 @@ class NexusFS(  # type: ignore[misc]
                 parent_path = self._get_parent_path(parent_path)
 
             # Create parents from top to bottom (reverse order)
-            import logging
-
-            logger = logging.getLogger(__name__)
-
             for parent_dir in reversed(parents_to_create):
                 self._create_directory_metadata(parent_dir, context=ctx)
                 # P0-3: Create parent tuples for each intermediate directory
@@ -1416,9 +1402,7 @@ class NexusFS(  # type: ignore[misc]
 
         # P0-3: Create parent relationship tuples for directory inheritance
         # This enables granting access to /workspace to automatically grant access to subdirectories
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         logger.debug(
             f"mkdir: Checking for hierarchy_manager: hasattr={hasattr(self, '_hierarchy_manager')}"
@@ -1547,9 +1531,7 @@ class NexusFS(  # type: ignore[misc]
             )
 
         # Check write permission on directory
-        import logging
 
-        logger = logging.getLogger(__name__)
         logger.debug(
             f"rmdir: path={path}, recursive={recursive}, user={ctx.user}, is_admin={ctx.is_admin}"
         )
@@ -1662,9 +1644,7 @@ class NexusFS(  # type: ignore[misc]
             >>> _has_descendant_access("/other", READ, joe_ctx)
             False  # No access to /other or any descendants
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         # Admin/system bypass
         if context.is_admin or context.is_system:
@@ -1935,9 +1915,7 @@ class NexusFS(  # type: ignore[misc]
             - After: 1 bulk query for all directories + all descendants
             - 10x improvement for 10 backend directories
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         # Admin/system bypass
         if context.is_admin or context.is_system:
@@ -2166,10 +2144,7 @@ class NexusFS(  # type: ignore[misc]
             # Returns: ["archives", "external", "shared", "workspace"]
             # (excludes "system" if not admin)
         """
-        import logging
         import time
-
-        logger = logging.getLogger(__name__)
 
         start = time.time()
         logger.warning(
@@ -3703,9 +3678,7 @@ class NexusFS(  # type: ignore[misc]
         context: dict | Any | None,
     ) -> None:
         """Create agent directory, config file, and grant ReBAC permissions."""
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         try:
             # Parse context to OperationContext
@@ -3896,9 +3869,7 @@ class NexusFS(  # type: ignore[misc]
             ...                          generate_api_key=True)
             >>> # Agent starts with 0 permissions, needs explicit ReBAC grants
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         # Extract user_id and zone_id from context
         user_id = self._extract_user_id(context)
@@ -4177,11 +4148,7 @@ class NexusFS(  # type: ignore[misc]
             ...     }
             ... )
         """
-        import logging
-
         import yaml
-
-        logger = logging.getLogger(__name__)
 
         # Extract user_id and zone_id from context
         user_id = self._extract_user_id(context)
@@ -4565,9 +4532,7 @@ class NexusFS(  # type: ignore[misc]
             >>> if deleted:
             ...     print("Agent deleted")
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         try:
             # Agent ID format: user_id,agent_name
@@ -4870,10 +4835,7 @@ class NexusFS(  # type: ignore[misc]
             >>> print(result["workspace_path"])
             /zone/alice/user/alice/workspace/ws_personal_abc123
         """
-        import logging
         from datetime import UTC, datetime
-
-        logger = logging.getLogger(__name__)
 
         # Input validation
         if not user_id:
@@ -5216,10 +5178,7 @@ class NexusFS(  # type: ignore[misc]
             >>> print(result["deleted_directories"])
             ['/zone/example/user/alice/workspace', ...]
         """
-        import logging
         from datetime import UTC, datetime
-
-        logger = logging.getLogger(__name__)
 
         # Input validation
         if not user_id:
@@ -5458,9 +5417,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             True if directory was deleted (or had content deleted), False otherwise
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         directory_removed = False
         had_content = False  # Track if directory had any content
@@ -5648,9 +5605,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             List of created directory paths
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
 
         ALL_RESOURCE_TYPES = ["workspace", "memory", "skill", "agent", "connector", "resource"]
         created_paths = []
@@ -5697,11 +5652,8 @@ class NexusFS(  # type: ignore[misc]
             List of imported skill paths
         """
         import base64
-        import logging
         import os
         from pathlib import Path
-
-        logger = logging.getLogger(__name__)
 
         # Find skills directory
         possible_dirs = []
@@ -10231,9 +10183,6 @@ class NexusFS(  # type: ignore[misc]
 
         Combines: deactivate, delete config, optional OAuth revocation, directory cleanup.
         """
-        import logging
-
-        _logger = logging.getLogger(__name__)
         result: dict[str, Any] = {
             "removed": False,
             "directory_deleted": False,
@@ -10294,10 +10243,10 @@ class NexusFS(  # type: ignore[misc]
         try:
             self.rmdir(mount_point, recursive=True, context=context)  # type: ignore[attr-defined]
             result["directory_deleted"] = True
-            _logger.info(f"Deleted mount point directory: {mount_point}")
+            logger.info(f"Deleted mount point directory: {mount_point}")
         except Exception as e:
             result["warnings"].append(f"Failed to delete mount point directory (non-fatal): {e}")
-            _logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
+            logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
 
         return result
 

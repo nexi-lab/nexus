@@ -106,6 +106,30 @@ async def get_rebac_service(request: Request) -> Any:
     return service
 
 
+async def get_permission_enforcer(request: Request) -> Any:
+    """Get PermissionEnforcer instance from app state (Issue #2033)."""
+    enforcer = getattr(request.app.state, "permission_enforcer", None)
+    if enforcer is None:
+        raise HTTPException(status_code=503, detail="PermissionEnforcer not initialized")
+    return enforcer
+
+
+async def get_version_service(request: Request) -> Any:
+    """Get VersionService instance from app state (Issue #2033)."""
+    service = getattr(request.app.state, "version_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="VersionService not initialized")
+    return service
+
+
+async def get_mount_service(request: Request) -> Any:
+    """Get MountService instance from app state (Issue #2033)."""
+    service = getattr(request.app.state, "mount_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="MountService not initialized")
+    return service
+
+
 # =============================================================================
 # ACE manager dependencies
 # =============================================================================

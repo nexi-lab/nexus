@@ -1298,6 +1298,11 @@ def create_app(
     app.state.rebac_service = getattr(nexus_fs, "rebac_service", None)  # Issue #2033: Strangler Fig
     app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
     app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
+    # Issue #2033 Phase 5: Expose more kernel services for Strangler Fig extraction
+    app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
+    app.state.version_service = getattr(nexus_fs, "version_service", None)
+    app.state.mount_service = getattr(nexus_fs, "mount_service", None)
+    app.state.hook_pipeline = getattr(nexus_fs, "_hook_pipeline", None)
 
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(

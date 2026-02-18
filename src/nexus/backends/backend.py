@@ -766,7 +766,7 @@ class Backend(ABC):
 
     # === ReBAC Object Type Mapping ===
 
-    def get_object_type(self, _backend_path: str) -> str:
+    def get_object_type(self, backend_path: str) -> str:
         """
         Map backend path to ReBAC object type.
 

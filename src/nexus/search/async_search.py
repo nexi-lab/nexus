@@ -46,6 +46,7 @@ from nexus.search.contextual_chunking import (
     ContextualChunkResult,
 )
 from nexus.search.embeddings import EmbeddingProvider
+from nexus.search.indexing import IndexingPipeline, IndexResult
 from nexus.search.results import BaseSearchResult
 
 if TYPE_CHECKING:
@@ -312,9 +313,8 @@ class AsyncSemanticSearch:
                     f"({entropy_result.reduction_percent:.1f}% reduction)"
                 )
         else:
-            # Regular chunking (CPU-bound, run in executor)
-            loop = asyncio.get_event_loop()
-            chunks = await loop.run_in_executor(None, lambda: self.chunker.chunk(content, path))
+            # Regular chunking (CPU-bound, offload to thread — Issue #1094)
+            chunks = await asyncio.to_thread(self.chunker.chunk, content, path)
 
         if not chunks:
             return 0
@@ -348,40 +348,33 @@ class AsyncSemanticSearch:
     async def index_documents_bulk(
         self,
         documents: list[tuple[str, str, str]],  # (path, content, path_id)
-    ) -> dict[str, int]:
-        """Index multiple documents in parallel.
+        max_concurrency: int = 10,
+        cross_doc_batching: bool = True,
+    ) -> dict[str, IndexResult]:
+        """Index multiple documents using parallel pipeline (Issue #1094).
 
         Args:
             documents: List of (path, content, path_id) tuples
+            max_concurrency: Max concurrent document processing
+            cross_doc_batching: Batch embeddings across documents
 
         Returns:
-            Dict mapping path to number of chunks indexed
+            Dict mapping path to IndexResult
         """
-        results: dict[str, int] = {}
+        pipeline = IndexingPipeline(
+            chunker=self.chunker,
+            embedding_provider=self.embedding_provider,
+            entropy_chunker=self._entropy_chunker,
+            contextual_chunker=self._contextual_chunker,
+            db_type=self.db_type,
+            async_session_factory=self.async_session,
+            max_concurrency=max_concurrency,
+            batch_size=self.batch_size,
+            cross_doc_batching=cross_doc_batching,
+        )
 
-        # Process in batches to avoid overwhelming the system
-        batch_size = 10  # Process 10 documents concurrently
-
-        for i in range(0, len(documents), batch_size):
-            batch = documents[i : i + batch_size]
-
-            # Create tasks for parallel processing
-            tasks = [
-                self.index_document(path, content, path_id) for path, content, path_id in batch
-            ]
-
-            # Wait for all tasks in batch
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Collect results
-            for (path, _, _), result in zip(batch, batch_results, strict=True):
-                if isinstance(result, BaseException):
-                    logger.error(f"Failed to index {path}: {result}")
-                    results[path] = 0
-                else:
-                    results[path] = int(result)
-
-        return results
+        results = await pipeline.index_documents(documents)
+        return {r.path: r for r in results}
 
     async def _bulk_insert_chunks(
         self,

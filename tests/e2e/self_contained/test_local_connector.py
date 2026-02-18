@@ -366,7 +366,7 @@ class TestPathSecurity:
             pytest.skip("Symlinks not supported")
 
         connector = LocalConnectorBackend(local_folder)
-        context = OperationContext(user="test", groups=[], user_id="test", zone_id="test")
+        context = OperationContext(user_id="test", groups=[], zone_id="test")
         context.backend_path = "escape/secret.txt"
         context.virtual_path = "/mnt/local/escape/secret.txt"
 

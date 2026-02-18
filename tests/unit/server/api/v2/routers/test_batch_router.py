@@ -21,7 +21,7 @@ from nexus.server.api.v2.routers.batch import create_batch_router
 def _make_mock_context() -> MagicMock:
     """Create a minimal mock OperationContext."""
     ctx = MagicMock()
-    ctx.user = "test-user"
+    ctx.user_id = "test-user"
     ctx.zone_id = "root"
     ctx.groups = []
     ctx.is_admin = False

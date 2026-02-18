@@ -580,7 +580,7 @@ class TestPermissionEnforcerNamespaceIntegration:
             namespace_manager=None,  # No namespace manager
         )
 
-        ctx = OperationContext(user="alice", groups=[], zone_id=zone)
+        ctx = OperationContext(user_id="alice", groups=[], zone_id=zone)
 
         # Should still work via ReBAC (no namespace filtering)
         result = enforcer.check("/workspace/file.txt", Permission.READ, ctx)
@@ -603,7 +603,7 @@ class TestPermissionEnforcerNamespaceIntegration:
             namespace_manager=namespace_manager,
         )
 
-        ctx = OperationContext(user="alice", groups=[], zone_id=zone)
+        ctx = OperationContext(user_id="alice", groups=[], zone_id=zone)
 
         all_paths = [
             "/workspace/project-alpha/a.txt",

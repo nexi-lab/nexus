@@ -80,7 +80,7 @@ def test_write_performance_with_permissions(
         )
         loop.run_until_complete(fs.initialize())
 
-        context = OperationContext(user="alice", groups=[], zone_id="test-tenant")
+        context = OperationContext(user_id="alice", groups=[], zone_id="test-tenant")
         counter = [0]
 
         def write_op():
@@ -140,7 +140,7 @@ def test_read_performance_with_permissions(
         )
         loop.run_until_complete(fs.initialize())
 
-        context = OperationContext(user="alice", groups=[], zone_id="test-tenant")
+        context = OperationContext(user_id="alice", groups=[], zone_id="test-tenant")
 
         # Setup: write files first
         num_files = 50
@@ -181,7 +181,7 @@ def test_permission_overhead_acceptable(
         )
         loop.run_until_complete(fs_with_perm.initialize())
 
-        context = OperationContext(user="alice", groups=[], zone_id="test-tenant")
+        context = OperationContext(user_id="alice", groups=[], zone_id="test-tenant")
         counter = [0]
 
         def write_read_with_perms():

@@ -19,7 +19,7 @@ class TestAdminCapabilitiesField:
 
     def test_admin_capabilities_defaults_to_empty_set(self):
         """Admin capabilities should default to empty set."""
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert isinstance(ctx.admin_capabilities, set)
         assert len(ctx.admin_capabilities) == 0
@@ -80,7 +80,7 @@ class TestRequestIdField:
 
     def test_request_id_auto_generated(self):
         """Request ID should be auto-generated as UUID."""
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         # Should have a request_id
         assert ctx.request_id is not None
@@ -94,9 +94,9 @@ class TestRequestIdField:
 
     def test_request_id_unique_for_each_context(self):
         """Each context should have a unique request_id."""
-        ctx1 = OperationContext(user="alice", groups=[])
-        ctx2 = OperationContext(user="alice", groups=[])
-        ctx3 = OperationContext(user="bob", groups=[])
+        ctx1 = OperationContext(user_id="alice", groups=[])
+        ctx2 = OperationContext(user_id="alice", groups=[])
+        ctx3 = OperationContext(user_id="bob", groups=[])
 
         # All should be different
         assert ctx1.request_id != ctx2.request_id
@@ -107,7 +107,7 @@ class TestRequestIdField:
         """Request ID can be set to a custom value (for correlation)."""
         custom_id = "custom-request-12345"
 
-        ctx = OperationContext(user="alice", groups=[], request_id=custom_id)
+        ctx = OperationContext(user_id="alice", groups=[], request_id=custom_id)
 
         assert ctx.request_id == custom_id
 
@@ -144,7 +144,7 @@ class TestOperationContextP04Fields:
         )
 
         # All fields should be set correctly
-        assert ctx.user == "admin"
+        assert ctx.user_id == "admin"
         assert ctx.is_admin is True
         assert len(ctx.admin_capabilities) == 2
         assert ctx.request_id == "req-123"
@@ -165,7 +165,7 @@ class TestOperationContextP04Fields:
 
     def test_system_context_with_request_id(self):
         """System operations also have request IDs for audit."""
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # System operations also get request IDs
         assert ctx.request_id is not None
@@ -178,16 +178,16 @@ class TestOperationContextBackwardCompatibility:
     def test_existing_context_creation_still_works(self):
         """Existing code that creates contexts should still work."""
         # Old-style context creation (no P0-4 fields)
-        ctx = OperationContext(user="alice", groups=["developers"], zone_id="org1")
+        ctx = OperationContext(user_id="alice", groups=["developers"], zone_id="org1")
 
         # Should work with defaults
-        assert ctx.user == "alice"
+        assert ctx.user_id == "alice"
         assert len(ctx.admin_capabilities) == 0
         assert ctx.request_id is not None
 
     def test_admin_context_without_capabilities_still_works(self):
         """Admin contexts without capabilities should work (fall through to ReBAC)."""
-        ctx = OperationContext(user="admin", groups=["admins"], is_admin=True)
+        ctx = OperationContext(user_id="admin", groups=["admins"], is_admin=True)
 
         # Should create successfully
         assert ctx.is_admin is True
@@ -213,24 +213,24 @@ class TestOperationContextValidation:
     def test_admin_capabilities_must_be_set(self):
         """Admin capabilities must be a set type."""
         # This should work (set)
-        ctx = OperationContext(user="admin", groups=[], admin_capabilities=set())
+        ctx = OperationContext(user_id="admin", groups=[], admin_capabilities=set())
         assert isinstance(ctx.admin_capabilities, set)
 
         # Note: If list is passed, dataclass will convert it
         # Let's test that the field default is correct
-        ctx2 = OperationContext(user="admin", groups=[])
+        ctx2 = OperationContext(user_id="admin", groups=[])
         assert isinstance(ctx2.admin_capabilities, set)
 
     def test_request_id_must_be_string(self):
         """Request ID must be a string."""
-        ctx = OperationContext(user="alice", groups=[], request_id="my-request-123")
+        ctx = OperationContext(user_id="alice", groups=[], request_id="my-request-123")
 
         assert isinstance(ctx.request_id, str)
         assert ctx.request_id == "my-request-123"
 
     def test_empty_admin_capabilities_is_valid(self):
         """Empty admin capabilities set is a valid state."""
-        ctx = OperationContext(user="alice", groups=[], admin_capabilities=set())
+        ctx = OperationContext(user_id="alice", groups=[], admin_capabilities=set())
 
         assert ctx.admin_capabilities == set()
         assert len(ctx.admin_capabilities) == 0

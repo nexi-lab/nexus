@@ -144,7 +144,7 @@ class TestVersionServiceGetVersion:
     #         enforce_permissions=True,
     #     )
     #     mock_permission_enforcer.check_permission.return_value = False
-    #     context = OperationContext(user="alice", groups=[])
+    #     context = OperationContext(user_id="alice", groups=[])
     #
     #     # Act & Assert
     #     with pytest.raises(PermissionError, match="READ permission denied"):
@@ -311,7 +311,7 @@ class TestVersionServiceRollback:
     #         enforce_permissions=True,
     #     )
     #     mock_permission_enforcer.check_permission.return_value = False
-    #     context = OperationContext(user="alice", groups=[])
+    #     context = OperationContext(user_id="alice", groups=[])
     #
     #     # Act & Assert
     #     with pytest.raises(PermissionError, match="WRITE permission denied"):

@@ -219,7 +219,7 @@ class TestSystemBypassAuditLogging:
             audit_store=audit_store,
         )
 
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         with pytest.raises(PermissionError):
             enforcer.check("/file.txt", Permission.READ, ctx)
@@ -237,7 +237,7 @@ class TestSystemBypassAuditLogging:
         audit_store = MockAuditStore()
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager(), audit_store=audit_store)
 
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Try to WRITE to non-system path (scope violation)
         with pytest.raises(PermissionError):
@@ -278,7 +278,7 @@ class TestAuditLoggingWithoutAuditStore:
             audit_store=None,  # No audit
         )
 
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Should not raise error
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True

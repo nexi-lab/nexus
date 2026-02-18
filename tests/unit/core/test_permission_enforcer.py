@@ -14,8 +14,8 @@ class TestOperationContext:
 
     def test_create_regular_user_context(self):
         """Test creating a regular user context."""
-        ctx = OperationContext(user="alice", groups=["developers"])
-        assert ctx.user == "alice"
+        ctx = OperationContext(user_id="alice", groups=["developers"])
+        assert ctx.user_id == "alice"
         assert ctx.groups == ["developers"]
         assert ctx.is_admin is False
         assert ctx.is_system is False
@@ -24,16 +24,16 @@ class TestOperationContext:
 
     def test_create_admin_context(self):
         """Test creating an admin context."""
-        ctx = OperationContext(user="admin", groups=["admins"], is_admin=True)
-        assert ctx.user == "admin"
+        ctx = OperationContext(user_id="admin", groups=["admins"], is_admin=True)
+        assert ctx.user_id == "admin"
         assert ctx.groups == ["admins"]
         assert ctx.is_admin is True
         assert ctx.is_system is False
 
     def test_create_system_context(self):
         """Test creating a system context."""
-        ctx = OperationContext(user="system", groups=[], is_system=True)
-        assert ctx.user == "system"
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        assert ctx.user_id == "system"
         assert ctx.groups == []
         assert ctx.is_admin is False
         assert ctx.is_system is True
@@ -58,27 +58,27 @@ class TestOperationContext:
 
     def test_zone_id_in_context(self):
         """Test zone ID in context for multi-zone isolation."""
-        ctx = OperationContext(user="alice", groups=["developers"], zone_id="org_acme")
+        ctx = OperationContext(user_id="alice", groups=["developers"], zone_id="org_acme")
         assert ctx.zone_id == "org_acme"
 
     def test_requires_user(self):
         """Test that user is required."""
         with pytest.raises(ValueError, match="user is required"):
-            OperationContext(user="", groups=[])
+            OperationContext(user_id="", groups=[])
 
     def test_requires_groups_list(self):
         """Test that groups must be a list."""
         with pytest.raises(TypeError, match="groups must be list"):
-            OperationContext(user="alice", groups="developers")  # type: ignore
+            OperationContext(user_id="alice", groups="developers")  # type: ignore
 
     def test_empty_groups_allowed(self):
         """Test that empty groups list is allowed."""
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
         assert ctx.groups == []
 
     def test_get_subject_defaults_to_user(self):
         """Test that get_subject() defaults to user when subject_id is None."""
-        ctx = OperationContext(user="alice", groups=["developers"])
+        ctx = OperationContext(user_id="alice", groups=["developers"])
         assert ctx.get_subject() == ("user", "alice")
 
 
@@ -102,7 +102,7 @@ class TestPermissionEnforcer:
     def test_system_bypass(self):
         """Test that system operations bypass all checks (scoped to /system/* for write/execute)."""
         enforcer = PermissionEnforcer()
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Read operations allowed on any path
         assert enforcer.check("/any/path", Permission.READ, ctx) is True
@@ -113,7 +113,7 @@ class TestPermissionEnforcer:
     def test_no_rebac_manager_denies_all(self):
         """Test that without ReBAC manager, access is denied (secure by default)."""
         enforcer = PermissionEnforcer(metadata_store=None, rebac_manager=None)
-        ctx = OperationContext(user="alice", groups=["developers"])
+        ctx = OperationContext(user_id="alice", groups=["developers"])
 
         assert enforcer.check("/any/path", Permission.READ, ctx) is False
         assert enforcer.check("/any/path", Permission.WRITE, ctx) is False
@@ -139,7 +139,7 @@ class TestPermissionEnforcer:
 
         rebac = MockReBACManager()
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=["developers"])
+        ctx = OperationContext(user_id="alice", groups=["developers"])
 
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
         assert enforcer.check("/file.txt", Permission.WRITE, ctx) is False
@@ -169,7 +169,7 @@ class TestPermissionEnforcer:
 
         rebac = MockReBACManager()
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=["developers"], zone_id="org_acme")
+        ctx = OperationContext(user_id="alice", groups=["developers"], zone_id="org_acme")
 
         enforcer.check("/file.txt", Permission.READ, ctx)
         assert rebac.last_zone_id == "org_acme"
@@ -187,7 +187,7 @@ class TestPermissionEnforcer:
 
         rebac = MockReBACManager()
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=["developers"])
+        ctx = OperationContext(user_id="alice", groups=["developers"])
 
         enforcer.check("/file.txt", Permission.READ, ctx)
         assert rebac.last_zone_id == "root"
@@ -210,7 +210,7 @@ class TestPermissionEnforcer:
     def test_filter_list_system_sees_all(self):
         """Test that system context sees all files in filter_list."""
         enforcer = PermissionEnforcer()
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         paths = ["/file1.txt", "/file2.txt", "/secret.txt"]
         filtered = enforcer.filter_list(paths, ctx)
@@ -230,7 +230,7 @@ class TestPermissionEnforcer:
                 return False
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="bob", groups=["designers"])
+        ctx = OperationContext(user_id="bob", groups=["designers"])
 
         paths = ["/public.txt", "/secret.txt"]
         filtered = enforcer.filter_list(paths, ctx)
@@ -250,7 +250,7 @@ class TestPermissionEnforcer:
 
         rebac = MockReBACManager()
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=["developers"])
+        ctx = OperationContext(user_id="alice", groups=["developers"])
 
         enforcer.check("/file.txt", Permission.READ, ctx)
         enforcer.check("/file.txt", Permission.WRITE, ctx)
@@ -318,7 +318,7 @@ class TestPermissionEnforcer:
 
         rebac = MockReBACManager()
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=MockRouter())
-        ctx = OperationContext(user="alice", groups=["developers"])
+        ctx = OperationContext(user_id="alice", groups=["developers"])
 
         # Test that permission check normalizes path to have leading slash
         result = enforcer.check("/workspace/alice", Permission.WRITE, ctx)
@@ -335,7 +335,7 @@ class TestHasAccessibleDescendantsBatch:
     def test_empty_prefixes_returns_empty_dict(self):
         """Empty input returns empty dict without touching Tiger cache."""
         enforcer = PermissionEnforcer()
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch([], ctx)
         assert result == {}
 
@@ -346,7 +346,7 @@ class TestHasAccessibleDescendantsBatch:
             pass  # No _tiger_cache attribute
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills", "/archive"], ctx)
         assert result == {"/docs": True, "/skills": True, "/archive": True}
 
@@ -361,7 +361,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills"], ctx)
         assert result == {"/docs": True, "/skills": True}
 
@@ -376,7 +376,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills", "/archive"], ctx)
         assert result == {"/docs": True, "/skills": True, "/archive": True}
 
@@ -391,7 +391,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills", "/archive"], ctx)
         assert result["/docs"] is True
         assert result["/skills"] is False
@@ -408,7 +408,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills"], ctx)
         # Should fallback to all True on decode error
         assert result == {"/docs": True, "/skills": True}
@@ -424,7 +424,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/workspace"], ctx)
         assert result["/workspace"] is False
 
@@ -439,7 +439,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/a/b/", "/a/b"], ctx)
         assert result["/a/b/"] is True
         assert result["/a/b"] is True
@@ -455,7 +455,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/a/b"], ctx)
         assert result["/a/b"] is True
 
@@ -470,7 +470,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/"], ctx)
         assert result["/"] is True
 
@@ -485,7 +485,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/docs"], ctx)
         assert result["/docs"] is False
 
@@ -500,7 +500,7 @@ class TestHasAccessibleDescendantsBatch:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
         assert enforcer.has_accessible_descendants("/docs", ctx) is True
         assert enforcer.has_accessible_descendants("/skills", ctx) is False
 
@@ -521,7 +521,7 @@ class TestFailClosedOnError:
                 raise RuntimeError("simulated ReBAC failure")
 
         enforcer = PermissionEnforcer(rebac_manager=BrokenReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
 
         with pytest.raises(RuntimeError, match="simulated ReBAC failure"):
             enforcer.check("/file.txt", Permission.READ, ctx)

@@ -71,13 +71,13 @@ class TrajectoryManager:
             return True
 
         # 2. Direct creator access
-        if self.context.user == trajectory.agent_id:
+        if self.context.user_id == trajectory.agent_id:
             return True
 
         # 3. User ownership (same user created it)
         # 4. Zone-scoped sharing (TODO: requires scope attribute in TrajectoryModel)
         # 5. Global scope (TODO: requires scope attribute in TrajectoryModel)
-        return self.context.user == trajectory.user_id
+        return self.context.user_id == trajectory.user_id
 
     def start_trajectory(
         self,

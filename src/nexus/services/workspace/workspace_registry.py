@@ -221,7 +221,7 @@ class WorkspaceRegistry:
             >>> # v0.5.0: Session-scoped workspace (temporary)
             >>> from nexus.core.permissions import OperationContext
             >>> from datetime import timedelta
-            >>> ctx = OperationContext(user="alice", groups=[])
+            >>> ctx = OperationContext(user_id="alice", groups=[])
             >>> registry.register_workspace(
             ...     "/tmp/notebook",
             ...     context=ctx,
@@ -255,7 +255,7 @@ class WorkspaceRegistry:
                     f"[CONTEXT-DEBUG] Extracted from dict: user_id={user_id}, agent_id={agent_id}, zone_id={zone_id}"
                 )
             else:
-                user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+                user_id = getattr(context, "user_id", None)
                 agent_id = getattr(context, "agent_id", None)
                 zone_id = getattr(context, "zone_id", None)
                 logger.warning(
@@ -499,7 +499,7 @@ class WorkspaceRegistry:
             >>> # v0.5.0: Session-scoped memory (temporary)
             >>> from nexus.core.permissions import OperationContext
             >>> from datetime import timedelta
-            >>> ctx = OperationContext(user="alice", groups=[])
+            >>> ctx = OperationContext(user_id="alice", groups=[])
             >>> registry.register_memory(
             ...     "/tmp/memory",
             ...     context=ctx,
@@ -525,7 +525,7 @@ class WorkspaceRegistry:
                 agent_id = context.get("agent_id")
                 zone_id = context.get("zone_id") or context.get("zone")
             else:
-                user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+                user_id = getattr(context, "user_id", None)
                 agent_id = getattr(context, "agent_id", None)
                 zone_id = getattr(context, "zone_id", None)
 

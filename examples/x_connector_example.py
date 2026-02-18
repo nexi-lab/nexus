@@ -62,7 +62,7 @@ async def main():
         backend_path="/x/timeline/recent.json",
     )
     print("✓ Context created:")
-    print(f"  - User: {context.user}")
+    print(f"  - User: {context.user_id}")
     print(f"  - Tenant: {context.tenant_id}")
     print(f"  - Path: {context.backend_path}")
 
@@ -303,7 +303,7 @@ if __name__ == "__main__":
             backend_path="/x/timeline/recent.json",
         )
         print("✓ Context created:")
-        print(f"  - User: {context.user}")
+        print(f"  - User: {context.user_id}")
         print(f"  - Tenant: {context.tenant_id}")
         print(f"  - Path: {context.backend_path}")
 

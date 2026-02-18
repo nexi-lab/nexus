@@ -2378,10 +2378,13 @@ def _get_memory_api_with_context(context: Any) -> Any:
     if context:
         if hasattr(context, "zone_id") and context.zone_id:
             context_dict["zone_id"] = context.zone_id
-        if hasattr(context, "user_id") and context.user_id:
+        if (
+            hasattr(context, "user_id")
+            and context.user_id
+            or hasattr(context, "user_id")
+            and context.user_id
+        ):
             context_dict["user_id"] = context.user_id
-        elif hasattr(context, "user") and context.user:
-            context_dict["user_id"] = context.user
         if hasattr(context, "agent_id") and context.agent_id:
             context_dict["agent_id"] = context.agent_id
 

@@ -479,7 +479,7 @@ class SyncPipelineService:
         """Create a context for reading content with proper backend_path set."""
         if context:
             new_context = OperationContext(
-                user=context.user,
+                user=context.user_id,
                 groups=context.groups,
                 backend_path=backend_path,
                 zone_id=getattr(context, "zone_id", None),

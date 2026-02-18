@@ -76,6 +76,7 @@ class TokenRotationStore:
         self,
         session: Any,
         token_family_id: str | None,
+        zone_id: str | None = None,
     ) -> int:
         """Revoke all credentials in a token family.
 
@@ -84,12 +85,14 @@ class TokenRotationStore:
         if not token_family_id:
             return 0
         now = datetime.now(UTC)
-        result = session.execute(
+        stmt = (
             update(OAuthCredentialModel)
             .where(OAuthCredentialModel.token_family_id == token_family_id)
             .where(OAuthCredentialModel.revoked == 0)
-            .values(revoked=1, revoked_at=now)
         )
+        if zone_id is not None:
+            stmt = stmt.where(OAuthCredentialModel.zone_id == zone_id)
+        result = session.execute(stmt.values(revoked=1, revoked_at=now))
         count = result.rowcount or 0
         if count > 0:
             logger.warning(
@@ -104,17 +107,19 @@ class TokenRotationStore:
         session: Any,
         token_family_id: str | None,
         retention_days: int = 30,
+        zone_id: str | None = None,
     ) -> None:
         """Delete history entries older than retention period."""
         if not token_family_id:
             return
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
         try:
-            session.execute(
-                delete(RefreshTokenHistoryModel).where(
-                    RefreshTokenHistoryModel.token_family_id == token_family_id,
-                    RefreshTokenHistoryModel.rotated_at < cutoff,
-                )
+            stmt = delete(RefreshTokenHistoryModel).where(
+                RefreshTokenHistoryModel.token_family_id == token_family_id,
+                RefreshTokenHistoryModel.rotated_at < cutoff,
             )
+            if zone_id is not None:
+                stmt = stmt.where(RefreshTokenHistoryModel.zone_id == zone_id)
+            session.execute(stmt)
         except Exception:
             logger.warning("Failed to prune token history", exc_info=True)

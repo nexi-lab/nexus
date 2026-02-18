@@ -354,7 +354,7 @@ class TokenManager:
                                 session, model.token_family_id, old_refresh_hash
                             ):
                                 count = self._rotation_store.invalidate_family(
-                                    session, model.token_family_id
+                                    session, model.token_family_id, zone_id=model.zone_id
                                 )
                                 session.commit()
                                 self._invalidate_cache(provider, user_email, zone_id)
@@ -413,6 +413,7 @@ class TokenManager:
                                 session,
                                 model.token_family_id,
                                 retention_days=_HISTORY_RETENTION_DAYS,
+                                zone_id=model.zone_id,
                             )
 
                         credential = new_credential
@@ -469,7 +470,7 @@ class TokenManager:
         with self.SessionLocal() as session:
             return self._rotation_store.detect_reuse(session, token_family_id, refresh_token_hash)
 
-    def invalidate_family(self, token_family_id: str) -> int:
+    def invalidate_family(self, token_family_id: str, zone_id: str | None = None) -> int:
         """Invalidate all credentials in a token family.
 
         Called when token reuse is detected.  Revokes all credentials
@@ -479,7 +480,9 @@ class TokenManager:
             Number of credentials revoked.
         """
         with self.SessionLocal() as session:
-            count = self._rotation_store.invalidate_family(session, token_family_id)
+            count = self._rotation_store.invalidate_family(
+                session, token_family_id, zone_id=zone_id
+            )
             session.commit()
 
             if count > 0:

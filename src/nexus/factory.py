@@ -586,7 +586,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     async_namespace_manager: Any = None
     try:
         from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
-        from nexus.services.permissions.namespace_factory import (
+        from nexus.rebac.namespace_factory import (
             create_namespace_manager as _create_ns_manager,
         )
 

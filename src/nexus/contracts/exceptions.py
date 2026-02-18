@@ -299,6 +299,22 @@ class RemoteTimeoutError(RemoteFilesystemError):
     pass
 
 
+class ConfigurationError(NexusError):
+    """Raised when a required service or provider is not configured.
+
+    This is an unexpected error — indicates a missing dependency or
+    misconfiguration that should be fixed by an operator, not an end user.
+    Maps to HTTP 500 Internal Server Error.
+    """
+
+    is_expected = False  # Misconfiguration, operator must fix
+    status_code = 500
+    error_type = "Internal Server Error"
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path)
+
+
 class ServiceUnavailableError(NexusError):
     """Service temporarily unavailable (e.g., circuit breaker open).
 

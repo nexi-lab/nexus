@@ -145,7 +145,9 @@ def main() -> None:
         py_unc = _bench_uncontended(PythonVFSLockManager, 5_000)
         rs_unc = _bench_uncontended(RustVFSLockManager, 5_000)
         speedup = py_unc["avg_ns"] / rs_unc["avg_ns"] if rs_unc["avg_ns"] > 0 else float("inf")
-        print(f"  Uncontended avg: Python={py_unc['avg_ns']:.0f}ns, Rust={rs_unc['avg_ns']:.0f}ns, Speedup={speedup:.1f}x")
+        print(
+            f"  Uncontended avg: Python={py_unc['avg_ns']:.0f}ns, Rust={rs_unc['avg_ns']:.0f}ns, Speedup={speedup:.1f}x"
+        )
 
     print()
 

@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
+from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.exceptions import (
     ConflictError,
     ConnectorError,
@@ -22,7 +23,6 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.dependencies import require_auth
 from nexus.server.protocol import (
     RPCErrorCode,

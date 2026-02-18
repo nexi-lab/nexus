@@ -1,8 +1,8 @@
 """RPC protocol types for Nexus JSON-RPC communication.
 
 Extracted from server/protocol.py (Issue #1519, 1A) so that core/
-modules (rpc_transport, rpc_codec) can use these types without
-importing from the server layer.
+modules (rpc_transport) can use these types without importing from
+the server layer.  (rpc_codec moved to nexus.contracts, Issue #2054.)
 
 These are pure data types with no dependencies beyond the standard library.
 """

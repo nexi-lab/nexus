@@ -44,12 +44,12 @@ first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 from __future__ import annotations
 
 import logging
+import os as _os
+from typing import TYPE_CHECKING, Any, cast
 
 __version__ = "0.7.2.dev0"  # bump to trigger CI quality checks
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
-
-from typing import TYPE_CHECKING, Any, cast
 
 # =============================================================================
 # LAZY IMPORTS for performance optimization
@@ -104,6 +104,9 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+
+# All mutable state (data, metastore, record store, etc.) lives under this directory.
+NEXUS_STATE_DIR = _os.path.expanduser("~/.nexus")
 
 logger = logging.getLogger(__name__)
 
@@ -282,11 +285,16 @@ def connect(
             project_id=cfg.gcs_project_id,
             credentials_path=cfg.gcs_credentials_path,
         )
-        metadata_path = cfg.db_path or str(Path("./nexus-gcs-metadata"))
+        nexus_root = NEXUS_STATE_DIR
+        data_dir = str(Path(nexus_root) / "data")
     else:
-        data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
+        data_dir = cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
+        nexus_root = str(Path(data_dir).parent)
         backend = LocalBackend(root_path=Path(data_dir).resolve())
-        metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
+
+    # Resolve paths — new fields take precedence, db_path is legacy fallback
+    metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
+    record_store_path = cfg.record_store_path or None
 
     # Create metadata store based on mode
     metadata_store: MetastoreABC
@@ -344,14 +352,14 @@ def connect(
     enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
     enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
 
-    # RecordStore (Four Pillars) — optional; only created when db_path is
-    # explicitly set.  Passing None gives a bare kernel (storage-only) where
-    # all service-layer features (audit log, versioning, ReBAC, etc.) are
-    # skipped.  The factory handles record_store=None gracefully.
-    if cfg.db_path:
+    # RecordStore (Four Pillars) — optional; only created when record_store_path
+    # is set.  Passing None gives a bare kernel (storage-only) where all
+    # service-layer features (audit log, versioning, ReBAC, etc.) are skipped.
+    # The factory handles record_store=None gracefully.
+    if record_store_path:
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
+        record_store = SQLAlchemyRecordStore(db_path=record_store_path)
     else:
         record_store = None
 

@@ -18,6 +18,7 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-12345"
 os.environ["NEXUS_DATABASE_URL"] = "sqlite:///:memory:"
 
+from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.server.fastapi_server import create_app
 from nexus.storage.models import Base
@@ -49,7 +50,7 @@ def test_app():
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(os.path.join(auth_tmpdir, "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=":memory:"),
-        enforce_permissions=False,  # Disable permissions for simpler testing
+        permissions=PermissionConfig(enforce=False),
     )
 
     # Create FastAPI app

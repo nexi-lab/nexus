@@ -1,12 +1,12 @@
 """Semantic Search Mixin - Extracted from SearchService (Issue #1287).
 
-This mixin provides all semantic search functionality:
+Thin facade that delegates to IndexingService + QueryService (Issue #2075).
+
+Provides all semantic search functionality:
 - Natural language search with embeddings
 - Document indexing for semantic search
 - Search statistics
 - Initialization of embedding providers
-
-Extracted from: search_service.py (2,478 lines -> under 2,000)
 """
 
 from __future__ import annotations
@@ -22,17 +22,17 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.search.async_search import AsyncSemanticSearch
-    from nexus.search.semantic import SemanticSearch
+    from nexus.search.indexing_service import IndexingService
+    from nexus.search.query_service import QueryService
 
 
 class SemanticSearchMixin:
     """Mixin providing semantic search capabilities for SearchService.
 
-    Attributes managed by this mixin:
-        _semantic_search: Sync semantic search instance
-        _async_search: Async semantic search instance
-        _record_store: RecordStoreABC for SQL engine (needed for semantic search)
+    Delegates to:
+        _query_service: QueryService for search execution
+        _indexing_service: IndexingService for document indexing (when file_reader available)
+        _indexing_pipeline: IndexingPipeline for bulk indexing (RPC path without nx)
 
     Methods provided:
         - ainitialize_semantic_search: Factory init from NexusFS
@@ -40,15 +40,16 @@ class SemanticSearchMixin:
         - semantic_search: Natural language search
         - semantic_search_index: Document indexing
         - semantic_search_stats: Indexing statistics
-        - _async_index_documents: Async bulk indexing helper
     """
 
     @property
     def _has_search_engine(self) -> bool:
-        """Check if either async or sync search engine is available."""
-        has_async = hasattr(self, "_async_search") and self._async_search is not None
-        has_sync = hasattr(self, "_semantic_search") and self._semantic_search is not None
-        return has_async or has_sync
+        """Check if a search engine is available."""
+        return (
+            (hasattr(self, "_query_service") and self._query_service is not None)
+            or (hasattr(self, "_async_search") and self._async_search is not None)
+            or (hasattr(self, "_semantic_search") and self._semantic_search is not None)
+        )
 
     def _require_search_engine(self) -> None:
         """Raise ValueError if no search engine is initialized."""
@@ -59,8 +60,11 @@ class SemanticSearchMixin:
             )
 
     # Type hints for attributes provided by SearchService.__init__
-    _semantic_search: SemanticSearch | None
-    _async_search: AsyncSemanticSearch | None
+    _query_service: QueryService | None
+    _indexing_service: IndexingService | None
+    _indexing_pipeline: Any  # IndexingPipeline | None
+    _async_search: Any  # kept for backward compat during migration
+    _semantic_search: Any  # kept for backward compat during migration
     _record_store: Any
     _gw_session_factory: Any
     _gw_backend: Any
@@ -69,7 +73,7 @@ class SemanticSearchMixin:
     list: Any  # Callable, provided by SearchService
 
     # =========================================================================
-    # Semantic Search Initialization (Issue #1287, moved from NexusFS)
+    # Semantic Search Initialization (Issue #1287, #2075)
     # =========================================================================
 
     async def ainitialize_semantic_search(
@@ -82,31 +86,36 @@ class SemanticSearchMixin:
         api_key: str | None = None,
         chunk_size: int = 1024,
         chunk_strategy: str = "semantic",
-        async_mode: bool = True,
+        async_mode: bool = True,  # noqa: ARG002
         cache_url: str | None = None,
         embedding_cache_ttl: int = 86400 * 3,
     ) -> None:
         """Initialize semantic search engine.
 
-        Factory method that creates and configures SemanticSearch and
-        AsyncSemanticSearch instances. Moved from NexusFS god object.
+        Creates IndexingService + QueryService backed by IndexingPipeline,
+        VectorDatabase, and FileReaderProtocol.
 
         Args:
-            nx: NexusFS instance (SemanticSearch still requires full nx reference)
+            nx: NexusFS instance (used to create FileReaderProtocol adapter)
             record_store_engine: SQLAlchemy engine from RecordStore
             embedding_provider: Provider name (e.g., "openai", "voyage")
             embedding_model: Model name for embeddings
             api_key: API key for embedding provider
             chunk_size: Chunk size in tokens
             chunk_strategy: Chunking strategy ("fixed", "semantic", "overlapping")
-            async_mode: If True, also initialize AsyncSemanticSearch
+            async_mode: Unused — kept for API compat.
             cache_url: Redis/Dragonfly URL for embedding cache
             embedding_cache_ttl: Cache TTL in seconds (default: 3 days)
         """
         import os
 
-        from nexus.search.chunking import ChunkStrategy
+        from nexus.search.chunking import ChunkStrategy, DocumentChunker
+        from nexus.search.indexing import IndexingPipeline
+        from nexus.search.indexing_service import IndexingService
+        from nexus.search.query_service import QueryService
+        from nexus.search.vector_db import VectorDatabase
 
+        # --- Embedding provider ---
         emb_provider = None
         if embedding_provider:
             from nexus.search.embeddings import create_cached_embedding_provider
@@ -126,67 +135,63 @@ class SemanticSearchMixin:
             "overlapping": ChunkStrategy.OVERLAPPING,
         }
         chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
-        database_url = str(record_store_engine.url)
 
-        if async_mode:
-            from nexus.search.async_search import AsyncSemanticSearch
-            from nexus.search.semantic import SemanticSearch
+        # --- Core components ---
+        vector_db = VectorDatabase(record_store_engine)
+        vector_db.initialize()
 
-            # Prefer injected async_session_factory from RecordStoreABC (Issue #1597).
-            # Base property raises NotImplementedError (not AttributeError),
-            # so getattr() default won't catch it.
-            _async_sf = None
-            if self._record_store is not None:
-                with contextlib.suppress(NotImplementedError, AttributeError):
-                    _async_sf = self._record_store.async_session_factory
-            self._async_search = AsyncSemanticSearch(
-                database_url=database_url,
-                embedding_provider=emb_provider,
-                chunk_size=chunk_size,
-                chunk_strategy=chunk_strat,
-                async_session_factory=_async_sf,
-            )
-            await self._async_search.initialize()
+        chunker = DocumentChunker(
+            chunk_size=chunk_size,
+            strategy=chunk_strat,
+            overlap_size=128,
+        )
 
-            # Issue #1520: Inject FileReaderProtocol when available
-            from nexus.factory import _NexusFSFileReader
+        _sync_sf = self._record_store.session_factory if self._record_store is not None else None
+        _async_sf = None
+        if self._record_store is not None:
+            with contextlib.suppress(NotImplementedError, AttributeError):
+                _async_sf = self._record_store.async_session_factory
 
-            _file_reader = _NexusFSFileReader(nx) if nx is not None else None
+        pipeline = IndexingPipeline(
+            chunker=chunker,
+            embedding_provider=emb_provider,
+            db_type=vector_db.db_type,
+            async_session_factory=_async_sf,
+            max_concurrency=10,
+            cross_doc_batching=True,
+        )
+        self._indexing_pipeline = pipeline
 
-            _sync_sf = (
-                self._record_store.session_factory if self._record_store is not None else None
-            )
-            self._semantic_search = SemanticSearch(
-                nx=nx,
-                embedding_provider=emb_provider,
-                chunk_size=chunk_size,
-                chunk_strategy=chunk_strat,
-                engine=record_store_engine,
+        # --- QueryService ---
+        if _sync_sf is not None:
+            self._query_service = QueryService(
+                vector_db=vector_db,
                 session_factory=_sync_sf,
-                file_reader=_file_reader,
+                embedding_provider=emb_provider,
             )
-            self._semantic_search.initialize()
         else:
-            # Issue #1520: Inject FileReaderProtocol when available
-            from nexus.factory import _NexusFSFileReader
-            from nexus.search.semantic import SemanticSearch
+            self._query_service = None
 
-            _file_reader = _NexusFSFileReader(nx) if nx is not None else None
+        # --- IndexingService (needs file_reader from nx) ---
+        from nexus.factory import _NexusFSFileReader
 
-            _sync_sf = (
-                self._record_store.session_factory if self._record_store is not None else None
-            )
-            self._semantic_search = SemanticSearch(
-                nx=nx,
-                embedding_provider=emb_provider,
-                chunk_size=chunk_size,
-                chunk_strategy=chunk_strat,
-                engine=record_store_engine,
-                session_factory=_sync_sf,
+        _file_reader = _NexusFSFileReader(nx) if nx is not None else None
+
+        if _file_reader is not None and _sync_sf is not None:
+            self._indexing_service = IndexingService(
+                pipeline=pipeline,
                 file_reader=_file_reader,
+                session_factory=_sync_sf,
+                vector_db=vector_db,
+                embedding_provider=emb_provider,
             )
-            self._semantic_search.initialize()
-            self._async_search = None
+        else:
+            self._indexing_service = None
+
+        # Legacy attributes — set to None so _has_search_engine doesn't
+        # need them and old code that checks them won't crash.
+        self._async_search = None
+        self._semantic_search = None
 
     # =========================================================================
     # Public API: Semantic Search
@@ -198,54 +203,51 @@ class SemanticSearchMixin:
         query: str,
         path: str = "/",
         limit: int = 10,
-        filters: dict[str, Any] | None = None,
+        filters: dict[str, Any] | None = None,  # noqa: ARG002
         search_mode: str = "semantic",
         adaptive_k: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """Search documents using natural language queries.
 
-        Supports three search modes:
-        - "keyword": Fast keyword search using FTS (no embeddings)
-        - "semantic": Semantic search using vector embeddings
-        - "hybrid": Combines keyword + semantic for best results
-
         Args:
             query: Natural language query
             path: Root path to search
             limit: Maximum number of results
-            filters: Optional filters (file_type, etc.)
+            filters: Optional filters (currently unused)
             search_mode: "keyword", "semantic", or "hybrid"
             adaptive_k: If True, dynamically adjust limit (Issue #1021)
 
-        Examples:
-            # Search for authentication info
-            results = await search.semantic_search(
-                "How does authentication work?"
-            )
-
-            # Search in specific directory
-            results = await search.semantic_search(
-                "database migration",
-                path="/docs",
-                limit=5
-            )
-
-            # Hybrid search (best results)
-            results = await search.semantic_search(
-                "error handling",
-                search_mode="hybrid"
-            )
-
         Raises:
             ValueError: If semantic search is not initialized
-            PermissionDeniedError: If user lacks read permission
         """
         self._require_search_engine()
 
-        # Use async search for non-blocking DB operations (high throughput)
-        if self._async_search is not None:
-            assert self._async_search is not None  # Type guard for mypy
-            results = await self._async_search.search(
+        # Prefer QueryService (Issue #2075)
+        if self._query_service is not None:
+            results = await self._query_service.search(
+                query=query,
+                path=path,
+                limit=limit,
+                search_mode=search_mode,
+                adaptive_k=adaptive_k,
+            )
+            return [
+                {
+                    "path": r.path,
+                    "chunk_index": r.chunk_index,
+                    "chunk_text": r.chunk_text,
+                    "score": r.score,
+                    "start_offset": r.start_offset,
+                    "end_offset": r.end_offset,
+                    "line_start": r.line_start,
+                    "line_end": r.line_end,
+                }
+                for r in results
+            ]
+
+        # Fallback: AsyncSemanticSearch (legacy — will be removed)
+        if hasattr(self, "_async_search") and self._async_search is not None:
+            results_legacy = await self._async_search.search(
                 query=query,
                 limit=limit,
                 path_filter=path if path != "/" else None,
@@ -254,54 +256,27 @@ class SemanticSearchMixin:
             )
             return [
                 {
-                    "path": result.path,
-                    "chunk_index": result.chunk_index,
-                    "chunk_text": result.chunk_text,
-                    "score": result.score,
-                    "start_offset": result.start_offset,
-                    "end_offset": result.end_offset,
-                    "line_start": result.line_start,
-                    "line_end": result.line_end,
+                    "path": r.path,
+                    "chunk_index": r.chunk_index,
+                    "chunk_text": r.chunk_text,
+                    "score": r.score,
+                    "start_offset": r.start_offset,
+                    "end_offset": r.end_offset,
+                    "line_start": r.line_start,
+                    "line_end": r.line_end,
                 }
-                for result in results
+                for r in results_legacy
             ]
 
-        # Fallback to sync search (requires NexusFS integration)
-        if self._semantic_search is not None:
-            sync_results = await self._semantic_search.search(
-                query=query,
-                path=path,
-                limit=limit,
-                filters=filters,
-                search_mode=search_mode,
-                adaptive_k=adaptive_k,
-            )
-
-            return [
-                {
-                    "path": result.path,
-                    "chunk_index": result.chunk_index,
-                    "chunk_text": result.chunk_text,
-                    "score": result.score,
-                    "start_offset": result.start_offset,
-                    "end_offset": result.end_offset,
-                    "line_start": result.line_start,
-                    "line_end": result.line_end,
-                }
-                for result in sync_results
-            ]
-
-        # Should not reach here due to initialization check above
         raise ValueError("Semantic search not properly initialized")
 
     @rpc_expose(description="Index documents for semantic search")
     async def semantic_search_index(
-        self, path: str = "/", recursive: bool = True
+        self,
+        path: str = "/",
+        recursive: bool = True,
     ) -> dict[str, int]:
         """Index documents for semantic search.
-
-        Chunks documents and generates embeddings. Must run before
-        using semantic_search().
 
         Args:
             path: Path to index (file or directory)
@@ -310,79 +285,44 @@ class SemanticSearchMixin:
         Returns:
             Dictionary mapping file paths to number of chunks indexed
 
-        Examples:
-            # Index all documents
-            await search.semantic_search_index()
-
-            # Index specific directory
-            await search.semantic_search_index("/docs")
-
         Raises:
             ValueError: If semantic search is not initialized
         """
         self._require_search_engine()
 
-        # Use async indexing for high throughput
-        if self._async_search is not None:
-            assert self._async_search is not None  # Type guard for mypy
-            return await self._async_index_documents(path, recursive)
+        # Prefer IndexingService (Issue #2075)
+        if self._indexing_service is not None:
+            try:
+                num_chunks = await self._indexing_service.index_document(path)
+                return {path: num_chunks}
+            except ValueError:
+                # path is a directory or doesn't exist as single file
+                pass
 
-        # Fallback to sync indexing via _semantic_search
-        assert self._semantic_search is not None  # Type guard
-        try:
-            await asyncio.to_thread(self._read, path)
-            num_chunks = await self._semantic_search.index_document(path)
-            return {path: num_chunks}
-        except Exception as e:
-            logger.debug(
-                "Failed to index single document %s, falling back to directory: %s", path, e
-            )
+            if recursive:
+                idx_results = await self._indexing_service.index_directory(path)
+                return {p: r.chunks_indexed for p, r in idx_results.items()}
+            return {}
 
-        if recursive:
-            idx_results = await self._semantic_search.index_directory(path)
-            return {p: r.chunks_indexed for p, r in idx_results.items()}
-        else:
-            files_result = await asyncio.to_thread(self.list, path, False)
-            files = files_result.items if hasattr(files_result, "items") else files_result
-            results: dict[str, int] = {}
-            for item in files:
-                file_path = item["name"] if isinstance(item, dict) else item
-                if not file_path.endswith("/"):
-                    try:
-                        num_chunks = await self._semantic_search.index_document(file_path)
-                        results[file_path] = num_chunks
-                    except Exception:
-                        results[file_path] = -1
-            return results
+        # Fallback: pipeline-based bulk indexing (RPC path without nx)
+        return await self._pipeline_index_documents(path, recursive)
 
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
         """Get semantic search indexing statistics.
 
-        Returns:
-            Dictionary with:
-            - total_chunks: Total indexed chunks
-            - indexed_files: Number of indexed files
-            - collection_name: Vector collection name
-            - embedding_model: Embedding model name
-            - chunk_size: Chunk size in tokens
-            - chunk_strategy: Chunking strategy
-
         Raises:
             ValueError: If semantic search is not initialized
         """
         self._require_search_engine()
 
-        # Prefer async search
-        if self._async_search is not None:
-            assert self._async_search is not None  # Type guard for mypy
+        if self._indexing_service is not None:
+            return await self._indexing_service.get_index_stats()
+
+        # Fallback: legacy
+        if hasattr(self, "_async_search") and self._async_search is not None:
             return await self._async_search.get_stats()
 
-        # Fallback to sync search
-        if self._semantic_search is not None:
-            return await self._semantic_search.get_index_stats()
-
-        # Should not reach here
         raise ValueError("Semantic search not properly initialized")
 
     @rpc_expose(description="Initialize semantic search engine")
@@ -394,30 +334,24 @@ class SemanticSearchMixin:
         chunk_size: int = 1024,
         chunk_strategy: str = "semantic",
         async_mode: bool = True,
-        contextual_chunking: bool = False,
-        context_generator: Any | None = None,
+        contextual_chunking: bool = False,  # noqa: ARG002
+        context_generator: Any | None = None,  # noqa: ARG002
         cache_url: str | None = None,
         embedding_cache_ttl: int = 86400 * 3,
     ) -> None:
-        """Initialize semantic search engine with embedding provider.
+        """Initialize semantic search engine with embedding provider (RPC path).
 
-        Args:
-            embedding_provider: "openai", "cohere", "huggingface", etc.
-            embedding_model: Model name (provider-specific)
-            api_key: API key for embedding provider
-            chunk_size: Chunk size in tokens
-            chunk_strategy: "semantic", "fixed", or "recursive"
-            async_mode: Use async backend for high throughput
-            contextual_chunking: Enable contextual chunking (Anthropic pattern)
-            context_generator: Callable for generating chunk context
-            cache_url: Redis/Dragonfly URL for embedding cache
-            embedding_cache_ttl: Cache TTL in seconds (default: 3 days)
+        This path does NOT have access to NexusFS, so IndexingService cannot be
+        created. QueryService is created for search; bulk indexing uses
+        IndexingPipeline directly.
         """
         import os
 
-        from nexus.search.chunking import ChunkStrategy
+        from nexus.search.chunking import ChunkStrategy, DocumentChunker
+        from nexus.search.indexing import IndexingPipeline
+        from nexus.search.query_service import QueryService
+        from nexus.search.vector_db import VectorDatabase
 
-        # Create embedding provider with caching
         emb_provider = None
         if embedding_provider:
             from nexus.search.embeddings import create_cached_embedding_provider
@@ -431,7 +365,6 @@ class SemanticSearchMixin:
                 cache_ttl=embedding_cache_ttl,
             )
 
-        # Map string to enum
         strategy_map = {
             "fixed": ChunkStrategy.FIXED,
             "semantic": ChunkStrategy.SEMANTIC,
@@ -439,45 +372,59 @@ class SemanticSearchMixin:
         }
         chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
 
-        # Get database URL from record store (service dependency)
         if self._record_store is None:
             raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
-        database_url = str(self._record_store.engine.url)
 
-        if async_mode:
-            # Use async search for high-throughput (non-blocking DB operations)
-            from nexus.search.async_search import AsyncSemanticSearch
+        engine = self._record_store.engine
+        vector_db = VectorDatabase(engine)
+        vector_db.initialize()
 
-            # Prefer injected async_session_factory from RecordStoreABC (Issue #1597)
-            _async_sf = None
-            with contextlib.suppress(NotImplementedError, AttributeError):
-                _async_sf = self._record_store.async_session_factory
-            self._async_search = AsyncSemanticSearch(
-                database_url=database_url,
-                embedding_provider=emb_provider,
-                chunk_size=chunk_size,
-                chunk_strategy=chunk_strat,
-                contextual_chunking=contextual_chunking,
-                context_generator=context_generator,
-                async_session_factory=_async_sf,
-            )
-            await self._async_search.initialize()
+        chunker = DocumentChunker(
+            chunk_size=chunk_size,
+            strategy=chunk_strat,
+            overlap_size=128,
+        )
 
-            # Note: In async mode, we use _async_search instead of _semantic_search
-            # _semantic_search remains None since it requires NexusFS instance
-            # All semantic search methods check _async_search first
-        else:
-            # Sync mode not supported in service extraction
+        _sync_sf = self._record_store.session_factory
+        _async_sf = None
+        with contextlib.suppress(NotImplementedError, AttributeError):
+            _async_sf = self._record_store.async_session_factory
+
+        if not async_mode:
             raise NotImplementedError(
                 "Sync semantic search requires NexusFS integration. Use async_mode=True."
             )
 
+        self._indexing_pipeline = IndexingPipeline(
+            chunker=chunker,
+            embedding_provider=emb_provider,
+            db_type=vector_db.db_type,
+            async_session_factory=_async_sf,
+            max_concurrency=10,
+            cross_doc_batching=True,
+        )
+
+        self._query_service = QueryService(
+            vector_db=vector_db,
+            session_factory=_sync_sf,
+            embedding_provider=emb_provider,
+        )
+
+        # No file_reader available in RPC path — IndexingService not created.
+        self._indexing_service = None
+        self._async_search = None
+        self._semantic_search = None
+
     # =========================================================================
-    # Helper Methods: Semantic Search Indexing
+    # Helper Methods
     # =========================================================================
 
-    async def _async_index_documents(self, path: str, recursive: bool) -> dict[str, int]:
-        """Index documents using async backend for high throughput."""
+    async def _pipeline_index_documents(
+        self,
+        path: str,
+        recursive: bool,
+    ) -> dict[str, int]:
+        """Index documents using IndexingPipeline directly (RPC path)."""
         from sqlalchemy import select
 
         from nexus.storage.models import FilePathModel
@@ -523,13 +470,17 @@ class SemanticSearchMixin:
                         if file_model and content:
                             docs.append((fp, content, file_model.path_id))
                     except Exception as e:
-                        logger.warning(f"Failed to prepare {fp} for indexing: {e}")
+                        logger.warning("Failed to prepare %s for indexing: %s", fp, e)
             return docs
 
         documents = await asyncio.to_thread(_prepare_documents_sync)
         if not documents:
             return {}
 
-        assert self._async_search is not None
-        idx_results = await self._async_search.index_documents_bulk(documents)
-        return {p: r.chunks_indexed for p, r in idx_results.items()}
+        pipeline = getattr(self, "_indexing_pipeline", None)
+        if pipeline is None:
+            logger.warning("No indexing pipeline configured")
+            return {}
+
+        idx_results = await pipeline.index_documents(documents)
+        return {r.path: r.chunks_indexed for r in idx_results}

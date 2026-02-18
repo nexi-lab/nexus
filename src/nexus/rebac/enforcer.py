@@ -769,7 +769,7 @@ class PermissionEnforcer:
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),
             request_id=getattr(context, "request_id", str(uuid.uuid4())),
-            user=context.user_id,
+            user_id=context.user_id,
             zone_id=context.zone_id,
             path=path,
             permission=permission,
@@ -799,7 +799,7 @@ class PermissionEnforcer:
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),
             request_id=getattr(context, "request_id", str(uuid.uuid4())),
-            user=context.user_id,
+            user_id=context.user_id,
             zone_id=context.zone_id,
             path=path,
             permission=permission,

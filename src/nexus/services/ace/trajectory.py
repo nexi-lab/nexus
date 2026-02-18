@@ -46,7 +46,7 @@ class TrajectoryManager:
         self.agent_id = agent_id
         self.zone_id = zone_id
         self.context = context or OperationContext(
-            user=user_id, groups=[], is_admin=False, is_system=False
+            user_id=user_id, groups=[], is_admin=False, is_system=False
         )
         self._active_trajectories: dict[str, dict[str, Any]] = {}
 

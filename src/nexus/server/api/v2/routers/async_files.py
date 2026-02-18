@@ -166,7 +166,7 @@ def create_async_files_router(
             from nexus.core.permissions import OperationContext
 
             return OperationContext(
-                user="anonymous",
+                user_id="anonymous",
                 groups=[],
                 zone_id="root",
             )

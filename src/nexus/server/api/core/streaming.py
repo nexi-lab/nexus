@@ -49,7 +49,7 @@ async def stream_file(
         from nexus.server.fastapi_server import to_thread_with_timeout
 
         context = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             zone_id=zone_id,
             subject_type="system",

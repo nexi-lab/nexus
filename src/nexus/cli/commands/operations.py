@@ -384,7 +384,7 @@ def _undo_operation(nx: Any, logger: Any, operation: Any) -> None:
                     from nexus.core.permissions import OperationContext
 
                     context = OperationContext(
-                        user=nx._default_context.agent_id or "system",
+                        user_id=nx._default_context.agent_id or "system",
                         groups=[],
                         is_admin=True,
                         is_system=True,

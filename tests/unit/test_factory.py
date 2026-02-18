@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.core.deployment_profile import DeploymentProfile
 from nexus.core.exceptions import BootError, NexusError
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ def _make_mock_ctx(**overrides: Any) -> Any:
         "enable_write_buffer": False,
         "resiliency_raw": None,
         "db_url": "sqlite:///:memory:",
+        "profile_tuning": DeploymentProfile.FULL.tuning(),
     }
     defaults.update(overrides)
     return _BootContext(**defaults)

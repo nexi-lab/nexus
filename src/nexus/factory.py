@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
     from nexus.storage.record_store import RecordStoreABC
+    from nexus.workflows.protocol import WorkflowProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -409,7 +410,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         )
 
         # --- Directory Visibility Cache ---
-        from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
+        from nexus.rebac.cache.visibility import DirectoryVisibilityCache
 
         dir_visibility_cache = DirectoryVisibilityCache(
             tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
@@ -585,8 +586,8 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     namespace_manager: Any = None
     async_namespace_manager: Any = None
     try:
-        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
-        from nexus.services.permissions.namespace_factory import (
+        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.rebac.namespace_factory import (
             create_namespace_manager as _create_ns_manager,
         )
 
@@ -877,7 +878,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         )
 
     # --- Workflow engine ---
-    workflow_engine: Any = None
+    workflow_engine: WorkflowProtocol | None = None
     if ctx.dist.enable_workflows:
         # Try to get Rust glob_match for performance (falls back to fnmatch)
         _glob_match_fn: Any = None
@@ -1192,7 +1193,9 @@ def _create_distributed_infra(
     return event_bus, lock_manager
 
 
-def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any:
+def _create_workflow_engine(
+    record_store: Any, glob_match_fn: Any = None
+) -> WorkflowProtocol | None:
     """Create workflow engine with async store and DI.
 
     Args:
@@ -1336,7 +1339,7 @@ def create_nexus_fs(
     zone_id: str | None = None,
     agent_id: str | None = None,
     custom_parsers: list[dict[str, Any]] | None = None,  # noqa: ARG001
-    workflow_engine: Any = None,
+    workflow_engine: WorkflowProtocol | None = None,
 ) -> NexusFS:
     """Create NexusFS with default services — the recommended entry point.
 

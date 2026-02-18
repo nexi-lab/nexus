@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.bm25s_search import BM25SIndex
     from nexus.search.chunking import EntropyAwareChunker
+    from nexus.search.indexing import IndexingPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,9 @@ class SearchDaemon:
         # Entropy-aware chunker for filtering redundant content (Issue #1024)
         self._entropy_chunker: EntropyAwareChunker | None = None
 
+        # Indexing pipeline for parallel refresh (Issue #1094)
+        self._indexing_pipeline: IndexingPipeline | None = None
+
         # State
         self._initialized = False
         self._shutting_down = False
@@ -223,6 +227,19 @@ class SearchDaemon:
                 f"Entropy filtering enabled: threshold={self.config.entropy_threshold}, "
                 f"alpha={self.config.entropy_alpha}"
             )
+
+        # Initialize indexing pipeline for parallel refresh (Issue #1094)
+        from nexus.search.chunking import DocumentChunker
+        from nexus.search.indexing import IndexingPipeline as _IP
+
+        self._indexing_pipeline = _IP(
+            chunker=DocumentChunker(),
+            embedding_provider=self._embedding_provider,
+            entropy_chunker=self._entropy_chunker,
+            async_session_factory=self._async_session,
+            max_concurrency=10,
+            cross_doc_batching=True,
+        )
 
         # Start index refresh background task
         if self.config.refresh_enabled:
@@ -833,7 +850,7 @@ class SearchDaemon:
     # Index Refresh
     # =========================================================================
 
-    async def notify_file_change(self, path: str, _change_type: str = "update") -> None:
+    async def notify_file_change(self, path: str, change_type: str = "update") -> None:  # noqa: ARG002
         """Notify the daemon of a file change for index refresh.
 
         Changes are debounced and batched for efficiency.

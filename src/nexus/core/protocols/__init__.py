@@ -20,13 +20,17 @@ from nexus.core.protocols.connector import (
     PassthroughProtocol,
     StreamingProtocol,
 )
+from nexus.core.protocols.content_service import ContentServiceProtocol
 from nexus.core.protocols.describable import Describable
+from nexus.core.protocols.revision_service import RevisionServiceProtocol
+from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
 
 __all__ = [
     "BatchContentProtocol",
     "CachingConnectorContract",
     "ConnectorProtocol",
+    "ContentServiceProtocol",
     "ContentStoreProtocol",
     "Describable",
     "DirectoryListingProtocol",
@@ -35,6 +39,8 @@ __all__ = [
     "OAuthCapableProtocol",
     "PassthroughProtocol",
     "ResolvedPath",
+    "RevisionServiceProtocol",
     "StreamingProtocol",
+    "VFSCoreProtocol",
     "VFSRouterProtocol",
 ]

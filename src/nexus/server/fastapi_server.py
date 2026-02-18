@@ -641,7 +641,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Start DirectoryGrantExpander worker for large directory grants (Leopard-style)
                 # This processes pending directory grants asynchronously in background
                 try:
-                    from nexus.rebac.tiger_cache import DirectoryGrantExpander
+                    from nexus.rebac.cache.tiger import DirectoryGrantExpander
 
                     expander = DirectoryGrantExpander(
                         engine=_app.state.nexus_fs._rebac_manager.engine,

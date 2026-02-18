@@ -24,12 +24,14 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
 from nexus.rebac.manager import (
-    ConsistencyLevel,
-    ConsistencyRequirement,
     EnhancedReBACManager,
+)
+from nexus.rebac.types import (
+    ConsistencyLevel,
+    ConsistencyMode,
+    ConsistencyRequirement,
     WriteResult,
 )
-from nexus.services.permissions.types import ConsistencyMode
 from nexus.storage.models import Base
 
 

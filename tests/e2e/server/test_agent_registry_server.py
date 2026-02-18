@@ -17,6 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.rebac.manager import EnhancedReBACManager
 from nexus.server.api.v2.routers.delegation import (
     DelegateRequest,
@@ -26,7 +27,6 @@ from nexus.server.api.v2.routers.delegation import (
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService
-from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

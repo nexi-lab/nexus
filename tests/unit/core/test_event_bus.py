@@ -1073,7 +1073,7 @@ class TestEventBusFactoryExtended:
         """Test creating NATS event bus via factory."""
         from unittest.mock import patch
 
-        with patch("nexus.core.event_bus_nats.NatsEventBus") as MockNats:
+        with patch("nexus.services.event_bus_nats.NatsEventBus") as MockNats:
             MockNats.return_value = MagicMock()
             create_event_bus(backend="nats", nats_url="nats://test:4222")
             MockNats.assert_called_once_with(nats_url="nats://test:4222")

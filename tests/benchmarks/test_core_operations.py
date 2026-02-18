@@ -514,7 +514,7 @@ class TestPermissionBenchmarks:
     @pytest.mark.benchmark_ci
     def test_permission_check_bulk_rust(self, benchmark, benchmark_nexus):
         """Benchmark bulk permission checking in Rust (if available)."""
-        from nexus.rebac.rebac_fast import (
+        from nexus.rebac.utils.fast import (
             RUST_AVAILABLE,
             check_permissions_bulk_with_fallback,
         )
@@ -557,7 +557,7 @@ class TestPermissionBenchmarks:
 
     def test_permission_check_scale_1000(self, benchmark, benchmark_nexus):
         """Benchmark 1000 permission checks."""
-        from nexus.rebac.rebac_fast import check_permissions_bulk_with_fallback
+        from nexus.rebac.utils.fast import check_permissions_bulk_with_fallback
 
         checks = [(("user", f"user_{i}"), "read", ("file", f"/file_{i}.txt")) for i in range(1000)]
 

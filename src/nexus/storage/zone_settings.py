@@ -7,7 +7,22 @@ zone settings stored as JSON in ZoneModel.settings.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import BaseModel
+
+
+class SigningMode(StrEnum):
+    """Message signing enforcement mode for a zone.
+
+    - OFF: No signing, no verification.
+    - VERIFY_ONLY: Verify signatures when present, warn if missing, allow through.
+    - ENFORCE: Require valid signatures; reject unsigned or invalid messages.
+    """
+
+    OFF = "off"
+    VERIFY_ONLY = "verify_only"
+    ENFORCE = "enforce"
 
 
 class ZoneSettings(BaseModel):
@@ -19,3 +34,5 @@ class ZoneSettings(BaseModel):
     """
 
     model_config = {"extra": "allow"}
+
+    message_signing: SigningMode = SigningMode.OFF

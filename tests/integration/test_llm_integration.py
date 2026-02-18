@@ -1,7 +1,7 @@
 """Integration tests for LLM brick extraction (Issue #1521).
 
 Verifies:
-- Import paths resolve correctly (old and new locations)
+- Import paths resolve correctly (canonical locations)
 - Protocol compliance (LiteLLMProvider satisfies LLMProviderProtocol)
 - LLMService protocol compliance
 - Brick manifest and verify_imports()

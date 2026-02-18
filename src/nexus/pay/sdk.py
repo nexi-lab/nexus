@@ -436,7 +436,7 @@ class NexusPay:
         deadline: datetime | None = None,
         boost: float | Decimal = 0,
         idempotency_key: str | None = None,
-    ) -> Any:
+    ) -> str:
         """Submit a task for priority scheduling.
 
         Args:
@@ -450,7 +450,7 @@ class NexusPay:
             idempotency_key: Optional deduplication key.
 
         Returns:
-            ScheduledTask with computed priority and queue position.
+            Task ID string.
 
         Raises:
             NexusPayError: If scheduler is not configured or priority is invalid.
@@ -459,25 +459,27 @@ class NexusPay:
             raise NexusPayError("SchedulerService not configured")
 
         from nexus.scheduler.constants import TIER_ALIASES
-        from nexus.scheduler.models import TaskSubmission
+        from nexus.services.protocols.scheduler import AgentRequest
 
         tier = TIER_ALIASES.get(priority)
         if tier is None:
             valid = ", ".join(sorted(TIER_ALIASES.keys()))
             raise NexusPayError(f"Invalid priority '{priority}'. Must be one of: {valid}")
 
-        submission = TaskSubmission(
+        agent_request = AgentRequest(
             agent_id=self.agent_id,
+            zone_id=self._zone_id,
+            priority=tier.value,
             executor_id=executor,
             task_type=task_type,
             payload=payload or {},
-            priority=tier,
-            deadline=deadline,
-            boost_amount=self._to_decimal(boost),
+            deadline=deadline.isoformat() if deadline else None,
+            boost_amount=str(self._to_decimal(boost)),
             idempotency_key=idempotency_key,
         )
 
-        return await self._scheduler.submit_task(submission)
+        result: str = await self._scheduler.submit(agent_request)
+        return result
 
     # =========================================================================
     # Decorators

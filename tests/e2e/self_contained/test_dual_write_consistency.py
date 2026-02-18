@@ -77,8 +77,8 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
             backend=LocalBackend(str(temp_dir / "data")),
             metadata_store=raft_store,
             record_store=record_store,
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
     yield nx
     nx.close()

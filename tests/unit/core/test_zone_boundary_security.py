@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.rebac.permissions_enhanced import AdminCapability
@@ -35,9 +36,10 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,
-        allow_admin_bypass=True,  # Enable admin bypass for zone boundary tests
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(
+            enforce=True, allow_admin_bypass=True
+        ),  # Enable admin bypass for zone boundary tests
     )
     yield nx
     nx.close()

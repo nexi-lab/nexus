@@ -35,6 +35,7 @@ from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.factory import create_nexus_fs
 from nexus.raft import _HAS_METASTORE
@@ -73,7 +74,7 @@ def _create_nexus_fs(tmp_path: Path, *, enforce_permissions: bool = False) -> Ne
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=enforce_permissions,
+        permissions=PermissionConfig(enforce=enforce_permissions),
         is_admin=False,
     )
 

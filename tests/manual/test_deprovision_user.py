@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from nexus import LocalBackend
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -74,9 +75,8 @@ def main() -> None:
         backend=LocalBackend(args.backend_path),
         metadata_store=RaftMetadataStore.embedded(str(Path(args.backend_path) / "raft-metadata")),
         record_store=record_store,
-        auto_parse=False,
-        enforce_permissions=True,
-        allow_admin_bypass=True,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True, allow_admin_bypass=True),
     )
     print("✓ NexusFS initialized")
     print()

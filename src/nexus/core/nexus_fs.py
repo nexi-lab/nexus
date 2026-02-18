@@ -9502,7 +9502,7 @@ class NexusFS(  # type: ignore[misc]
         _context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Unmount an MCP server - delegates to MCPService."""
-        return await self.mcp_service.mcp_unmount(name=name, _context=_context)
+        return await self.mcp_service.mcp_unmount(name=name, context=_context)
 
     @rpc_expose(description="Sync tools from MCP server")
     async def mcp_sync(

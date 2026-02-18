@@ -2628,9 +2628,6 @@ class ReBACManager:
     # Directory Operations (Issue #1459 Phase 13: delegated to DirectoryExpander)
     # =========================================================================
 
-    # Kept for backward compatibility — class attribute referenced by some tests
-    DIRECTORY_EXPANSION_LIMIT = 10_000
-
     def _is_directory_path(self, path: str) -> bool:
         """Check if a path represents a directory."""
         return self._directory_expander.is_directory_path(path)
@@ -6162,6 +6159,5 @@ class ReBACManager:
 # Backward Compatibility Alias
 # ====================================================================================
 
-# Backward-compat aliases (Issue #1385)
+# Backward-compat alias (Issue #1385)
 EnhancedReBACManager = ReBACManager
-ZoneAwareReBACManager = ReBACManager

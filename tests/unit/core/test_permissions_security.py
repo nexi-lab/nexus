@@ -22,7 +22,7 @@ from nexus.core.permissions import (
     Permission,
 )
 from nexus.core.read_set import enable_read_tracking
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 
 # ---------------------------------------------------------------------------
 # OperationContext creation and validation

@@ -34,7 +34,9 @@ from nexus.raft.zone_manager import ROOT_ZONE_ID
 @pytest.fixture
 def mock_nats_connect():
     """Patch nats.connect to return a mock NATS client."""
-    with patch("nexus.core.event_bus_nats.nats.connect", new_callable=AsyncMock) as mock_connect:
+    with patch(
+        "nexus.services.event_bus_nats.nats.connect", new_callable=AsyncMock
+    ) as mock_connect:
         nc = AsyncMock()
         nc.is_connected = True
         nc.drain = AsyncMock()
@@ -53,7 +55,7 @@ def make_bus():
     """Create a NatsEventBus with default test settings."""
 
     def _make(**kwargs):
-        from nexus.core.event_bus_nats import NatsEventBus
+        from nexus.services.event_bus_nats import NatsEventBus
 
         defaults = {"nats_url": "nats://test:4222"}
         defaults.update(kwargs)
@@ -769,7 +771,7 @@ class TestNatsEventBusErrors:
         from nats.errors import NoServersError
 
         with patch(
-            "nexus.core.event_bus_nats.nats.connect",
+            "nexus.services.event_bus_nats.nats.connect",
             new_callable=AsyncMock,
             side_effect=NoServersError,
         ):

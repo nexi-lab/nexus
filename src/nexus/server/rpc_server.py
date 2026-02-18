@@ -560,15 +560,22 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Zone isolation: scope to context zone_id when available
+        context = self._get_operation_context()
+        context_zone_id = getattr(context, "zone_id", None) if context else None
+
         with self.auth_provider.session_factory() as session:
             # Build query with filters
             stmt = select(APIKeyModel)
 
+            # Mandatory zone isolation: always apply context zone_id
+            if context_zone_id:
+                stmt = stmt.where(APIKeyModel.zone_id == context_zone_id)
+            elif params.zone_id:
+                stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
+
             if params.user_id:
                 stmt = stmt.where(APIKeyModel.user_id == params.user_id)
-
-            if params.zone_id:
-                stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
 
             if params.is_admin is not None:
                 stmt = stmt.where(APIKeyModel.is_admin == int(params.is_admin))
@@ -635,8 +642,14 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Zone isolation: scope to context zone_id when available
+        context = self._get_operation_context()
+        context_zone_id = getattr(context, "zone_id", None) if context else None
+
         with self.auth_provider.session_factory() as session:
             stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+            if context_zone_id:
+                stmt = stmt.where(APIKeyModel.zone_id == context_zone_id)
             api_key = session.scalar(stmt)
 
             if not api_key:
@@ -667,15 +680,30 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Success status
         """
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+        from datetime import UTC, datetime
+
+        from sqlalchemy import select
+
+        from nexus.storage.models import APIKeyModel
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Zone isolation: scope to context zone_id when available
+        context = self._get_operation_context()
+        context_zone_id = getattr(context, "zone_id", None) if context else None
+
         with self.auth_provider.session_factory() as session:
-            success = DatabaseAPIKeyAuth.revoke_key(session, params.key_id)
-            if not success:
+            stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+            if context_zone_id:
+                stmt = stmt.where(APIKeyModel.zone_id == context_zone_id)
+            api_key = session.scalar(stmt)
+
+            if not api_key:
                 raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
+
+            api_key.revoked = 1
+            api_key.revoked_at = datetime.now(UTC)
 
             session.commit()
             return {"success": True, "key_id": params.key_id}
@@ -698,8 +726,14 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Zone isolation: scope to context zone_id when available
+        context = self._get_operation_context()
+        context_zone_id = getattr(context, "zone_id", None) if context else None
+
         with self.auth_provider.session_factory() as session:
             stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+            if context_zone_id:
+                stmt = stmt.where(APIKeyModel.zone_id == context_zone_id)
             api_key = session.scalar(stmt)
 
             if not api_key:
@@ -712,12 +746,16 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             if params.is_admin is not None:
                 # Safety check: prevent self-demotion if this is the last admin key
                 if not params.is_admin and api_key.is_admin:
-                    # Check if there are other admin keys
+                    # Check if there are other admin keys (within same zone)
                     admin_count_stmt = select(APIKeyModel).where(
                         APIKeyModel.is_admin == 1,
                         APIKeyModel.revoked == 0,
                         APIKeyModel.key_id != params.key_id,
                     )
+                    if context_zone_id:
+                        admin_count_stmt = admin_count_stmt.where(
+                            APIKeyModel.zone_id == context_zone_id
+                        )
                     other_admin_keys = list(session.scalars(admin_count_stmt).all())
                     if not other_admin_keys:
                         raise ValidationError(

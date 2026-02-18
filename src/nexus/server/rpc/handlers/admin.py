@@ -86,13 +86,20 @@ def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dic
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
+    # Zone isolation: scope to context zone_id when available
+    context_zone_id = getattr(context, "zone_id", None) if context else None
+
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel)
 
+        # Mandatory zone isolation: always apply context zone_id
+        if context_zone_id:
+            stmt = stmt.where(APIKeyModel.zone_id == context_zone_id)
+        elif params.zone_id:
+            stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
+
         if params.user_id:
             stmt = stmt.where(APIKeyModel.user_id == params.user_id)
-        if params.zone_id:
-            stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
         if params.is_admin is not None:
             stmt = stmt.where(APIKeyModel.is_admin == int(params.is_admin))
         if not params.include_revoked:
@@ -147,8 +154,13 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
+    # Zone isolation: scope to context zone_id when available
+    context_zone_id = getattr(context, "zone_id", None) if context else None
+
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+        if context_zone_id:
+            stmt = stmt.where(APIKeyModel.zone_id == context_zone_id)
         api_key = session.scalar(stmt)
 
         if not api_key:
@@ -171,19 +183,30 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
 
 def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from sqlalchemy import select
+
     from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.storage.models import APIKeyModel
 
     require_admin(context)
 
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
+    # Zone isolation: scope to context zone_id when available
+    context_zone_id = getattr(context, "zone_id", None) if context else None
+
     with auth_provider.session_factory() as session:
-        success = DatabaseAPIKeyAuth.revoke_key(session, params.key_id)
-        if not success:
+        stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+        if context_zone_id:
+            stmt = stmt.where(APIKeyModel.zone_id == context_zone_id)
+        api_key = session.scalar(stmt)
+
+        if not api_key:
             raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
 
+        api_key.revoked = 1
+        api_key.revoked_at = datetime.now(UTC)
         session.commit()
         return {"success": True, "key_id": params.key_id}
 
@@ -201,8 +224,13 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
+    # Zone isolation: scope to context zone_id when available
+    context_zone_id = getattr(context, "zone_id", None) if context else None
+
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+        if context_zone_id:
+            stmt = stmt.where(APIKeyModel.zone_id == context_zone_id)
         api_key = session.scalar(stmt)
 
         if not api_key:

@@ -543,7 +543,7 @@ warn_unused_ignores = false
 disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped", "attr-defined", "arg-type"]
 
 [[tool.mypy.overrides]]
-module = "nexus.core.event_bus"
+module = "nexus.services.event_bus.redis"
 # redis PubSub.aclose() not in type stubs
 disable_error_code = ["attr-defined"]
 

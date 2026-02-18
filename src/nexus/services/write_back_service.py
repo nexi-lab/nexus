@@ -37,9 +37,9 @@ from nexus.services.conflict_resolution import (
 from nexus.services.write_back_metrics import WriteBackMetrics
 
 if TYPE_CHECKING:
-    from nexus.core.event_bus import EventBusBase
     from nexus.services.change_log_store import ChangeLogStore
     from nexus.services.conflict_log_store import ConflictLogStore
+    from nexus.services.event_bus.base import EventBusBase
     from nexus.services.gateway import NexusFSGateway
     from nexus.services.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
 

@@ -32,9 +32,9 @@ from nexus.core.rpc_decorator import rpc_expose
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.distributed_lock import LockManagerBase
-    from nexus.core.event_bus import EventBusBase
     from nexus.core.file_watcher import FileWatcher
     from nexus.core.permissions import OperationContext
+    from nexus.services.event_bus.base import EventBusBase
 
 logger = logging.getLogger(__name__)
 

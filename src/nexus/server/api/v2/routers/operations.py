@@ -27,7 +27,7 @@ from nexus.server.api.v2.models import (
     OperationListResponse,
     OperationResponse,
 )
-from nexus.storage.operation_logger import OperationLogger
+from nexus.services.protocols.operation_log import OperationLogProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ async def list_operations(
     include_total: bool = Query(
         False, description="Include exact total count (adds a COUNT query; off by default)"
     ),
-    logger_and_zone: tuple[OperationLogger, str] = Depends(get_operation_logger),
+    logger_and_zone: tuple[OperationLogProtocol, str] = Depends(get_operation_logger),
 ) -> OperationListResponse:
     """List operations with optional filters.
 
@@ -140,7 +140,7 @@ async def get_agent_activity(
     since: datetime | None = Query(
         None, description="Activity since this time (ISO-8601). Default: last 24h"
     ),
-    logger_and_zone: tuple[OperationLogger, str] = Depends(get_operation_logger),
+    logger_and_zone: tuple[OperationLogProtocol, str] = Depends(get_operation_logger),
 ) -> AgentActivityResponse:
     """Get aggregated activity summary for a specific agent.
 

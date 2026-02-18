@@ -929,7 +929,7 @@ class NexusFS(  # type: ignore[misc]
     @property
     def user_id(self) -> str | None:
         """Default user_id from the instance context."""
-        return getattr(self._default_context, "user", None)
+        return getattr(self._default_context, "user_id", None)
 
     def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration.

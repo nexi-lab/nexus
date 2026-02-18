@@ -5198,7 +5198,10 @@ class NexusFS(  # type: ignore[misc]
 
                 from nexus.storage.models import APIKeyModel
 
-                del_result: Any = session.execute(sa_delete(APIKeyModel).filter_by(user_id=user_id))
+                api_key_stmt = sa_delete(APIKeyModel).where(APIKeyModel.user_id == user_id)
+                if zone_id:
+                    api_key_stmt = api_key_stmt.where(APIKeyModel.zone_id == zone_id)
+                del_result: Any = session.execute(api_key_stmt)
                 deleted_keys = del_result.rowcount
                 session.commit()
                 result["deleted_api_keys"] = deleted_keys
@@ -5363,11 +5366,12 @@ class NexusFS(  # type: ignore[misc]
                         from nexus.storage.models import FilePathModel
 
                         # Delete file paths for directory and all children (paths starting with dir_path)
-                        fp_result: Any = session.execute(
-                            sa_delete(FilePathModel).where(
-                                FilePathModel.virtual_path.like(f"{dir_path}%")
-                            )
+                        fp_stmt = sa_delete(FilePathModel).where(
+                            FilePathModel.virtual_path.like(f"{dir_path}%")
                         )
+                        if context.zone_id:
+                            fp_stmt = fp_stmt.where(FilePathModel.zone_id == context.zone_id)
+                        fp_result: Any = session.execute(fp_stmt)
                         deleted_count = fp_result.rowcount
                         session.commit()
                         logger.debug(f"Deleted {deleted_count} file path entries for {dir_path}")
@@ -5386,12 +5390,15 @@ class NexusFS(  # type: ignore[misc]
                     try:
                         from sqlalchemy import delete as sa_delete
 
-                        rebac_result: Any = session.execute(
-                            sa_delete(ReBACTupleModel).where(
-                                ReBACTupleModel.object_type == "file",
-                                ReBACTupleModel.object_id.like(f"{dir_path}%"),
-                            )
+                        rebac_stmt = sa_delete(ReBACTupleModel).where(
+                            ReBACTupleModel.object_type == "file",
+                            ReBACTupleModel.object_id.like(f"{dir_path}%"),
                         )
+                        if context.zone_id:
+                            rebac_stmt = rebac_stmt.where(
+                                ReBACTupleModel.zone_id == context.zone_id
+                            )
+                        rebac_result: Any = session.execute(rebac_stmt)
                         deleted_tuples = rebac_result.rowcount
                         session.commit()
                         logger.debug(f"Deleted {deleted_tuples} ReBAC tuples for {dir_path}")

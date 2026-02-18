@@ -162,12 +162,18 @@ class ConflictLogStore(SyncStoreBase):
                 return None
             return self._row_to_record(row)
 
-    def resolve_conflict_manually(self, conflict_id: str, outcome: ResolutionOutcome) -> bool:
+    def resolve_conflict_manually(
+        self,
+        conflict_id: str,
+        outcome: ResolutionOutcome,
+        zone_id: str | None = None,
+    ) -> bool:
         """Update a conflict record to manually_resolved status.
 
         Args:
             conflict_id: UUID of the conflict record
             outcome: The chosen resolution outcome
+            zone_id: Zone ID for federation isolation
 
         Returns:
             True if updated, False if not found or already resolved
@@ -177,7 +183,7 @@ class ConflictLogStore(SyncStoreBase):
         from nexus.storage.models import ConflictLogModel
 
         with self._with_session() as session:
-            result: Any = session.execute(
+            resolve_stmt = (
                 update(ConflictLogModel)
                 .where(
                     ConflictLogModel.id == conflict_id,
@@ -189,14 +195,23 @@ class ConflictLogStore(SyncStoreBase):
                     resolved_at=datetime.now(UTC),
                 )
             )
+            if zone_id is not None:
+                resolve_stmt = resolve_stmt.where(ConflictLogModel.zone_id == zone_id)
+            result: Any = session.execute(resolve_stmt)
             return bool(result.rowcount > 0)
 
-    def expire_stale(self, ttl_seconds: int = 2592000, max_entries: int = 10000) -> int:
+    def expire_stale(
+        self,
+        ttl_seconds: int = 2592000,
+        max_entries: int = 10000,
+        zone_id: str | None = None,
+    ) -> int:
         """Expire old conflict records by TTL (30 days) and cap (10K).
 
         Args:
             ttl_seconds: Max age in seconds (default 30 days)
             max_entries: Max total records before oldest get deleted
+            zone_id: Restrict expiration to a specific zone (federation isolation)
 
         Returns:
             Number of records deleted
@@ -210,28 +225,32 @@ class ConflictLogStore(SyncStoreBase):
             cutoff = datetime.fromtimestamp(now.timestamp() - ttl_seconds, tz=UTC)
 
             # Phase 1: TTL — delete records older than cutoff
-            result: Any = session.execute(
-                delete(ConflictLogModel).where(ConflictLogModel.created_at < cutoff)
-            )
+            ttl_stmt = delete(ConflictLogModel).where(ConflictLogModel.created_at < cutoff)
+            if zone_id is not None:
+                ttl_stmt = ttl_stmt.where(ConflictLogModel.zone_id == zone_id)
+            result: Any = session.execute(ttl_stmt)
             ttl_deleted = result.rowcount
 
             # Phase 2: Cap — if still over limit, delete oldest
-            total_count = int(
-                session.execute(select(func.count()).select_from(ConflictLogModel)).scalar() or 0
-            )
+            count_stmt = select(func.count()).select_from(ConflictLogModel)
+            if zone_id is not None:
+                count_stmt = count_stmt.where(ConflictLogModel.zone_id == zone_id)
+            total_count = int(session.execute(count_stmt).scalar() or 0)
             cap_deleted = 0
             if total_count > max_entries:
                 overflow = total_count - max_entries
-                oldest_ids = session.execute(
+                oldest_stmt = (
                     select(ConflictLogModel.id)
                     .order_by(ConflictLogModel.created_at)
                     .limit(overflow)
-                ).all()
+                )
+                if zone_id is not None:
+                    oldest_stmt = oldest_stmt.where(ConflictLogModel.zone_id == zone_id)
+                oldest_ids = session.execute(oldest_stmt).all()
                 if oldest_ids:
                     ids = [row[0] for row in oldest_ids]
-                    result = session.execute(
-                        delete(ConflictLogModel).where(ConflictLogModel.id.in_(ids))
-                    )
+                    cap_stmt = delete(ConflictLogModel).where(ConflictLogModel.id.in_(ids))
+                    result = session.execute(cap_stmt)
                     cap_deleted = result.rowcount
 
             total: int = ttl_deleted + cap_deleted

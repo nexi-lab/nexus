@@ -273,17 +273,17 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    link = (
-                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
-                        .scalars()
-                        .first()
+                    zone_id, user_id, is_admin = self._extract_context_info(context)
+                    link_stmt = select(ShareLinkModel).where(
+                        ShareLinkModel.link_id == link_id
                     )
+                    if zone_id:
+                        link_stmt = link_stmt.where(ShareLinkModel.zone_id == zone_id)
+                    link = session.execute(link_stmt).scalars().first()
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
                         )
-
-                    zone_id, user_id, is_admin = self._extract_context_info(context)
                     is_owner = link.created_by == user_id and link.zone_id == zone_id
 
                     if not is_owner and not is_admin:

@@ -126,36 +126,6 @@ class NexusFSCoreMixin:
             agent_id=overlay_data.get("agent_id"),
         )
 
-    def _create_tracked_event_task(
-        self, coro: Any, timeout: float = 30.0, name: str | None = None
-    ) -> asyncio.Task[Any]:
-        """Create an async task that is tracked and auto-cleaned up.
-
-        Issue #913: Prevents memory leaks from fire-and-forget tasks.
-        Tasks are stored in _event_tasks and automatically removed when done.
-
-        Args:
-            coro: The coroutine to run
-            timeout: Timeout in seconds (default: 30s to prevent hanging tasks)
-            name: Optional task name for debugging
-
-        Returns:
-            The created task (already tracked)
-        """
-
-        async def wrapped_coro() -> Any:
-            try:
-                return await asyncio.wait_for(coro, timeout=timeout)
-            except TimeoutError:
-                logger.warning(f"Event task timed out after {timeout}s: {name or 'unnamed'}")
-            except Exception as e:
-                logger.error(f"Event task failed: {name or 'unnamed'}: {e}")
-
-        task = asyncio.create_task(wrapped_coro(), name=name)
-        self._event_tasks.add(task)
-        task.add_done_callback(self._event_tasks.discard)
-        return task
-
     def _publish_file_event(
         self,
         event_type: str,
@@ -339,62 +309,6 @@ class NexusFSCoreMixin:
             if zone_id not in self._revision_locks:
                 self._revision_locks[zone_id] = threading.Lock()
             return self._revision_locks[zone_id]
-
-    def _increment_and_get_revision(self, zone_id: str) -> int:
-        """Atomically increment and return the new revision for a zone.
-
-        Issue #1187: Provides monotonic revision counters for filesystem
-        consistency tokens (zookies). Each write operation increments the counter
-        and includes the new revision in the returned zookie.
-
-        Issue #1330 Phase 4.2: Uses native redb REVISIONS_TABLE via
-        metadata.increment_revision(). redb's single-writer transaction
-        provides atomicity — no Python _revision_lock needed.
-
-        Falls back to FileMetadata-based counter if increment_revision()
-        is not available on the metadata store.
-
-        Args:
-            zone_id: The zone to increment revision for
-
-        Returns:
-            The new revision number after incrementing
-        """
-        # Fast path: native redb counter (no lock, atomic via redb txn)
-        if hasattr(self.metadata, "increment_revision"):
-            try:
-                return self.metadata.increment_revision(zone_id)
-            except Exception as e:
-                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                return int(time.time() * 1000)
-
-        # Legacy fallback: FileMetadata-based counter (requires lock)
-        from nexus.core.metadata import FileMetadata
-
-        rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        # Issue #1180: Per-zone lock ensures atomic read-modify-write without
-        # cross-zone contention. TODO: Replace with sled atomic_increment (Phase B).
-        with self._get_revision_lock(zone_id):
-            try:
-                meta = self.metadata.get(rev_path)
-                new_rev = (meta.version + 1) if meta else 1
-                self.metadata.put(
-                    FileMetadata(
-                        path=rev_path,
-                        backend_name="__sys__",
-                        physical_path="__sys__",
-                        size=0,
-                        version=new_rev,
-                        zone_id=zone_id,
-                    )
-                )
-                # Issue #1180 Phase B: Notify waiters of the new revision.
-                self._get_revision_notifier().notify_revision(zone_id, new_rev)
-                return new_rev
-            except Exception as e:
-                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                # Fallback: return timestamp-based pseudo-revision
-                return int(time.time() * 1000)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
@@ -3983,18 +3897,6 @@ class NexusFSCoreMixin:
                 results[path] = None
 
         return results
-
-    def _compute_etag(self, content: bytes) -> str:
-        """
-        Compute ETag for file content.
-
-        Args:
-            content: File content
-
-        Returns:
-            ETag (MD5 hash)
-        """
-        return hashlib.md5(content).hexdigest()
 
     def _read_memory_path(
         self, path: str, return_metadata: bool = False, context: OperationContext | None = None

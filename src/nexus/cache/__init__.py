@@ -1,23 +1,23 @@
-"""Nexus Cache Layer - Pluggable caching backends for permissions and metadata.
+"""Nexus Cache Layer — Tier 2 BRICK for pluggable caching backends.
 
 All domain caches are driver-agnostic, built on CacheStoreABC primitives.
-CacheFactory (systemd layer) creates them; kernel never imports directly.
+CacheBrick is the single entry point for all cache domain services.
 
 Configuration:
     Set NEXUS_DRAGONFLY_URL to enable Dragonfly backend:
 
     NEXUS_DRAGONFLY_URL=redis://localhost:6379
 
-    If not set, NullCacheStore provides graceful degradation.
+    If not set, NullCacheStore provides graceful degradation (Tier 2 = silent).
 
 Usage:
-    from nexus.cache import get_permission_cache, get_tiger_cache
+    from nexus.cache import CacheBrick
 
-    cache = get_permission_cache()
-    result = await cache.get(subject_type, subject_id, permission, ...)
+    brick = CacheBrick(cache_store=my_store)
+    await brick.start()
 
-    embedding_cache = cache_factory.get_embedding_cache()
-    embeddings = await embedding_cache.get_or_embed_batch(texts, model, embed_fn)
+    perm_cache = brick.permission_cache
+    tiger_cache = brick.tiger_cache
 """
 
 from nexus.cache.backend_wrapper import (
@@ -31,13 +31,16 @@ from nexus.cache.base import (
     ResourceMapCacheProtocol,
     TigerCacheProtocol,
 )
+from nexus.cache.brick import CacheBrick
 from nexus.cache.dragonfly import DragonflyCacheStore
 from nexus.cache.factory import CacheFactory
 from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.cache.settings import CacheSettings
 
 __all__ = [
-    # Factory + config
+    # Brick facade (Issue #1524)
+    "CacheBrick",
+    # Factory + config (kept temporarily, will be absorbed by CacheBrick)
     "CacheFactory",
     "CacheSettings",
     # CachingBackendWrapper — transparent caching decorator for any Backend (#1392)
@@ -49,7 +52,7 @@ __all__ = [
     "PermissionCacheProtocol",
     "ResourceMapCacheProtocol",
     "TigerCacheProtocol",
-    # CacheStoreABC drivers (for DI into CacheFactory/NexusFS)
+    # CacheStoreABC drivers (for DI into CacheBrick/NexusFS)
     "DragonflyCacheStore",
     "InMemoryCacheStore",
 ]

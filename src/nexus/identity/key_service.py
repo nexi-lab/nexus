@@ -2,25 +2,23 @@
 
 KeyService manages Ed25519 signing keys with:
 - Idempotent provisioning: ensure_keypair() is safe to call N times
-- TTL cache for public keys (Decision #14B, 60s default)
-- Cached revocation set (Decision #15B)
 - Key rotation with grace period (Decision #16C)
 - RFC 9421 keyid-based direct lookup
 
-Thread-safe via threading.Lock for cache operations.
+Federation-safe: no process-local caches or locks. All state is in the
+database (RecordStoreABC). Distributed caching via CacheStoreABC can be
+layered on top (see task #224).
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
-from cachetools import TTLCache
 from sqlalchemy import select, update
 
 from nexus.identity.crypto import IdentityCrypto
@@ -64,43 +62,24 @@ class AgentKeyRecord:
     revoked_at: datetime | None
 
 
-# Sentinel for cache miss
-_CACHE_MISS = object()
-
-
 class KeyService:
     """Manages agent signing keys with idempotent provisioning.
+
+    All state is stored in the database — no process-local caches or locks.
+    This makes KeyService safe for federation mode (multiple nodes).
 
     Args:
         record_store: RecordStoreABC providing session_factory for database access.
         crypto: IdentityCrypto instance for key operations.
-        cache_maxsize: Max entries in the public key TTL cache.
-        cache_ttl: TTL in seconds for cached public keys (default: 60).
     """
 
     def __init__(
         self,
         record_store: RecordStoreABC,
         crypto: IdentityCrypto,
-        cache_maxsize: int = 5000,
-        cache_ttl: int = 60,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._crypto = crypto
-        self._lock = threading.Lock()
-
-        # TTL cache: key_id -> (public_key_bytes, did, is_active)
-        self._key_cache: TTLCache[str, AgentKeyRecord | None] = TTLCache(
-            maxsize=cache_maxsize, ttl=cache_ttl
-        )
-        # TTL cache: agent_id -> list[AgentKeyRecord]
-        self._agent_keys_cache: TTLCache[str, list[AgentKeyRecord]] = TTLCache(
-            maxsize=cache_maxsize, ttl=cache_ttl
-        )
-        # Revocation cache (key_ids that are revoked) — bounded TTL cache
-        self._revoked_cache: TTLCache[str, bool] = TTLCache(
-            maxsize=cache_maxsize, ttl=cache_ttl * 5 if cache_ttl > 0 else 300
-        )
 
     @contextmanager
     def _get_session(self) -> Generator[Session, None, None]:
@@ -174,9 +153,6 @@ class KeyService:
             session.add(model)
             session.flush()
 
-        # Invalidate caches for this agent
-        self._invalidate_agent_cache(agent_id)
-
         logger.info(
             "[KYA] Generated keypair for agent %s (key_id=%s, did=%s)",
             agent_id,
@@ -199,19 +175,12 @@ class KeyService:
     def get_active_keys(self, agent_id: str) -> list[AgentKeyRecord]:
         """Get all active keys for an agent, newest first.
 
-        Uses TTL cache to avoid per-request DB hits.
-
         Args:
             agent_id: Agent identifier.
 
         Returns:
             List of active AgentKeyRecord snapshots, newest first.
         """
-        with self._lock:
-            cached = self._agent_keys_cache.get(agent_id, _CACHE_MISS)
-        if cached is not _CACHE_MISS:
-            return cast(list[AgentKeyRecord], cached)
-
         now = _utcnow_naive()
         with self._get_session() as session:
             models = list(
@@ -232,43 +201,26 @@ class KeyService:
                     continue
                 records.append(self._model_to_record(m))
 
-        with self._lock:
-            self._agent_keys_cache[agent_id] = records
-
         return records
 
     def get_public_key(self, key_id: str) -> AgentKeyRecord | None:
         """Lookup a key by key_id (for RFC 9421 keyid parameter).
 
-        Uses TTL cache for fast repeated lookups.
-
         Args:
             key_id: UUID key identifier.
 
         Returns:
-            AgentKeyRecord if found and active, None otherwise.
+            AgentKeyRecord if found, None otherwise.
         """
-        with self._lock:
-            cached = self._key_cache.get(key_id, _CACHE_MISS)
-        if cached is not _CACHE_MISS:
-            return cast("AgentKeyRecord | None", cached)
-
         with self._get_session() as session:
             model = session.execute(
                 select(AgentKeyModel).where(AgentKeyModel.key_id == key_id)
             ).scalar_one_or_none()
 
             if model is None:
-                with self._lock:
-                    self._key_cache[key_id] = None
                 return None
 
-            record = self._model_to_record(model)
-
-        with self._lock:
-            self._key_cache[key_id] = record
-
-        return record
+            return self._model_to_record(model)
 
     def get_public_key_object(self, key_id: str) -> Ed25519PublicKey | None:
         """Get the Ed25519PublicKey object for a key_id.
@@ -340,8 +292,6 @@ class KeyService:
             session.add(model)
             session.flush()
 
-        self._invalidate_agent_cache(agent_id)
-
         logger.info(
             "[KYA] Rotated key for agent %s (new_key=%s, old_keys_expire=%s)",
             agent_id,
@@ -364,7 +314,7 @@ class KeyService:
     def revoke_key(self, key_id: str) -> bool:
         """Immediately revoke a key.
 
-        Sets is_active=0, revoked_at=now. Invalidates all caches.
+        Sets is_active=0, revoked_at=now.
 
         Args:
             key_id: UUID of the key to revoke.
@@ -390,19 +340,11 @@ class KeyService:
                 .values(is_active=0, revoked_at=now)
             )
 
-        # Update revocation cache
-        with self._lock:
-            self._revoked_cache[key_id] = True
-
-        # Invalidate caches
-        self._invalidate_key_cache(key_id)
-        self._invalidate_agent_cache(agent_id)
-
         logger.info("[KYA] Revoked key %s for agent %s", key_id, agent_id)
         return True
 
     def is_revoked(self, key_id: str) -> bool:
-        """Check if a key is revoked. Uses cached revocation set.
+        """Check if a key is revoked.
 
         Args:
             key_id: UUID of the key to check.
@@ -410,18 +352,8 @@ class KeyService:
         Returns:
             True if the key is revoked.
         """
-        with self._lock:
-            if key_id in self._revoked_cache:
-                return True
-
-        # Check DB if not in cache
         record = self.get_public_key(key_id)
-        if record is not None and record.revoked_at is not None:
-            with self._lock:
-                self._revoked_cache[key_id] = True
-            return True
-
-        return False
+        return record is not None and record.revoked_at is not None
 
     def decrypt_private_key(self, key_id: str) -> Any:
         """Decrypt and return the private key for signing operations.
@@ -447,16 +379,6 @@ class KeyService:
                 raise ValueError(f"Key '{key_id}' is not active")
 
             return self._crypto.decrypt_private_key(model.encrypted_private_key)
-
-    def _invalidate_agent_cache(self, agent_id: str) -> None:
-        """Invalidate agent-level caches."""
-        with self._lock:
-            self._agent_keys_cache.pop(agent_id, None)
-
-    def _invalidate_key_cache(self, key_id: str) -> None:
-        """Invalidate key-level cache."""
-        with self._lock:
-            self._key_cache.pop(key_id, None)
 
     @staticmethod
     def _model_to_record(model: AgentKeyModel) -> AgentKeyRecord:

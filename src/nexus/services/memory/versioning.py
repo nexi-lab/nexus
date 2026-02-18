@@ -22,8 +22,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from nexus.core.permissions import OperationContext, Permission
+from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)
 

@@ -214,14 +214,14 @@ class MicrosoftOAuthProvider(OAuthProvider):
 
         return new_cred
 
-    async def revoke_token(self, _credential: OAuthCredential) -> bool:
+    async def revoke_token(self, credential: OAuthCredential) -> bool:  # noqa: ARG002
         """Revoke a Microsoft OAuth token.
 
         Note: Microsoft Graph API doesn't have a standard token revocation endpoint.
         To revoke access, users must remove app permissions from their account settings.
 
         Args:
-            _credential: Credential to revoke (unused - Microsoft has no revocation API)
+            credential: Credential to revoke (unused - Microsoft has no revocation API)
 
         Returns:
             True (always, since there's no API to call)

@@ -13,11 +13,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.rebac.manager import (
-    ZoneAwareReBACManager,
-    ZoneIsolationError,
-)
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.consistency.zone_manager import ZoneIsolationError
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 
@@ -35,7 +33,7 @@ def zone_aware_manager(engine):
 
     Uses cache_ttl_seconds=0 to disable caching for predictable test behavior.
     """
-    manager = ZoneAwareReBACManager(
+    manager = ReBACManager(
         engine=engine,
         cache_ttl_seconds=0,  # Disable cache for predictable tests
         max_depth=10,
@@ -437,7 +435,7 @@ class TestCrossZonePermissionExpansion:
         """Create manager with file namespace for permission expansion."""
         from nexus.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
 
-        manager = ZoneAwareReBACManager(
+        manager = ReBACManager(
             engine=engine,
             cache_ttl_seconds=0,
             max_depth=10,

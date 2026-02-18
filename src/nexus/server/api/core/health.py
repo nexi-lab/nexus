@@ -101,7 +101,7 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
     if has_rebac:
         cb = getattr(state, "rebac_circuit_breaker", None)
         if cb:
-            from nexus.services.permissions.circuit_breaker import CircuitState
+            from nexus.rebac.circuit_breaker import CircuitState
 
             cb_state = cb.state
             if cb_state == CircuitState.CLOSED:

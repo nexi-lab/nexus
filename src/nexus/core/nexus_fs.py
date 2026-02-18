@@ -300,6 +300,10 @@ class NexusFS(  # type: ignore[misc]
         # Wire self-dependent services (require self reference)
         self._wire_services()
 
+        # Issue #2033 Phase 5: Register concrete hook implementations on the pipeline.
+        # Hooks are wired AFTER _wire_services() so all dependencies are available.
+        self._register_vfs_hooks()
+
         # Issue #1169: Read Set-Aware Cache for precise invalidation
         # Wraps the metadata cache with read-set-aware invalidation.
         # Falls back to path-based invalidation for entries without read sets.
@@ -472,6 +476,74 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=None,
                 metadata_cache=metadata_cache,
             )
+
+    def _register_vfs_hooks(self) -> None:
+        """Register concrete hook implementations on the VFS pipeline.
+
+        Called after _wire_services() so all dependencies (ReBAC manager,
+        parser registry, tiger cache) are available for injection.
+
+        Issue #2033 Phase 5: hooks run via _hook_pipeline.run_post_*() in
+        nexus_fs_core.py read/write/delete/rename paths.
+        """
+        from nexus.core.vfs_hook_impls import (
+            AutoParseWriteHook,
+            DynamicViewerReadHook,
+            TigerCacheRenameHook,
+        )
+
+        pipeline = self._hook_pipeline
+
+        # --- DynamicViewerReadHook (post-read: column-level CSV filtering) ---
+        rebac_mgr = getattr(self, "_rebac_manager", None)
+        has_viewer = (
+            rebac_mgr is not None
+            and hasattr(self, "_get_subject_from_context")
+            and hasattr(self, "get_dynamic_viewer_config")
+            and hasattr(self, "apply_dynamic_viewer_filter")
+        )
+        if has_viewer:
+            pipeline.register_read_hook(
+                DynamicViewerReadHook(
+                    get_subject=self._get_subject_from_context,
+                    get_viewer_config=self.get_dynamic_viewer_config,  # type: ignore[attr-defined]
+                    apply_filter=self.apply_dynamic_viewer_filter,  # type: ignore[attr-defined]
+                )
+            )
+
+        # --- AutoParseWriteHook (post-write: fire-and-forget background parsing) ---
+        parser_reg = getattr(self, "parser_registry", None)
+        if parser_reg is not None and getattr(self, "auto_parse", False):
+            pipeline.register_write_hook(
+                AutoParseWriteHook(
+                    get_parser=parser_reg.get_parser,
+                    parse_fn=self.parse,  # type: ignore[attr-defined]
+                )
+            )
+
+        # --- TigerCacheRenameHook (post-rename: bitmap updates on move) ---
+        tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
+        if tiger_cache is not None:
+
+            def _metadata_list_iter(
+                prefix: str, recursive: bool = True, zone_id: str = "root"
+            ) -> Any:
+                return self.metadata.list(prefix=prefix, recursive=recursive)
+
+            pipeline.register_rename_hook(
+                TigerCacheRenameHook(
+                    tiger_cache=tiger_cache,
+                    metadata_list_iter=_metadata_list_iter,
+                )
+            )
+
+        logger.info(
+            "[VFS-HOOKS] Registered: read=%d, write=%d, delete=%d, rename=%d",
+            pipeline.read_hook_count,
+            pipeline.write_hook_count,
+            pipeline.delete_hook_count,
+            pipeline.rename_hook_count,
+        )
 
     @property
     def _service_extras(self) -> dict[str, Any]:

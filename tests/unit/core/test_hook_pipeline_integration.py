@@ -7,7 +7,9 @@ during NexusFS read/write/rename operations.
 from __future__ import annotations
 
 from nexus.core.vfs_hooks import (
+    DeleteHookContext,
     ReadHookContext,
+    RenameHookContext,
     VFSHookPipeline,
     WriteHookContext,
 )
@@ -51,6 +53,34 @@ class _TrackingWriteHook:
         return "tracking_write"
 
     def on_post_write(self, ctx: WriteHookContext) -> None:
+        self.calls.append(ctx)
+
+
+class _TrackingDeleteHook:
+    """Hook that records all post-delete invocations."""
+
+    def __init__(self) -> None:
+        self.calls: list[DeleteHookContext] = []
+
+    @property
+    def name(self) -> str:
+        return "tracking_delete"
+
+    def on_post_delete(self, ctx: DeleteHookContext) -> None:
+        self.calls.append(ctx)
+
+
+class _TrackingRenameHook:
+    """Hook that records all post-rename invocations."""
+
+    def __init__(self) -> None:
+        self.calls: list[RenameHookContext] = []
+
+    @property
+    def name(self) -> str:
+        return "tracking_rename"
+
+    def on_post_rename(self, ctx: RenameHookContext) -> None:
         self.calls.append(ctx)
 
 
@@ -181,3 +211,115 @@ class TestHookPipelineFailureSafety:
 
         assert len(tracker.calls) == 1  # still called
         assert len(ctx.warnings) == 1  # only broken hook warns
+
+
+class TestHookPipelineE2EDispatch:
+    """Verify hooks are invoked during REAL NexusFS read/write/delete/rename ops.
+
+    These tests register tracking hooks, perform actual VFS operations, and
+    confirm the pipeline dispatched to each hook with the correct context.
+    """
+
+    def test_read_dispatches_post_read_hook(self, tmp_path):
+        nx = make_test_nexus(tmp_path)
+        tracker = _TrackingReadHook()
+        nx._hook_pipeline.register_read_hook(tracker)
+
+        # Write a file first, then read it
+        nx.write("/test.txt", b"hello world")
+        content = nx.read("/test.txt")
+
+        assert content == b"hello world"
+        assert len(tracker.calls) == 1
+        assert tracker.calls[0].path == "/test.txt"
+        assert tracker.calls[0].content == b"hello world"
+
+    def test_read_hook_can_transform_content(self, tmp_path):
+        nx = make_test_nexus(tmp_path)
+        hook = _UpperCaseReadHook()
+        nx._hook_pipeline.register_read_hook(hook)
+
+        nx.write("/data.csv", b"name,age\nalice,30")
+        content = nx.read("/data.csv")
+
+        assert content == b"NAME,AGE\nALICE,30"
+
+    def test_read_hook_skips_non_csv(self, tmp_path):
+        nx = make_test_nexus(tmp_path)
+        hook = _UpperCaseReadHook()
+        nx._hook_pipeline.register_read_hook(hook)
+
+        nx.write("/data.txt", b"name,age\nalice,30")
+        content = nx.read("/data.txt")
+
+        assert content == b"name,age\nalice,30"  # unchanged
+
+    def test_write_dispatches_post_write_hook(self, tmp_path):
+        nx = make_test_nexus(tmp_path)
+        tracker = _TrackingWriteHook()
+        nx._hook_pipeline.register_write_hook(tracker)
+
+        nx.write("/test.txt", b"hello")
+
+        assert len(tracker.calls) == 1
+        assert tracker.calls[0].path == "/test.txt"
+        assert tracker.calls[0].content == b"hello"
+        assert tracker.calls[0].is_new_file is True
+
+    def test_write_hook_receives_update_context(self, tmp_path):
+        nx = make_test_nexus(tmp_path)
+        tracker = _TrackingWriteHook()
+        nx._hook_pipeline.register_write_hook(tracker)
+
+        nx.write("/test.txt", b"v1")
+        nx.write("/test.txt", b"v2")
+
+        assert len(tracker.calls) == 2
+        assert tracker.calls[0].is_new_file is True   # first write = new file
+        assert tracker.calls[1].is_new_file is False   # second write = update
+
+    def test_delete_dispatches_post_delete_hook(self, tmp_path):
+        nx = make_test_nexus(tmp_path)
+        tracker = _TrackingDeleteHook()
+        nx._hook_pipeline.register_delete_hook(tracker)
+
+        nx.write("/test.txt", b"data")
+        nx.delete("/test.txt")
+
+        assert len(tracker.calls) == 1
+        assert tracker.calls[0].path == "/test.txt"
+        assert tracker.calls[0].metadata is not None
+
+    def test_rename_dispatches_post_rename_hook(self, tmp_path):
+        nx = make_test_nexus(tmp_path)
+        tracker = _TrackingRenameHook()
+        nx._hook_pipeline.register_rename_hook(tracker)
+
+        nx.write("/old.txt", b"data")
+        nx.rename("/old.txt", "/new.txt")
+
+        assert len(tracker.calls) == 1
+        assert tracker.calls[0].old_path == "/old.txt"
+        assert tracker.calls[0].new_path == "/new.txt"
+
+    def test_multiple_hooks_all_fire(self, tmp_path):
+        nx = make_test_nexus(tmp_path)
+        read_tracker = _TrackingReadHook()
+        write_tracker = _TrackingWriteHook()
+        delete_tracker = _TrackingDeleteHook()
+        rename_tracker = _TrackingRenameHook()
+
+        nx._hook_pipeline.register_read_hook(read_tracker)
+        nx._hook_pipeline.register_write_hook(write_tracker)
+        nx._hook_pipeline.register_delete_hook(delete_tracker)
+        nx._hook_pipeline.register_rename_hook(rename_tracker)
+
+        nx.write("/a.txt", b"data")     # write hook fires
+        nx.read("/a.txt")               # read hook fires
+        nx.rename("/a.txt", "/b.txt")   # rename hook fires
+        nx.delete("/b.txt")             # delete hook fires
+
+        assert len(write_tracker.calls) == 1
+        assert len(read_tracker.calls) == 1
+        assert len(rename_tracker.calls) == 1
+        assert len(delete_tracker.calls) == 1

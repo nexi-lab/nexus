@@ -1076,6 +1076,23 @@ class NexusFSCoreMixin:
         # Apply dynamic_viewer filtering for CSV files
         content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
 
+        # Issue #2033 Phase 5: Dispatch post-read hooks (dynamic viewer, tracking, etc.)
+        _pipeline = getattr(self, "_hook_pipeline", None)
+        if _pipeline is not None and _pipeline.read_hook_count > 0:
+            from nexus.core.vfs_hooks import ReadHookContext
+
+            _read_ctx = ReadHookContext(
+                path=path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=meta,
+                content=content,
+                content_hash=meta.etag,
+            )
+            _pipeline.run_post_read(_read_ctx)
+            content = _read_ctx.content  # hooks may have filtered content
+
         # Handle parsed=True flag - return parsed content instead of raw bytes
         if parsed:
             content, parse_info = self._get_parsed_content(path, content)
@@ -2117,6 +2134,26 @@ class NexusFSCoreMixin:
         if self.auto_parse:
             self._auto_parse_file(path)
 
+        # Issue #2033 Phase 5: Dispatch post-write hooks (auto-parse, tiger cache, etc.)
+        _pipeline = getattr(self, "_hook_pipeline", None)
+        if _pipeline is not None and _pipeline.write_hook_count > 0:
+            from nexus.core.vfs_hooks import WriteHookContext
+
+            _write_ctx = WriteHookContext(
+                path=path,
+                content=content,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_new_file=(meta is None),
+                content_hash=content_hash,
+                old_metadata=meta,
+                new_version=new_version,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=metadata_snapshot,
+            )
+            _pipeline.run_post_write(_write_ctx)
+
         # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
         _snapshot_svc = getattr(self, "_snapshot_service", None)
         if _snapshot_svc is not None:
@@ -3093,6 +3130,20 @@ class NexusFSCoreMixin:
             agent_id=agent_id,
         )
 
+        # Issue #2033 Phase 5: Dispatch post-delete hooks
+        _pipeline = getattr(self, "_hook_pipeline", None)
+        if _pipeline is not None and _pipeline.delete_hook_count > 0:
+            from nexus.core.vfs_hooks import DeleteHookContext
+
+            _delete_ctx = DeleteHookContext(
+                path=path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=meta,
+            )
+            _pipeline.run_post_delete(_delete_ctx)
+
         return {}
 
     @rpc_expose(description="Rename/move file")
@@ -3299,6 +3350,22 @@ class NexusFSCoreMixin:
             except Exception as e:
                 # Log but don't fail the rename operation
                 logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
+
+        # Issue #2033 Phase 5: Dispatch post-rename hooks (tiger cache, etc.)
+        _pipeline = getattr(self, "_hook_pipeline", None)
+        if _pipeline is not None and _pipeline.rename_hook_count > 0:
+            from nexus.core.vfs_hooks import RenameHookContext
+
+            _rename_ctx = RenameHookContext(
+                old_path=old_path,
+                new_path=new_path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_directory=bool(is_directory),
+                metadata=meta,
+            )
+            _pipeline.run_post_rename(_rename_ctx)
 
         # Task #45: Sync to RecordStore (audit trail)
         # Issue #1246: Unified error handling via _notify_observer.

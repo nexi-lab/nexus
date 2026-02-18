@@ -791,9 +791,9 @@ class TestGetSubjectFromContext:
         result = service._get_subject_from_context(ctx)
         assert result == ("user", "bob")
 
-    def test_extract_from_dict_with_user_key(self, service):
-        """Test extracting subject from dict with 'user' key."""
-        ctx = {"user": "charlie"}
+    def test_extract_from_dict_with_user_id_key(self, service):
+        """Test extracting subject from dict with 'user_id' key."""
+        ctx = {"user_id": "charlie"}
         result = service._get_subject_from_context(ctx)
         assert result == ("user", "charlie")
 

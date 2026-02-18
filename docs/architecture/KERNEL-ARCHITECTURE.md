@@ -38,7 +38,7 @@ implementations via DI at startup.
 |------|-----------|-------|----------------|
 | Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
 | Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
-| Services | Runtime (load/unload) | 22 protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
+| Services | Runtime (load/unload) | 23 protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
 The kernel operates with zero services loaded.
@@ -122,7 +122,7 @@ This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code chan
 Two independent ABC axes, composed via DI:
 
 - **Data ABCs** (this section): WHERE is data stored? → 4 pillars by storage capability
-- **Ops ABCs** (§3): WHAT can users/agents DO? → 28 scenario domains by ops affinity
+- **Ops ABCs** (§3): WHAT can users/agents DO? → 29 scenario domains by ops affinity
 
 A concrete class sits at the intersection: e.g. `ReBACManager` implements `PermissionProtocol`
 (Ops) and internally uses `RecordStoreABC` (Data). The Protocol itself has no storage opinion.
@@ -163,7 +163,7 @@ constructor and never auto-creates services.
 
 ### Service Protocols (`nexus.services.protocols`)
 
-28 scenario domains mapped to Ops ABCs. 22 Protocols exist, 9 gaps remain.
+29 scenario domains mapped to Ops ABCs. 23 Protocols exist, 9 gaps remain.
 
 | Category | Protocols | Count |
 |----------|-----------|-------|
@@ -171,7 +171,7 @@ constructor and never auto-creates services.
 | **Search & Content** | SearchProtocol, SearchBrickProtocol (driver), LLMProtocol | 3 |
 | **Mount & Storage** | MountProtocol, ShareLinkProtocol, OAuthProtocol | 3 |
 | **Agent Infra** | AgentRegistryProtocol, SchedulerProtocol | 2 |
-| **Events & Hooks** | EventLogProtocol, HookEngineProtocol, WatchProtocol, LockProtocol (split from EventsProtocol, #546) | 4 |
+| **Events & Hooks** | EventLogProtocol, HookEngineProtocol, WatchProtocol, LockProtocol | 4 |
 | **Domain Services** | SkillsProtocol, PaymentProtocol | 2 |
 | **Missing (9 gaps)** | Version, Memory, Trajectory, Delegation, Governance, Reputation, OperationLog, Plugin, Workflow | 9 |
 
@@ -226,24 +226,40 @@ Three tiers, mirroring Linux's kernel → system → user space communication:
 | Tier | Linux Analogue | Nexus | Latency | Topology |
 |------|---------------|-------|---------|----------|
 | **Kernel** | `kfifo` ring buffer | Nexus Native Pipe (`DT_PIPE`, MetastoreABC) | ~5μs | Intra-process |
-| **System** | `sendmsg()` / Unix sockets | gRPC (Zone Transport/API) | ~0.5–1ms | Point-to-point (1:1) |
-| **User Space** | POSIX `mq_open` / multi-queue | EventBus (CacheStoreABC pub/sub) | ~1–5ms | Fan-out (1:N) |
+| **System** | `sendmsg()` / Unix sockets / POSIX MQ | gRPC (consensus) + IPC (agent messaging) | ~0.5–1ms | Point-to-point (1:1) |
+| **User Space** | `dbus-daemon` / Netlink | EventBus (CacheStoreABC pub/sub) | ~1–5ms | Fan-out (1:N) |
 
-**Selection rule:** Consensus write path → System (gRPC, 1:1). Notification read path → User Space (EventBus, 1:N fan-out to 100s of observers). Internal signaling → Kernel (Pipe, zero-copy).
+**Selection rule:** Consensus write path → System (gRPC, 1:1). Agent-to-agent messaging → System (IPC, 1:1 queue). Notification read path → User Space (EventBus, 1:N fan-out to 100s of observers). Internal signaling → Kernel (Pipe, zero-copy).
 
 See `federation-memo.md` §7j for Pipe design.
 
-### System Tier: gRPC Services
+### System Tier
 
-> **SSOT:** Proto files in `proto/` are the source of truth for RPC definitions.
+gRPC for consensus (Raft node-to-node, zone API) and Exchange (agent-to-agent value exchange).
+IPC for agent messaging — 1:1 queue semantics using VFS as transport.
 
-| Proto Service | Proto File | Scope | Purpose |
-|---------------|-----------|-------|---------|
-| `ZoneTransportService` | `proto/nexus/raft/transport.proto` | Internal | Node-to-node Raft messages (StepMessage, ReplicateEntries) |
-| `ZoneApiService` | `proto/nexus/raft/transport.proto` | Internal | Client-facing zone ops (Propose, Query, GetClusterInfo, JoinZone, InviteZone) |
-| `ExchangeService` | `proto/nexus/exchange/v1/exchange.proto` | External | Agent Exchange API — identity (4 RPCs), payment (8 RPCs), audit (5 RPCs) |
+> **SSOT:** Proto files in `proto/` define all RPC services. See `federation-memo.md` §2–§5.
+> IPC details in `ops-scenario-matrix.md` S29.
 
-Named `Zone*` to match `ZoneConsensus` (Rust). `ExchangeService` is the external-facing API for agent-to-agent value exchange.
+### User Space Tier: EventBus
+
+`EventBusProtocol` (service protocol in `nexus.services.event_bus.protocol`) provides
+pub/sub for file system change notifications. Kernel defines only the event data types
+(`FileEvent`, `FileEventType` in `nexus.core.event_bus`).
+
+Linux analogue: `dbus-daemon` (1:N broadcast). Consumed by `WatchProtocol` (S8) and
+`EventLogProtocol` (S17). Backends: Redis/Dragonfly (current default), NATS JetStream
+(preferred long-term). All should route through `CacheStoreABC` pub/sub.
+
+**Federation gap:** EventBus is currently zone-local. Cross-zone event propagation not yet designed.
+
+---
+
+## 7. RecordStoreABC Pattern
+
+Services consume `RecordStoreABC.session_factory` + SQLAlchemy ORM.
+Direct SQL or raw driver access is an abstraction break.
+This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code changes.
 
 ---
 
@@ -253,7 +269,7 @@ Named `Zone*` to match `ZoneConsensus` (Rust). `ExchangeService` is the external
 |-------|----------|
 | Data type → pillar mapping (50+ types) | `data-storage-matrix.md` |
 | Storage orthogonality proof | `data-storage-matrix.md` §ORTHOGONALITY |
-| Ops ABC × scenario affinity (28 domains, 22 protocols) | `ops-scenario-matrix.md` |
+| Ops ABC × scenario affinity (29 domains, 23 protocols) | `ops-scenario-matrix.md` |
 | Ops ABC orthogonality + gap analysis | `ops-scenario-matrix.md` §2–§3 |
 | Raft, gRPC, write flows | `federation-memo.md` §2–§5 |
 | Zone model, DT_MOUNT | `federation-memo.md` §5–§6 |

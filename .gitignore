@@ -203,6 +203,8 @@ aws-credentials
 
 # Claude Code local settings
 .claude/settings.local.json
+CLAUDE.md
+.claude/CLAUDE.md
 docs/plans/
 
 # Cargo local config (Windows MSVC linker path is dev-machine specific)

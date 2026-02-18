@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from cachetools import TTLCache as _TTLCache
 from fuse import FuseOSError
@@ -385,7 +385,9 @@ def get_from_local_disk_cache(ctx: FUSESharedContext, path: str) -> bytes | None
         if content_hash is None:
             return None
         zone_id = get_zone_id(ctx)
-        content = ctx.local_disk_cache.get(content_hash, zone_id=zone_id)
+        content: bytes | None = cast(
+            "bytes | None", ctx.local_disk_cache.get(content_hash, zone_id=zone_id)
+        )
         if content is not None:
             logger.debug(f"[FUSE-L2] HIT: {path} (zone={zone_id})")
         return content

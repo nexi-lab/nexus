@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import stat
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fuse import FuseOSError
 
@@ -150,7 +150,7 @@ class MetadataHandler:
                 metadata.get("size") if isinstance(metadata, dict) else getattr(metadata, "size", 0)
             )
             if meta_size and meta_size > 0:
-                return meta_size
+                return cast("int", meta_size)
             return stat_size_fallback(ctx, path)
 
         return stat_size_fallback(ctx, path)
@@ -168,7 +168,7 @@ class MetadataHandler:
             logger.info(
                 f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
             )
-            return cached_entries
+            return cast("list[str]", cached_entries)
 
         logger.info(f"[FUSE-PERF] readdir START: path={path}")
 

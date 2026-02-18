@@ -24,17 +24,34 @@ class FakeOperationContext:
 
 @pytest.fixture()
 def make_ops():
-    """Factory to create NexusFUSEOperations with controlled attributes."""
+    """Factory to create NexusFUSEOperations with controlled attributes.
+
+    After the ops/ decomposition (Issue #2079), _use_rust and _rust_client are
+    properties proxying to _ctx, so we create a minimal FUSESharedContext.
+    """
 
     def _make(*, use_rust: bool = False, rust_client: Any = None, context: Any = None):
         from nexus.fuse.operations import NexusFUSEOperations
+        from nexus.fuse.ops._shared import FUSESharedContext
 
         mock_fs = MagicMock()
         mock_fs.list_mounts.return_value = []
 
         ops = NexusFUSEOperations.__new__(NexusFUSEOperations)
-        ops._use_rust = use_rust
-        ops._rust_client = rust_client
+        ops._ctx = FUSESharedContext(
+            nexus_fs=mock_fs,
+            mode=MagicMock(),
+            context=context,
+            namespace_manager=None,
+            cache=MagicMock(),
+            local_disk_cache=None,
+            readahead=None,
+            rust_client=rust_client,
+            use_rust=use_rust,
+            events=MagicMock(),
+            cache_config={},
+            dir_cache=MagicMock(),
+        )
         ops._context = context
         return ops
 

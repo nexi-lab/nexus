@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import logging
+from typing import cast
 
 from fuse import FuseOSError
 
@@ -124,7 +125,7 @@ class IOHandler:
                 logger.debug(
                     f"[FUSE-READ] READAHEAD HIT: {original_path}[{offset}:{offset + size}]"
                 )
-                return prefetched
+                return cast("bytes", prefetched)
 
         skip_auth = file_info.get("auth_verified", False)
 

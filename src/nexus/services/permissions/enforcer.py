@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
 
 if TYPE_CHECKING:
+    from nexus.rebac.cache.boundary import PermissionBoundaryCache
     from nexus.rebac.hotspot_detector import HotspotDetector
     from nexus.rebac.manager import ReBACManager
+    from nexus.rebac.permissions_enhanced import AuditStore
     from nexus.services.permissions.namespace_manager import NamespaceManager
-    from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
-    from nexus.services.permissions.permissions_enhanced import AuditStore
 
 logger = logging.getLogger(__name__)
 
@@ -417,7 +417,7 @@ class PermissionEnforcer:
                 return self._check_rebac(path, permission, context)
 
             # Import AdminCapability here to avoid circular imports
-            from nexus.services.permissions.permissions_enhanced import AdminCapability
+            from nexus.rebac.permissions_enhanced import AdminCapability
 
             # P0-4: Zone boundary check (security fix for issue #819)
             # Extract zone from path (format: /zone/{zone_id}/...)
@@ -818,7 +818,7 @@ class PermissionEnforcer:
 
         from datetime import UTC, datetime
 
-        from nexus.services.permissions.permissions_enhanced import AuditLogEntry
+        from nexus.rebac.permissions_enhanced import AuditLogEntry
 
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),
@@ -848,7 +848,7 @@ class PermissionEnforcer:
 
         from datetime import UTC, datetime
 
-        from nexus.services.permissions.permissions_enhanced import AuditLogEntry
+        from nexus.rebac.permissions_enhanced import AuditLogEntry
 
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),

@@ -57,10 +57,6 @@ from nexus.rebac.graph.bulk_evaluator import (
 from nexus.rebac.graph.expand import ExpandEngine
 from nexus.rebac.graph.traversal import PermissionComputer
 from nexus.rebac.graph.zone_traversal import ZoneAwareTraversal
-from nexus.rebac.rebac_fast import (
-    check_permissions_bulk_with_fallback,
-    is_rust_available,
-)
 from nexus.rebac.rebac_tracing import (
     record_check_result,
     record_graph_limit_exceeded,
@@ -79,14 +75,18 @@ from nexus.rebac.types import (
     WriteResult,
 )
 from nexus.rebac.utils.changelog import insert_changelog_entry
+from nexus.rebac.utils.fast import (
+    check_permissions_bulk_with_fallback,
+    is_rust_available,
+)
 from nexus.rebac.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from nexus.rebac.cache.iterator import IteratorCache
     from nexus.rebac.cache.leopard import LeopardIndex
-    from nexus.rebac.rebac_iterator_cache import IteratorCache
-    from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
+    from nexus.rebac.cache.tiger import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +208,7 @@ class ReBACManager:
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
         if enable_tiger_cache and engine.dialect.name == "postgresql":
-            from nexus.rebac.tiger_cache import (
+            from nexus.rebac.cache.tiger import (
                 TigerCache,
                 TigerCacheUpdater,
                 TigerResourceMap,
@@ -266,7 +266,7 @@ class ReBACManager:
         )
 
         # Iterator cache for paginated list operations (Issue #722)
-        from nexus.rebac.rebac_iterator_cache import IteratorCache
+        from nexus.rebac.cache.iterator import IteratorCache
 
         self._iterator_cache: IteratorCache = IteratorCache(
             max_size=1000,
@@ -895,7 +895,7 @@ class ReBACManager:
 
         # Try Rust acceleration first (has proper memoization, prevents timeout)
         try:
-            from nexus.rebac.rebac_fast import (
+            from nexus.rebac.utils.fast import (
                 check_permission_single_rust,
                 is_rust_available,
             )
@@ -2878,7 +2878,7 @@ class ReBACManager:
         """
         import time as time_module
 
-        from nexus.rebac.rebac_fast import (
+        from nexus.rebac.utils.fast import (
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )

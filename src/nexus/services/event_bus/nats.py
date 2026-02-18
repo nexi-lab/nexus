@@ -1,6 +1,6 @@
 """NATS JetStream event bus implementation.
 
-Communication brick implementing EventBusProtocol via NATS JetStream.
+Communication brick implementing EventBusBase via NATS JetStream.
 Provides durable event delivery, stream replay, and consumer groups.
 
 Subject hierarchy: nexus.events.{zone_id}.{event_type}
@@ -39,12 +39,9 @@ from nats.js.api import (
 from nats.js.errors import NotFoundError
 
 from nexus.constants import DEFAULT_NATS_URL
-from nexus.core.event_bus import (
-    AckableEvent,
-    EventBusBase,
-    FileEvent,
-    FileEventType,
-)
+from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.services.event_bus.base import EventBusBase
+from nexus.services.event_bus.protocol import AckableEvent
 
 if TYPE_CHECKING:
     from nats.aio.msg import Msg

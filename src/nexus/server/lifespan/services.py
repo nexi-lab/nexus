@@ -493,6 +493,16 @@ async def _startup_scheduler(app: FastAPI) -> None:
         if async_reg is not None:
             async_reg._state_emitter = state_emitter
 
+        # Wire hook cleanup handler into state emitter (Issue #1257)
+        _nx = getattr(app.state, "nexus_fs", None)
+        _svc = getattr(_nx, "services", None) if _nx else None
+        scoped_hook_engine = getattr(_svc, "scoped_hook_engine", None) if _svc else None
+        if scoped_hook_engine is not None:
+            from nexus.services.hook_engine import create_agent_cleanup_handler
+
+            state_emitter.add_handler(create_agent_cleanup_handler(scoped_hook_engine))
+            logger.debug("Hook cleanup handler registered on AgentStateEmitter")
+
         # Initialize fair-share counters from DB
         await scheduler_service.sync_fair_share()
 

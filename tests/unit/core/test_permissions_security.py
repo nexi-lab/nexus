@@ -196,7 +196,7 @@ class TestAdminBypassBehaviour:
         """When bypass disabled, admin falls through to ReBAC (denied if no manager)."""
         enforcer = PermissionEnforcer(allow_admin_bypass=False, rebac_manager=None)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -208,7 +208,7 @@ class TestAdminBypassBehaviour:
         """Admin with correct capability is allowed when bypass is ON."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -219,7 +219,7 @@ class TestAdminBypassBehaviour:
         """Admin without the matching capability falls through to ReBAC."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=None)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},  # has read, NOT write
@@ -231,7 +231,7 @@ class TestAdminBypassBehaviour:
         """Admin with empty capabilities falls through to ReBAC."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=None)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities=set(),
@@ -246,7 +246,7 @@ class TestAdminBypassBehaviour:
             admin_bypass_paths=["/admin/*"],
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -258,7 +258,7 @@ class TestAdminBypassBehaviour:
         """Admin in zone A cannot access /zone/B/* without MANAGE_ZONES capability."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=None)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             zone_id="techcorp",
@@ -272,7 +272,7 @@ class TestAdminBypassBehaviour:
         """Admin accessing own zone path is allowed (not cross-zone)."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             zone_id="acme",
@@ -286,7 +286,7 @@ class TestAdminBypassBehaviour:
 
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
-            user="superadmin",
+            user_id="superadmin",
             groups=[],
             is_admin=True,
             zone_id="techcorp",
@@ -311,7 +311,7 @@ class TestAdminBypassBehaviour:
             audit_store=audit_store,
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -449,7 +449,7 @@ class TestSubjectTypeValidation:
     def test_get_subject_returns_correct_tuple(self, subject_type, subject_id):
         """get_subject() returns the typed (type, id) tuple for ReBAC."""
         ctx = OperationContext(
-            user="owner",
+            user_id="owner",
             groups=[],
             subject_type=subject_type,
             subject_id=subject_id,
@@ -468,7 +468,7 @@ class TestSubjectTypeValidation:
         enforcer = PermissionEnforcer(rebac_manager=rebac)
 
         ctx = OperationContext(
-            user="owner",
+            user_id="owner",
             groups=[],
             subject_type="agent",
             subject_id="agent_42",
@@ -482,7 +482,7 @@ class TestSubjectTypeValidation:
     def test_agent_context_with_user_owner(self):
         """Agent context preserves both agent_id and user_id."""
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             agent_id="notebook_xyz",
             subject_type="agent",
@@ -578,7 +578,7 @@ class TestSecureDefaults:
         """Admin with bypass sees every path in filter_list."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -645,7 +645,7 @@ class TestStaleSessionDetection:
             agent_registry=agent_registry,
         )
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="agent_42",
@@ -669,7 +669,7 @@ class TestStaleSessionDetection:
             agent_registry=agent_registry,
         )
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="agent_42",
@@ -690,7 +690,7 @@ class TestStaleSessionDetection:
             agent_registry=agent_registry,
         )
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="deleted_agent",
@@ -711,7 +711,7 @@ class TestStaleSessionDetection:
             agent_registry=agent_registry,
         )
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="sk_key_agent",
@@ -733,7 +733,7 @@ class TestStaleSessionDetection:
             agent_registry=agent_registry,
         )
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",
@@ -762,7 +762,7 @@ class TestCheckStaleSessionHelper:
         registry.get.return_value = record
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="agent_x",
@@ -782,7 +782,7 @@ class TestCheckStaleSessionHelper:
         registry.get.return_value = record
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="agent_x",
@@ -800,7 +800,7 @@ class TestCheckStaleSessionHelper:
         registry.get.return_value = None
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="gone_agent",
@@ -815,7 +815,7 @@ class TestCheckStaleSessionHelper:
         from nexus.core.permissions import check_stale_session
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="agent_x",
@@ -830,7 +830,7 @@ class TestCheckStaleSessionHelper:
 
         registry = MagicMock()
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="agent",
             subject_id="agent_x",
@@ -846,7 +846,7 @@ class TestCheckStaleSessionHelper:
 
         registry = MagicMock()
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",
@@ -903,7 +903,7 @@ class TestNamespaceVisibility:
             namespace_manager=ns_manager,
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},

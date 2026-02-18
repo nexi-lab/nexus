@@ -56,7 +56,7 @@ async def main():
     user_email = os.getenv("NEXUS_USER_EMAIL", "your-email@example.com")
 
     context = OperationContext(
-        user=user_email,
+        user_id=user_email,
         groups=[],
         tenant_id="example_org",
         backend_path="/x/timeline/recent.json",
@@ -173,7 +173,7 @@ async def grep_example():
 
     user_email = os.getenv("NEXUS_USER_EMAIL", "your-email@example.com")
     context = OperationContext(
-        user=user_email,
+        user_id=user_email,
         groups=[],
         tenant_id="example_org",
     )
@@ -225,7 +225,7 @@ async def glob_example():
 
     user_email = os.getenv("NEXUS_USER_EMAIL", "your-email@example.com")
     context = OperationContext(
-        user=user_email,
+        user_id=user_email,
         groups=[],
         tenant_id="example_org",
     )
@@ -297,7 +297,7 @@ if __name__ == "__main__":
         user_email = os.getenv("NEXUS_USER_EMAIL", "your-email@example.com")
 
         context = OperationContext(
-            user=user_email,
+            user_id=user_email,
             groups=[],
             tenant_id="default",  # Must match the tenant_id used during OAuth setup
             backend_path="/x/timeline/recent.json",

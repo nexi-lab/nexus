@@ -53,7 +53,7 @@ class TestAdminBypassAuditLogging:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -67,7 +67,7 @@ class TestAdminBypassAuditLogging:
         assert len(audit_store.entries) == 1
 
         entry = audit_store.entries[0]
-        assert entry.user == "admin"
+        assert entry.user_id == "admin"
         assert entry.zone_id == "org_acme"
         assert entry.path == "/file.txt"
         assert entry.permission == "read"
@@ -86,7 +86,7 @@ class TestAdminBypassAuditLogging:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -113,7 +113,7 @@ class TestAdminBypassAuditLogging:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities=set(),  # No capabilities
@@ -140,7 +140,7 @@ class TestAdminBypassAuditLogging:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -167,7 +167,7 @@ class TestAdminBypassAuditLogging:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*", "admin:write:*", "admin:delete:*"},
@@ -191,7 +191,7 @@ class TestSystemBypassAuditLogging:
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager(), audit_store=audit_store)
 
         ctx = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             is_system=True,
             request_id="sys-req-456",
@@ -204,7 +204,7 @@ class TestSystemBypassAuditLogging:
         assert len(audit_store.entries) == 1
 
         entry = audit_store.entries[0]
-        assert entry.user == "system"
+        assert entry.user_id == "system"
         assert entry.bypass_type == "system"
         assert entry.allowed is True
         assert entry.request_id == "sys-req-456"
@@ -265,7 +265,7 @@ class TestAuditLoggingWithoutAuditStore:
         )
 
         ctx = OperationContext(
-            user="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
+            user_id="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
         )
 
         # Should not raise error
@@ -292,7 +292,7 @@ class TestAuditLoggingWithoutAuditStore:
         )
 
         ctx = OperationContext(
-            user="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
+            user_id="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
         )
 
         # Should fall through to ReBAC without error
@@ -313,7 +313,7 @@ class TestAuditEntryStructure:
         )
 
         ctx = OperationContext(
-            user="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
+            user_id="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
         )
 
         enforcer.check("/file.txt", Permission.READ, ctx)
@@ -340,7 +340,7 @@ class TestAuditEntryStructure:
 
         request_id = "correlation-id-abc-123"
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -362,7 +362,7 @@ class TestAuditEntryStructure:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -388,7 +388,7 @@ class TestMultipleBypassAttempts:
         )
 
         ctx = OperationContext(
-            user="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
+            user_id="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
         )
 
         # Multiple operations
@@ -416,7 +416,7 @@ class TestMultipleBypassAttempts:
 
         # Context with read capability only
         ctx = OperationContext(
-            user="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
+            user_id="admin", groups=[], is_admin=True, admin_capabilities={"admin:read:*"}
         )
 
         # Success: READ with read capability

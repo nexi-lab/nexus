@@ -58,7 +58,7 @@ def sync_service(mock_gateway):
 def operation_context():
     """Standard operation context for tests."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_system=False,
@@ -165,7 +165,7 @@ class TestSyncMount:
         """Admin users bypass permission checks."""
         mock_gateway.rebac_check.return_value = False
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test_zone",
             is_admin=True,

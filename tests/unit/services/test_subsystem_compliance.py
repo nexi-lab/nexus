@@ -42,7 +42,7 @@ class TestExtractContextIdentity:
         from nexus.core.permissions import OperationContext
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=["devs"],
             zone_id="org_acme",
             is_admin=True,
@@ -64,7 +64,7 @@ class TestExtractContextIdentity:
         from nexus.core.permissions import OperationContext
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_id="agent_007",
         )
@@ -76,7 +76,7 @@ class TestExtractContextIdentity:
         """extract_context_identity works with any duck-typed context object."""
         from types import SimpleNamespace
 
-        ctx = SimpleNamespace(zone_id="z1", user=None, subject_id="svc_001", is_admin=False)
+        ctx = SimpleNamespace(zone_id="z1", user_id=None, subject_id="svc_001", is_admin=False)
         identity = extract_context_identity(ctx)  # type: ignore[arg-type]
         assert identity.user_id == "svc_001"
         assert identity.zone_id == "z1"

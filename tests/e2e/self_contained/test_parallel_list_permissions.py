@@ -45,7 +45,7 @@ def _make_context(
 ) -> OperationContext:
     """Create an OperationContext for testing."""
     return OperationContext(
-        user=user,
+        user_id=user,
         groups=[],
         zone_id=zone_id,
         is_admin=is_admin,
@@ -433,7 +433,7 @@ class TestFilterListAdminBypass:
             allowed_paths=set(),
             allow_admin_bypass=True,
         )
-        admin_ctx = _make_context(user="admin_user", is_admin=True)
+        admin_ctx = _make_context(user_id="admin_user", is_admin=True)
 
         all_paths = [f"/zone/dir{d}/file{f}.txt" for d in range(5) for f in range(10)]
         assert len(all_paths) == 50
@@ -452,7 +452,7 @@ class TestFilterListAdminBypass:
             allowed_paths={"/zone/dir0/file0.txt"},
             allow_admin_bypass=False,
         )
-        admin_ctx = _make_context(user="admin_user", is_admin=True)
+        admin_ctx = _make_context(user_id="admin_user", is_admin=True)
 
         paths = ["/zone/dir0/file0.txt", "/zone/dir1/file1.txt"]
         result = enforcer.filter_list(paths, admin_ctx)
@@ -467,7 +467,7 @@ class TestFilterListAdminBypass:
             allowed_paths=allowed,
             allow_admin_bypass=True,
         )
-        regular_ctx = _make_context(user="regular_user", is_admin=False)
+        regular_ctx = _make_context(user_id="regular_user", is_admin=False)
 
         paths = ["/data/public.txt", "/data/private.txt"]
         result = enforcer.filter_list(paths, regular_ctx)

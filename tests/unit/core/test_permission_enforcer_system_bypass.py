@@ -179,7 +179,7 @@ class TestSystemBypassAuditLogging:
         assert len(audit_store.entries) == 1
 
         entry = audit_store.entries[0]
-        assert entry.user == "system"
+        assert entry.user_id == "system"
         assert entry.bypass_type == "system"
         assert entry.allowed is True
         assert entry.request_id == "sys-req-123"
@@ -237,7 +237,7 @@ class TestSystemVsAdminBypass:
 
         # User is both system and admin
         ctx = OperationContext(
-            user="system_admin",
+            user_id="system_admin",
             groups=["admins"],
             is_system=True,  # System flag set
             is_admin=True,  # Admin flag also set
@@ -253,7 +253,7 @@ class TestSystemVsAdminBypass:
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager(), allow_admin_bypass=True)
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             is_system=False,  # Not system

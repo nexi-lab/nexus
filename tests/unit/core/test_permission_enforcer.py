@@ -41,7 +41,7 @@ class TestOperationContext:
     def test_create_agent_context(self):
         """Test creating an AI agent context."""
         ctx = OperationContext(
-            user="claude", groups=["ai_agents"], subject_type="agent", subject_id="claude_001"
+            user_id="claude", groups=["ai_agents"], subject_type="agent", subject_id="claude_001"
         )
         assert ctx.subject_type == "agent"
         assert ctx.subject_id == "claude_001"
@@ -50,7 +50,10 @@ class TestOperationContext:
     def test_create_service_context(self):
         """Test creating a service context."""
         ctx = OperationContext(
-            user="backup", groups=["services"], subject_type="service", subject_id="backup_service"
+            user_id="backup",
+            groups=["services"],
+            subject_type="service",
+            subject_id="backup_service",
         )
         assert ctx.subject_type == "service"
         assert ctx.subject_id == "backup_service"
@@ -63,7 +66,7 @@ class TestOperationContext:
 
     def test_requires_user(self):
         """Test that user is required."""
-        with pytest.raises(ValueError, match="user is required"):
+        with pytest.raises(ValueError, match="user_id is required"):
             OperationContext(user_id="", groups=[])
 
     def test_requires_groups_list(self):
@@ -89,7 +92,7 @@ class TestPermissionEnforcer:
         """Test that admin users bypass all checks."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*", "admin:write:*", "admin:execute:*"},
@@ -196,7 +199,7 @@ class TestPermissionEnforcer:
         """Test that admins see all files in filter_list."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -273,7 +276,7 @@ class TestPermissionEnforcer:
         enforcer = PermissionEnforcer(rebac_manager=rebac)
 
         ctx = OperationContext(
-            user="claude", groups=["ai_agents"], subject_type="agent", subject_id="claude_001"
+            user_id="claude", groups=["ai_agents"], subject_type="agent", subject_id="claude_001"
         )
 
         enforcer.check("/file.txt", Permission.READ, ctx)

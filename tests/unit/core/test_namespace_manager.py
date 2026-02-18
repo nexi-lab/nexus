@@ -486,7 +486,7 @@ class TestPermissionEnforcerNamespaceIntegration:
         )
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -507,7 +507,7 @@ class TestPermissionEnforcerNamespaceIntegration:
         )
 
         system_ctx = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             is_system=True,
             zone_id="test_zone",
@@ -528,7 +528,7 @@ class TestPermissionEnforcerNamespaceIntegration:
 
         # Regular user with no grants
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
         )
@@ -554,7 +554,7 @@ class TestPermissionEnforcerNamespaceIntegration:
         )
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id=zone,
         )
@@ -778,7 +778,7 @@ class TestNamespaceEdgeCases:
 
         # Agent with no grants
         ctx = OperationContext(
-            user="agent-x",
+            user_id="agent-x",
             agent_id="agent-x",
             subject_type="agent",
             subject_id="agent-x",
@@ -807,7 +807,7 @@ class TestNamespaceEdgeCases:
         )
 
         ctx = OperationContext(
-            user="agent-filter",
+            user_id="agent-filter",
             agent_id="agent-filter",
             subject_type="agent",
             subject_id="agent-filter",
@@ -837,7 +837,7 @@ class TestNamespaceEdgeCases:
         )
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},

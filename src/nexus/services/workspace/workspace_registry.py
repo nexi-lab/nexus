@@ -248,7 +248,7 @@ class WorkspaceRegistry:
                 f"[CONTEXT-DEBUG] register_workspace: context type={type(context)}, context={context}"
             )
             if isinstance(context, dict):
-                user_id = context.get("user_id") or context.get("user")
+                user_id = context.get("user_id") or context.get("user_id")
                 agent_id = context.get("agent_id")
                 zone_id = context.get("zone_id") or context.get("zone")
                 logger.warning(
@@ -521,7 +521,7 @@ class WorkspaceRegistry:
         if context:
             # Handle both dict (from RPC) and OperationContext (direct calls)
             if isinstance(context, dict):
-                user_id = context.get("user_id") or context.get("user")
+                user_id = context.get("user_id") or context.get("user_id")
                 agent_id = context.get("agent_id")
                 zone_id = context.get("zone_id") or context.get("zone")
             else:

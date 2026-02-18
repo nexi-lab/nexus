@@ -84,7 +84,7 @@ async def whoami(
         zone_id=auth_result.get("zone_id"),
         is_admin=auth_result.get("is_admin", False),
         inherit_permissions=auth_result.get("inherit_permissions", True),
-        user=auth_result.get("subject_id"),
+        user_id=auth_result.get("subject_id"),
     )
 
 

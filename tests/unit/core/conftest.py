@@ -22,7 +22,7 @@ from nexus.core.permissions import OperationContext
 def operation_context() -> OperationContext:
     """Standard OperationContext for subsystem tests."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_admin=False,
@@ -33,7 +33,7 @@ def operation_context() -> OperationContext:
 def admin_context() -> OperationContext:
     """Admin OperationContext for subsystem tests."""
     return OperationContext(
-        user="admin_user",
+        user_id="admin_user",
         groups=["admins"],
         zone_id="test_zone",
         is_admin=True,

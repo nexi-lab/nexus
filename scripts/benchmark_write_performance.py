@@ -114,7 +114,7 @@ def run_benchmark(enable_deferred: bool = False):
 
         # Create user context
         ctx = OperationContext(
-            user="benchmark_user",
+            user_id="benchmark_user",
             groups=[],
             zone_id="benchmark_zone",
             is_admin=False,

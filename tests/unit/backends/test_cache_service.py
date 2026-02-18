@@ -401,7 +401,7 @@ class TestReadContentWithCache:
         )
 
         ctx = OperationContext(
-            user="test", groups=[], backend_path="/test/cached.txt", is_system=True
+            user_id="test", groups=[], backend_path="/test/cached.txt", is_system=True
         )
         ctx.virtual_path = "/test/cached.txt"
 

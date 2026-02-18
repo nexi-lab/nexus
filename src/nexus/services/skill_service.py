@@ -1349,7 +1349,7 @@ class SkillService:
                 if rel_path and not rel_path.endswith("/"):
                     file_path = f"{target_path}{rel_path}"
                     logger.info(
-                        "[skills_import] Writing file: %s, user=%s, zone=%s",
+                        "[skills_import] Writing file: %s, user_id=%s, zone=%s",
                         file_path,
                         context.user_id,
                         context.zone_id,

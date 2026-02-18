@@ -185,7 +185,7 @@ class TestZoneIsolation:
         """Admin from zone_a trying /zone/zone_b/ is blocked without MANAGE_ZONES."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=None)
         ctx = OperationContext(
-            user="zone_admin",
+            user_id="zone_admin",
             groups=[],
             is_admin=True,
             zone_id="zone_a",
@@ -249,7 +249,7 @@ class TestPermissionEscalation:
             rebac_manager=_make_mock_rebac({}),
         )
         ctx = OperationContext(
-            user="mallory",
+            user_id="mallory",
             groups=[],
             is_admin=True,  # claims admin
             admin_capabilities={"admin:read:*"},
@@ -264,7 +264,7 @@ class TestPermissionEscalation:
             rebac_manager=_make_mock_rebac({}),
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},  # read only
@@ -290,7 +290,7 @@ class TestAdminBehavior:
         )
         enforcer = PermissionEnforcer(allow_admin_bypass=False, rebac_manager=rebac)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -302,7 +302,7 @@ class TestAdminBehavior:
         rebac = _make_mock_rebac({})
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=rebac)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities=set(),
@@ -317,7 +317,7 @@ class TestAdminBehavior:
             admin_bypass_paths=["/admin/*"],
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -352,7 +352,7 @@ class TestPermissionBypassNoEnforcement:
         """Admin bypass works even without rebac_manager."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=None)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -370,7 +370,7 @@ class TestEmptyNullContextHandling:
 
     def test_empty_user_rejected(self):
         """Empty user string is rejected at construction."""
-        with pytest.raises(ValueError, match="user is required"):
+        with pytest.raises(ValueError, match="user_id is required"):
             OperationContext(user_id="", groups=[])
 
     def test_many_groups_allowed(self):
@@ -382,14 +382,13 @@ class TestEmptyNullContextHandling:
     def test_context_with_all_fields(self):
         """Context with every field set does not break."""
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=["g1", "g2"],
             zone_id="zone1",
             agent_id="agent_x",
             agent_generation=3,
             is_admin=True,
             is_system=False,
-            user_id="alice_id",
             subject_type="agent",
             subject_id="agent_x",
             admin_capabilities={"admin:read:*"},
@@ -746,7 +745,7 @@ class TestBypassAuditLogging:
             audit_store=audit_store,
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -775,7 +774,7 @@ class TestCombinedSecurityScenarios:
             rebac_manager=_make_mock_rebac({}),
         )
         ctx = OperationContext(
-            user="evil_admin",
+            user_id="evil_admin",
             groups=[],
             is_admin=True,
             zone_id="zone_a",
@@ -788,7 +787,7 @@ class TestCombinedSecurityScenarios:
         """System context write is scoped to /system/ regardless of admin bypass."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             is_system=True,
         )
@@ -817,7 +816,7 @@ class TestCombinedSecurityScenarios:
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
         ctx = OperationContext(
-            user="owner",
+            user_id="owner",
             groups=[],
             subject_type="agent",
             subject_id="bot_1",
@@ -829,7 +828,7 @@ class TestCombinedSecurityScenarios:
         rebac = _make_mock_rebac({})
         enforcer = PermissionEnforcer(rebac_manager=rebac)
         ctx = OperationContext(
-            user="owner",
+            user_id="owner",
             groups=[],
             subject_type="agent",
             subject_id="bot_1",

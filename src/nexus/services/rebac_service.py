@@ -1551,7 +1551,7 @@ class ReBACService(ReBACShareMixin):
 
             # Construct from subject_type + subject_id
             subject_type = context.get("subject_type", "user")
-            subject_id = context.get("subject_id") or context.get("user")
+            subject_id = context.get("subject_id") or context.get("user_id")
             if subject_id:
                 return (subject_type, subject_id)
 
@@ -1614,7 +1614,7 @@ class ReBACService(ReBACShareMixin):
         elif isinstance(context, dict):
             # Create OperationContext from dict
             op_context = OperationContext(
-                user_id=context.get("user", "unknown"),
+                user_id=context.get("user_id", "unknown"),
                 groups=context.get("groups", []),
                 zone_id=context.get("zone_id"),
                 is_admin=context.get("is_admin", False),

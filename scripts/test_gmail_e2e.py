@@ -617,9 +617,8 @@ def main():
     # Create context
     user_email = args.user or "test@example.com"
     context = OperationContext(
-        user=user_email,
-        groups=[],
         user_id=user_email,
+        groups=[],
         zone_id="default",
     )
 

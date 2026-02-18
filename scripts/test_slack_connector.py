@@ -207,7 +207,7 @@ def test_list_channels(connector):
 
         # Create context
         user_email = os.getenv("SLACK_USER_EMAIL", "test@example.com")
-        context = OperationContext(user=user_email, groups=[])
+        context = OperationContext(user_id=user_email, groups=[])
 
         # List root directory (should show channel types)
         print("\n1. Listing root directory...")
@@ -259,7 +259,7 @@ def test_read_messages(connector):
 
         # Create context
         user_email = os.getenv("SLACK_USER_EMAIL", "test@example.com")
-        context = OperationContext(user=user_email, groups=[])
+        context = OperationContext(user_id=user_email, groups=[])
 
         # Get first channel
         channels = connector.list_dir("channels", context)
@@ -333,7 +333,7 @@ def test_post_message(connector):
 
         # Create context
         user_email = os.getenv("SLACK_USER_EMAIL", "test@example.com")
-        context = OperationContext(user=user_email, groups=[])
+        context = OperationContext(user_id=user_email, groups=[])
 
         # Get first channel
         channels = connector.list_dir("channels", context)

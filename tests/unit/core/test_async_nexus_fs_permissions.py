@@ -716,7 +716,7 @@ async def test_different_users_different_permissions(
     mock_rebac_manager.rebac_check.side_effect = user_specific_check
 
     # Write as alice (allowed)
-    alice_context = OperationContext(user="alice", groups=[], zone_id="test-tenant")
+    alice_context = OperationContext(user_id="alice", groups=[], zone_id="test-tenant")
     result = await async_fs_with_permissions.write(path, content, context=alice_context)
     assert "etag" in result
 
@@ -725,7 +725,7 @@ async def test_different_users_different_permissions(
     assert read_content == content
 
     # Read as bob (denied)
-    bob_context = OperationContext(user="bob", groups=[], zone_id="test-tenant")
+    bob_context = OperationContext(user_id="bob", groups=[], zone_id="test-tenant")
     with pytest.raises(NexusPermissionError):
         await async_fs_with_permissions.read(path, context=bob_context)
 
@@ -745,7 +745,7 @@ async def test_empty_list_dir_with_no_permissions(
     mock_rebac_manager.rebac_check.return_value = False
     mock_rebac_manager.rebac_check_bulk.return_value = {}
 
-    context = OperationContext(user="outsider", groups=[], zone_id="test-tenant")
+    context = OperationContext(user_id="outsider", groups=[], zone_id="test-tenant")
 
     # List should return empty since user has no READ permission on any files
     items = await async_fs_with_permissions.list_dir("/secure", context=context)
@@ -769,7 +769,7 @@ async def test_selective_permission_enforcement(
     await async_fs_with_permissions.write("/allowed/file2.txt", b"Content 2")
 
     # All permissions allowed
-    context = OperationContext(user="partial", groups=[], zone_id="test-tenant")
+    context = OperationContext(user_id="partial", groups=[], zone_id="test-tenant")
 
     # We can read the allowed files
     content1 = await async_fs_with_permissions.read("/allowed/file1.txt", context=context)
@@ -802,7 +802,7 @@ async def test_permission_enforcer_none_is_permissive(
     await fs.initialize()
 
     try:
-        context = OperationContext(user="anyone", groups=[], zone_id="test-tenant")
+        context = OperationContext(user_id="anyone", groups=[], zone_id="test-tenant")
 
         # Operations should still work (permissive when no enforcer)
         result = await fs.write("/test/no-enforcer.txt", b"Content", context=context)

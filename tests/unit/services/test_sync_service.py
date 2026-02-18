@@ -250,7 +250,7 @@ class TestSyncMount:
         ctx = SyncContext(
             mount_point="/mnt/gcs",
             recursive=False,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         sync_service.sync_mount(ctx)
@@ -277,7 +277,7 @@ class TestSyncMountDryRun:
             mount_point="/mnt/gcs",
             recursive=True,
             dry_run=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = sync_service.sync_mount(ctx)
@@ -301,7 +301,7 @@ class TestSyncMountDryRun:
             mount_point="/mnt/gcs",
             recursive=True,
             dry_run=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = sync_service.sync_mount(ctx)
@@ -320,7 +320,7 @@ class TestSyncMountDryRun:
             recursive=True,
             dry_run=True,
             sync_content=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         sync_service.sync_mount(ctx)
@@ -347,7 +347,7 @@ class TestSyncDeletions:
         ctx = SyncContext(
             mount_point="/mnt/gcs",
             recursive=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = SyncResult()
@@ -370,7 +370,7 @@ class TestSyncDeletions:
         ctx = SyncContext(
             mount_point="/mnt/gcs",
             recursive=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = SyncResult()
@@ -393,7 +393,7 @@ class TestSyncDeletions:
         ctx = SyncContext(
             mount_point="/mnt/gcs",
             recursive=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = SyncResult()
@@ -420,7 +420,7 @@ class TestSyncDeletions:
         ctx = SyncContext(
             mount_point="/mnt/gcs",
             recursive=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = SyncResult()
@@ -439,7 +439,7 @@ class TestSyncDeletions:
             mount_point="/mnt/gcs",
             path="/mnt/gcs/subdir",
             recursive=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = SyncResult()
@@ -458,7 +458,7 @@ class TestSyncDeletions:
         ctx = SyncContext(
             mount_point="/mnt/gcs",
             recursive=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = SyncResult()
@@ -485,7 +485,7 @@ class TestSyncErrorHandling:
         ctx = SyncContext(
             mount_point="/mnt/gcs",
             recursive=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = sync_service.sync_mount(ctx)
@@ -506,7 +506,7 @@ class TestSyncErrorHandling:
         ctx = SyncContext(
             mount_point="/mnt/gcs",
             recursive=True,
-            context=OperationContext(user="test_user", groups=[], zone_id="test_zone"),
+            context=OperationContext(user_id="test_user", groups=[], zone_id="test_zone"),
         )
 
         result = sync_service.sync_mount(ctx)

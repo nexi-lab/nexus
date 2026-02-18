@@ -88,7 +88,7 @@ class TestExtractZoneId:
 
     def test_extract_zone_id_from_operation_context_missing(self, nx: NexusFS) -> None:
         """Test extracting zone_id from OperationContext without zone_id."""
-        context = OperationContext(user="alice", groups=[])
+        context = OperationContext(user_id="alice", groups=[])
         result = nx._extract_zone_id(context)
         assert result is None
 
@@ -131,7 +131,7 @@ class TestExtractUserId:
 
     def test_extract_user_id_from_operation_context_fallback(self, nx: NexusFS) -> None:
         """Test extracting user_id from OperationContext falls back to user."""
-        context = OperationContext(user="bob", groups=[])
+        context = OperationContext(user_id="bob", groups=[])
         result = nx._extract_user_id(context)
         assert result == "bob"
 
@@ -548,7 +548,7 @@ class TestDeleteAgentCleanup:
         ctx = nx._parse_context(context)
         # Create admin context to bypass permission checks
         admin_ctx = OperationContext(
-            user=ctx.user,
+            user=ctx.user_id,
             groups=ctx.groups,
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,

@@ -129,7 +129,7 @@ def get_manifest(
 
     # Ownership check
     context = _get_operation_context(auth_result)
-    owner_id = context.user_id or context.user or ""
+    owner_id = context.user_id or ""
     if record.owner_id != owner_id:
         raise HTTPException(status_code=403, detail="Not authorized for this agent")
 
@@ -156,7 +156,7 @@ def set_manifest(
 
     # Ownership check
     context = _get_operation_context(auth_result)
-    owner_id = context.user_id or context.user or ""
+    owner_id = context.user_id or ""
     if record.owner_id != owner_id:
         raise HTTPException(status_code=403, detail="Not authorized for this agent")
 
@@ -196,7 +196,7 @@ async def resolve_manifest(
 
     # Ownership check
     context = _get_operation_context(auth_result)
-    owner_id = context.user_id or context.user or ""
+    owner_id = context.user_id or ""
     if record.owner_id != owner_id:
         raise HTTPException(status_code=403, detail="Not authorized for this agent")
 

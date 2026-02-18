@@ -417,7 +417,7 @@ class SearchListingMixin:
                     )
             if not has_permission:
                 raise PermissionDeniedError(
-                    f"Access denied: User '{context.user}' does not have "
+                    f"Access denied: User '{context.user_id}' does not have "
                     f"TRAVERSE permission for '{path}'"
                 )
 

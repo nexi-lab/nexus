@@ -78,7 +78,7 @@ class TestPythonFallback:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
 
         # This will use Python fallback since mock doesn't have nexus_fast
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills", "/archive"], ctx)
@@ -97,7 +97,7 @@ class TestPythonFallback:
             _tiger_cache = MockTigerCache()
 
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="alice", groups=["dev"])
+        ctx = OperationContext(user_id="alice", groups=["dev"])
 
         assert enforcer.has_accessible_descendants("/docs", ctx) is True
         assert enforcer.has_accessible_descendants("/skills", ctx) is False

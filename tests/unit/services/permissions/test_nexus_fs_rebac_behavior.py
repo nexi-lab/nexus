@@ -159,7 +159,7 @@ class TestGetSubjectFromContext:
         """Extracts subject from object with only user attribute."""
         fs = MockNexusFS()
         mock_context = Mock(spec=["user"])
-        mock_context.user = "eve"
+        mock_context.user_id = "eve"
 
         result = fs._get_subject_from_context(mock_context)
 

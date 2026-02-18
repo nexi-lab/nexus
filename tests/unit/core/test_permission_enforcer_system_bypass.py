@@ -41,7 +41,7 @@ class TestSystemBypassReadOperations:
     def test_system_can_read_any_path(self):
         """System context can READ any path (for auto-parse, indexing, etc.)."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Should allow READ on any path
         assert enforcer.check("/workspace/file.txt", Permission.READ, ctx) is True
@@ -53,7 +53,7 @@ class TestSystemBypassReadOperations:
         """System READ operations should bypass ReBAC checks."""
         rebac = MockReBACManager()
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         assert enforcer.check("/any/file.txt", Permission.READ, ctx) is True
 
@@ -67,7 +67,7 @@ class TestSystemBypassWriteOperations:
     def test_system_can_write_to_system_paths(self):
         """System can WRITE to /system/* paths."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Should allow WRITE to /system/* paths
         assert enforcer.check("/system/config.yaml", Permission.WRITE, ctx) is True
@@ -77,7 +77,7 @@ class TestSystemBypassWriteOperations:
     def test_system_cannot_write_to_non_system_paths(self):
         """System CANNOT WRITE to non-/system/* paths (security)."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Should deny WRITE to non-system paths
         with pytest.raises(PermissionError, match="System bypass not allowed"):
@@ -92,7 +92,7 @@ class TestSystemBypassWriteOperations:
     def test_system_write_scope_is_strict(self):
         """System WRITE scope check is strict (/system prefix required)."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Edge cases
         with pytest.raises(PermissionError):
@@ -110,7 +110,7 @@ class TestSystemBypassExecuteOperations:
     def test_system_can_execute_system_scripts(self):
         """System can EXECUTE scripts in /system/* paths."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         assert enforcer.check("/system/scripts/backup.sh", Permission.EXECUTE, ctx) is True
         assert enforcer.check("/system/bin/indexer", Permission.EXECUTE, ctx) is True
@@ -118,7 +118,7 @@ class TestSystemBypassExecuteOperations:
     def test_system_cannot_execute_non_system_scripts(self):
         """System CANNOT EXECUTE scripts outside /system/* (security)."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         with pytest.raises(PermissionError, match="System bypass not allowed"):
             enforcer.check("/workspace/script.sh", Permission.EXECUTE, ctx)
@@ -140,7 +140,7 @@ class TestSystemBypassKillSwitch:
     def test_system_bypass_kill_switch_disabled(self):
         """When kill-switch is OFF, all system operations should fail."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager(), allow_system_bypass=False)
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # All operations should fail
         with pytest.raises(PermissionError, match="System bypass disabled"):
@@ -152,7 +152,7 @@ class TestSystemBypassKillSwitch:
     def test_system_bypass_kill_switch_enabled(self):
         """When kill-switch is ON, system operations work normally."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager(), allow_system_bypass=True)
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # READ on any path should work
         assert enforcer.check("/any/file.txt", Permission.READ, ctx) is True
@@ -169,7 +169,9 @@ class TestSystemBypassAuditLogging:
         audit_store = MockAuditStore()
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager(), audit_store=audit_store)
 
-        ctx = OperationContext(user="system", groups=[], is_system=True, request_id="sys-req-123")
+        ctx = OperationContext(
+            user_id="system", groups=[], is_system=True, request_id="sys-req-123"
+        )
 
         enforcer.check("/workspace/file.txt", Permission.READ, ctx)
 
@@ -191,7 +193,7 @@ class TestSystemBypassAuditLogging:
             audit_store=audit_store,
         )
 
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         with pytest.raises(PermissionError):
             enforcer.check("/file.txt", Permission.READ, ctx)
@@ -208,7 +210,7 @@ class TestSystemBypassAuditLogging:
         audit_store = MockAuditStore()
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager(), audit_store=audit_store)
 
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Try to write to non-system path
         with pytest.raises(PermissionError, match="System bypass not allowed"):
@@ -268,7 +270,7 @@ class TestSystemBypassEdgeCases:
     def test_system_bypass_with_root_path(self):
         """Test system bypass behavior with root path."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # READ on root should work
         assert enforcer.check("/", Permission.READ, ctx) is True
@@ -280,7 +282,7 @@ class TestSystemBypassEdgeCases:
     def test_system_bypass_with_system_path_variations(self):
         """Test various /system/* path variations."""
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # All should work
         assert enforcer.check("/system/file.txt", Permission.WRITE, ctx) is True
@@ -293,7 +295,7 @@ class TestSystemBypassEdgeCases:
             rebac_manager=MockReBACManager(),
             audit_store=None,  # No audit
         )
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Should not raise error
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True

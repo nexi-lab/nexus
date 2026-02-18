@@ -136,7 +136,7 @@ def e2e_env():
         # ============================================================
         source_fs = _make_nexus_fs(source_dir)
 
-        admin = OperationContext(user="admin", groups=[], is_admin=True)
+        admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write test files
         source_fs.write(

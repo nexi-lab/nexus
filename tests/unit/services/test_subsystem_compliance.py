@@ -55,7 +55,7 @@ class TestExtractContextIdentity:
     def test_none_zone_id_defaults_to_root(self) -> None:
         from nexus.core.permissions import OperationContext
 
-        ctx = OperationContext(user="bob", groups=[], zone_id=None)
+        ctx = OperationContext(user_id="bob", groups=[], zone_id=None)
         identity = extract_context_identity(ctx)
         assert identity.zone_id == "root"
 

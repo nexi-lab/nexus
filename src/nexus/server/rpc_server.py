@@ -196,7 +196,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                             "subject_id": context.subject_id,
                             "zone_id": context.zone_id,
                             "is_admin": context.is_admin,
-                            "user": context.user,  # For backward compatibility
+                            "user_id": context.user_id,
                         },
                     )
                 else:

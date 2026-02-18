@@ -48,7 +48,7 @@ def source_nexus_fs_with_permissions(temp_dir):
     )
 
     # Create admin context for writing test files
-    admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+    admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
     # Create test files as admin
     fs.write("/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context)
@@ -148,7 +148,7 @@ class TestImportWithPermissions:
         assert result.files_created == 3
 
         # Verify files exist via metadata store (bypasses permission checks)
-        admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+        admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Check via metadata directly
         meta = target_nexus_fs_with_permissions.metadata.get("/workspace/readme.md")
@@ -164,7 +164,7 @@ class TestImportWithPermissions:
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test SKIP conflict mode with permissions enabled."""
-        admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+        admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
         target_nexus_fs_with_permissions.write(
@@ -193,7 +193,7 @@ class TestImportWithPermissions:
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test OVERWRITE conflict mode with permissions enabled."""
-        admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+        admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
         target_nexus_fs_with_permissions.write(
@@ -227,7 +227,7 @@ class TestRoundTripWithPermissions:
     ):
         """Test that content is preserved through export/import with permissions."""
         bundle_path = temp_dir / "roundtrip_perms.nexus"
-        admin_context = OperationContext(user="admin", groups=[], is_admin=True)
+        admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Export from source
         export_manifest = export_zone_bundle(

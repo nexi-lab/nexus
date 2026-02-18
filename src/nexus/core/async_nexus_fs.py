@@ -198,7 +198,7 @@ class AsyncNexusFS:
             permission_name = permission.name if hasattr(permission, "name") else str(permission)
             raise NexusPermissionError(
                 path=path,
-                message=f"Permission denied: {ctx.user} does not have {permission_name} permission on {path}",
+                message=f"Permission denied: {ctx.user_id} does not have {permission_name} permission on {path}",
             )
 
     # === Path Utilities ===

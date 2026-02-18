@@ -114,7 +114,9 @@ class NexusConfig(BaseModel):
     profile: str = Field(
         default="full",
         description=(
-            "Deployment profile controlling which bricks are enabled: embedded, lite, full, cloud"
+            "Deployment profile controlling which bricks are enabled: "
+            "embedded (storage+eventlog only), lite (core services), "
+            "full (all bricks), cloud (all + federation)"
         ),
     )
 

@@ -27,7 +27,6 @@ from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -563,7 +562,7 @@ class GCSBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """
         Create directory marker in GCS.
@@ -605,7 +604,7 @@ class GCSBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Remove directory from GCS."""
         # Normalize path

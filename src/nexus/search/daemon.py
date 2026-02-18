@@ -374,7 +374,9 @@ class SearchDaemon:
             # Use a zero vector which won't match anything but loads the index
             async with self._async_engine.connect() as conn:
                 # Set HNSW search parameters for high recall
-                await conn.execute(text(f"SET hnsw.ef_search = {self.config.vector_ef_search}"))
+                # Validate config value is an integer to prevent SQL injection
+                ef_search = int(self.config.vector_ef_search)
+                await conn.execute(text(f"SET hnsw.ef_search = {ef_search}"))
 
                 # Dummy query to warm index (SELECT 1 with vector operation)
                 # Check if embedding column exists first

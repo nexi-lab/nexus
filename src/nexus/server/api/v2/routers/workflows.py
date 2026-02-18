@@ -174,7 +174,7 @@ async def create_workflow(
 
     Accepts a JSON workflow definition and loads it into the engine.
     """
-    from nexus.workflows.loader import WorkflowLoader
+    from nexus.bricks.workflows.loader import WorkflowLoader
 
     # Convert request to dict for WorkflowLoader
     workflow_dict: dict[str, Any] = {

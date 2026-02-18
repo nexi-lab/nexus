@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.a2a.messaging import (
+from nexus.bricks.a2a.messaging import (
     DataPart,
     FilePart,
     MessageMetadata,
@@ -32,7 +32,7 @@ class TestPartReexports:
         assert p.type == "text"
 
     def test_file_part_available(self) -> None:
-        from nexus.a2a.models import FileContent
+        from nexus.bricks.a2a.models import FileContent
 
         p = FilePart(file=FileContent(name="test.txt"))
         assert p.type == "file"

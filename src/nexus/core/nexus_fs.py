@@ -308,7 +308,9 @@ class NexusFS(  # type: ignore[misc]
         }
 
         # Issue #372: Sandbox manager - lazy initialization
-        from nexus.sandbox.sandbox_manager import SandboxManager
+        # TODO(#2032): Extract SandboxProtocol to services/protocols/ and
+        # inject via factory.py DI instead of importing the brick directly.
+        from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
         self._sandbox_manager: SandboxManager | None = None
 
@@ -6101,7 +6103,7 @@ class NexusFS(  # type: ignore[misc]
         if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
             import os
 
-            from nexus.sandbox.sandbox_manager import SandboxManager
+            from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
             # Pass config if available (needed for Docker provider initialization)
@@ -6116,7 +6118,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Attach smart router if providers are available (Issue #1317)
             if self._sandbox_manager.providers:
-                from nexus.sandbox.sandbox_router import SandboxRouter
+                from nexus.bricks.sandbox.sandbox_router import SandboxRouter
 
                 self._sandbox_manager._router = SandboxRouter(
                     available_providers=self._sandbox_manager.providers,

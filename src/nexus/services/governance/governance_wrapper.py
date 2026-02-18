@@ -12,11 +12,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.pay.audit_types import TransactionProtocol
 from nexus.core.sync_bridge import fire_and_forget
-from nexus.pay.audit_types import TransactionProtocol
 
 if TYPE_CHECKING:
-    from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
+    from nexus.bricks.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
     from nexus.services.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
     from nexus.services.protocols.payment import PaymentProtocol
 

@@ -126,7 +126,7 @@ async def x402_webhook(
     This endpoint receives payment confirmations from the x402 facilitator
     and credits the agent's account in TigerBeetle.
     """
-    from nexus.pay.x402 import X402Error
+    from nexus.bricks.pay.x402 import X402Error
 
     try:
         # Convert Pydantic model to dict for processing
@@ -177,7 +177,7 @@ async def request_topup(
     Returns a 402 Payment Required response with payment details.
     The client should then send USDC to the specified address.
     """
-    from nexus.pay.x402 import X402Error
+    from nexus.bricks.pay.x402 import X402Error
 
     try:
         # Get payment details from x402 client

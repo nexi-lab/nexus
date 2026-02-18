@@ -38,10 +38,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from nexus.bricks.pay.credits import CreditsService
+from nexus.bricks.pay.sdk import NexusPay
+from nexus.bricks.pay.x402 import X402Client, X402PaymentVerification
 from nexus.core.async_nexus_fs import AsyncNexusFS
-from nexus.pay.credits import CreditsService
-from nexus.pay.sdk import NexusPay
-from nexus.pay.x402 import X402Client, X402PaymentVerification
 from nexus.rebac.async_manager import AsyncReBACManager
 from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 from nexus.server.middleware.x402 import X402PaymentMiddleware

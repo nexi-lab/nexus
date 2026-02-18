@@ -11,15 +11,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.scheduler.constants import (
+from nexus.bricks.scheduler.constants import (
     TASK_STATUS_RUNNING,
     PriorityClass,
     PriorityTier,
 )
-from nexus.scheduler.events import AgentStateEmitter, AgentStateEvent
-from nexus.scheduler.models import ScheduledTask
-from nexus.scheduler.policies.fair_share import FairShareCounter
-from nexus.scheduler.service import SchedulerService
+from nexus.bricks.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.bricks.scheduler.models import ScheduledTask
+from nexus.bricks.scheduler.policies.fair_share import FairShareCounter
+from nexus.bricks.scheduler.service import SchedulerService
 from nexus.services.protocols.scheduler import AgentRequest
 
 # =============================================================================

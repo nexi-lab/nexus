@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
-from nexus.a2a.models import (
+from nexus.bricks.a2a.models import (
     Artifact,
     DataPart,
     FileContent,
@@ -20,7 +20,7 @@ from nexus.a2a.models import (
     TaskStatus,
     TextPart,
 )
-from nexus.a2a.stores.serialization import (
+from nexus.bricks.a2a.stores.serialization import (
     task_from_db_row,
     task_from_dict,
     task_to_db_columns,

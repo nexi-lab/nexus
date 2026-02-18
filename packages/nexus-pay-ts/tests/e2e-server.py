@@ -19,8 +19,8 @@ import uvicorn
 from fastapi import FastAPI
 
 # Import the actual pay router and exception handlers
-from nexus.pay.credits import CreditsService
-from nexus.pay.sdk import NexusPay
+from nexus.bricks.pay.credits import CreditsService
+from nexus.bricks.pay.sdk import NexusPay
 from nexus.server.api.v2.routers.pay import (
     _register_pay_exception_handlers,
     get_nexuspay,

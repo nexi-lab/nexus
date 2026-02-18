@@ -10,6 +10,7 @@ Usage:
     from nexus.contracts.exceptions import BackendError, ValidationError
 """
 
+from nexus.contracts.constants import TIER_ALIASES, PriorityTier
 from nexus.contracts.exceptions import (
     AccessDeniedError,
     AuditLogError,
@@ -69,6 +70,9 @@ from nexus.contracts.validators import (
 )
 
 __all__ = [
+    # Constants (shared across bricks)
+    "PriorityTier",
+    "TIER_ALIASES",
     # Validators
     "EmailAddress",
     "EmailList",

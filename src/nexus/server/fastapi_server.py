@@ -10,7 +10,7 @@ Performance improvements:
 - Non-blocking I/O
 - 10-50x throughput improvement under concurrent load
 
-The server maintains the same API contract as rpc_server.py:
+The server exposes the following API contract:
 - POST /api/nfs/{method} - JSON-RPC endpoints
 - GET /health - Health check
 - GET /api/auth/whoami - Authentication info

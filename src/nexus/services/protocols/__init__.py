@@ -29,14 +29,9 @@ from nexus.rebac.namespace_manager import NamespaceMount
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
-<<<<<<< HEAD
-from nexus.services.protocols.context_manifest import ContextManifestProtocol
-from nexus.services.protocols.governance import GovernanceProtocol
-=======
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.services.protocols.delegation import DelegationProtocol
->>>>>>> origin/develop
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -54,14 +49,6 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
-<<<<<<< HEAD
-from nexus.services.protocols.llm import LLMProtocol, LLMServiceProtocol
-from nexus.services.protocols.lock import LockProtocol
-from nexus.services.protocols.mcp import MCPProtocol
-from nexus.services.protocols.mount import MountProtocol, ProgressCallback
-from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-from nexus.services.protocols.oauth import OAuthProtocol
-=======
 from nexus.services.protocols.llm import LLMServiceProtocol
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.services.protocols.lock import LockProtocol
@@ -73,7 +60,6 @@ from nexus.services.protocols.mount_persist import MountPersistProtocol
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.services.protocols.oauth import OAuthProtocol
 from nexus.services.protocols.operation_log import OperationLogProtocol
->>>>>>> origin/develop
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
@@ -81,16 +67,6 @@ from nexus.services.protocols.plugin import PluginProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.reputation import ReputationProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
-<<<<<<< HEAD
-from nexus.services.protocols.search import SearchBrickProtocol
-from nexus.services.protocols.share_link import ShareLinkProtocol
-from nexus.services.protocols.skills import SkillsProtocol
-from nexus.services.protocols.watch import WatchProtocol
-from nexus.workflows.protocol import (
-    LLMProviderProtocol,
-    MetadataStoreProtocol,
-    NexusOperationsProtocol,
-=======
 from nexus.services.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
 from nexus.services.protocols.skills import SkillsProtocol
@@ -105,60 +81,38 @@ from nexus.workflows.protocol import (
     MetadataStoreProtocol,
     NexusOperationsProtocol,
     WorkflowLLMProtocol,
->>>>>>> origin/develop
     WorkflowProtocol,
 )
 
 __all__ = [
-<<<<<<< HEAD
-=======
     "APIKeyCreatorProtocol",
->>>>>>> origin/develop
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
     "AnomalyDetectorProtocol",
-<<<<<<< HEAD
-    "ContextManifestProtocol",
-    "EventLogConfig",
-    "EventLogProtocol",
-    "GovernanceProtocol",
-=======
     "ChunkedUploadProtocol",
     "DelegationProtocol",
     "EventLogConfig",
     "EventLogProtocol",
->>>>>>> origin/develop
     "HookContext",
     "HookEngineProtocol",
     "HookId",
     "HookResult",
     "HookSpec",
-<<<<<<< HEAD
-    "LLMProtocol",
-=======
->>>>>>> origin/develop
     "LLMProviderProtocol",
     "LLMServiceProtocol",
     "LockProtocol",
     "MCPProtocol",
-<<<<<<< HEAD
-    "MetadataStoreProtocol",
-=======
     "MemoryProtocol",
     "MetadataStoreProtocol",
     "MountCoreProtocol",
     "MountPersistProtocol",
->>>>>>> origin/develop
     "MountProtocol",
     "NamespaceManagerProtocol",
     "NamespaceMount",
     "NexusOperationsProtocol",
     "OAuthProtocol",
-<<<<<<< HEAD
-=======
     "OperationLogProtocol",
->>>>>>> origin/develop
     "POST_COPY",
     "POST_DELETE",
     "POST_MKDIR",
@@ -178,12 +132,6 @@ __all__ = [
     "ReputationProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
-<<<<<<< HEAD
-    "ShareLinkProtocol",
-    "SkillsProtocol",
-    "WatchProtocol",
-    "WorkflowProtocol",
-=======
     "SearchProtocol",
     "ShareLinkProtocol",
     "SkillsProtocol",
@@ -198,5 +146,4 @@ __all__ = [
     "WorkflowLLMProtocol",
     "WorkflowProtocol",
     "WriteBackProtocol",
->>>>>>> origin/develop
 ]

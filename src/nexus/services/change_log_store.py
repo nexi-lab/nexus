@@ -14,11 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-<<<<<<< HEAD
-=======
 
 from sqlalchemy import delete, func, select
->>>>>>> origin/develop
 
 from nexus.core.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase

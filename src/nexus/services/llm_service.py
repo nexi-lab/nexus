@@ -94,10 +94,7 @@ class LLMService:
         """
         self.nexus_fs = nexus_fs
         self._provider_cache: dict[str, Any] = {}
-<<<<<<< HEAD
-=======
         self._semantic_search_engine = semantic_search_engine
->>>>>>> origin/develop
 
         logger.info("[LLMService] Initialized")
 
@@ -466,7 +463,6 @@ class LLMService:
                     # OpenRouter model - need to configure for OpenRouter
                     if not api_key and os.getenv("OPENROUTER_API_KEY"):
                         api_key = os.getenv("OPENROUTER_API_KEY")
-<<<<<<< HEAD
 
                     # Set custom_llm_provider for OpenRouter
                     if api_key:
@@ -483,24 +479,6 @@ class LLMService:
                     else:
                         config = LLMConfig(model=model)
 
-=======
-
-                    # Set custom_llm_provider for OpenRouter
-                    if api_key:
-                        config = LLMConfig(
-                            model=model,
-                            api_key=SecretStr(api_key),
-                            custom_llm_provider="openrouter",
-                        )
-                    else:
-                        config = LLMConfig(model=model, custom_llm_provider="openrouter")
-                else:
-                    if api_key:
-                        config = LLMConfig(model=model, api_key=SecretStr(api_key))
-                    else:
-                        config = LLMConfig(model=model)
-
->>>>>>> origin/develop
                 provider = LiteLLMProvider(config)
                 self._provider_cache[cache_key] = provider
 

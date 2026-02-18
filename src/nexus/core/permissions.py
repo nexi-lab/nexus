@@ -5,12 +5,8 @@ This module defines the kernel-level types for ReBAC permission enforcement:
 - OperationContext: operation context with subject identity
 - check_stale_session(): stale session detection helper
 
-<<<<<<< HEAD
-PermissionEnforcer lives in services/permissions/enforcer.py — import it from there.
-=======
 PermissionEnforcer lives in services/permissions/enforcer.py — re-exported here
 for backward compatibility.
->>>>>>> origin/develop
 """
 
 from __future__ import annotations
@@ -25,9 +21,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-<<<<<<< HEAD
-logger = logging.getLogger(__name__)
-=======
 
 def __getattr__(name: str) -> Any:
     """Lazy re-export to avoid circular import with services.permissions.enforcer."""
@@ -36,7 +29,6 @@ def __getattr__(name: str) -> Any:
 
         return PermissionEnforcer
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
->>>>>>> origin/develop
 
 
 def check_stale_session(agent_registry: Any, context: OperationContext) -> None:

@@ -14,10 +14,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable, Coroutine
-<<<<<<< HEAD
-=======
 from datetime import datetime
->>>>>>> origin/develop
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -39,17 +36,11 @@ from nexus.ipc.exceptions import (
 )
 from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
 from nexus.ipc.storage.protocol import IPCStorageDriver
-<<<<<<< HEAD
-
-if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
-=======
 from nexus.storage.zone_settings import SigningMode
 
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
     from nexus.ipc.signing import MessageSigner, MessageVerifier
->>>>>>> origin/develop
 
 logger = logging.getLogger(__name__)
 
@@ -112,10 +103,7 @@ class MessageSender:
         hot_publisher: HotPathPublisher | None = None,
         delivery_mode: DeliveryMode = DeliveryMode.COLD_ONLY,
         max_cold_concurrency: int = DEFAULT_MAX_COLD_CONCURRENCY,
-<<<<<<< HEAD
-=======
         signer: MessageSigner | None = None,
->>>>>>> origin/develop
     ) -> None:
         self._storage = storage
         self._publisher = event_publisher
@@ -127,10 +115,7 @@ class MessageSender:
         self._mode = delivery_mode if hot_publisher is not None else DeliveryMode.COLD_ONLY
         self._cold_semaphore = asyncio.Semaphore(max_cold_concurrency)
         self._pending_tasks: set[asyncio.Task[None]] = set()
-<<<<<<< HEAD
-=======
         self._signer = signer
->>>>>>> origin/develop
 
     async def send(self, envelope: MessageEnvelope) -> str:
         """Send a message to the recipient's inbox.
@@ -147,13 +132,10 @@ class MessageSender:
             InboxFullError: If recipient's inbox exceeds size limit (cold modes).
             EnvelopeValidationError: If envelope is invalid.
         """
-<<<<<<< HEAD
-=======
         # Sign envelope before serialization (if signer is configured)
         if self._signer is not None:
             envelope = self._signer.sign(envelope)
 
->>>>>>> origin/develop
         data = envelope.to_bytes()
         self._validate_envelope(envelope, serialized_size=len(data))
 
@@ -367,11 +349,8 @@ class MessageProcessor:
         dedup_ttl_seconds: int = 3600,
         hot_subscriber: HotPathSubscriber | None = None,
         max_handler_concurrency: int = DEFAULT_MAX_HANDLER_CONCURRENCY,
-<<<<<<< HEAD
-=======
         verifier: MessageVerifier | None = None,
         signing_mode: SigningMode = SigningMode.OFF,
->>>>>>> origin/develop
     ) -> None:
         self._storage = storage
         self._agent_id = agent_id
@@ -383,11 +362,8 @@ class MessageProcessor:
         self._hot_task: asyncio.Task[None] | None = None
         self._handler_semaphore = asyncio.Semaphore(max_handler_concurrency)
         self._handler_tasks: set[asyncio.Task[None]] = set()
-<<<<<<< HEAD
-=======
         self._verifier = verifier
         self._signing_mode = signing_mode
->>>>>>> origin/develop
 
     def _dedup_key(self, msg_id: str) -> str:
         """Zone-scoped cache key for message dedup."""
@@ -453,14 +429,11 @@ class MessageProcessor:
                     await self._track_processed(envelope.id)
                     continue
 
-<<<<<<< HEAD
-=======
                 # Signature verification for hot path
                 if not self._verify_signature_hot(envelope):
                     await self._track_processed(envelope.id)
                     continue
 
->>>>>>> origin/develop
                 # Dispatch handler with semaphore
                 await self._dispatch_hot_handler(envelope)
         except asyncio.CancelledError:
@@ -620,20 +593,6 @@ class MessageProcessor:
         # Track in dedup cache (TTL-based eviction via CacheStoreABC)
         await self._track_processed(envelope.id)
 
-<<<<<<< HEAD
-    async def _move_to_dead_letter(
-        self,
-        msg_path: str,
-        envelope: MessageEnvelope,
-        reason: str,
-    ) -> None:
-        """Move a message to the dead letter directory."""
-        try:
-            dest = message_path_in_dead_letter(self._agent_id, envelope.id, envelope.timestamp)
-            await self._storage.rename(msg_path, dest, self._zone_id)
-            logger.info(
-                "Message %s moved to dead_letter for agent %s (reason: %s)",
-=======
     def _verify_signature_hot(self, envelope: MessageEnvelope) -> bool:
         """Verify message signature on the hot path (no dead-letter, just drop).
 
@@ -700,7 +659,6 @@ class MessageProcessor:
             # VERIFY_ONLY: warn but allow through
             logger.warning(
                 "Unsigned message %s (verify_only mode) for agent %s",
->>>>>>> origin/develop
                 envelope.id,
                 self._agent_id,
             )
@@ -793,29 +751,6 @@ class MessageProcessor:
         except Exception:
             logger.error(
                 "Failed to move message %s to dead_letter",
-<<<<<<< HEAD
-                envelope.id,
-                exc_info=True,
-            )
-
-    async def _move_to_dead_letter_raw(self, msg_path: str, reason: str) -> None:
-        """Move an unparseable message to dead letter using raw filename."""
-        try:
-            filename = msg_path.rsplit("/", 1)[-1]
-            dest = f"{dead_letter_path(self._agent_id)}/{filename}"
-            await self._storage.rename(msg_path, dest, self._zone_id)
-            logger.info(
-                "Malformed message moved to dead_letter for agent %s: %s (reason: %s)",
-                self._agent_id,
-                filename,
-                reason,
-            )
-        except Exception:
-            logger.error(
-                "Failed to move malformed message %s to dead_letter",
-                msg_path,
-=======
                 msg_id or msg_path,
->>>>>>> origin/develop
                 exc_info=True,
             )

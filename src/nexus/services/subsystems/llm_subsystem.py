@@ -17,11 +17,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.services.subsystem import Subsystem
 
 if TYPE_CHECKING:
-<<<<<<< HEAD
-    from nexus.services.protocols.llm import LLMProtocol
-=======
     from nexus.services.protocols.llm import LLMServiceProtocol
->>>>>>> origin/develop
 
 logger = logging.getLogger(__name__)
 
@@ -29,35 +25,20 @@ logger = logging.getLogger(__name__)
 class LLMSubsystem(Subsystem):
     """LLM-powered document reading subsystem.
 
-<<<<<<< HEAD
-    Delegates all business logic to an ``LLMProtocol`` implementation.
-=======
     Delegates all business logic to an ``LLMServiceProtocol`` implementation.
->>>>>>> origin/develop
     Adds lifecycle management (health_check, cleanup) required by the
     Subsystem ABC.
 
     Args:
-<<<<<<< HEAD
-        llm_service: LLMProtocol implementation with the 4 RPC methods.
-    """
-
-    def __init__(self, llm_service: LLMProtocol) -> None:
-=======
         llm_service: LLMServiceProtocol implementation with the 4 RPC methods.
     """
 
     def __init__(self, llm_service: LLMServiceProtocol) -> None:
->>>>>>> origin/develop
         self._service = llm_service
         logger.info("[LLMSubsystem] Initialized")
 
     @property
-<<<<<<< HEAD
-    def service(self) -> LLMProtocol:
-=======
     def service(self) -> LLMServiceProtocol:
->>>>>>> origin/develop
         """Access the underlying LLM service."""
         return self._service
 

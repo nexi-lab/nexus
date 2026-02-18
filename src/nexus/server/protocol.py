@@ -12,27 +12,16 @@ Implementation details:
 
 from __future__ import annotations
 
-<<<<<<< HEAD
-from dataclasses import dataclass
-from typing import Any
-
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
-=======
 from typing import Any
 
 # Issue #1519, 1A: RPC types extracted to core/rpc_types.py so core/ modules
 # (rpc_transport, rpc_codec) can use them without importing from server/.
 # Re-exported here for backward compatibility.
 from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse  # noqa: F401
->>>>>>> origin/develop
 
 # ============================================================
 # Generated Param classes + METHOD_PARAMS
 # ============================================================
-<<<<<<< HEAD
-# Import decorator from core module to avoid circular imports
-from nexus.core.rpc_decorator import rpc_expose  # noqa: F401, E402
-=======
 from nexus.server._rpc_param_overrides import *  # noqa: F401, F403, E402
 from nexus.server._rpc_param_overrides import (  # noqa: E402
     OVERRIDE_METHOD_PARAMS as _OVERRIDE_METHOD_PARAMS,
@@ -40,12 +29,6 @@ from nexus.server._rpc_param_overrides import (  # noqa: E402
 from nexus.server._rpc_params_generated import *  # noqa: F401, F403, E402
 from nexus.server._rpc_params_generated import METHOD_PARAMS as _GEN_METHOD_PARAMS  # noqa: E402
 from nexus.server.rpc_results import RebacCheckResult, RebacCreateResult  # noqa: F401, E402
->>>>>>> origin/develop
-
-# Issue #1519, 1A: RPC types extracted to core/rpc_types.py so core/ modules
-# (rpc_transport, rpc_codec) can use them without importing from server/.
-# Re-exported here for backward compatibility.
-from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse  # noqa: F401
 
 # ============================================================
 # Merged METHOD_PARAMS (overrides take precedence over generated)

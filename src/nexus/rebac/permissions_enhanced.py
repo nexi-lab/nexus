@@ -21,12 +21,6 @@ from typing import Any
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-<<<<<<< HEAD
-from nexus.core.permissions import OperationContext
-from nexus.services.permissions.enforcer import PermissionEnforcer
-
-=======
->>>>>>> origin/develop
 # ============================================================================
 # P0-4: Admin Capabilities and Audit System
 # ============================================================================

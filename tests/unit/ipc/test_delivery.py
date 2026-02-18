@@ -591,8 +591,6 @@ class TestHotColdDelivery:
         # Inbox still has only 1 file (cold write failed due to backpressure)
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 1
-<<<<<<< HEAD
-=======
 
 
 # ===========================================================================
@@ -829,4 +827,3 @@ class TestSignedDelivery:
 
         assert count == 1
         assert len(received) == 1
->>>>>>> origin/develop

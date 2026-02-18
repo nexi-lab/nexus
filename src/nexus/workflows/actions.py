@@ -317,17 +317,9 @@ class WebhookAction(BaseAction):
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
         try:
-<<<<<<< HEAD
             url = self.safe_interpolate(self.config["url"], context)
 
             # SSRF protection: block private/internal IPs (Issue #1596)
-=======
-            url = self.interpolate(self.config["url"], context)
-
-            # SSRF protection: block private/internal IPs (Issue #1596)
-            from nexus.server.security.url_validator import validate_outbound_url
-
->>>>>>> origin/develop
             try:
                 validate_outbound_url(url)
             except ValueError as ssrf_err:
@@ -380,7 +372,6 @@ class WebhookAction(BaseAction):
                 action_name=self.name,
                 success=False,
                 error="Webhook delivery failed",
-<<<<<<< HEAD
             )
 
 
@@ -425,41 +416,6 @@ class SandboxedAction(BaseAction):
             )
 
         try:
-=======
-            )
-
-
-class PythonAction(BaseAction):
-    """Execute Python code via SandboxManager (Issue #1596).
-
-    Routes all code execution through the SandboxManager brick for
-    process-level isolation. Fails closed if no sandbox provider is available.
-    """
-
-    async def execute(self, context: WorkflowContext) -> ActionResult:
-        code = self.config.get("code", "")
-        timeout = self.config.get("timeout", 300)
-
-        logger.debug("PythonAction: code=%d bytes, file_path=%s", len(code), context.file_path)
-
-        # Fail closed: require SandboxManager (Issue #1596 — no bare exec())
-        sandbox_mgr = (
-            getattr(context.services, "sandbox_manager", None) if context.services else None
-        )
-        if sandbox_mgr is None:
-            logger.error(
-                "PythonAction refused: no sandbox_manager available in context.services. "
-                "Code execution requires a sandbox provider (Docker, E2B, or Monty)."
-            )
-            return ActionResult(
-                action_name=self.name,
-                success=False,
-                error="Python code execution requires a sandbox provider (not configured)",
-            )
-
-        try:
-            # Get or create a sandbox scoped to this workflow execution
->>>>>>> origin/develop
             zone_id = context.zone_id
             user_id = context.variables.get("user_id", "workflow")
             agent_id = context.variables.get("agent_id")
@@ -473,16 +429,9 @@ class PythonAction(BaseAction):
             )
             sandbox_id = sandbox["sandbox_id"]
 
-<<<<<<< HEAD
             result = await sandbox_mgr.run_code(
                 sandbox_id=sandbox_id,
                 language=language,
-=======
-            # Execute code in isolated sandbox
-            result = await sandbox_mgr.run_code(
-                sandbox_id=sandbox_id,
-                language="python",
->>>>>>> origin/develop
                 code=code,
                 timeout=timeout,
             )
@@ -493,31 +442,23 @@ class PythonAction(BaseAction):
                     success=True,
                     output={
                         "stdout": result.stdout,
-<<<<<<< HEAD
                         **({"stderr": result.stderr} if language == "bash" else {}),
                         **(
                             {"execution_time": result.execution_time}
                             if language == "python"
                             else {}
                         ),
-=======
-                        "execution_time": result.execution_time,
->>>>>>> origin/develop
                     },
                 )
             else:
                 return ActionResult(
                     action_name=self.name,
                     success=False,
-<<<<<<< HEAD
                     output={"stdout": result.stdout, "stderr": result.stderr},
-=======
->>>>>>> origin/develop
                     error=result.stderr or f"Exit code: {result.exit_code}",
                 )
 
         except Exception as e:
-<<<<<<< HEAD
             logger.error(
                 "%sAction '%s' sandbox execution failed: %s",
                 language.title(),
@@ -528,13 +469,6 @@ class PythonAction(BaseAction):
                 action_name=self.name,
                 success=False,
                 error=f"{language.title()} execution failed",
-=======
-            logger.error("PythonAction '%s' sandbox execution failed: %s", self.name, e)
-            return ActionResult(
-                action_name=self.name,
-                success=False,
-                error="Python code execution failed",
->>>>>>> origin/develop
             )
 
 

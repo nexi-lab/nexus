@@ -185,10 +185,6 @@ def _startup_key_service(app: FastAPI) -> None:
             from nexus.auth.oauth.crypto import OAuthCrypto
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-<<<<<<< HEAD
-            from nexus.server.auth.oauth_crypto import OAuthCrypto
-=======
->>>>>>> origin/develop
             from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists

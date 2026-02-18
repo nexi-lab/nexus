@@ -356,10 +356,6 @@ class TestWorkflowEngine:
 
         execution = await engine.execute_workflow(definition, context)
         assert execution.status == WorkflowStatus.SUCCEEDED
-<<<<<<< HEAD
-=======
-        assert "10" in execution.action_results[0].output["stdout"]
->>>>>>> origin/develop
 
     @pytest.mark.asyncio
     async def test_action_output_stored_in_context(self):
@@ -388,10 +384,3 @@ class TestWorkflowEngine:
 
         execution = await engine.execute_workflow(definition, context)
         assert execution.status == WorkflowStatus.SUCCEEDED
-<<<<<<< HEAD
-=======
-        assert execution.actions_completed == 2
-        # Engine stores action1's output in context as action1_output
-        assert "action1_output" in context.variables
-        assert "hello" in context.variables["action1_output"]["stdout"]
->>>>>>> origin/develop

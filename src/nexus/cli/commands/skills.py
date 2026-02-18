@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -29,8 +30,6 @@ from nexus.cli.utils import (
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 
-<<<<<<< HEAD
-=======
 class SQLAlchemyDatabaseConnection:
     """Wrapper for SQLAlchemy session to match DatabaseConnection protocol."""
 
@@ -89,7 +88,6 @@ def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
         return None
 
 
->>>>>>> origin/develop
 def register_commands(cli: click.Group) -> None:
     """Register skills commands with the main CLI group.
 

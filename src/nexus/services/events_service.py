@@ -156,11 +156,7 @@ class EventsService:
         """Wait for file system changes on a path.
 
         Dual-track implementation:
-<<<<<<< HEAD
-        - Layer 2 (preferred): Uses RedisEventBus (Redis Pub/Sub)
-=======
         - Layer 2 (preferred): Uses EventBus (distributed)
->>>>>>> origin/develop
         - Layer 1 (fallback): Uses OS-native file watching (same-box only)
 
         Args:

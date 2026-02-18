@@ -132,30 +132,21 @@ class KernelServices:
     workspace_registry: Any = None
     mount_manager: Any = None
     workspace_manager: Any = None
-<<<<<<< HEAD
-=======
     context_branch_service: Any = None  # Issue #1315: workspace branching
 
     # Sync/versioning
->>>>>>> origin/develop
     write_observer: Any = None
     version_service: Any = None
     overlay_resolver: Any = None
     wallet_provisioner: Any = None
-<<<<<<< HEAD
-=======
     snapshot_service: Any = None  # Issue #1752: Transactional snapshots
->>>>>>> origin/develop
 
     # Cache invalidation (Issue #1169 / #1519)
     cache_observer: CacheInvalidationObserver | None = None
 
-<<<<<<< HEAD
-=======
     # --- Tier 1.5: SYSTEM SERVICE — Brick Lifecycle Manager (Issue #1704) ---
     brick_lifecycle_manager: Any = None
 
->>>>>>> origin/develop
     # --- Tier 2: BRICK — infrastructure ---
     event_bus: Any = None
     lock_manager: Any = None
@@ -188,8 +179,6 @@ class KernelServices:
     search_service: Any = None
     events_service: Any = None
 
-<<<<<<< HEAD
-=======
     # Mount/sync/task-queue services (Issue #655)
     # When set, NexusFS uses these instead of creating via @cached_property.
     mount_core_service: Any = None
@@ -198,7 +187,6 @@ class KernelServices:
     mount_persist_service: Any = None
     task_queue_service: Any = None
 
->>>>>>> origin/develop
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

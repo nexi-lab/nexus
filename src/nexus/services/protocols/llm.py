@@ -18,13 +18,8 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-<<<<<<< HEAD
-    from nexus.llm.citation import DocumentReadResult
-    from nexus.llm.provider import LLMProvider
-=======
     from nexus.llm.provider import LLMProvider
     from nexus.services.llm_citation import DocumentReadResult
->>>>>>> origin/develop
 
 
 @runtime_checkable
@@ -85,7 +80,3 @@ class LLMServiceProtocol(Protocol):
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ) -> Any: ...
-
-
-# Backward compatibility alias (Issue #1521)
-LLMProtocol = LLMServiceProtocol

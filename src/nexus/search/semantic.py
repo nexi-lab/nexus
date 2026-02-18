@@ -37,10 +37,7 @@ from nexus.search.contextual_chunking import (
     ContextualChunkingConfig,
 )
 from nexus.search.embeddings import EmbeddingProvider
-<<<<<<< HEAD
-=======
 from nexus.search.indexing import IndexingPipeline, IndexResult
->>>>>>> origin/develop
 from nexus.search.models import DocumentChunkModel, FilePathModel
 from nexus.search.protocols import FileReaderProtocol
 from nexus.search.results import BaseSearchResult
@@ -750,17 +747,3 @@ class SemanticSearch:
     async def delete_document(self, path: str) -> None:
         """Delete document (wrapper for delete_document_index)."""
         return await self.delete_document_index(path)
-<<<<<<< HEAD
-
-    async def clear_index(self) -> None:
-        """Clear the entire search index."""
-        with self._get_session() as session:
-            # Delete all chunks
-            session.query(DocumentChunkModel).delete()
-            session.commit()
-
-    def close(self) -> None:
-        """Close the search engine (no-op for now)."""
-        pass
-=======
->>>>>>> origin/develop

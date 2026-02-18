@@ -34,13 +34,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-<<<<<<< HEAD
-=======
 logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
->>>>>>> origin/develop
 
 class BaseBlobStorageConnector(Backend):
     """

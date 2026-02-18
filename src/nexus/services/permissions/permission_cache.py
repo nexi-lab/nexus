@@ -20,15 +20,9 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 
 if TYPE_CHECKING:
-<<<<<<< HEAD
-    from nexus.rebac.manager import ReBACManager
-    from nexus.services.permissions.hotspot_detector import HotspotDetector
-    from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
-=======
     from nexus.rebac.cache.boundary import PermissionBoundaryCache
     from nexus.rebac.hotspot_detector import HotspotDetector
     from nexus.rebac.manager import ReBACManager
->>>>>>> origin/develop
 
 logger = logging.getLogger(__name__)
 

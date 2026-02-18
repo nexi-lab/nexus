@@ -147,11 +147,7 @@ between VFS and storage. Without it, the kernel cannot describe files.
 ### NexusFS — Syscall Dispatch Layer
 
 `NexusFS` is the kernel entry point, analogous to Linux's syscall layer (`sys_open`,
-<<<<<<< HEAD
-`sys_read`). It wires VFSRouter + FileMetadataProtocol + ObjectStoreABC into
-=======
 `sys_read`). It wires VFSRouter + MetastoreABC + ObjectStoreABC into
->>>>>>> origin/develop
 user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 **no service business logic** — services are accessed through `ServiceRegistry`
 (Phase 2) or thin delegation stubs (Phase 1).
@@ -160,16 +156,10 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 + services and wires them together. NexusFS receives pre-built dependencies via its
 constructor and never auto-creates services.
 
-<<<<<<< HEAD
-> *Gap:* NexusFS still contains 2 event-related mixins and ~40 lazy service imports
-> in `_wire_services()`. Migration: extract remaining mixins → standalone service
-> classes, then replace `KernelServices` dataclass with `ServiceRegistry`.
-=======
 > *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
 > `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
 > Remaining: ~40 lazy service imports in `_wire_services()` (#194), replace
 > `KernelServices` dataclass with `ServiceRegistry`.
->>>>>>> origin/develop
 
 ### Service Protocols (`nexus.services.protocols`)
 

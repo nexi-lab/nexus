@@ -89,8 +89,6 @@ class Backend(ABC):
     - Compatible with path router and mounting
     """
 
-<<<<<<< HEAD
-=======
     @staticmethod
     def resolve_database_url(db_param: str) -> str:
         """
@@ -116,7 +114,6 @@ class Backend(ABC):
 
         return os.getenv("TOKEN_MANAGER_DB") or db_param
 
->>>>>>> origin/develop
     @property
     @abstractmethod
     def name(self) -> str:
@@ -775,8 +772,6 @@ class Backend(ABC):
 
         Override in subclasses (e.g. IPCVFSDriver) for custom object type mapping.
         Called by ObjectTypeMapper as the virtual dispatch target.
-<<<<<<< HEAD
-=======
 
         Used by the permission enforcer to determine what type of object
         is being accessed for ReBAC permission checks. This allows different
@@ -784,7 +779,6 @@ class Backend(ABC):
 
         Args:
             _backend_path: Path relative to backend (no mount point prefix)
->>>>>>> origin/develop
 
         Returns:
             ReBAC object type string
@@ -806,15 +800,12 @@ class Backend(ABC):
 
         Override in subclasses for custom object ID mapping.
         Called by ObjectTypeMapper as the virtual dispatch target.
-<<<<<<< HEAD
-=======
 
         Used by the permission enforcer to identify the specific object
         being accessed in ReBAC permission checks.
 
         Args:
             backend_path: Path relative to backend
->>>>>>> origin/develop
 
         Returns:
             Object identifier for ReBAC

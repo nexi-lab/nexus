@@ -69,17 +69,6 @@ class PKCEStateStore:
         await self._cache_store.delete(key)
         result: dict[str, str] = json.loads(raw)
         return result
-<<<<<<< HEAD
-
-    @property
-    def size(self) -> int:
-        """Current number of entries (for monitoring/testing).
-
-        Not available with CacheStoreABC — returns -1 when backed by external store.
-        """
-        return -1
-=======
->>>>>>> origin/develop
 
 
 class OAuthService:

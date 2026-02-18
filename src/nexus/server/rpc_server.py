@@ -553,6 +553,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Zone isolation: use caller's zone_id from auth context
+        context = self._get_operation_context()
+        caller_zone_id = getattr(context, "zone_id", None) if context else None
+
         with self.auth_provider.session_factory() as session:
             # Build query with filters
             stmt = select(APIKeyModel)
@@ -560,7 +564,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             if params.user_id:
                 stmt = stmt.where(APIKeyModel.user_id == params.user_id)
 
-            if params.zone_id:
+            # Zone isolation: caller's zone_id takes priority
+            if caller_zone_id is not None:
+                stmt = stmt.where(APIKeyModel.zone_id == caller_zone_id)
+            elif params.zone_id:
                 stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
 
             if params.is_admin is not None:
@@ -628,8 +635,14 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Zone isolation: use caller's zone_id from auth context
+        context = self._get_operation_context()
+        caller_zone_id = getattr(context, "zone_id", None) if context else None
+
         with self.auth_provider.session_factory() as session:
             stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+            if caller_zone_id is not None:
+                stmt = stmt.where(APIKeyModel.zone_id == caller_zone_id)
             api_key = session.scalar(stmt)
 
             if not api_key:
@@ -665,8 +678,12 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Zone isolation: use caller's zone_id from auth context
+        context = self._get_operation_context()
+        caller_zone_id = getattr(context, "zone_id", None) if context else None
+
         with self.auth_provider.session_factory() as session:
-            success = DatabaseAPIKeyAuth.revoke_key(session, params.key_id)
+            success = DatabaseAPIKeyAuth.revoke_key(session, params.key_id, zone_id=caller_zone_id)
             if not success:
                 raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
 
@@ -691,8 +708,14 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Zone isolation: use caller's zone_id from auth context
+        context = self._get_operation_context()
+        caller_zone_id = getattr(context, "zone_id", None) if context else None
+
         with self.auth_provider.session_factory() as session:
             stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+            if caller_zone_id is not None:
+                stmt = stmt.where(APIKeyModel.zone_id == caller_zone_id)
             api_key = session.scalar(stmt)
 
             if not api_key:

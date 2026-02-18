@@ -1255,44 +1255,6 @@ def _create_provider_registry(parsing: Any) -> Any:
     return registry
 
 
-def _post_init(nx: NexusFS) -> None:
-    """Post-construction steps: mount restoration.
-
-    Called after NexusFS is constructed to perform I/O that requires
-    a fully-wired kernel instance.
-    """
-    import os
-
-    # Load all saved mounts from database and activate them
-    try:
-        if hasattr(nx, "load_all_saved_mounts"):
-            auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
-                "true",
-                "1",
-                "yes",
-            )
-            mount_result = nx.load_all_saved_mounts(auto_sync=auto_sync)
-            if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
-                sync_msg = (
-                    f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
-                )
-                logger.info(
-                    "Mount restoration: %d loaded%s, %d failed",
-                    mount_result["loaded"],
-                    sync_msg,
-                    mount_result["failed"],
-                )
-                if not auto_sync and mount_result["loaded"] > 0:
-                    logger.info(
-                        "Auto-sync disabled for fast startup. "
-                        "Use sync_mount() or set NEXUS_AUTO_SYNC_MOUNTS=true"
-                    )
-                for error in mount_result.get("errors", []):
-                    logger.error("  Mount error: %s", error)
-    except Exception as e:
-        logger.warning("Failed to load saved mounts during initialization: %s", e)
-
-
 def create_nexus_fs(
     backend: Backend,
     metadata_store: MetastoreABC,
@@ -1451,8 +1413,5 @@ def create_nexus_fs(
 
     # Attach CacheBrick to NexusFS for server layer access (Issue #1524)
     nx._cache_brick = _cache_brick  # type: ignore[attr-defined]
-
-    # Post-construction I/O (mount restoration, etc.)
-    _post_init(nx)
 
     return nx

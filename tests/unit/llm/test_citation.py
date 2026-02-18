@@ -1,8 +1,16 @@
+<<<<<<< HEAD
 """Tests for citation extraction (src/nexus/llm/citation.py)."""
 
 from __future__ import annotations
 
 from nexus.llm.citation import Citation, CitationExtractor, DocumentReadResult
+=======
+"""Tests for citation extraction (src/nexus/services/llm_citation.py)."""
+
+from __future__ import annotations
+
+from nexus.services.llm_citation import Citation, CitationExtractor, DocumentReadResult
+>>>>>>> origin/develop
 
 
 class TestCitation:

@@ -547,10 +547,16 @@ class ScopedFilesystem:
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        io_profile: str = "balanced",
     ) -> str:
         """Add a dynamic backend mount to the filesystem."""
         return self._fs.add_mount(
-            self._scope_path(mount_point), backend_type, backend_config, priority, readonly
+            mount_point=self._scope_path(mount_point),
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            io_profile=io_profile,
         )
 
     def remove_mount(self, mount_point: str) -> dict[str, Any]:

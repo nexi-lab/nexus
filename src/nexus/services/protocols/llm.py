@@ -18,8 +18,13 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+<<<<<<< HEAD
     from nexus.llm.citation import DocumentReadResult
     from nexus.llm.provider import LLMProvider
+=======
+    from nexus.llm.provider import LLMProvider
+    from nexus.services.llm_citation import DocumentReadResult
+>>>>>>> origin/develop
 
 
 @runtime_checkable

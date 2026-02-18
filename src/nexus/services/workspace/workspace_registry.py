@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
 
 
 @dataclass
@@ -121,7 +121,7 @@ class WorkspaceRegistry:
 
     def __init__(
         self,
-        metadata: FileMetadataProtocol,
+        metadata: MetastoreABC,
         rebac_manager: Any | None = None,  # v0.5.0: For auto-granting ownership
         session_factory: Any | None = None,  # SQLAlchemy session factory
     ):
@@ -147,7 +147,9 @@ class WorkspaceRegistry:
 
         with self.metadata_session_factory() as session:
             # Load workspaces - merge with existing cache (don't clear it)
-            workspaces = session.query(WorkspaceConfigModel).all()
+            from sqlalchemy import select
+
+            workspaces = session.execute(select(WorkspaceConfigModel)).scalars().all()
             for ws in workspaces:
                 metadata_dict = json.loads(ws.extra_metadata) if ws.extra_metadata else {}
                 self._workspaces[ws.path] = WorkspaceConfig(
@@ -160,7 +162,7 @@ class WorkspaceRegistry:
                 )
 
             # Load memories - merge with existing cache (don't clear it)
-            memories = session.query(MemoryConfigModel).all()
+            memories = session.execute(select(MemoryConfigModel)).scalars().all()
             for mem in memories:
                 if mem.path is None:
                     continue  # Skip invalid entries
@@ -369,7 +371,11 @@ class WorkspaceRegistry:
         from nexus.storage.models import WorkspaceConfigModel
 
         with self.metadata_session_factory() as session:
-            ws_model = session.query(WorkspaceConfigModel).filter_by(path=path).first()
+            from sqlalchemy import select
+
+            ws_model = (
+                session.execute(select(WorkspaceConfigModel).filter_by(path=path)).scalars().first()
+            )
             if ws_model:
                 if name is not None:
                     ws_model.name = name
@@ -671,7 +677,11 @@ class WorkspaceRegistry:
         from nexus.storage.models import WorkspaceConfigModel
 
         with self.metadata_session_factory() as session:
-            workspace = session.query(WorkspaceConfigModel).filter_by(path=path).first()
+            from sqlalchemy import select
+
+            workspace = (
+                session.execute(select(WorkspaceConfigModel).filter_by(path=path)).scalars().first()
+            )
             if workspace:
                 session.delete(workspace)
                 session.commit()
@@ -710,7 +720,11 @@ class WorkspaceRegistry:
         from nexus.storage.models import MemoryConfigModel
 
         with self.metadata_session_factory() as session:
-            memory = session.query(MemoryConfigModel).filter_by(path=path).first()
+            from sqlalchemy import select
+
+            memory = (
+                session.execute(select(MemoryConfigModel).filter_by(path=path)).scalars().first()
+            )
             if memory:
                 session.delete(memory)
                 session.commit()

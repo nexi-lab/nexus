@@ -209,26 +209,6 @@ class TestModuleBoundary:
         assert "xml" in pc_fields
 
 
-class TestMCPBackwardCompat:
-    """Verify MCP backward-compat re-exports from nexus.skills."""
-
-    def test_mcp_models_importable_from_skills(self):
-        """MCP models are still importable from nexus.skills (backward compat)."""
-        from nexus.skills import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
-
-        assert MCPMount is not None
-        assert MCPToolConfig is not None
-        assert MCPToolDefinition is not None
-        assert MCPToolExample is not None
-
-    def test_mcp_classes_match_canonical_source(self):
-        """Backward-compat re-exports point to the same classes as nexus.mcp."""
-        from nexus.mcp.models import MCPMount as Canonical
-        from nexus.skills import MCPMount as Compat
-
-        assert Canonical is Compat
-
-
 # =============================================================================
 # AST Helpers: detect guarded / scoped imports
 # =============================================================================

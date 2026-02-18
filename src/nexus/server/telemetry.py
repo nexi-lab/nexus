@@ -148,7 +148,7 @@ def setup_telemetry(
         _instrument_libraries()
 
         # Inject rebac tracer into permission tracing module
-        from nexus.services.permissions.rebac_tracing import set_tracer as _set_rebac_tracer
+        from nexus.rebac.rebac_tracing import set_tracer as _set_rebac_tracer
 
         _set_rebac_tracer(trace.get_tracer("nexus.rebac"))
 
@@ -345,6 +345,6 @@ def shutdown_telemetry() -> None:
         _initialized = False
         _tracer = None
         # Reset rebac tracer
-        from nexus.services.permissions.rebac_tracing import reset_tracer as _reset_rebac_tracer
+        from nexus.rebac.rebac_tracing import reset_tracer as _reset_rebac_tracer
 
         _reset_rebac_tracer()

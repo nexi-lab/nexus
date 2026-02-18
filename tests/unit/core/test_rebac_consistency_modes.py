@@ -12,11 +12,15 @@ References:
 
 import pytest
 
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.manager import (
     ConsistencyLevel,
     WriteResult,
 )
+<<<<<<< HEAD
 from nexus.rebac.rebac_cache import ReBACPermissionCache
+=======
+>>>>>>> origin/develop
 from nexus.rebac.types import (
     ConsistencyMode,
     ConsistencyRequirement,

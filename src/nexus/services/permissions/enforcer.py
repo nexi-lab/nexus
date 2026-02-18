@@ -20,11 +20,19 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
 
 if TYPE_CHECKING:
+<<<<<<< HEAD
     from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.hotspot_detector import HotspotDetector
     from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
     from nexus.services.permissions.permissions_enhanced import AuditStore
+=======
+    from nexus.rebac.cache.boundary import PermissionBoundaryCache
+    from nexus.rebac.hotspot_detector import HotspotDetector
+    from nexus.rebac.manager import ReBACManager
+    from nexus.rebac.permissions_enhanced import AuditStore
+    from nexus.services.permissions.namespace_manager import NamespaceManager
+>>>>>>> origin/develop
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +63,10 @@ class PermissionEnforcer:
     def __init__(
         self,
         metadata_store: Any = None,
+<<<<<<< HEAD
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
+=======
+>>>>>>> origin/develop
         rebac_manager: ReBACManager | None = None,
         entity_registry: Any = None,  # Entity registry (reserved for future use)
         router: Any = None,  # PathRouter for backend object type resolution
@@ -79,7 +90,6 @@ class PermissionEnforcer:
 
         Args:
             metadata_store: Metadata store for file lookup (optional)
-            acl_store: Deprecated, ignored (kept for backward compatibility)
             rebac_manager: ReBAC manager for relationship-based permissions
             entity_registry: Entity registry (reserved for future use)
             router: PathRouter for resolving backend object types (v0.5.0+)
@@ -140,17 +150,6 @@ class PermissionEnforcer:
                 self._boundary_cache.invalidate_permission_change,
             )
 
-        # Warn if ACL store is provided (deprecated)
-        if acl_store is not None:
-            import warnings
-
-            warnings.warn(
-                "acl_store parameter is deprecated and will be removed in v0.7.0. "
-                "Use ReBAC for all permissions.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
     def invalidate_cache(
         self,
         subject_type: str | None = None,
@@ -179,9 +178,8 @@ class PermissionEnforcer:
     ) -> bool:
         """Check if user has any accessible paths under the given prefix.
 
-        Uses Tiger bitmap for O(1) lookup instead of scanning all files.
-        This is used to determine if a directory should be shown when user
-        has access to files within it (but not the directory itself).
+        Delegates to has_accessible_descendants_batch() for a single prefix.
+        Uses Tiger bitmap + Rust binary search for O(log N) lookup.
 
         Args:
             prefix: Directory path prefix (e.g., "/skills/")
@@ -190,73 +188,8 @@ class PermissionEnforcer:
         Returns:
             True if user can access any path starting with prefix
         """
-        start = time.time()
-        tiger_cache = getattr(self.rebac_manager, "_tiger_cache", None)
-        if tiger_cache is None:
-            logger.debug("[HAS-DESCENDANTS] No Tiger cache, returning True (fallback)")
-            return True  # Fallback: assume accessible
-
-        try:
-            subject = context.get_subject()
-            subject_type, subject_id = subject
-            zone_id = context.zone_id
-
-            # Get user's bitmap
-            bitmap_bytes = tiger_cache.get_bitmap_bytes(
-                subject_type=subject_type,
-                subject_id=subject_id,
-                permission="read",
-                resource_type="file",
-                zone_id=zone_id,
-            )
-
-            if bitmap_bytes is None:
-                logger.debug(f"[HAS-DESCENDANTS] No bitmap for {subject_type}:{subject_id}")
-                return True  # No bitmap = fallback to showing directory
-
-            # Decode bitmap to get all allowed int IDs
-            try:
-                import nexus_fast
-
-                allowed_ids = nexus_fast.decode_roaring_bitmap(bitmap_bytes)
-            except (ImportError, AttributeError):
-                # Fallback to Python roaring bitmap
-                from pyroaring import BitMap
-
-                bitmap = BitMap.deserialize(bitmap_bytes)
-                allowed_ids = list(bitmap)
-
-            if not allowed_ids:
-                logger.debug(f"[HAS-DESCENDANTS] Empty bitmap for {subject_type}:{subject_id}")
-                return False
-
-            # Get paths for allowed IDs using reverse map (O(1) per ID)
-            resource_map = tiger_cache._resource_map
-            prefix_normalized = prefix.rstrip("/") + "/"
-
-            # Check if any allowed path starts with prefix
-            with resource_map._lock:
-                for int_id in allowed_ids:
-                    # O(1) reverse lookup: int_id -> (type, path)
-                    resource_info = resource_map._int_to_uuid.get(int_id)
-                    if resource_info and resource_info[0] == "file":
-                        path = resource_info[1]
-                        if path.startswith(prefix_normalized) or path == prefix.rstrip("/"):
-                            elapsed = (time.time() - start) * 1000
-                            logger.debug(
-                                f"[HAS-DESCENDANTS] prefix={prefix}, FOUND {path} in {elapsed:.1f}ms"
-                            )
-                            return True
-
-            elapsed = (time.time() - start) * 1000
-            logger.debug(f"[HAS-DESCENDANTS] prefix={prefix}, NOT FOUND in {elapsed:.1f}ms")
-            return False
-
-        except Exception as e:
-            logger.warning(
-                "[HAS-DESCENDANTS] Error: %s, returning True (fallback)", e, exc_info=True
-            )
-            return True  # Fallback: assume accessible
+        results = self.has_accessible_descendants_batch([prefix], context)
+        return results.get(prefix, True)
 
     def has_accessible_descendants_batch(
         self,
@@ -266,8 +199,8 @@ class PermissionEnforcer:
         """Check if user has accessible paths under multiple prefixes at once.
 
         Loads Tiger bitmap ONCE and scans all prefixes in a single pass.
-        This avoids the N+1 pattern of calling has_accessible_descendants()
-        individually per directory (Issue #1298).
+        Uses Rust binary search when available for O(log N) per prefix (Issue #1565).
+        Falls back to Python startswith() loops if Rust is unavailable.
 
         Args:
             prefixes: List of directory path prefixes (e.g., ["/skills/", "/docs/"])
@@ -290,8 +223,8 @@ class PermissionEnforcer:
             subject_type, subject_id = subject
             zone_id = context.zone_id
 
-            # Get user's bitmap ONCE
-            bitmap_bytes = tiger_cache.get_bitmap_bytes(
+            # Get accessible paths via Tiger cache public API (Issue #1565)
+            accessible_paths = tiger_cache.get_accessible_paths_list(
                 subject_type=subject_type,
                 subject_id=subject_id,
                 permission="read",
@@ -299,55 +232,40 @@ class PermissionEnforcer:
                 zone_id=zone_id,
             )
 
-            if bitmap_bytes is None:
+            if accessible_paths is None:
                 logger.debug(
                     f"[BATCH-OPT] No bitmap for {subject_type}:{subject_id}, "
                     f"returning all True for {len(prefixes)} prefixes"
                 )
                 return dict.fromkeys(prefixes, True)
 
-            # Decode bitmap ONCE
+            if not accessible_paths:
+                logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
+                return dict.fromkeys(prefixes, False)
+
+            # Try Rust-accelerated prefix matching (Issue #1565)
             try:
                 import nexus_fast
 
-                allowed_ids = nexus_fast.decode_roaring_bitmap(bitmap_bytes)
+                results_list = nexus_fast.batch_prefix_check(accessible_paths, list(prefixes))
+                results = dict(zip(prefixes, results_list, strict=True))
             except (ImportError, AttributeError):
-                from pyroaring import BitMap
-
-                bitmap = BitMap.deserialize(bitmap_bytes)
-                allowed_ids = list(bitmap)
-
-            if not allowed_ids:
-                logger.debug(f"[BATCH-OPT] Empty bitmap for {subject_type}:{subject_id}")
-                return dict.fromkeys(prefixes, False)
-
-            # Build set of all accessible file paths from allowed IDs (single scan)
-            resource_map = tiger_cache._resource_map
-            accessible_paths: list[str] = []
-            with resource_map._lock:
-                for int_id in allowed_ids:
-                    resource_info = resource_map._int_to_uuid.get(int_id)
-                    if resource_info and resource_info[0] == "file":
-                        accessible_paths.append(resource_info[1])
-
-            # Check each prefix against the accessible paths set
-            results: dict[str, bool] = {}
-            for prefix in prefixes:
-                prefix_normalized = prefix.rstrip("/") + "/"
-                prefix_exact = prefix.rstrip("/")
-                found = False
-                for path in accessible_paths:
-                    if path.startswith(prefix_normalized) or path == prefix_exact:
-                        found = True
-                        break
-                results[prefix] = found
+                # Python fallback (same logic, O(N×M))
+                results = {}
+                for prefix in prefixes:
+                    prefix_normalized = prefix.rstrip("/") + "/"
+                    prefix_exact = prefix.rstrip("/")
+                    results[prefix] = any(
+                        p.startswith(prefix_normalized) or p == prefix_exact
+                        for p in accessible_paths
+                    )
 
             elapsed = (time.time() - start) * 1000
             found_count = sum(1 for v in results.values() if v)
             logger.debug(
                 f"[BATCH-OPT] has_accessible_descendants_batch: "
                 f"{found_count}/{len(prefixes)} accessible in {elapsed:.1f}ms "
-                f"(bitmap: {len(allowed_ids)} IDs, paths: {len(accessible_paths)})"
+                f"(paths: {len(accessible_paths)})"
             )
             return results
 
@@ -430,7 +348,7 @@ class PermissionEnforcer:
                 return self._check_rebac(path, permission, context)
 
             # Import AdminCapability here to avoid circular imports
-            from nexus.services.permissions.permissions_enhanced import AdminCapability
+            from nexus.rebac.permissions_enhanced import AdminCapability
 
             # P0-4: Zone boundary check (security fix for issue #819)
             # Extract zone from path (format: /zone/{zone_id}/...)
@@ -831,7 +749,7 @@ class PermissionEnforcer:
 
         from datetime import UTC, datetime
 
-        from nexus.services.permissions.permissions_enhanced import AuditLogEntry
+        from nexus.rebac.permissions_enhanced import AuditLogEntry
 
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),
@@ -861,7 +779,7 @@ class PermissionEnforcer:
 
         from datetime import UTC, datetime
 
-        from nexus.services.permissions.permissions_enhanced import AuditLogEntry
+        from nexus.rebac.permissions_enhanced import AuditLogEntry
 
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),

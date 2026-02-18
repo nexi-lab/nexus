@@ -69,6 +69,7 @@ class PKCEStateStore:
         await self._cache_store.delete(key)
         result: dict[str, str] = json.loads(raw)
         return result
+<<<<<<< HEAD
 
     @property
     def size(self) -> int:
@@ -77,6 +78,8 @@ class PKCEStateStore:
         Not available with CacheStoreABC — returns -1 when backed by external store.
         """
         return -1
+=======
+>>>>>>> origin/develop
 
 
 class OAuthService:
@@ -1173,7 +1176,7 @@ class OAuthService:
             OAuthProviderFactory instance
         """
         if self._oauth_factory is None:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth.factory import OAuthProviderFactory
 
             # Get config if available
             oauth_config = None

@@ -1,7 +1,7 @@
 """Kernel protocol interfaces for the Nexus architecture.
 
 VFSRouterProtocol lives here — it is a kernel concern (mount table + path routing).
-Service-layer protocols (EventLogProtocol, ContextManifestProtocol, etc.) live in
+Service-layer protocols (EventLogProtocol, PermissionProtocol, etc.) live in
 nexus.services.protocols/ per the Four Pillars architecture.
 
 References:
@@ -20,13 +20,21 @@ from nexus.core.protocols.connector import (
     PassthroughProtocol,
     StreamingProtocol,
 )
+<<<<<<< HEAD
 from nexus.core.protocols.describable import Describable
+=======
+from nexus.core.protocols.content_service import ContentServiceProtocol
+from nexus.core.protocols.describable import Describable
+from nexus.core.protocols.revision_service import RevisionServiceProtocol
+from nexus.core.protocols.vfs_core import VFSCoreProtocol
+>>>>>>> origin/develop
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
 
 __all__ = [
     "BatchContentProtocol",
     "CachingConnectorContract",
     "ConnectorProtocol",
+    "ContentServiceProtocol",
     "ContentStoreProtocol",
     "Describable",
     "DirectoryListingProtocol",
@@ -35,6 +43,8 @@ __all__ = [
     "OAuthCapableProtocol",
     "PassthroughProtocol",
     "ResolvedPath",
+    "RevisionServiceProtocol",
     "StreamingProtocol",
+    "VFSCoreProtocol",
     "VFSRouterProtocol",
 ]

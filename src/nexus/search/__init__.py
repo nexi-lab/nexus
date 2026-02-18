@@ -44,7 +44,6 @@ from nexus.search.bm25s_search import (
     BM25SIndex,
     BM25SSearchResult,
     CodeTokenizer,
-    get_bm25s_index,
     is_bm25s_available,
 )
 from nexus.search.chunking import (
@@ -105,6 +104,7 @@ from nexus.search.hnsw_config import (
     get_recommended_config,
     get_vector_count,
 )
+from nexus.search.indexing import IndexingPipeline, IndexProgress, IndexResult
 from nexus.search.manifest import SearchBrickManifest, verify_imports
 from nexus.search.mobile_config import (
     EMBEDDING_MODELS,
@@ -249,6 +249,10 @@ __all__ = [
     "DatasetScale",
     "get_vector_count",
     "get_recommended_config",
+    # Indexing Pipeline (Issue #1094)
+    "IndexingPipeline",
+    "IndexResult",
+    "IndexProgress",
     # Semantic Search (sync)
     "SemanticSearch",
     "SemanticSearchResult",
@@ -297,7 +301,6 @@ __all__ = [
     "BM25SIndex",
     "BM25SSearchResult",
     "CodeTokenizer",
-    "get_bm25s_index",
     "is_bm25s_available",
     # Hot Search Daemon (Issue #951)
     "SearchDaemon",

@@ -12,7 +12,11 @@ Uses ordered steps for safety without requiring cross-system transactions:
 On failure at step 2+: unregister agent (no key exists, safe to retry).
 
 #1618 additions:
+<<<<<<< HEAD
     - DelegationStatus lifecycle (ACTIVE → REVOKED/EXPIRED/COMPLETED)
+=======
+    - DelegationStatus lifecycle (ACTIVE -> REVOKED/EXPIRED/COMPLETED)
+>>>>>>> origin/develop
     - Soft-delete revocation (status=REVOKED first, then cleanup)
     - Fail-loud on grant deletion during revocation
     - Session context manager (DRY)
@@ -51,9 +55,9 @@ from nexus.services.delegation.models import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
+    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.rebac.namespace_manager import NamespaceManager
     from nexus.services.agents.agent_registry import AgentRegistry
-    from nexus.services.permissions.entity_registry import EntityRegistry
-    from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.services.reputation.reputation_service import ReputationService
 
@@ -289,7 +293,11 @@ class DelegationService:
         """Revoke a delegation using soft-delete-first pattern (Issue 8A).
 
         Steps:
+<<<<<<< HEAD
             0. Set status=REVOKED (contract with callers — immediate)
+=======
+            0. Set status=REVOKED (contract with callers -- immediate)
+>>>>>>> origin/develop
             1. Delete ReBAC tuples (fail-loud, Issue 7A)
             2. Revoke API key
             3. Unregister agent
@@ -313,10 +321,17 @@ class DelegationService:
                 f"Delegation {delegation_id} is not active (status={record.status.value})"
             )
 
+<<<<<<< HEAD
         # Step 0: Soft-delete — mark as REVOKED immediately
         self._update_delegation_status(delegation_id, DelegationStatus.REVOKED)
 
         # Step 1: Delete ReBAC tuples — fail-loud (Issue 7A)
+=======
+        # Step 0: Soft-delete -- mark as REVOKED immediately
+        self._update_delegation_status(delegation_id, DelegationStatus.REVOKED)
+
+        # Step 1: Delete ReBAC tuples -- fail-loud (Issue 7A)
+>>>>>>> origin/develop
         self._delete_worker_tuples(record.agent_id, record.zone_id)
 
         # Step 2: Revoke API key
@@ -353,9 +368,12 @@ class DelegationService:
         Returns:
             Tuple of (records, total_count).
         """
+        from sqlalchemy import func, select
+
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
+<<<<<<< HEAD
             query = session.query(DelegationRecordModel).filter(
                 DelegationRecordModel.parent_agent_id == parent_agent_id
             )
@@ -367,18 +385,44 @@ class DelegationService:
                 query.order_by(DelegationRecordModel.created_at.desc())
                 .offset(offset)
                 .limit(limit)
+=======
+            stmt = select(DelegationRecordModel).where(
+                DelegationRecordModel.parent_agent_id == parent_agent_id
+            )
+            if status_filter is not None:
+                stmt = stmt.where(DelegationRecordModel.status == status_filter.value)
+
+            count_stmt = select(func.count()).select_from(stmt.subquery())
+            total = session.execute(count_stmt).scalar() or 0
+            rows = (
+                session.execute(
+                    stmt.order_by(DelegationRecordModel.created_at.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+                .scalars()
+>>>>>>> origin/develop
                 .all()
             )
             return [self._model_to_record(row) for row in rows], total
 
     def get_delegation_by_id(self, delegation_id: str) -> DelegationRecord | None:
         """Get delegation record by delegation_id."""
+<<<<<<< HEAD
+=======
+        from sqlalchemy import select
+
+>>>>>>> origin/develop
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
             row = (
-                session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.delegation_id == delegation_id)
+                session.execute(
+                    select(DelegationRecordModel).where(
+                        DelegationRecordModel.delegation_id == delegation_id
+                    )
+                )
+                .scalars()
                 .first()
             )
             if row is None:
@@ -387,15 +431,30 @@ class DelegationService:
 
     def get_delegation(self, agent_id: str) -> DelegationRecord | None:
         """Get active delegation record for a worker agent."""
+<<<<<<< HEAD
+=======
+        from sqlalchemy import select
+
+>>>>>>> origin/develop
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
             row = (
+<<<<<<< HEAD
                 session.query(DelegationRecordModel)
                 .filter(
                     DelegationRecordModel.agent_id == agent_id,
                     DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
                 )
+=======
+                session.execute(
+                    select(DelegationRecordModel).where(
+                        DelegationRecordModel.agent_id == agent_id,
+                        DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
+                    )
+                )
+                .scalars()
+>>>>>>> origin/develop
                 .first()
             )
             if row is None:
@@ -723,7 +782,11 @@ class DelegationService:
         worker_id: str,
         zone_id: str | None,
     ) -> list[str]:
+<<<<<<< HEAD
         """Get mount table for the worker agent (fail-soft — informational)."""
+=======
+        """Get mount table for the worker agent (fail-soft -- informational)."""
+>>>>>>> origin/develop
         if self._namespace_manager is None:
             return []
         try:
@@ -754,16 +817,23 @@ class DelegationService:
 
     def _revoke_worker_api_key(self, worker_id: str) -> None:
         """Revoke all API keys for the worker agent."""
+<<<<<<< HEAD
+=======
+        from sqlalchemy import select
+
+>>>>>>> origin/develop
         from nexus.identity.api_key_ops import revoke_api_key
         from nexus.storage.models.auth import APIKeyModel
 
         with self._session() as session:
             keys = (
-                session.query(APIKeyModel)
-                .filter(
-                    APIKeyModel.subject_type == "agent",
-                    APIKeyModel.subject_id == worker_id,
+                session.execute(
+                    select(APIKeyModel).where(
+                        APIKeyModel.subject_type == "agent",
+                        APIKeyModel.subject_id == worker_id,
+                    )
                 )
+                .scalars()
                 .all()
             )
             for key in keys:
@@ -771,6 +841,7 @@ class DelegationService:
 
     def _update_delegation_status(self, delegation_id: str, status: DelegationStatus) -> None:
         """Update delegation record status (soft-delete pattern, Issue 8A)."""
+<<<<<<< HEAD
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session() as session:
@@ -779,17 +850,36 @@ class DelegationService:
                 .filter(DelegationRecordModel.delegation_id == delegation_id)
                 .update({"status": status.value})
             )
+=======
+        from sqlalchemy import update
+
+        from nexus.storage.models.agents import DelegationRecordModel
+
+        with self._session() as session:
+            result = session.execute(
+                update(DelegationRecordModel)
+                .where(DelegationRecordModel.delegation_id == delegation_id)
+                .values(status=status.value)
+            )
+            rows_updated = result.rowcount
+>>>>>>> origin/develop
             if rows_updated == 0:
                 raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
 
     def _load_delegation_record(self, delegation_id: str) -> DelegationRecord | None:
         """Load a delegation record by ID."""
+        from sqlalchemy import select
+
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
             row = (
-                session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.delegation_id == delegation_id)
+                session.execute(
+                    select(DelegationRecordModel).where(
+                        DelegationRecordModel.delegation_id == delegation_id
+                    )
+                )
+                .scalars()
                 .first()
             )
             if row is None:

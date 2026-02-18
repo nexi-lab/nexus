@@ -18,8 +18,8 @@ NexusFS follows an **OS-inspired layered architecture**.
                           ↓ protocol interface
 ┌──────────────────────────────────────────────────────────────┐
 │  KERNEL                                                      │
-│  Minimal compilable unit. VFS, FileMetadataProtocol,         │
-│  MetastoreABC, ObjectStoreABC interface definitions.         │
+│  Minimal compilable unit. VFS, MetastoreABC,                 │
+│  ObjectStoreABC interface definitions.                       │
 └──────────────────────────────────────────────────────────────┘
                           ↓ dependency injection
 ┌──────────────────────────────────────────────────────────────┐
@@ -36,7 +36,7 @@ implementations via DI at startup.
 
 | Tier | Swap time | Nexus | Linux analogue |
 |------|-----------|-------|----------------|
-| Static kernel | Never | MetastoreABC, VFS `route()`, FileMetadataProtocol, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
+| Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
 | Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
 | Services | Runtime (load/unload) | 22 protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
@@ -111,6 +111,12 @@ Kernel does NOT need: JOINs, FK, vector search, TTL, pub/sub (all service-layer)
 No CacheStore → EventBus disabled, PermissionCache falls back to RecordStore,
 TigerCache O(n), UserSession stays in RecordStore. `NullCacheStore` provides no-op impl.
 
+### RecordStoreABC Usage Pattern
+
+Services consume `RecordStoreABC.session_factory` + SQLAlchemy ORM.
+Direct SQL or raw driver access is an abstraction break.
+This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code changes.
+
 ### Dual-Axis ABC Architecture
 
 Two independent ABC axes, composed via DI:
@@ -130,19 +136,22 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 
 | Interface | Linux Analogue | Purpose |
 |-----------|---------------|---------|
-| `MetastoreABC` | block device | Ordered KV primitive |
-| `FileMetadataProtocol` | `struct inode_operations` | Typed FileMetadata CRUD over MetastoreABC |
+| `MetastoreABC` | `struct inode_operations` | Typed FileMetadata CRUD (the inode layer) |
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
 | `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
 
-`FileMetadataProtocol` is kernel because it IS the inode layer — the typed contract
-between VFS and Metastore. Without it, the kernel cannot describe files.
+`MetastoreABC` is kernel because it IS the inode layer — the typed contract
+between VFS and storage. Without it, the kernel cannot describe files.
 
 ### NexusFS — Syscall Dispatch Layer
 
 `NexusFS` is the kernel entry point, analogous to Linux's syscall layer (`sys_open`,
+<<<<<<< HEAD
 `sys_read`). It wires VFSRouter + FileMetadataProtocol + ObjectStoreABC into
+=======
+`sys_read`). It wires VFSRouter + MetastoreABC + ObjectStoreABC into
+>>>>>>> origin/develop
 user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 **no service business logic** — services are accessed through `ServiceRegistry`
 (Phase 2) or thin delegation stubs (Phase 1).
@@ -151,9 +160,16 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 + services and wires them together. NexusFS receives pre-built dependencies via its
 constructor and never auto-creates services.
 
+<<<<<<< HEAD
 > *Gap:* NexusFS still contains 2 event-related mixins and ~40 lazy service imports
 > in `_wire_services()`. Migration: extract remaining mixins → standalone service
 > classes, then replace `KernelServices` dataclass with `ServiceRegistry`.
+=======
+> *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
+> `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
+> Remaining: ~40 lazy service imports in `_wire_services()` (#194), replace
+> `KernelServices` dataclass with `ServiceRegistry`.
+>>>>>>> origin/develop
 
 ### Service Protocols (`nexus.services.protocols`)
 
@@ -165,7 +181,7 @@ constructor and never auto-creates services.
 | **Search & Content** | SearchProtocol, SearchBrickProtocol (driver), LLMProtocol | 3 |
 | **Mount & Storage** | MountProtocol, ShareLinkProtocol, OAuthProtocol | 3 |
 | **Agent Infra** | AgentRegistryProtocol, SchedulerProtocol | 2 |
-| **Events & Hooks** | EventLogProtocol, HookEngineProtocol, EventsProtocol (needs split → Watch + Lock) | 3 |
+| **Events & Hooks** | EventLogProtocol, HookEngineProtocol, WatchProtocol, LockProtocol (split from EventsProtocol, #546) | 4 |
 | **Domain Services** | SkillsProtocol, PaymentProtocol | 2 |
 | **Missing (9 gaps)** | Version, Memory, Trajectory, Delegation, Governance, Reputation, OperationLog, Plugin, Workflow | 9 |
 
@@ -211,25 +227,33 @@ Driver selection is config-time: same binary, different `NEXUS_METASTORE`, `NEXU
 
 ---
 
-## 6. gRPC Services
+## 6. Communication
 
-> **SSOT:** Proto files in `proto/` are the source of truth for RPC definitions. This table is a summary for architectural orientation — see the proto files for exact request/response types and detailed comments.
+### Messaging Tiers
+
+Three tiers, mirroring Linux's kernel → system → user space communication:
+
+| Tier | Linux Analogue | Nexus | Latency | Topology |
+|------|---------------|-------|---------|----------|
+| **Kernel** | `kfifo` ring buffer | Nexus Native Pipe (`DT_PIPE`, MetastoreABC) | ~5μs | Intra-process |
+| **System** | `sendmsg()` / Unix sockets | gRPC (Zone Transport/API) | ~0.5–1ms | Point-to-point (1:1) |
+| **User Space** | POSIX `mq_open` / multi-queue | EventBus (CacheStoreABC pub/sub) | ~1–5ms | Fan-out (1:N) |
+
+**Selection rule:** Consensus write path → System (gRPC, 1:1). Notification read path → User Space (EventBus, 1:N fan-out to 100s of observers). Internal signaling → Kernel (Pipe, zero-copy).
+
+See `federation-memo.md` §7j for Pipe design.
+
+### System Tier: gRPC Services
+
+> **SSOT:** Proto files in `proto/` are the source of truth for RPC definitions.
 
 | Proto Service | Proto File | Scope | Purpose |
 |---------------|-----------|-------|---------|
 | `ZoneTransportService` | `proto/nexus/raft/transport.proto` | Internal | Node-to-node Raft messages (StepMessage, ReplicateEntries) |
 | `ZoneApiService` | `proto/nexus/raft/transport.proto` | Internal | Client-facing zone ops (Propose, Query, GetClusterInfo, JoinZone, InviteZone) |
-| `ExchangeService` | `proto/nexus/exchange/v1/exchange.proto` | External | Agent Exchange API — identity (4 RPCs), payment (8 RPCs), audit (5 RPCs). REST-only Phase 1; Connect-RPC planned Phase 2/3. |
+| `ExchangeService` | `proto/nexus/exchange/v1/exchange.proto` | External | Agent Exchange API — identity (4 RPCs), payment (8 RPCs), audit (5 RPCs) |
 
-Named `Zone*` to match `ZoneConsensus` (Rust). Zone services are internal — not exposed as external APIs. `ExchangeService` is the external-facing API for agent-to-agent value exchange.
-
----
-
-## 7. RecordStoreABC Pattern
-
-Services consume `RecordStoreABC.session_factory` + SQLAlchemy ORM.
-Direct SQL or raw driver access is an abstraction break.
-This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code changes.
+Named `Zone*` to match `ZoneConsensus` (Rust). `ExchangeService` is the external-facing API for agent-to-agent value exchange.
 
 ---
 

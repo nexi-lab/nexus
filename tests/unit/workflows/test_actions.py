@@ -223,6 +223,10 @@ class TestPythonAction:
 
     @pytest.mark.asyncio
     async def test_execute_python_action(self):
+<<<<<<< HEAD
+=======
+        """Test executing Python action delegates to sandbox."""
+>>>>>>> origin/develop
         code = "result = variables['x'] + variables['y']"
         action = PythonAction(name="calc", config={"code": code})
         context = WorkflowContext(
@@ -239,6 +243,10 @@ class TestPythonAction:
 
     @pytest.mark.asyncio
     async def test_execute_python_action_error(self):
+<<<<<<< HEAD
+=======
+        """Test executing Python action with sandbox error."""
+>>>>>>> origin/develop
         code = "raise ValueError('test error')"
         action = PythonAction(name="calc", config={"code": code})
         context = WorkflowContext(

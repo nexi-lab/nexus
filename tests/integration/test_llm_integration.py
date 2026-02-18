@@ -1,7 +1,11 @@
 """Integration tests for LLM brick extraction (Issue #1521).
 
 Verifies:
+<<<<<<< HEAD
 - Import paths resolve correctly (old and new locations)
+=======
+- Import paths resolve correctly (canonical locations)
+>>>>>>> origin/develop
 - Protocol compliance (LiteLLMProvider satisfies LLMProviderProtocol)
 - LLMService protocol compliance
 - Brick manifest and verify_imports()
@@ -49,6 +53,7 @@ class TestImportPaths:
         assert LLMDocumentReader is not None
         assert ReadChunk is not None
 
+<<<<<<< HEAD
     def test_backward_compat_stubs(self) -> None:
         """Old import paths still work via backward-compat stubs."""
         from nexus.llm.citation import (
@@ -81,6 +86,8 @@ class TestImportPaths:
         assert C1 is C2
         assert CB1 is CB2
 
+=======
+>>>>>>> origin/develop
     def test_brick_level_exports(self) -> None:
         """LLM brick __init__ exports core types (not orchestration)."""
         from nexus.llm import (

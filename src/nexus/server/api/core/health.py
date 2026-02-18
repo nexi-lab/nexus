@@ -101,7 +101,7 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
     if has_rebac:
         cb = getattr(state, "rebac_circuit_breaker", None)
         if cb:
-            from nexus.services.permissions.circuit_breaker import CircuitState
+            from nexus.rebac.circuit_breaker import CircuitState
 
             cb_state = cb.state
             if cb_state == CircuitState.CLOSED:
@@ -226,22 +226,19 @@ async def pool_metrics(request: Request) -> dict[str, Any]:
     else:
         metrics["postgres"] = {"status": "not_available"}
 
-    # Redis/Dragonfly pool stats from cache factory
+    # Redis/Dragonfly pool stats from CacheBrick (Issue #1524)
     try:
-        from nexus.cache.factory import get_cache_factory
-
-        cache_factory = get_cache_factory()
-        if cache_factory.has_cache_store and cache_factory._cache_client:
-            dragonfly_stats = cache_factory._cache_client.get_pool_stats()
-            dragonfly_info = await cache_factory._cache_client.get_info()
+        cache_brick = getattr(state, "cache_factory", None)
+        if cache_brick is not None and cache_brick.has_cache_store:
+            _store = cache_brick.cache_store
+            dragonfly_stats = _store.get_pool_stats()
+            dragonfly_info = await _store.get_info()
             metrics["dragonfly"] = {
                 **dragonfly_stats,
                 "server_info": dragonfly_info,
             }
         else:
             metrics["dragonfly"] = {"status": "not_configured"}
-    except RuntimeError:
-        metrics["dragonfly"] = {"status": "not_initialized"}
     except Exception as e:
         metrics["dragonfly"] = {"error": str(e)}
 

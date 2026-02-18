@@ -23,8 +23,9 @@ from nexus.core.rebac import (
     Entity,
     NamespaceConfig,
 )
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.default_namespaces import (
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.default_namespaces import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
@@ -34,12 +35,11 @@ from nexus.services.permissions.default_namespaces import (
 )
 from nexus.services.permissions.graph.expand import ExpandEngine
 from nexus.services.permissions.graph.traversal import PermissionComputer
-from nexus.services.permissions.rebac_cache import ReBACPermissionCache
-from nexus.services.permissions.rebac_fast import (
+from nexus.services.permissions.tuples.repository import TupleRepository
+from nexus.services.permissions.utils.fast import (
     check_permissions_bulk_with_fallback,
     is_rust_available,
 )
-from nexus.services.permissions.tuples.repository import TupleRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -155,10 +155,6 @@ class ReBACManager:
         from sqlalchemy.orm import sessionmaker
 
         self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
-
-        # Backward-compat aliases for code accessing _conn_map / _pg_version directly
-        self._conn_map = self._repo._conn_map
-        self._pg_version = self._repo._pg_version
 
     def _get_connection(self) -> Any:
         """Get a DBAPI connection from the pool.

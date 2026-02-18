@@ -57,12 +57,21 @@ def _make_mock_ctx(**overrides: Any) -> Any:
     """Build a minimal _BootContext-like object for tier function tests."""
     from nexus.factory import _BootContext
 
+<<<<<<< HEAD
+=======
+    mock_engine = MagicMock()
+>>>>>>> origin/develop
     defaults = {
         "record_store": MagicMock(),
         "metadata_store": MagicMock(),
         "backend": MagicMock(),
         "router": MagicMock(),
+<<<<<<< HEAD
         "engine": MagicMock(),
+=======
+        "engine": mock_engine,
+        "read_engine": mock_engine,
+>>>>>>> origin/develop
         "session_factory": MagicMock(),
         "perm": MagicMock(
             enforce_zone_isolation=True,
@@ -198,6 +207,11 @@ class TestBootSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
+<<<<<<< HEAD
+=======
+            "context_branch_service",
+            "brick_lifecycle_manager",
+>>>>>>> origin/develop
         }
         assert expected_keys == set(result.keys())
 
@@ -248,7 +262,12 @@ class TestBootBrickServices:
             "lock_manager",
             "workflow_engine",
             "api_key_creator",
+<<<<<<< HEAD
             "rlm_service",
+=======
+            "snapshot_service",
+            "task_queue_service",
+>>>>>>> origin/develop
         }
         assert expected_keys == set(result.keys())
 

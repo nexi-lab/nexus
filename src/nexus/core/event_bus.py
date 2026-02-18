@@ -167,7 +167,7 @@ class FileEvent:
     @classmethod
     def from_file_change(
         cls,
-        change: Any,  # FileChange from file_watcher.py (avoid circular import)
+        change: Any,  # FileChange from services/watch/file_watcher.py (avoid circular import)
         zone_id: str | None = None,
     ) -> FileEvent:
         """Create FileEvent from Layer 1 FileChange.
@@ -179,7 +179,7 @@ class FileEvent:
         - RENAMED → FILE_RENAME
 
         Args:
-            change: FileChange from file_watcher.py
+            change: FileChange from services/watch/file_watcher.py
             zone_id: Optional zone ID to associate
 
         Returns:
@@ -1011,7 +1011,7 @@ def create_event_bus(
     if backend == "nats":
         if nats_url is None:
             raise ValueError("nats_url is required for NATS backend")
-        from nexus.core.event_bus_nats import NatsEventBus
+        from nexus.services.event_bus_nats import NatsEventBus
 
         return NatsEventBus(nats_url=nats_url, **kwargs)
 

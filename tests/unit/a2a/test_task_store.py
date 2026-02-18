@@ -551,6 +551,7 @@ class TestVFSEnvelopeFormat:
         assert loaded.status.state == original.status.state
         assert len(loaded.artifacts) == 1
         assert loaded.artifacts[0].artifactId == "art-1"
+<<<<<<< HEAD
 
 
 # ======================================================================
@@ -571,3 +572,5 @@ class TestDatabaseTaskStoreDeprecation:
         with pytest.warns(DeprecationWarning):
             store = DatabaseTaskStore(fake_record_store)
         assert store._session_factory is fake_record_store.session_factory
+=======
+>>>>>>> origin/develop

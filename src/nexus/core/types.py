@@ -1,9 +1,13 @@
-"""Zero-dependency leaf module for shared domain types (Issue #1291).
+"""Backward-compat re-exports — canonical source is nexus.contracts.types."""
 
-This module contains types that are imported by 72+ files across the codebase.
-It has ZERO runtime imports from ``nexus.*``, breaking the circular import hub
-that previously existed in ``core/permissions.py``.
+from nexus.contracts.types import (
+    ContextIdentity,
+    OperationContext,
+    Permission,
+    extract_context_identity,
+)
 
+<<<<<<< HEAD
 Backward compatibility:
     ``from nexus.core.permissions import OperationContext, Permission`` still works
     via re-exports in ``permissions.py``.
@@ -282,3 +286,6 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
         ),
         is_admin=getattr(context, "is_admin", False),
     )
+=======
+__all__ = ["ContextIdentity", "OperationContext", "Permission", "extract_context_identity"]
+>>>>>>> origin/develop

@@ -112,7 +112,10 @@ class TestEventsServiceInit:
         mock_backend_passthrough,
         mock_event_bus,
         mock_lock_manager,
+<<<<<<< HEAD
         mock_file_watcher,
+=======
+>>>>>>> origin/develop
         mock_metadata_cache,
     ):
         """Service stores all injected dependencies."""
@@ -120,14 +123,21 @@ class TestEventsServiceInit:
             backend=mock_backend_passthrough,
             event_bus=mock_event_bus,
             lock_manager=mock_lock_manager,
+<<<<<<< HEAD
             file_watcher=mock_file_watcher,
+=======
+>>>>>>> origin/develop
             zone_id="z1",
             metadata_cache=mock_metadata_cache,
         )
         assert svc._backend is mock_backend_passthrough
         assert svc._event_bus is mock_event_bus
         assert svc._lock_manager is mock_lock_manager
+<<<<<<< HEAD
         assert svc._file_watcher is mock_file_watcher
+=======
+        assert svc._file_watcher is None  # lazy-initialized, not injected
+>>>>>>> origin/develop
         assert svc._zone_id == "z1"
         assert svc._metadata_cache is mock_metadata_cache
 
@@ -213,10 +223,19 @@ class TestZoneIdResolution:
 class TestFileWatcherLazyInit:
     """Tests for _get_file_watcher lazy initialization."""
 
+<<<<<<< HEAD
     def test_returns_injected_watcher(self, mock_backend_passthrough, mock_file_watcher):
         """Returns injected watcher if available."""
         svc = EventsService(backend=mock_backend_passthrough, file_watcher=mock_file_watcher)
         assert svc._get_file_watcher() is mock_file_watcher
+=======
+    def test_lazy_creates_watcher(self, mock_backend_passthrough):
+        """Lazy-creates FileWatcher for passthrough backend."""
+        svc = EventsService(backend=mock_backend_passthrough)
+        watcher = svc._get_file_watcher()
+        assert watcher is not None
+        assert svc._file_watcher is watcher
+>>>>>>> origin/develop
 
     def test_raises_for_non_passthrough(self, mock_backend_remote):
         """Raises NotImplementedError for non-passthrough backend."""

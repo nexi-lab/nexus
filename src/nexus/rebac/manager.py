@@ -33,15 +33,20 @@ from nexus.core.rebac import (
     NamespaceConfig,
 )
 from nexus.rebac.batch.bulk_checker import BulkPermissionChecker
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.cache.tiger.facade import TigerFacade
 from nexus.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
+<<<<<<< HEAD
 from nexus.rebac.consistency.zone_manager import (
     ZoneIsolationError,  # noqa: F401 — re-exported for backward compat
     ZoneManager,
 )
+=======
+from nexus.rebac.consistency.zone_manager import ZoneManager
+>>>>>>> origin/develop
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.directory.expander import DirectoryExpander
 from nexus.rebac.graph.bulk_evaluator import (
@@ -59,11 +64,6 @@ from nexus.rebac.graph.bulk_evaluator import (
 from nexus.rebac.graph.expand import ExpandEngine
 from nexus.rebac.graph.traversal import PermissionComputer
 from nexus.rebac.graph.zone_traversal import ZoneAwareTraversal
-from nexus.rebac.rebac_cache import ReBACPermissionCache
-from nexus.rebac.rebac_fast import (
-    check_permissions_bulk_with_fallback,
-    is_rust_available,
-)
 from nexus.rebac.rebac_tracing import (
     record_check_result,
     record_graph_limit_exceeded,
@@ -75,7 +75,10 @@ from nexus.rebac.tuples.repository import TupleRepository
 from nexus.rebac.types import (
     CheckResult,
     ConsistencyLevel,
+<<<<<<< HEAD
     ConsistencyMode,  # noqa: F401 — re-exported for rebac_service + tests
+=======
+>>>>>>> origin/develop
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
@@ -83,14 +86,18 @@ from nexus.rebac.types import (
     WriteResult,
 )
 from nexus.rebac.utils.changelog import insert_changelog_entry
+from nexus.rebac.utils.fast import (
+    check_permissions_bulk_with_fallback,
+    is_rust_available,
+)
 from nexus.rebac.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.rebac.leopard import LeopardIndex
-    from nexus.rebac.rebac_iterator_cache import IteratorCache
-    from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
+    from nexus.rebac.cache.iterator import IteratorCache
+    from nexus.rebac.cache.leopard import LeopardIndex
+    from nexus.rebac.cache.tiger import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -129,17 +136,20 @@ class ReBACManager:
         enable_graph_limits: bool = True,
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
+        read_engine: Engine | None = None,
     ):
         """Initialize ReBAC manager.
 
         Args:
-            engine: SQLAlchemy database engine
+            engine: SQLAlchemy database engine (primary/write)
             cache_ttl_seconds: Cache TTL in seconds (default: 5 minutes)
             max_depth: Maximum graph traversal depth (default: 50 hops)
             enforce_zone_isolation: Enable zone isolation checks (default: True)
             enable_graph_limits: Enable graph limit enforcement (default: True)
             enable_leopard: Enable Leopard transitive closure index (default: True)
             enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True)
+            read_engine: Optional separate engine for read-only operations (Issue #725).
+                        Defaults to ``engine`` when not provided.
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
@@ -149,8 +159,8 @@ class ReBACManager:
         self._namespaces_initialized = False
         self._tuple_version: int = 0
 
-        # Compose TupleRepository for data access delegation
-        self._repo = TupleRepository(engine)
+        # Compose TupleRepository for data access delegation (Issue #725: read/write split)
+        self._repo = TupleRepository(engine, read_engine=read_engine)
 
         # Compose graph traversal and expand engines
         self._computer = PermissionComputer(self._repo, self.get_namespace, max_depth)
@@ -171,10 +181,6 @@ class ReBACManager:
         from sqlalchemy.orm import sessionmaker
 
         self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
-
-        # Backward-compat aliases for code accessing _conn_map / _pg_version directly
-        self._conn_map = self._repo._conn_map
-        self._pg_version = self._repo._pg_version
 
         # ── Enhanced initialization ──
         # Zone isolation (absorbed from ZoneAwareReBACManager — Phase 10)
@@ -200,7 +206,7 @@ class ReBACManager:
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
         if enable_leopard:
-            from nexus.rebac.leopard import LeopardIndex
+            from nexus.rebac.cache.leopard import LeopardIndex
 
             self._leopard = LeopardIndex(
                 engine=engine,
@@ -213,7 +219,7 @@ class ReBACManager:
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
         if enable_tiger_cache and engine.dialect.name == "postgresql":
-            from nexus.rebac.tiger_cache import (
+            from nexus.rebac.cache.tiger import (
                 TigerCache,
                 TigerCacheUpdater,
                 TigerResourceMap,
@@ -271,7 +277,7 @@ class ReBACManager:
         )
 
         # Iterator cache for paginated list operations (Issue #722)
-        from nexus.rebac.rebac_iterator_cache import IteratorCache
+        from nexus.rebac.cache.iterator import IteratorCache
 
         self._iterator_cache: IteratorCache = IteratorCache(
             max_size=1000,
@@ -279,7 +285,7 @@ class ReBACManager:
         )
 
         # Issue #922: Permission boundary cache for O(1) inheritance checks
-        from nexus.rebac.permission_boundary_cache import PermissionBoundaryCache
+        from nexus.rebac.cache.boundary import PermissionBoundaryCache
 
         self._boundary_cache: PermissionBoundaryCache = PermissionBoundaryCache()
 
@@ -557,7 +563,7 @@ class ReBACManager:
 
         from nexus.core.rebac import WILDCARD_SUBJECT
 
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
             # Check 1: Direct subject match (zone-scoped)
             cursor.execute(
@@ -900,7 +906,7 @@ class ReBACManager:
 
         # Try Rust acceleration first (has proper memoization, prevents timeout)
         try:
-            from nexus.rebac.rebac_fast import (
+            from nexus.rebac.utils.fast import (
                 check_permission_single_rust,
                 is_rust_available,
             )
@@ -1088,7 +1094,7 @@ class ReBACManager:
         Returns:
             List of tuple dictionaries
         """
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -1134,7 +1140,7 @@ class ReBACManager:
         Returns:
             List of cross-zone share tuples
         """
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
@@ -1193,7 +1199,7 @@ class ReBACManager:
         """
         from nexus.core.rebac import WILDCARD_SUBJECT
 
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -2040,7 +2046,7 @@ class ReBACManager:
         self, relation: str, obj: Entity, zone_id: str
     ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object (zone-scoped)."""
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -2072,7 +2078,7 @@ class ReBACManager:
         self, subject: Entity, permission: str, obj: Entity, zone_id: str
     ) -> bool | None:
         """Get cached permission check result (zone-aware cache key)."""
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -2633,9 +2639,6 @@ class ReBACManager:
     # Directory Operations (Issue #1459 Phase 13: delegated to DirectoryExpander)
     # =========================================================================
 
-    # Kept for backward compatibility — class attribute referenced by some tests
-    DIRECTORY_EXPANSION_LIMIT = 10_000
-
     def _is_directory_path(self, path: str) -> bool:
         """Check if a path represents a directory."""
         return self._directory_expander.is_directory_path(path)
@@ -2759,7 +2762,7 @@ class ReBACManager:
 
         Returns None if cache entry is older than max_age_seconds.
         """
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             min_computed_at = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
@@ -2883,7 +2886,7 @@ class ReBACManager:
         """
         import time as time_module
 
-        from nexus.rebac.rebac_fast import (
+        from nexus.rebac.utils.fast import (
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )
@@ -3337,9 +3340,14 @@ class ReBACManager:
         return self._repo.increment_zone_revision(zone_id, conn)
 
     @contextmanager
-    def _connection(self) -> Any:
-        """Context manager for database connections. Delegates to TupleRepository (Issue #1459)."""
-        with self._repo.connection() as conn:
+    def _connection(self, *, readonly: bool = False) -> Any:
+        """Context manager for database connections. Delegates to TupleRepository (Issue #1459).
+
+        Args:
+            readonly: If True, uses the read engine and skips commit (Issue #725).
+                     Use for pure SELECT operations (permission checks, cache lookups).
+        """
+        with self._repo.connection(readonly=readonly) as conn:
             yield conn
 
     def _create_cursor(self, conn: Any) -> Any:
@@ -3554,7 +3562,7 @@ class ReBACManager:
 
         from nexus.core.rebac import NamespaceConfig
 
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -5057,7 +5065,7 @@ class ReBACManager:
 
         logger = logging.getLogger(__name__)
 
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             # For simplicity, fetch all tuples (can be optimized later)
@@ -5356,7 +5364,7 @@ class ReBACManager:
                 return l1_result
 
         # L1 miss - check L2 (database) cache
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             cursor.execute(
@@ -6114,7 +6122,7 @@ class ReBACManager:
             stats["l1_stats"] = None
 
         # L2 cache stats (query database)
-        with self._connection() as conn:
+        with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
             # Count total entries in L2 cache
@@ -6162,6 +6170,5 @@ class ReBACManager:
 # Backward Compatibility Alias
 # ====================================================================================
 
-# Backward-compat aliases (Issue #1385)
+# Backward-compat alias (Issue #1385)
 EnhancedReBACManager = ReBACManager
-ZoneAwareReBACManager = ReBACManager

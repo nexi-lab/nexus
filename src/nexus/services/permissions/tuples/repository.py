@@ -20,7 +20,11 @@ from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+<<<<<<< HEAD
 from sqlalchemy import or_, select, text
+=======
+from sqlalchemy import or_, select
+>>>>>>> origin/develop
 
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
 from nexus.storage.models.permissions import (
@@ -46,12 +50,20 @@ class TupleRepository:
     manager layer which handles cache invalidation and other cross-cutting
     concerns.
 
+    Supports read/write separation (Issue #725):
+    - ``read_engine`` is used for read-only queries (permission checks, lookups)
+    - ``engine`` is used for writes (INSERT/DELETE/UPDATE + increment_zone_revision)
+    - When no ``read_engine`` is provided, falls back to ``engine`` for all operations
+
     Args:
-        engine: SQLAlchemy database engine (SQLite or PostgreSQL)
+        engine: SQLAlchemy database engine for write operations (SQLite or PostgreSQL)
+        read_engine: Optional separate engine for read-only operations (Issue #725).
+                    Defaults to ``engine`` when not provided.
     """
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, read_engine: Engine | None = None) -> None:
         self.engine = engine
+        self.read_engine = read_engine or engine
 
         # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
         # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
@@ -101,28 +113,41 @@ class TupleRepository:
                 logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
-    def connection(self) -> Generator[Any, None, None]:
+    def connection(self, *, readonly: bool = False) -> Generator[Any, None, None]:
         """Context manager for database connections.
 
         Uses engine.connect() which properly goes through the connection pool
         and respects pool_pre_ping for automatic stale connection detection.
 
+        Args:
+            readonly: If True, uses ``read_engine`` and skips commit (Issue #725).
+                     If False (default), uses ``engine`` and commits on success.
+
         Usage:
-            with repo.connection() as conn:
+            with repo.connection() as conn:       # write path
                 cursor = repo.create_cursor(conn)
                 cursor.execute(...)
-                conn.commit()
+
+            with repo.connection(readonly=True) as conn:  # read path
+                cursor = repo.create_cursor(conn)
+                cursor.execute(...)
         """
+<<<<<<< HEAD
 
         with self.engine.connect() as sa_conn:
             # Fix PostgreSQL prepared statement performance issue (#683)
             if self.engine.dialect.name == "postgresql":
                 sa_conn.execute(text("SET plan_cache_mode = 'force_custom_plan'"))
+=======
+        target_engine = self.read_engine if readonly else self.engine
+>>>>>>> origin/develop
 
+        with target_engine.connect() as sa_conn:
             dbapi_conn = sa_conn.connection.dbapi_connection
             try:
                 yield dbapi_conn
-                sa_conn.commit()
+                if not readonly:
+                    sa_conn.commit()
             except Exception:
                 sa_conn.rollback()
                 raise
@@ -207,21 +232,34 @@ class TupleRepository:
     # Zone revision tracking (Issue #909)
     # ------------------------------------------------------------------
 
+<<<<<<< HEAD
     def get_zone_revision(self, zone_id: str | None, _conn: Any | None = None) -> int:
+=======
+    def get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:  # noqa: ARG002
+>>>>>>> origin/develop
         """Get current revision for a zone (read-only, no increment).
 
         Used for revision-based cache key generation (Issue #909).
+        Uses read_engine for read replica support (Issue #725).
 
         Args:
             zone_id: Zone ID (defaults to "root")
+<<<<<<< HEAD
             _conn: Optional database connection (unused, kept for API compat)
+=======
+            conn: Optional database connection (unused, kept for API compat)
+>>>>>>> origin/develop
 
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
         effective_zone = zone_id or "root"
         stmt = select(RVS.current_version).where(RVS.zone_id == effective_zone)
+<<<<<<< HEAD
         with self.engine.connect() as sa_conn:
+=======
+        with self.read_engine.connect() as sa_conn:
+>>>>>>> origin/develop
             row = sa_conn.execute(stmt).first()
             return int(row.current_version) if row else 0
 
@@ -435,6 +473,7 @@ class TupleRepository:
         (group:eng#member, editor-of, file:readme)
 
         SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
+        Uses read_engine for read replica support (Issue #725).
 
         Args:
             relation: Relation type
@@ -460,7 +499,11 @@ class TupleRepository:
         else:
             stmt = stmt.where(RT.zone_id == zone_id)
 
+<<<<<<< HEAD
         with self.engine.connect() as sa_conn:
+=======
+        with self.read_engine.connect() as sa_conn:
+>>>>>>> origin/develop
             return [
                 (row.subject_type, row.subject_id, row.subject_relation)
                 for row in sa_conn.execute(stmt)
@@ -496,7 +539,11 @@ class TupleRepository:
             expires_filter,
         )
 
+<<<<<<< HEAD
         with self.engine.connect() as sa_conn:
+=======
+        with self.read_engine.connect() as sa_conn:
+>>>>>>> origin/develop
             results = [Entity(row.object_type, row.object_id) for row in sa_conn.execute(stmt)]
 
         if logger.isEnabledFor(logging.DEBUG):
@@ -534,7 +581,11 @@ class TupleRepository:
             expires_filter,
         )
 
+<<<<<<< HEAD
         with self.engine.connect() as sa_conn:
+=======
+        with self.read_engine.connect() as sa_conn:
+>>>>>>> origin/develop
             results = [Entity(row.subject_type, row.subject_id) for row in sa_conn.execute(stmt)]
 
         if logger.isEnabledFor(logging.DEBUG):
@@ -562,7 +613,11 @@ class TupleRepository:
             expires_filter,
         )
 
+<<<<<<< HEAD
         with self.engine.connect() as sa_conn:
+=======
+        with self.read_engine.connect() as sa_conn:
+>>>>>>> origin/develop
             return [(row.subject_type, row.subject_id) for row in sa_conn.execute(stmt)]
 
     def bulk_check_tuples_exist(
@@ -848,7 +903,11 @@ class TupleRepository:
         else:
             stmt = stmt.where(RT.zone_id == zone_id)
 
+<<<<<<< HEAD
         with self.engine.connect() as sa_conn:
+=======
+        with self.read_engine.connect() as sa_conn:
+>>>>>>> origin/develop
             row = sa_conn.execute(stmt).first()
             if row:
                 # Evaluate ABAC conditions if present

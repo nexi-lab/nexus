@@ -1,5 +1,6 @@
-"""Database-backed API key authentication provider."""
+"""Backward-compatibility shim — use nexus.auth.providers.database_key instead."""
 
+<<<<<<< HEAD
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -196,3 +197,9 @@ class DatabaseAPIKeyAuth(AuthProvider):
     def revoke_key(session: Session, key_id: str) -> bool:
         """Revoke an API key. Delegates to nexus.identity.api_key_ops."""
         return revoke_api_key(session, key_id)
+=======
+from nexus.auth.constants import API_KEY_MIN_LENGTH, API_KEY_PREFIX, HMAC_SALT
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+
+__all__ = ["DatabaseAPIKeyAuth", "API_KEY_PREFIX", "API_KEY_MIN_LENGTH", "HMAC_SALT"]
+>>>>>>> origin/develop

@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -244,7 +245,7 @@ def test_in_process_thread_exhaustion(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            enforce_permissions=False,
+            permissions=PermissionConfig(enforce=False),
         )
 
         # Create test files (no permission check needed)
@@ -360,7 +361,7 @@ async def test_async_thread_exhaustion(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
-            enforce_permissions=False,  # Disable for setup
+            permissions=PermissionConfig(enforce=False),  # Disable for setup
         )
 
         # Create test files (no permission check needed)
@@ -391,7 +392,7 @@ async def test_async_thread_exhaustion(
         print("Created 100 test files")
 
         # FORCE WORST CASE: Disable Rust acceleration to simulate slow Python path
-        import nexus.rebac.rebac_fast as rebac_fast
+        import nexus.rebac.utils.fast as rebac_fast
 
         _original_rust_available = rebac_fast.RUST_AVAILABLE  # noqa: F841
         rebac_fast.RUST_AVAILABLE = False

@@ -123,7 +123,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                            If provided, enables persistent caching for fast grep/search.
             max_messages_per_channel: Maximum number of messages to fetch per channel (default: 100).
                                      Set to None for unlimited.
-            metadata_store: FileMetadataProtocol instance for writing to file_paths table (optional).
+            metadata_store: MetastoreABC instance for writing to file_paths table (optional).
                           Required for metadata-based listing (fast database queries).
 
         Note:
@@ -155,7 +155,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         import traceback
 
         try:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth.factory import OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()

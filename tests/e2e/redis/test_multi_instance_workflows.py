@@ -32,6 +32,7 @@ import uuid
 
 import pytest
 
+from nexus.core.config import CacheConfig, DistributedConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -122,24 +123,23 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
             metadata_store=RaftMetadataStore.embedded(str(db_path_agent1).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent1),
             is_admin=True,  # Bypass router access checks
-            enforce_permissions=False,  # Disable permissions for testing
-            enforce_zone_isolation=False,  # Disable zone isolation for testing
+            permissions=PermissionConfig(enforce=False, enforce_zone_isolation=False),
             zone_id="test",  # Explicit zone for consistent event routing
-            enable_content_cache=True,  # Enable cache with invalidation
-            enable_metadata_cache=True,  # Enable cache with invalidation
-            enable_distributed_locks=True,  # Uses Raft-based locks via RaftMetadataStore
+            cache=CacheConfig(enable_content_cache=True, enable_metadata_cache=True),
+            distributed=DistributedConfig(enable_locks=True),
         )
 
     # Use shared event bus (same Redis connection = events propagate)
     nexus._event_bus = shared_event_bus
+    nexus.events_service._event_bus = shared_event_bus
 
     # Start cache invalidation (events from other instances will invalidate local cache)
-    nexus._start_cache_invalidation()
+    nexus.events_service._start_cache_invalidation()
 
     yield nexus
 
     # Stop cache invalidation
-    nexus._stop_cache_invalidation()
+    nexus.events_service._stop_cache_invalidation()
 
 
 @pytest.fixture
@@ -163,24 +163,23 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
             metadata_store=RaftMetadataStore.embedded(str(db_path_agent2).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent2),
             is_admin=True,  # Bypass router access checks
-            enforce_permissions=False,  # Disable permissions for testing
-            enforce_zone_isolation=False,  # Disable zone isolation for testing
+            permissions=PermissionConfig(enforce=False, enforce_zone_isolation=False),
             zone_id="test",  # Explicit zone for consistent event routing
-            enable_content_cache=True,  # Enable cache with invalidation
-            enable_metadata_cache=True,  # Enable cache with invalidation
-            enable_distributed_locks=True,  # Uses Raft-based locks via RaftMetadataStore
+            cache=CacheConfig(enable_content_cache=True, enable_metadata_cache=True),
+            distributed=DistributedConfig(enable_locks=True),
         )
 
     # Use shared event bus (same Redis connection = events propagate)
     nexus._event_bus = shared_event_bus
+    nexus.events_service._event_bus = shared_event_bus
 
     # Start cache invalidation (events from other instances will invalidate local cache)
-    nexus._start_cache_invalidation()
+    nexus.events_service._start_cache_invalidation()
 
     yield nexus
 
     # Stop cache invalidation
-    nexus._stop_cache_invalidation()
+    nexus.events_service._stop_cache_invalidation()
 
 
 # =============================================================================
@@ -216,7 +215,7 @@ class TestWaitThenRead:
 
         async def agent_a_wait_json():
             """Agent A: Wait for JSON files only."""
-            change = await nexus_fs.wait_for_changes("/data/*.json", timeout=5.0)
+            change = await nexus_fs.events_service.wait_for_changes("/data/*.json", timeout=5.0)
             if change:
                 received_path["path"] = change["path"]
 
@@ -238,7 +237,7 @@ class TestWaitThenRead:
         """Agent A waits but no file written -> timeout returns None."""
         nexus_fs.mkdir("/empty", parents=True)
 
-        change = await nexus_fs.wait_for_changes("/empty/", timeout=0.5)
+        change = await nexus_fs.events_service.wait_for_changes("/empty/", timeout=0.5)
 
         assert change is None
 
@@ -261,7 +260,7 @@ class TestLockThenWrite:
         test_path = "/shared/config.json"
         nexus_fs.mkdir("/shared", parents=True)
 
-        lock_id = await nexus_fs.lock(test_path, timeout=5.0)
+        lock_id = await nexus_fs.events_service.lock(test_path, timeout=5.0)
         assert lock_id is not None
 
         try:
@@ -269,7 +268,7 @@ class TestLockThenWrite:
             content = nexus_fs.read(test_path)
             assert content == b'{"version": 1}'
         finally:
-            released = await nexus_fs.unlock(lock_id, test_path)
+            released = await nexus_fs.events_service.unlock(lock_id, test_path)
             assert released is True
 
     @pytest.mark.asyncio
@@ -282,7 +281,7 @@ class TestLockThenWrite:
         lock_released = False
         operation_failed = False
 
-        lock_id = await nexus_fs.lock(test_path, timeout=5.0)
+        lock_id = await nexus_fs.events_service.lock(test_path, timeout=5.0)
         if lock_id:
             lock_acquired = True
             try:
@@ -291,7 +290,7 @@ class TestLockThenWrite:
             except ValueError:
                 operation_failed = True
             finally:
-                released = await nexus_fs.unlock(lock_id, test_path)
+                released = await nexus_fs.events_service.unlock(lock_id, test_path)
                 lock_released = released
 
         assert lock_acquired is True
@@ -409,9 +408,9 @@ class TestEventNotification:
 
         async def waiter():
             # Wait specifically for file_write event (ignore lingering dir_create)
-            event = await nexus_fs.wait_for_changes("/notify/", timeout=5.0)
+            event = await nexus_fs.events_service.wait_for_changes("/notify/", timeout=5.0)
             while event and event.get("type") != "file_write":
-                event = await nexus_fs.wait_for_changes("/notify/", timeout=3.0)
+                event = await nexus_fs.events_service.wait_for_changes("/notify/", timeout=3.0)
             received_event["event"] = event
 
         async def writer():
@@ -444,9 +443,13 @@ class TestEventNotification:
 
         async def waiter():
             # second instance waits for delete event via Redis
-            event = await second_nexus_fs.wait_for_changes("/notify_del/", timeout=5.0)
+            event = await second_nexus_fs.events_service.wait_for_changes(
+                "/notify_del/", timeout=5.0
+            )
             while event and event.get("type") != "file_delete":
-                event = await second_nexus_fs.wait_for_changes("/notify_del/", timeout=3.0)
+                event = await second_nexus_fs.events_service.wait_for_changes(
+                    "/notify_del/", timeout=3.0
+                )
             received_event["event"] = event
 
         async def deleter():
@@ -479,9 +482,13 @@ class TestEventNotification:
 
         async def waiter():
             # second instance waits for rename event via Redis
-            event = await second_nexus_fs.wait_for_changes("/notify_ren/", timeout=5.0)
+            event = await second_nexus_fs.events_service.wait_for_changes(
+                "/notify_ren/", timeout=5.0
+            )
             while event and event.get("type") != "file_rename":
-                event = await second_nexus_fs.wait_for_changes("/notify_ren/", timeout=3.0)
+                event = await second_nexus_fs.events_service.wait_for_changes(
+                    "/notify_ren/", timeout=3.0
+                )
             received_event["event"] = event
 
         async def renamer():
@@ -521,14 +528,14 @@ class TestErrorHandling:
         test_path = "/expired/lock.txt"
         nexus_fs.mkdir("/expired", parents=True)
 
-        lock_id = await nexus_fs.lock(test_path, timeout=5.0, ttl=0.3)
+        lock_id = await nexus_fs.events_service.lock(test_path, timeout=5.0, ttl=0.3)
         assert lock_id is not None
 
         # Wait for TTL to expire
         await asyncio.sleep(0.5)
 
         # Raft single-node: unlock still succeeds (no TTL auto-expiry)
-        released = await nexus_fs.unlock(lock_id, test_path)
+        released = await nexus_fs.events_service.unlock(lock_id, test_path)
         assert released is True
 
     @pytest.mark.asyncio
@@ -537,11 +544,11 @@ class TestErrorHandling:
         test_path = "/wrong/lock.txt"
         nexus_fs.mkdir("/wrong", parents=True)
 
-        lock_id = await nexus_fs.lock(test_path, timeout=5.0)
+        lock_id = await nexus_fs.events_service.lock(test_path, timeout=5.0)
         assert lock_id is not None
 
         try:
-            extended = await nexus_fs.extend_lock("wrong-id", test_path, ttl=30.0)
+            extended = await nexus_fs.events_service.extend_lock("wrong-id", test_path, ttl=30.0)
             assert extended is False
         finally:
-            await nexus_fs.unlock(lock_id, test_path)
+            await nexus_fs.events_service.unlock(lock_id, test_path)

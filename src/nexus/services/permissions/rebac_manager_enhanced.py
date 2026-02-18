@@ -1,6 +1,6 @@
-"""
-Enhanced ReBAC Manager with P0 Fixes
+"""Backward-compat shim — canonical: nexus.rebac.manager."""
 
+<<<<<<< HEAD
 This module implements critical security and reliability fixes for GA:
 - P0-1: Consistency levels and version tokens
 - P0-2: Zone scoping (absorbed from ZoneAwareReBACManager — Phase 10)
@@ -3307,3 +3307,6 @@ class EnhancedReBACManager(ReBACManager):
             self._tuple_version += 1
 
         return len(rows)
+=======
+from nexus.rebac.manager import EnhancedReBACManager, ReBACManager  # noqa: F401
+>>>>>>> origin/develop

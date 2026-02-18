@@ -1,5 +1,6 @@
-"""PermissionEnforcer — ReBAC permission enforcement for Nexus (v0.6.0+).
+"""Backward-compat shim — canonical: nexus.rebac.enforcer."""
 
+<<<<<<< HEAD
 Moved from core/permissions.py to services/permissions/ because this class
 has runtime dependencies on services/ (PermissionCacheCoordinator,
 AdminCapability, AuditLogEntry, PermissionFilterChain). Per KERNEL-ARCHITECTURE.md,
@@ -1056,3 +1057,6 @@ class PermissionEnforcer:
                 result.append(path)
 
         return result
+=======
+from nexus.rebac.enforcer import PermissionEnforcer  # noqa: F401
+>>>>>>> origin/develop

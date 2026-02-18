@@ -43,6 +43,8 @@ first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 
 from __future__ import annotations
 
+import logging
+
 __version__ = "0.7.2.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
@@ -64,7 +66,6 @@ if TYPE_CHECKING:
     from nexus.backends.gcs import GCSBackend
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
-    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.exceptions import (
         BackendError,
         InvalidPathError,
@@ -74,6 +75,7 @@ if TYPE_CHECKING:
         NexusPermissionError,
     )
     from nexus.core.filesystem import NexusFilesystem
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
@@ -102,6 +104,8 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+
+logger = logging.getLogger(__name__)
 
 # Module-level cache for lazy imports
 _lazy_imports_cache: dict[str, Any] = {}
@@ -238,14 +242,11 @@ def connect(
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
-        return cast(
-            NexusFilesystem,
-            RemoteNexusFS(
-                server_url=server_url,
-                api_key=api_key,
-                timeout=timeout,
-                connect_timeout=connect_timeout,
-            ),
+        return RemoteNexusFS(  # type: ignore[return-value]
+            server_url=server_url,
+            api_key=api_key,
+            timeout=timeout,
+            connect_timeout=connect_timeout,
         )
 
     # ── Modes: standalone / federation ───────────────────────────────
@@ -289,7 +290,7 @@ def connect(
         metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
 
     # Create metadata store based on mode
-    metadata_store: FileMetadataProtocol
+    metadata_store: MetastoreABC
     if cfg.mode == "federation":
         try:
             from nexus.constants import DEFAULT_GRPC_BIND_ADDR
@@ -410,7 +411,45 @@ def connect(
     if cfg.mode == "federation":
         nx_fs._zone_mgr = zone_mgr
 
+    # Restore saved mounts (application-layer startup I/O)
+    _restore_mounts(nx_fs)
+
     return nx_fs
+
+
+def _restore_mounts(nx_fs: NexusFS) -> None:
+    """Restore saved mounts from database at application startup.
+
+    This is application-layer I/O that runs after NexusFS construction.
+    The factory itself never performs I/O — callers decide when to
+    restore mounts.
+    """
+    import os
+
+    try:
+        auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        mount_result = nx_fs.load_all_saved_mounts(auto_sync=auto_sync)
+        if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
+            sync_msg = f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
+            logger.info(
+                "Mount restoration: %d loaded%s, %d failed",
+                mount_result["loaded"],
+                sync_msg,
+                mount_result["failed"],
+            )
+            if not auto_sync and mount_result["loaded"] > 0:
+                logger.info(
+                    "Auto-sync disabled for fast startup. "
+                    "Use sync_mount() or set NEXUS_AUTO_SYNC_MOUNTS=true"
+                )
+            for error in mount_result.get("errors", []):
+                logger.error("  Mount error: %s", error)
+    except Exception as e:
+        logger.warning("Failed to load saved mounts during initialization: %s", e)
 
 
 __all__ = [

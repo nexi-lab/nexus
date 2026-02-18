@@ -1,23 +1,17 @@
-"""Unified registry base for named-component registries.
+"""Re-export shim — canonical home is ``nexus.contracts.registry`` (Issue #1523).
 
-Provides ``BaseRegistry[T]``, a generic, thread-safe registry that
-eliminates the duplicated register/get/list/clear/discover boilerplate
-found across the codebase.  ``BrickRegistry`` adds mandatory Protocol
-compliance checking on top.
-
-**Intentionally excluded registries:**
-
-* ``SkillRegistry`` -- async, dual-store, tier hierarchy, ReBAC.
-* ``RouterRegistry`` -- ordered list, thin API, ASGI middleware.
-
-Their domain-specific logic far outweighs the ~9 LOC of common boilerplate,
-so forcing them into ``BaseRegistry`` would *add* complexity.
-
-Design doc: NEXUS-LEGO-ARCHITECTURE.md S5.2, S12.5, S19.5.
+All symbols are re-exported so existing ``from nexus.core.registry import …``
+statements continue to work with zero changes.
 """
 
-from __future__ import annotations
+from nexus.contracts.registry import (
+    BaseRegistry,
+    BrickInfo,
+    BrickRegistry,
+    _validate_protocol_compliance,
+)
 
+<<<<<<< HEAD
 import importlib
 import inspect
 import logging
@@ -267,3 +261,11 @@ def _validate_protocol_compliance(obj: Any, protocol: type) -> None:
         raise TypeError(
             f"{target.__name__} missing protocol attributes: {', '.join(sorted(missing))}"
         )
+=======
+__all__ = [
+    "BaseRegistry",
+    "BrickInfo",
+    "BrickRegistry",
+    "_validate_protocol_compliance",
+]
+>>>>>>> origin/develop

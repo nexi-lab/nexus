@@ -23,7 +23,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+<<<<<<< HEAD
     from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
+=======
+    from nexus.rebac.cache.tiger import TigerCache, TigerCacheUpdater
+>>>>>>> origin/develop
 
 logger = logging.getLogger(__name__)
 

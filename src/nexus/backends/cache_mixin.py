@@ -1,170 +1,90 @@
-"""Cache mixin for connectors.
+"""Cache mixin for connectors — thin adapter.
 
-Provides caching capabilities for connector backends (GCS, S3, X, Gmail, etc.).
-Local backend does not use this mixin - caching is only for external connectors.
+Delegates all cache logic to CacheService and BackendIOService.
+Preserves the full public API for backward compatibility with all
+7 connectors (GCS, S3, Local, Gmail, Slack, HN, GCalendar).
 
-See docs/design/cache-layer.md for design details.
-Part of: #506, #510 (cache layer epic)
+Part of: #506, #510 (cache layer epic), #1628 (SRP refactor)
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
-
-from nexus.core.exceptions import ConflictError
-from nexus.core.hash_fast import hash_content
+from nexus.backends.cache_models import (
+    IMMUTABLE_VERSION,
+    MAX_CACHE_FILE_SIZE,
+    MAX_FULL_TEXT_SIZE,
+    SUMMARY_SIZE,
+    CachedReadResult,
+    CacheEntry,
+    SyncResult,
+)
 from nexus.core.permissions import OperationContext
-from nexus.storage.file_cache import get_file_cache
-from nexus.storage.models import FilePathModel
 
 if TYPE_CHECKING:
     from nexus_fast import L1MetadataCache
     from sqlalchemy.orm import Session
 
+    from nexus.backends.cache_service import CacheService as _CacheServiceType
+
 logger = logging.getLogger(__name__)
 
-# Backend version constant for immutable content (e.g., Gmail emails that never change)
-IMMUTABLE_VERSION = "immutable"
-
-
-@dataclass
-class SyncResult:
-    """Result of a sync operation."""
-
-    files_scanned: int = 0
-    files_synced: int = 0
-    files_skipped: int = 0
-    bytes_synced: int = 0
-    embeddings_generated: int = 0
-    errors: list[str] = field(default_factory=list)
-
-    def __repr__(self) -> str:
-        return (
-            f"SyncResult(scanned={self.files_scanned}, synced={self.files_synced}, "
-            f"skipped={self.files_skipped}, bytes={self.bytes_synced}, "
-            f"embeddings={self.embeddings_generated}, errors={len(self.errors)})"
-        )
-
-
-@dataclass
-class CacheEntry:
-    """A cached content entry with lazy loading.
-
-    The content_binary field uses lazy loading - raw bytes are stored
-    in _content_binary_raw and only assigned when content_binary is accessed.
-    This avoids memory overhead when content isn't actually read.
-    """
-
-    cache_id: str
-    path_id: str
-    content_text: str | None
-    _content_binary: bytes | None  # Binary content (cached after first access)
-    content_hash: str
-    content_type: str
-    original_size: int
-    cached_size: int
-    backend_version: str | None
-    synced_at: datetime
-    stale: bool
-    parsed_from: str | None = None
-    parse_metadata: dict | None = None
-    _content_binary_raw: bytes | None = None  # Raw bytes for lazy loading
-
-    @property
-    def content_binary(self) -> bytes | None:
-        """Get binary content (lazy load on first access)."""
-        if self._content_binary is None and self._content_binary_raw:
-            self._content_binary = self._content_binary_raw
-        return self._content_binary
-
-    @content_binary.setter
-    def content_binary(self, value: bytes | None) -> None:
-        """Set binary content directly."""
-        self._content_binary = value
-        self._content_binary_raw = None  # Clear raw since we have the value
-
-
-@dataclass
-class CachedReadResult:
-    """Result of a cached read operation.
-
-    Contains both the content and metadata needed for HTTP caching (ETag, etc.).
-    """
-
-    content: bytes
-    content_hash: str  # Can be used as ETag
-    from_cache: bool  # True if served from cache, False if fetched from backend
-    cache_entry: CacheEntry | None = None  # Full cache entry if available
+# Re-export for backward compatibility
+__all__ = [
+    "IMMUTABLE_VERSION",
+    "MAX_CACHE_FILE_SIZE",
+    "MAX_FULL_TEXT_SIZE",
+    "SUMMARY_SIZE",
+    "CacheConnectorMixin",
+    "CacheEntry",
+    "CachedReadResult",
+    "SyncResult",
+]
 
 
 class CacheConnectorMixin:
     """Mixin that adds cache support to connectors.
 
+    Thin adapter that delegates to CacheService and BackendIOService.
+    Preserves all method signatures for backward compatibility.
+
     Provides a two-level cache:
     - L1: In-memory Rust metadata cache (fast, per-instance, lost on restart)
     - L2: Disk-based content + metadata sidecar (FileContentCache)
 
-    Per data-storage-matrix.md, ContentCacheModel (DB) has been eliminated.
-    L2 uses disk files (.bin, .txt, .meta) instead of PostgreSQL.
-
     Usage:
         class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             pass
-
-    The connector must have:
-        - self.session_factory: SQLAlchemy session factory (for FilePathModel lookups)
-        - OR self.db_session: SQLAlchemy session (legacy)
-        - self._read_from_backend(): Read content from actual backend
-        - self._list_files(): List files from backend
-
-    Optional (for version checking):
-        - self.get_version(): Get current backend version for a path
-
-    L1-Only Mode:
-        Set l1_only=True to skip L2 (disk) caching entirely.
-        This is useful for connectors where the source is already local
-        (e.g., LocalConnector), so L2 persistence provides no benefit.
-
-        When l1_only=True:
-        - No session_factory/db_session required
-        - L1 cache uses disk_path pointing to original files
-        - Connector must implement get_physical_path() for disk_path
     """
 
     # L1-only mode: skip L2 (PostgreSQL) caching entirely
-    # Useful for LocalConnector where source is already local disk
     l1_only: bool = False
 
     # Callback for sync completion notifications (e.g., zoekt reindex). Issue #1520.
     on_sync_callback: Any | None = None
 
     # Maximum file size to cache (default 100MB)
-    MAX_CACHE_FILE_SIZE: int = 100 * 1024 * 1024
+    MAX_CACHE_FILE_SIZE: int = MAX_CACHE_FILE_SIZE
 
-    # L1 Metadata Cache (Rust) - lock-free, stores only metadata (~100 bytes per entry)
-    # Content is read via mmap from disk when needed
-    # Using class variable so all connectors share the same cache
+    # Maximum text size to store as 'full' (default 10MB)
+    MAX_FULL_TEXT_SIZE: int = MAX_FULL_TEXT_SIZE
+
+    # Summary size for large files (default 100KB)
+    SUMMARY_SIZE: int = SUMMARY_SIZE
+
+    # =========================================================================
+    # L1 Metadata Cache (Rust) — class-level, shared across all connectors
+    # =========================================================================
+
     _l1_cache: L1MetadataCache | None = None
-    _l1_max_entries: int = 100_000  # Default 100k entries
-    _l1_default_ttl: int = 300  # Default 5 minutes TTL
+    _l1_max_entries: int = 100_000
+    _l1_default_ttl: int = 300
 
     @classmethod
     def _get_l1_cache(cls) -> L1MetadataCache | None:
-        """Get or create the shared L1 metadata cache (Rust-based).
-
-        The L1 cache stores only metadata (~100 bytes per entry) instead of
-        full content. Content is read via mmap from disk when needed.
-
-        Performance:
-        - Lookup: <1μs (vs ~100μs for Python pickle-based L1)
-        - Concurrent access: Lock-free (vs Python threading.Lock)
-        - Memory: ~100 bytes per entry (vs megabytes for content)
-        """
+        """Get or create the shared L1 metadata cache (Rust-based)."""
         if cls._l1_cache is None:
             try:
                 from nexus_fast import L1MetadataCache
@@ -174,8 +94,9 @@ class CacheConnectorMixin:
                     default_ttl=cls._l1_default_ttl,
                 )
                 logger.info(
-                    f"[CACHE] L1 Rust cache initialized: max_entries={cls._l1_max_entries}, "
-                    f"default_ttl={cls._l1_default_ttl}s"
+                    "[CACHE] L1 Rust cache initialized: max_entries=%d, default_ttl=%ds",
+                    cls._l1_max_entries,
+                    cls._l1_default_ttl,
                 )
             except ImportError:
                 logger.warning("[CACHE] nexus_fast not available, L1 cache disabled")
@@ -184,25 +105,15 @@ class CacheConnectorMixin:
 
     @classmethod
     def set_l1_cache_config(cls, max_entries: int = 100_000, default_ttl: int = 300) -> None:
-        """Configure the L1 cache. Must be called before first use.
-
-        Args:
-            max_entries: Maximum number of entries (default: 100000)
-            default_ttl: Default TTL in seconds (default: 300 = 5 minutes)
-        """
+        """Configure the L1 cache. Must be called before first use."""
         cls._l1_max_entries = max_entries
         cls._l1_default_ttl = default_ttl
-        # Reset cache if already created
         if cls._l1_cache is not None:
             cls._l1_cache = None
 
     @classmethod
     def get_l1_cache_stats(cls) -> dict[str, Any]:
-        """Get L1 cache statistics.
-
-        Returns:
-            Dict with entries, hits, misses, hit_rate, max_entries, default_ttl
-        """
+        """Get L1 cache statistics."""
         if cls._l1_cache is None:
             return {
                 "entries": 0,
@@ -221,123 +132,60 @@ class CacheConnectorMixin:
         if cls._l1_cache is not None:
             cls._l1_cache.clear()
 
-    # Maximum text size to store as 'full' (default 10MB)
-    MAX_FULL_TEXT_SIZE: int = 10 * 1024 * 1024
+    # =========================================================================
+    # Lazy CacheService creation
+    # =========================================================================
 
-    # Summary size for large files (default 100KB)
-    SUMMARY_SIZE: int = 100 * 1024
+    @property
+    def _cache_service(self) -> _CacheServiceType:
+        """Lazy-create CacheService on first access."""
+        if not hasattr(self, "_cache_service_instance"):
+            from nexus.backends.backend_io import BackendIOService
+            from nexus.backends.cache_service import CacheService
+
+            self._cache_service_instance = CacheService(
+                connector=self,
+                l1_cache=self._get_l1_cache(),
+                backend_io=BackendIOService(self),
+            )
+        return self._cache_service_instance
+
+    # =========================================================================
+    # Delegated methods — preserve all original signatures
+    # =========================================================================
 
     def _has_caching(self) -> bool:
-        """Check if any caching is enabled (L1 or L1+L2).
-
-        Returns True if:
-        - l1_only mode is enabled (L1 cache only), OR
-        - session_factory/db_session is available (L1+L2 cache)
-
-        This is the standard implementation. Connectors can override if needed.
-        """
-        # L1-only mode: caching enabled without database
-        if getattr(self, "l1_only", False):
-            return True
-        # L1+L2 mode: requires database session
-        return (
-            getattr(self, "session_factory", None) is not None
-            or getattr(self, "db_session", None) is not None
-            or getattr(self, "_db_session", None) is not None
-        )
+        """Check if any caching is enabled (L1 or L1+L2)."""
+        return self._cache_service.has_caching()
 
     def _has_l2_caching(self) -> bool:
-        """Check if L2 (PostgreSQL) caching is enabled.
-
-        Returns True only if:
-        - l1_only mode is NOT enabled, AND
-        - session_factory/db_session is available
-
-        Used to skip L2 operations in L1-only mode.
-        """
-        if getattr(self, "l1_only", False):
-            return False
-        return (
-            getattr(self, "session_factory", None) is not None
-            or getattr(self, "db_session", None) is not None
-            or getattr(self, "_db_session", None) is not None
-        )
+        """Check if L2 (disk) caching is enabled."""
+        return self._cache_service.has_l2_caching()
 
     def _get_cache_path(self, context: OperationContext | None) -> str | None:
-        """Get the cache key path from context.
-
-        Prefers virtual_path (full path like /mnt/s3/file.txt) over backend_path.
-        This ensures cache keys match the file_paths table entries.
-
-        Args:
-            context: Operation context with virtual_path and/or backend_path
-
-        Returns:
-            The path to use as cache key, or None if no path available
-        """
-        if context is None:
-            return None
-        # Prefer virtual_path (full path with mount prefix)
-        if hasattr(context, "virtual_path") and context.virtual_path:
-            return context.virtual_path
-        # Fall back to backend_path
-        if hasattr(context, "backend_path") and context.backend_path:
-            return context.backend_path
-        return None
+        """Get the cache key path from context."""
+        return self._cache_service.get_cache_path(context)
 
     def _get_db_session(self) -> Session:
-        """Get database session. Override if session is stored differently.
-
-        Supports multiple patterns:
-        1. session_factory (SessionLocal) - creates new session each call
-        2. db_session - existing session instance
-        3. _db_session - existing session instance (alternate attribute)
-        """
-        # Prefer session factory pattern (creates session per operation)
-        if hasattr(self, "session_factory") and self.session_factory is not None:
-            return cast("Session", self.session_factory())
-        # Fall back to existing session
-        if hasattr(self, "db_session") and self.db_session is not None:
-            return cast("Session", self.db_session)
-        if hasattr(self, "_db_session") and self._db_session is not None:
-            return cast("Session", self._db_session)
-        raise RuntimeError("No database session available for caching")
+        """Get database session."""
+        return self._cache_service.get_db_session()
 
     def _get_path_id(self, path: str, session: Session) -> str | None:
         """Get path_id for a virtual path."""
-        stmt = select(FilePathModel.path_id).where(
-            FilePathModel.virtual_path == path,
-            FilePathModel.deleted_at.is_(None),
-        )
-        result = session.execute(stmt)
-        row: str | None = result.scalar_one_or_none()
-        return row
+        return self._cache_service.get_path_id(path, session)
 
     def _get_path_ids_bulk(self, paths: list[str], session: Session) -> dict[str, str]:
-        """Get path_ids for multiple virtual paths in a single query.
+        """Get path_ids for multiple virtual paths in a single query."""
+        return self._cache_service.get_path_ids_bulk(paths, session)
 
-        Args:
-            paths: List of virtual paths
-            session: Database session
+    def _read_from_cache(self, path: str, original: bool = False) -> CacheEntry | None:
+        """Read content from cache (L1 then L2)."""
+        return self._cache_service.read_from_cache(path, original)
 
-        Returns:
-            Dict mapping virtual_path -> path_id (only for paths that exist)
-        """
-        if not paths:
-            return {}
-
-        stmt = select(FilePathModel.virtual_path, FilePathModel.path_id).where(
-            FilePathModel.virtual_path.in_(paths),
-            FilePathModel.deleted_at.is_(None),
-        )
-        result = session.execute(stmt)
-        return {row[0]: row[1] for row in result.fetchall()}
-
-    def read_bulk_from_cache(
-        self,
-        paths: list[str],
-        original: bool = False,
+    def _read_bulk_from_cache(
+        self, paths: list[str], original: bool = False
     ) -> dict[str, CacheEntry]:
+<<<<<<< HEAD
         """Read multiple entries from cache in bulk (L1 + L2).
 
         This is optimized for batch operations like grep where many files
@@ -486,12 +334,15 @@ class CacheConnectorMixin:
             f"{len(paths) - len(results)} misses (total {len(paths)} paths)"
         )
         return results
+=======
+        """Read multiple entries from cache in bulk (L1 + L2)."""
+        return self._cache_service.read_bulk_from_cache(paths, original)
+>>>>>>> origin/develop
 
     def read_content_bulk(
-        self,
-        paths: list[str],
-        context: OperationContext | None = None,
+        self, paths: list[str], context: OperationContext | None = None
     ) -> dict[str, bytes]:
+<<<<<<< HEAD
         """Read multiple files' content in bulk, using cache where available.
 
         This method is optimized for batch operations like grep. It:
@@ -689,6 +540,10 @@ class CacheConnectorMixin:
                 logger.debug("[CACHE] L1 cache populate failed for %s: %s", path, e)
 
         return entry
+=======
+        """Read multiple files' content in bulk, using cache where available."""
+        return self._cache_service.read_content_bulk(paths, context)
+>>>>>>> origin/develop
 
     def _write_to_cache(
         self,
@@ -701,6 +556,7 @@ class CacheConnectorMixin:
         parse_metadata: dict | None = None,
         zone_id: str | None = None,
     ) -> CacheEntry:
+<<<<<<< HEAD
         """Write content to cache.
 
         Supports two modes:
@@ -842,130 +698,132 @@ class CacheConnectorMixin:
         return CacheEntry(
             cache_id=cache_id,
             path_id=path_id,
+=======
+        """Write content to cache."""
+        return self._cache_service.write_to_cache(
+            path=path,
+            content=content,
+>>>>>>> origin/develop
             content_text=content_text,
-            _content_binary=content if original_size <= self.MAX_CACHE_FILE_SIZE else None,
-            content_hash=content_hash,
             content_type=content_type,
-            original_size=original_size,
-            cached_size=cached_size,
             backend_version=backend_version,
-            synced_at=now,
-            stale=False,
             parsed_from=parsed_from,
             parse_metadata=parse_metadata,
+            zone_id=zone_id,
         )
 
-    # =========================================================================
-    # Automatic Caching API (for new connectors)
-    # =========================================================================
+    def _batch_write_to_cache(self, entries: list[dict]) -> list[CacheEntry]:
+        """Write multiple entries to cache in a single transaction."""
+        return self._cache_service.bulk_write_to_cache(entries)
 
     def read_content_with_cache(
         self,
         content_hash: str,
         context: OperationContext | None = None,
     ) -> CachedReadResult:
-        """Read content with automatic L1/L2 caching.
+        """Read content with automatic L1/L2 caching."""
+        return self._cache_service.read_content_with_cache(content_hash, context)
 
-        This method provides automatic caching for connector read operations:
-        1. Check L1 (memory) and L2 (PostgreSQL) cache
-        2. If cache hit and not stale, return cached content
-        3. If cache miss or stale, call _fetch_content() to get from backend
-        4. Write fetched content to cache
-        5. Return content with metadata (content_hash for ETag support)
+    def get_content_hash(self, path: str) -> str | None:
+        """Get content hash (ETag) for a path from cache."""
+        return self._cache_service.get_content_hash(path)
 
-        New connectors should:
-        1. Inherit from CacheConnectorMixin
-        2. Implement _fetch_content() to fetch from their backend
-        3. Call read_content_with_cache() in their read_content() method
+    def _invalidate_cache(
+        self,
+        path: str | None = None,
+        mount_prefix: str | None = None,
+        delete: bool = False,
+    ) -> int:
+        """Invalidate cache entries (L1 memory + L2 disk)."""
+        return self._cache_service.invalidate_cache(path, mount_prefix, delete)
 
-        Example:
-            class NewConnector(Backend, CacheConnectorMixin):
-                def _fetch_content(self, content_hash, context):
-                    # Fetch from your backend (API, storage, etc.)
-                    return self._api_client.get(context.backend_path)
+    def _check_version(
+        self,
+        path: str,
+        expected_version: str,
+        context: OperationContext | None = None,
+    ) -> bool:
+        """Check if backend version matches expected."""
+        return self._cache_service.check_version(path, expected_version, context)
 
-                def read_content(self, content_hash, context):
-                    result = self.read_content_with_cache(content_hash, context)
-                    return result.content
+    def _get_size_from_cache(self, path: str) -> int | None:
+        """Get file size from cache (efficient, no backend call)."""
+        return self._cache_service.get_size_from_cache(path)
 
-        Args:
-            content_hash: Content hash (may be ignored by some connectors)
-            context: Operation context with backend_path, zone_id, etc.
+    # =========================================================================
+    # Public-name aliases (used by SyncPipelineService on develop)
+    # =========================================================================
 
-        Returns:
-            CachedReadResult with content, content_hash (ETag), and cache metadata
+    def read_bulk_from_cache(
+        self, paths: list[str], original: bool = False
+    ) -> dict[str, CacheEntry]:
+        """Public alias for _read_bulk_from_cache (SyncPipelineService)."""
+        return self._read_bulk_from_cache(paths, original)
 
-        Raises:
-            ValueError: If context.backend_path is not set
-            BackendError: If fetch fails
-        """
-        if not context or not context.backend_path:
-            raise ValueError("context with backend_path is required")
+    def batch_read_from_backend(
+        self,
+        paths: list[str],
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, bytes]:
+        """Public alias for _batch_read_from_backend (SyncPipelineService)."""
+        return self._batch_read_from_backend(paths, contexts)
 
-        path = self._get_cache_path(context) or context.backend_path
-        zone_id = getattr(context, "zone_id", None)
+    def parse_content(
+        self, path: str, content: bytes
+    ) -> tuple[str | None, str | None, dict | None]:
+        """Public alias for _parse_content (SyncPipelineService)."""
+        return self._parse_content(path, content)
 
-        # Step 1: Check cache (L1 then L2)
-        if self._has_caching():
-            cached = self._read_from_cache(path, original=True)
-            if cached and not cached.stale and cached.content_binary:
-                logger.debug(f"[CACHE] HIT: {path}")
-                return CachedReadResult(
-                    content=cached.content_binary,
-                    content_hash=cached.content_hash,
-                    from_cache=True,
-                    cache_entry=cached,
-                )
+    def batch_write_to_cache(self, entries: list[dict]) -> list[CacheEntry]:
+        """Public alias for _batch_write_to_cache (SyncPipelineService)."""
+        return self._batch_write_to_cache(entries)
 
-        # Step 2: Fetch from backend
-        logger.debug(f"[CACHE] MISS: {path} - fetching from backend")
-        content = self._fetch_content(content_hash, context)
+    def generate_embeddings_for_path(self, path: str) -> None:
+        """Public alias for _generate_embeddings (SyncPipelineService)."""
+        return self._generate_embeddings(path)
 
-        # Step 3: Write to cache
-        result_hash = hash_content(content)
-        cache_entry = None
+    # =========================================================================
+    # Backend I/O — delegated to BackendIOService via CacheService
+    # =========================================================================
 
-        if self._has_caching():
-            try:
-                cache_entry = self._write_to_cache(
-                    path=path,
-                    content=content,
-                    backend_version=self._get_backend_version(context),
-                    zone_id=zone_id,
-                )
-                result_hash = cache_entry.content_hash
-            except Exception as e:
-                logger.warning(f"[CACHE] Failed to cache {path}: {e}")
+    def _batch_read_from_backend(
+        self,
+        paths: list[str],
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, bytes]:
+        """Batch read content directly from backend (bypassing cache)."""
+        return self._cache_service.backend_io.batch_read_from_backend(paths, contexts)
 
-        return CachedReadResult(
-            content=content,
-            content_hash=result_hash,
-            from_cache=False,
-            cache_entry=cache_entry,
-        )
+    def _read_content_from_backend(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> bytes | None:
+        """Read content directly from backend (bypassing cache)."""
+        return self._cache_service.backend_io.read_content_from_backend(path, context)
+
+    def _parse_content(
+        self,
+        path: str,
+        content: bytes,
+    ) -> tuple[str | None, str | None, dict | None]:
+        """Parse content using the parser registry."""
+        return self._cache_service.backend_io.parse_content(path, content)
+
+    def _generate_embeddings(self, path: str) -> None:
+        """Generate embeddings for a file. Override in connectors."""
+        pass
+
+    # =========================================================================
+    # Connector hooks (stay in mixin — overridden by connectors)
+    # =========================================================================
 
     def _fetch_content(
         self,
         content_hash: str,
         context: OperationContext | None = None,
     ) -> bytes:
-        """Fetch content from the backend (to be implemented by connectors).
-
-        New connectors should override this method to implement their
-        backend-specific fetch logic. The caching is handled automatically
-        by read_content_with_cache().
-
-        Args:
-            content_hash: Content hash (may be ignored by some connectors)
-            context: Operation context with backend_path
-
-        Returns:
-            Content as bytes
-
-        Raises:
-            NotImplementedError: If not overridden by connector
-            BackendError: If fetch fails
-        """
+        """Fetch content from the backend (to be implemented by connectors)."""
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement _fetch_content() "
             "to use read_content_with_cache()"
@@ -975,20 +833,10 @@ class CacheConnectorMixin:
         self,
         context: OperationContext | None = None,
     ) -> str | None:
-        """Get the backend version for a path (for cache invalidation).
-
-        Override this in connectors that support versioning (S3, GCS).
-        API connectors (HN, X) typically return None and use TTL-based expiration.
-
-        Args:
-            context: Operation context with backend_path
-
-        Returns:
-            Backend version string, or None if not supported
-        """
-        # Default: no versioning (use TTL-based expiration)
+        """Get the backend version for a path (for cache invalidation)."""
         return None
 
+<<<<<<< HEAD
     def get_content_hash(
         self,
         path: str,
@@ -1280,6 +1128,8 @@ class CacheConnectorMixin:
 
         return True
 
+=======
+>>>>>>> origin/develop
     def sync_content_to_cache(
         self,
         path: str | None = None,
@@ -1290,24 +1140,7 @@ class CacheConnectorMixin:
         generate_embeddings: bool = True,
         context: OperationContext | None = None,
     ) -> SyncResult:
-        """Sync content from connector backend to cache layer.
-
-        Delegates to SyncPipelineService which orchestrates a 7-step process
-        to efficiently sync content from external storage backends (GCS, S3,
-        Gmail, etc.) into a two-level cache (L1 in-memory + L2 disk).
-
-        Args:
-            path: Specific path to sync (relative to mount), or None for entire mount
-            mount_point: Virtual mount point (e.g., "/mnt/gcs")
-            include_patterns: Glob patterns to include (e.g., ["*.py", "*.md"])
-            exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc", ".git/*"])
-            max_file_size: Maximum file size to cache (default: MAX_CACHE_FILE_SIZE)
-            generate_embeddings: Generate embeddings for semantic search (default: True)
-            context: Operation context with zone_id, user, etc.
-
-        Returns:
-            SyncResult with statistics (files_scanned, files_synced, etc.)
-        """
+        """Sync content from connector backend to cache layer."""
         from nexus.backends.sync_pipeline import SyncPipelineService
 
         pipeline = SyncPipelineService(self)
@@ -1321,213 +1154,7 @@ class CacheConnectorMixin:
             context=context,
         )
 
-        # Notify search brick via callback if files were synced (Issue #1520)
         if result.files_synced > 0 and self.on_sync_callback is not None:
             self.on_sync_callback(result.files_synced)
 
         return result
-
-    def batch_read_from_backend(
-        self,
-        paths: list[str],
-        contexts: dict[str, OperationContext] | None = None,
-    ) -> dict[str, bytes]:
-        """Batch read content directly from backend (bypassing cache).
-
-        Leverages _bulk_download_blobs() for efficient parallel downloads when
-        available (BaseBlobStorageConnector subclasses). Falls back to sequential
-        reads for other connector types.
-
-        Args:
-            paths: List of backend-relative paths
-            contexts: Optional dict mapping path -> OperationContext
-
-        Returns:
-            Dict mapping path -> content bytes (only successful reads)
-
-        Performance:
-            - With _bulk_download_blobs: 10-20x speedup via parallel downloads
-              - GCS: ~15x speedup with 10 workers (optimal)
-              - S3: ~20x speedup with 20 workers
-            - Without: Sequential reads (fallback)
-        """
-        # Check if this connector has bulk download support
-        if hasattr(self, "_bulk_download_blobs") and hasattr(self, "_get_blob_path"):
-            # Use optimized bulk download for blob storage connectors
-            logger.info(f"[BATCH-READ] Using bulk download for {len(paths)} paths")
-
-            # Convert backend paths to blob paths
-            blob_paths = [self._get_blob_path(path) for path in paths]
-
-            # Extract version IDs from contexts if available
-            version_ids: dict[str, str] = {}
-            if contexts:
-                for path in paths:
-                    context = contexts.get(path)
-                    if context and hasattr(context, "version_id") and context.version_id:
-                        blob_path = self._get_blob_path(path)
-                        version_ids[blob_path] = context.version_id
-
-            # Bulk download all blobs in parallel
-            # Uses connector's default max_workers (GCS: 10, S3: 20, Base: 20)
-            blob_results = self._bulk_download_blobs(
-                blob_paths,
-                version_ids=version_ids if version_ids else None,
-            )
-
-            # Map blob paths back to backend paths
-            blob_to_backend = {self._get_blob_path(p): p for p in paths}
-            results: dict[str, bytes] = {}
-            for blob_path, content in blob_results.items():
-                backend_path = blob_to_backend.get(blob_path)
-                if backend_path:
-                    results[backend_path] = content
-
-            logger.info(
-                f"[BATCH-READ] Bulk download complete: {len(results)}/{len(paths)} successful"
-            )
-            return results
-
-        # Check if this connector has custom bulk download support
-        if hasattr(self, "_bulk_download_contents"):
-            # Use connector-specific bulk download
-            logger.info(f"[BATCH-READ] Using connector bulk download for {len(paths)} paths")
-            results = self._bulk_download_contents(paths, contexts)
-            logger.info(
-                f"[BATCH-READ] Bulk download complete: {len(results)}/{len(paths)} successful"
-            )
-            return results
-
-        # Fallback: sequential reads for non-blob connectors
-        logger.info(f"[BATCH-READ] Falling back to sequential reads for {len(paths)} paths")
-        results = {}
-        for path in paths:
-            context = contexts.get(path) if contexts else None
-            content = self._read_content_from_backend(path, context)
-            if content is not None:
-                results[path] = content
-        return results
-
-    def _read_content_from_backend(
-        self,
-        path: str,
-        context: OperationContext | None = None,
-    ) -> bytes | None:
-        """Read content directly from backend (bypassing cache).
-
-        Args:
-            path: Backend-relative path
-            context: Operation context with backend_path set
-
-        Override this if your connector has a different read method.
-        """
-        # Try direct blob download first (bypasses cache in read_content)
-        if hasattr(self, "_download_blob") and hasattr(self, "_get_blob_path"):
-            try:
-                blob_path = self._get_blob_path(path)
-                content: bytes = self._download_blob(blob_path)
-                return content
-            except Exception as e:
-                logger.debug("Direct blob download failed for %s: %s", path, e)
-
-        # Fall back to read_content (may use cache)
-        if hasattr(self, "read_content"):
-            try:
-                # read_content expects (content_hash, context) for GCS connector
-                # Pass empty content_hash and let it use context.backend_path
-                return self.read_content("", context)  # type: ignore
-            except Exception as e:
-                logger.debug("Fallback read_content failed for %s: %s", path, e)
-                return None
-        return None
-
-    def parse_content(
-        self,
-        path: str,
-        content: bytes,
-    ) -> tuple[str | None, str | None, dict | None]:
-        """Parse content using the parser registry.
-
-        Args:
-            path: File path (used to determine file type)
-            content: Raw file content
-
-        Returns:
-            Tuple of (parsed_text, parsed_from, parse_metadata)
-            Returns (None, None, None) if parsing fails or not supported
-        """
-        try:
-            from nexus.parsers.markitdown_parser import MarkItDownParser
-        except ImportError:
-            return None, None, None
-
-        try:
-            # Get file extension
-            ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
-
-            # Check if parser supports this format
-            parser = MarkItDownParser()
-            if ext not in parser.supported_formats:
-                return None, None, None
-
-            # Parse content
-            import asyncio
-
-            # Run async parse in sync context
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(
-                    parser.parse(content, {"path": path, "filename": path.split("/")[-1]})
-                )
-            finally:
-                loop.close()
-
-            if result and result.text:
-                return result.text, ext.lstrip("."), {"chunks": len(result.chunks)}
-
-        except Exception as e:
-            logger.debug("Content parsing failed for %s: %s", path, e)
-
-        return None, None, None
-
-    def generate_embeddings_for_path(self, path: str) -> None:
-        """Generate embeddings for a file.
-
-        Override this to integrate with semantic search.
-        Default implementation is a no-op.
-        """
-        # TODO: Integrate with SemanticSearch.index_document()
-        pass
-
-    def _get_size_from_cache(self, path: str) -> int | None:
-        """Get file size from cache (efficient, no backend call).
-
-        This checks both L1 (memory) and L2 (database) cache for the file's
-        original size. This is much more efficient than fetching content or
-        calling the backend API.
-
-        Args:
-            path: Virtual file path
-
-        Returns:
-            File size in bytes, or None if not in cache
-
-        Performance:
-            - L1 hit: <1ms (memory lookup)
-            - L2 hit: ~5-10ms (single DB query)
-            - Miss: None returned, caller should fall back to backend
-        """
-        if not self._has_caching():
-            return None
-
-        try:
-            # Check cache (L1 + L2)
-            entry = self._read_from_cache(path, original=False)
-            if entry and not entry.stale:
-                logger.debug(f"[CACHE] SIZE HIT: {path} ({entry.original_size} bytes)")
-                return entry.original_size
-            logger.debug(f"[CACHE] SIZE MISS: {path}")
-        except Exception as e:
-            logger.debug(f"[CACHE] SIZE ERROR for {path}: {e}")
-
-        return None

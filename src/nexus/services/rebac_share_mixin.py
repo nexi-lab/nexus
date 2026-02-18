@@ -231,7 +231,11 @@ class ReBACShareMixin:
         if zone_id is not None:
             current_zone = zone_id
 
+<<<<<<< HEAD
         from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
+=======
+        from nexus.rebac.cache.iterator import CursorExpiredError
+>>>>>>> origin/develop
 
         relation_to_level = {
             "shared-viewer": "viewer",
@@ -307,7 +311,11 @@ class ReBACShareMixin:
         """List incoming shares with iterator caching (sync)."""
         mgr = self._require_manager()
 
+<<<<<<< HEAD
         from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
+=======
+        from nexus.rebac.cache.iterator import CursorExpiredError
+>>>>>>> origin/develop
 
         relation_to_level = {
             "shared-viewer": "viewer",

@@ -31,14 +31,6 @@ def get_nexus_fs(request: Request) -> Any:
     return fs
 
 
-def get_async_nexus_fs(request: Request) -> Any:
-    """Get AsyncNexusFS instance from app.state, raising 503 if not initialized."""
-    fs = getattr(request.app.state, "async_nexus_fs", None)
-    if fs is None:
-        raise HTTPException(status_code=503, detail="AsyncNexusFS not initialized")
-    return fs
-
-
 def get_lock_manager(request: Request) -> Any:
     """Get the distributed lock manager from NexusFS, raising 503 if not configured."""
     fs = get_nexus_fs(request)
@@ -71,28 +63,12 @@ def get_search_daemon(request: Request) -> Any:
     return daemon
 
 
-def get_websocket_manager(request: Request) -> Any:
-    """Get WebSocketManager from app.state, raising 503 if not available."""
-    mgr = getattr(request.app.state, "websocket_manager", None)
-    if mgr is None:
-        raise HTTPException(status_code=503, detail="WebSocket manager not available")
-    return mgr
-
-
 def get_key_service(request: Request) -> Any:
     """Get KeyService from app.state, raising 503 if not available."""
     svc = getattr(request.app.state, "key_service", None)
     if svc is None:
         raise HTTPException(status_code=503, detail="Identity service not available")
     return svc
-
-
-def get_database_url(request: Request) -> str:
-    """Get database URL from app.state, raising 503 if not configured."""
-    url: str | None = getattr(request.app.state, "database_url", None)
-    if not url:
-        raise HTTPException(status_code=503, detail="Database URL not configured")
-    return url
 
 
 def get_async_session_factory(request: Request) -> Any:
@@ -111,9 +87,20 @@ def get_async_session_factory(request: Request) -> Any:
     return factory
 
 
-def get_operation_timeout(request: Request) -> float:
-    """Get operation timeout from app.state (default: 30.0s)."""
-    return getattr(request.app.state, "operation_timeout", 30.0)
+def get_async_read_session_factory(request: Request) -> Any:
+    """Get async read session factory for read-only operations (Issue #725).
+
+    Returns the read replica async session factory if configured,
+    otherwise falls back to the primary async session factory.
+
+    This is the correct dependency for read-only async endpoints
+    (graph queries, search queries) to leverage read replicas.
+    """
+    factory = getattr(request.app.state, "async_read_session_factory", None)
+    if factory is not None:
+        return factory
+    # Fall back to primary async session factory
+    return get_async_session_factory(request)
 
 
 # =============================================================================
@@ -124,13 +111,3 @@ def get_operation_timeout(request: Request) -> float:
 def get_optional_search_daemon(request: Request) -> Any:
     """Get SearchDaemon from app.state, returning None if not enabled."""
     return getattr(request.app.state, "search_daemon", None)
-
-
-def get_optional_subscription_manager(request: Request) -> Any:
-    """Get SubscriptionManager from app.state, returning None if not available."""
-    return getattr(request.app.state, "subscription_manager", None)
-
-
-def get_optional_websocket_manager(request: Request) -> Any:
-    """Get WebSocketManager from app.state, returning None if not available."""
-    return getattr(request.app.state, "websocket_manager", None)

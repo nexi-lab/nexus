@@ -7,8 +7,21 @@ stored in the VFS (filesystem), PostgreSQL, or any future backend.
 Issue: #1243
 """
 
+<<<<<<< HEAD
+=======
+from nexus.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
+>>>>>>> origin/develop
 from nexus.ipc.storage.protocol import IPCStorageDriver
 from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 from nexus.ipc.storage.vfs_driver import VFSStorageDriver
 
+<<<<<<< HEAD
 __all__ = ["IPCStorageDriver", "VFSStorageDriver", "RecordStoreStorageDriver"]
+=======
+__all__ = [
+    "IPCStorageDriver",
+    "VFSStorageDriver",
+    "RecordStoreStorageDriver",
+    "CrossZoneStorageDriver",
+]
+>>>>>>> origin/develop

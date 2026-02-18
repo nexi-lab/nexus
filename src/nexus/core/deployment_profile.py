@@ -1,0 +1,212 @@
+"""Deployment profiles for Nexus feature gating.
+
+Issue #1389: Feature flags for deployment modes (full/lite/embedded).
+
+Each DeploymentProfile defines a default set of enabled bricks.
+Individual brick overrides are supported via FeaturesConfig or env vars.
+The profile sets the *defaults*; explicit overrides always win.
+
+Lego Architecture reference: Part 10 — Edge Deployment.
+
+Profile hierarchy (superset relationship):
+    embedded ⊂ lite ⊂ full ⊆ cloud
+"""
+
+from __future__ import annotations
+
+import logging
+from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Brick name constants — canonical names used across the system
+# ---------------------------------------------------------------------------
+
+# Kernel-level (always present, never gated)
+BRICK_STORAGE = "storage"
+
+# System services (gated by profile)
+BRICK_EVENTLOG = "eventlog"
+BRICK_NAMESPACE = "namespace"
+BRICK_AGENT_REGISTRY = "agent_registry"
+BRICK_PERMISSIONS = "permissions"
+BRICK_SCHEDULER = "scheduler"
+
+# Infrastructure bricks
+BRICK_CACHE = "cache"
+BRICK_OBSERVABILITY = "observability"
+BRICK_UPLOADS = "uploads"
+BRICK_RESILIENCY = "resiliency"
+
+# Feature bricks
+BRICK_SEARCH = "search"
+BRICK_PAY = "pay"
+BRICK_LLM = "llm"
+BRICK_SKILLS = "skills"
+BRICK_SANDBOX = "sandbox"
+BRICK_WORKFLOWS = "workflows"
+BRICK_A2A = "a2a"
+BRICK_DISCOVERY = "discovery"
+BRICK_MCP = "mcp"
+BRICK_MEMORY = "memory"
+
+# Cloud-only
+BRICK_FEDERATION = "federation"
+
+# All brick names for validation
+ALL_BRICK_NAMES: frozenset[str] = frozenset(
+    {
+        BRICK_STORAGE,
+        BRICK_EVENTLOG,
+        BRICK_NAMESPACE,
+        BRICK_AGENT_REGISTRY,
+        BRICK_PERMISSIONS,
+        BRICK_SCHEDULER,
+        BRICK_CACHE,
+        BRICK_OBSERVABILITY,
+        BRICK_UPLOADS,
+        BRICK_RESILIENCY,
+        BRICK_SEARCH,
+        BRICK_PAY,
+        BRICK_LLM,
+        BRICK_SKILLS,
+        BRICK_SANDBOX,
+        BRICK_WORKFLOWS,
+        BRICK_A2A,
+        BRICK_DISCOVERY,
+        BRICK_MCP,
+        BRICK_MEMORY,
+        BRICK_FEDERATION,
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# DeploymentProfile enum
+# ---------------------------------------------------------------------------
+
+
+class DeploymentProfile(StrEnum):
+    """Deployment profile controlling which bricks are enabled by default.
+
+    Profiles define capability tiers for different deployment targets:
+    - embedded: MCU / WASM (<1 MB) — storage + eventlog only
+    - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
+    - full: Desktop, laptop (4–32 GB) — all bricks, local inference
+    - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
+    """
+
+    EMBEDDED = "embedded"
+    LITE = "lite"
+    FULL = "full"
+    CLOUD = "cloud"
+
+    def default_bricks(self) -> frozenset[str]:
+        """Return the default set of enabled bricks for this profile."""
+        return _PROFILE_BRICKS[self]
+
+    def is_brick_enabled(self, brick: str) -> bool:
+        """Check if a brick is enabled by default in this profile."""
+        return brick in self.default_bricks()
+
+
+# ---------------------------------------------------------------------------
+# Profile-to-brick mappings (frozen — immutable at runtime)
+# ---------------------------------------------------------------------------
+
+_EMBEDDED_BRICKS: frozenset[str] = frozenset(
+    {
+        BRICK_STORAGE,
+        BRICK_EVENTLOG,
+    }
+)
+
+_LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
+    {
+        BRICK_NAMESPACE,
+        BRICK_AGENT_REGISTRY,
+        BRICK_PERMISSIONS,
+        BRICK_CACHE,
+        BRICK_SCHEDULER,
+    }
+)
+
+_FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
+    {
+        BRICK_SEARCH,
+        BRICK_PAY,
+        BRICK_LLM,
+        BRICK_SKILLS,
+        BRICK_SANDBOX,
+        BRICK_WORKFLOWS,
+        BRICK_A2A,
+        BRICK_DISCOVERY,
+        BRICK_MCP,
+        BRICK_MEMORY,
+        BRICK_OBSERVABILITY,
+        BRICK_UPLOADS,
+        BRICK_RESILIENCY,
+    }
+)
+
+_CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset(
+    {
+        BRICK_FEDERATION,
+    }
+)
+
+_PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
+    DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
+    DeploymentProfile.LITE: _LITE_BRICKS,
+    DeploymentProfile.FULL: _FULL_BRICKS,
+    DeploymentProfile.CLOUD: _CLOUD_BRICKS,
+}
+
+
+def resolve_enabled_bricks(
+    profile: DeploymentProfile,
+    *,
+    overrides: dict[str, bool] | None = None,
+) -> frozenset[str]:
+    """Resolve the effective set of enabled bricks.
+
+    Starts with the profile's default brick set, then applies explicit
+    overrides. Explicit overrides always win over profile defaults.
+
+    Args:
+        profile: The deployment profile providing defaults.
+        overrides: Dict of brick_name -> enabled (True to force-enable,
+                   False to force-disable). Unknown brick names raise ValueError.
+
+    Returns:
+        Frozen set of enabled brick names.
+    """
+    enabled = set(profile.default_bricks())
+
+    if overrides:
+        unknown = set(overrides.keys()) - ALL_BRICK_NAMES
+        if unknown:
+            raise ValueError(f"Unknown brick names in overrides: {unknown}")
+
+        for brick_name, is_enabled in overrides.items():
+            default_enabled = brick_name in profile.default_bricks()
+            if is_enabled != default_enabled:
+                action = "enabling" if is_enabled else "disabling"
+                logger.warning(
+                    "Brick override: %s '%s' (profile '%s' default: %s)",
+                    action,
+                    brick_name,
+                    profile.value,
+                    "enabled" if default_enabled else "disabled",
+                )
+            if is_enabled:
+                enabled.add(brick_name)
+            else:
+                enabled.discard(brick_name)
+
+    return frozenset(enabled)

@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from nexus import LocalBackend
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -29,11 +30,13 @@ def test_workspace_namespace_operations():
     """Test basic operations in workspace namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            auto_parse=False,
+            parsing=ParseConfig(auto_parse=False),
             backend=LocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
-            enforce_permissions=False,  # Test namespace routing without permissions
+            permissions=PermissionConfig(
+                enforce=False
+            ),  # Test namespace routing without permissions
         )
 
         # v0.6.0+: Create OperationContext with subject identity
@@ -72,11 +75,11 @@ def test_shared_namespace_operations():
     """Test basic operations in shared namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            auto_parse=False,
             backend=LocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         ctx = OperationContext(
@@ -111,11 +114,11 @@ def test_external_namespace_operations():
     """Test basic operations in external namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            auto_parse=False,
             backend=LocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         ctx = OperationContext(
@@ -145,11 +148,11 @@ def test_multi_namespace_operations_single_zone():
     """Test operations across multiple namespaces for single zone."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            auto_parse=False,
             backend=LocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         ctx = OperationContext(
@@ -179,11 +182,11 @@ def test_namespace_isolation_between_zones():
     """Test that different zones' workspaces are isolated."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            auto_parse=False,
             backend=LocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         # Zone 1 writes

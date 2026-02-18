@@ -1,5 +1,6 @@
-"""ReBAC Manager for relationship-based access control.
+"""Backward-compat shim — canonical: nexus.rebac.manager."""
 
+<<<<<<< HEAD
 This module implements the core ReBAC APIs:
 - Check API: Fast permission checks with graph traversal and caching
 - Write API: Create relationship tuples with changelog tracking
@@ -3052,3 +3053,6 @@ class ReBACManager:
         Connections are closed immediately after each operation.
         """
         pass
+=======
+from nexus.rebac.manager import ReBACManager  # noqa: F401
+>>>>>>> origin/develop

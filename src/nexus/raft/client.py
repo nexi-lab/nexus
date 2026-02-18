@@ -17,19 +17,16 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import grpc
 from grpc import aio as grpc_aio
 
-from nexus.core import metadata_pb2
-
 # Import generated proto types
 from nexus.raft import commands_pb2, transport_pb2, transport_pb2_grpc
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +441,7 @@ class RaftClient:
         """
         zone = zone_id or self.zone_id or ""
 
+<<<<<<< HEAD
         # Convert FileMetadata to proto
         proto_metadata = metadata_pb2.FileMetadata(
             path=metadata.path,
@@ -461,6 +459,14 @@ class RaftClient:
             target_zone_id=metadata.target_zone_id or "",
             owner_id=metadata.owner_id or "",
         )
+=======
+        # Convert FileMetadata to proto (generated mapper is SSOT)
+        from nexus.storage._metadata_mapper_generated import MetadataMapper
+
+        proto_metadata = MetadataMapper.to_proto(metadata)
+        if zone:
+            proto_metadata.zone_id = zone
+>>>>>>> origin/develop
 
         # Create PutMetadata command and propose via Raft
         command = commands_pb2.RaftCommand(
@@ -567,39 +573,12 @@ class RaftClient:
         response = await self._propose(command)
         return bool(response.success)
 
-    def _proto_to_file_metadata(self, proto: Any) -> FileMetadata:
-        """Convert proto FileMetadata to dataclass."""
-        from nexus.core._metadata_generated import FileMetadata as FM
+    @staticmethod
+    def _proto_to_file_metadata(proto: Any) -> FileMetadata:
+        """Convert proto FileMetadata to dataclass (delegates to generated mapper)."""
+        from nexus.storage._metadata_mapper_generated import MetadataMapper
 
-        created_at = None
-        modified_at = None
-        if proto.created_at:
-            try:
-                created_at = datetime.fromisoformat(proto.created_at)
-            except ValueError:
-                pass
-        if proto.modified_at:
-            try:
-                modified_at = datetime.fromisoformat(proto.modified_at)
-            except ValueError:
-                pass
-
-        return FM(
-            path=proto.path,
-            backend_name=proto.backend_name,
-            physical_path=str(proto.physical_path) if proto.physical_path else "",
-            size=proto.size,
-            etag=proto.etag or None,
-            mime_type=proto.mime_type or None,
-            created_at=created_at,
-            modified_at=modified_at,
-            version=proto.version,
-            zone_id=proto.zone_id or None,
-            created_by=proto.created_by or None,
-            entry_type=proto.entry_type,
-            target_zone_id=proto.target_zone_id or None,
-            owner_id=proto.owner_id or None,
-        )
+        return MetadataMapper.from_proto(proto)
 
     # =========================================================================
     # Lock Operations (via Propose/Query RPCs)

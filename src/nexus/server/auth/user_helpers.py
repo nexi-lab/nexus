@@ -1,24 +1,24 @@
-"""User management helper functions.
+"""User management helper functions — backward compatibility re-exports.
 
-Provides utility functions for:
-- User lookup by various identifiers (email, username, OAuth, external ID)
-- ReBAC group-based zone membership management
-- Zone group naming conventions
-- User creation with uniqueness checks
+User lookups have moved to: nexus.auth.user_queries
+Zone membership has moved to: nexus.server.services.zone_membership
+
+This file re-exports all symbols for backward compatibility.
 """
 
-import logging
-from datetime import UTC, datetime
-from typing import Any
+from __future__ import annotations
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from nexus.storage.models import (
-    UserModel,
-    UserOAuthAccountModel,
+# User lookup functions (now in auth brick)
+from nexus.auth.user_queries import (  # noqa: F401
+    check_email_available,
+    check_username_available,
+    get_user_by_email,
+    get_user_by_id,
+    get_user_by_username,
+    validate_user_uniqueness,
 )
 
+<<<<<<< HEAD
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
@@ -661,3 +661,18 @@ def restore_user(session: Session, user_id: str) -> UserModel | None:
     session.add(user)
     session.flush()
     return user
+=======
+# Zone helper functions (canonical: core.zone_helpers, re-exported for backward compat)
+from nexus.core.zone_helpers import (  # noqa: F401
+    add_user_to_zone,
+    can_invite_to_zone,
+    get_user_zones,
+    is_zone_admin,
+    is_zone_group,
+    is_zone_owner,
+    parse_zone_from_group,
+    remove_user_from_zone,
+    user_belongs_to_zone,
+    zone_group_id,
+)
+>>>>>>> origin/develop

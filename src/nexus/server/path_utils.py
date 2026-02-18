@@ -79,18 +79,6 @@ def unscope_internal_path(path: str) -> str:
     return f"/{remaining}" if remaining else "/"
 
 
-def unscope_internal_paths(paths: list[str]) -> list[str]:
-    """Strip internal prefixes from a list of paths.
-
-    Args:
-        paths: List of internal storage paths
-
-    Returns:
-        List of user-friendly paths
-    """
-    return [unscope_internal_path(p) for p in paths]
-
-
 def unscope_internal_dict(d: dict, path_keys: list[str]) -> dict:
     """Strip internal prefixes from path values in a dict.
 

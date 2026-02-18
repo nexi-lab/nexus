@@ -148,7 +148,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             app.state.agent_registry = AgentRegistry(
                 session_factory=app.state.nexus_fs.SessionLocal,
@@ -182,9 +182,13 @@ def _startup_key_service(app: FastAPI) -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
+            from nexus.auth.oauth.crypto import OAuthCrypto
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
+<<<<<<< HEAD
             from nexus.server.auth.oauth_crypto import OAuthCrypto
+=======
+>>>>>>> origin/develop
             from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists
@@ -309,7 +313,7 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         sync_rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
         if sync_rebac:
             try:
-                from nexus.services.permissions.namespace_factory import (
+                from nexus.rebac.namespace_factory import (
                     create_namespace_manager,
                 )
 

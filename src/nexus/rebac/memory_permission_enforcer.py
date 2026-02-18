@@ -14,10 +14,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.permissions import OperationContext, Permission
+from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.rebac.utils.zone import normalize_zone_id
 from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.permissions.enforcer import PermissionEnforcer
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
@@ -36,7 +36,6 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
     def __init__(
         self,
         metadata_store: Any = None,
-        acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
         rebac_manager: EnhancedReBACManager | None = None,
         memory_router: MemoryViewRouter | None = None,
         entity_registry: EntityRegistry | None = None,
@@ -45,12 +44,11 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
 
         Args:
             metadata_store: Metadata store for file permissions.
-            acl_store: Deprecated, ignored (kept for backward compatibility).
             rebac_manager: ReBAC manager for relationship-based permissions.
             memory_router: Memory view router for resolving paths.
             entity_registry: Entity registry for identity lookups.
         """
-        super().__init__(metadata_store, acl_store, rebac_manager)
+        super().__init__(metadata_store, rebac_manager=rebac_manager)
         self.memory_router = memory_router
         self.entity_registry = entity_registry
 

@@ -60,7 +60,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
         # Issue #940: Initialize AsyncNexusFS with permission enforcement
         try:
             from nexus.core.async_nexus_fs import AsyncNexusFS
-            from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+            from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
             backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
             tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
@@ -76,7 +76,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
             if enforce_permissions and hasattr(app.state, "nexus_fs"):
                 sync_rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
-                    from nexus.services.permissions.namespace_factory import (
+                    from nexus.rebac.namespace_factory import (
                         create_namespace_manager,
                     )
 
@@ -126,7 +126,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
 async def _startup_cache_factory(app: FastAPI) -> None:
     """Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)."""
     try:
-        from nexus.cache.factory import init_cache_factory
+        from nexus.cache.factory import CacheFactory
         from nexus.cache.settings import CacheSettings
 
         cache_settings = CacheSettings.from_env()
@@ -134,9 +134,9 @@ async def _startup_cache_factory(app: FastAPI) -> None:
         # Pass RecordStore for SQL-backed cache fallback
         record_store = getattr(app.state.nexus_fs, "_record_store", None)
 
-        app.state.cache_factory = await init_cache_factory(
-            cache_settings, record_store=record_store
-        )
+        cache_factory = CacheFactory(cache_settings, record_store=record_store)
+        await cache_factory.initialize()
+        app.state.cache_factory = cache_factory
         logger.info(
             f"Cache factory initialized with {app.state.cache_factory.backend_name} backend"
         )
@@ -205,11 +205,21 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
                 # Start DirectoryGrantExpander worker
                 try:
                     from typing import cast
+<<<<<<< HEAD
 
                     from sqlalchemy.engine import Engine
 
                     from nexus.services.permissions.tiger_cache import DirectoryGrantExpander
 
+=======
+
+                    from sqlalchemy.engine import Engine
+
+                    from nexus.services.permissions.cache.tiger.expander import (
+                        DirectoryGrantExpander,
+                    )
+
+>>>>>>> origin/develop
                     _rebac_engine = cast(Engine, getattr(_rebac, "engine", None))
                     expander = DirectoryGrantExpander(
                         engine=_rebac_engine,
@@ -272,7 +282,7 @@ def _startup_cache_warmup(app: FastAPI) -> None:
         _nexus_fs_warmup = app.state.nexus_fs  # Capture for closure
 
         async def _warmup_file_cache() -> None:
-            from nexus.cache.warmer import CacheWarmer, WarmupConfig
+            from nexus.server.cache_warmer import CacheWarmer, WarmupConfig
 
             config = WarmupConfig(
                 max_files=warmup_max_files,

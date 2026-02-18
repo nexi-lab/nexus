@@ -82,14 +82,22 @@ class LLMService:
     def __init__(
         self,
         nexus_fs: Any | None = None,
+        *,
+        semantic_search_engine: Any | None = None,
     ):
         """Initialize LLM service.
 
         Args:
             nexus_fs: NexusFS instance for filesystem operations and search
+            semantic_search_engine: Injected search engine via DI (Issue #684).
+                Set after construction when search is initialized lazily.
         """
         self.nexus_fs = nexus_fs
         self._provider_cache: dict[str, Any] = {}
+<<<<<<< HEAD
+=======
+        self._semantic_search_engine = semantic_search_engine
+>>>>>>> origin/develop
 
         logger.info("[LLMService] Initialized")
 
@@ -458,6 +466,7 @@ class LLMService:
                     # OpenRouter model - need to configure for OpenRouter
                     if not api_key and os.getenv("OPENROUTER_API_KEY"):
                         api_key = os.getenv("OPENROUTER_API_KEY")
+<<<<<<< HEAD
 
                     # Set custom_llm_provider for OpenRouter
                     if api_key:
@@ -474,13 +483,29 @@ class LLMService:
                     else:
                         config = LLMConfig(model=model)
 
+=======
+
+                    # Set custom_llm_provider for OpenRouter
+                    if api_key:
+                        config = LLMConfig(
+                            model=model,
+                            api_key=SecretStr(api_key),
+                            custom_llm_provider="openrouter",
+                        )
+                    else:
+                        config = LLMConfig(model=model, custom_llm_provider="openrouter")
+                else:
+                    if api_key:
+                        config = LLMConfig(model=model, api_key=SecretStr(api_key))
+                    else:
+                        config = LLMConfig(model=model)
+
+>>>>>>> origin/develop
                 provider = LiteLLMProvider(config)
                 self._provider_cache[cache_key] = provider
 
-        # Get semantic search if available
-        search = None
-        if self.nexus_fs and hasattr(self.nexus_fs, "semantic_search_engine"):
-            search = self.nexus_fs.semantic_search_engine
+        # Get semantic search if available (Issue #684: prefer DI over kernel access)
+        search = self._semantic_search_engine
 
         # Create document reader
         if self.nexus_fs is None:

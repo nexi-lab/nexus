@@ -10,7 +10,11 @@ from dataclasses import dataclass
 
 import pytest
 
+<<<<<<< HEAD
 from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
+=======
+from nexus.services.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
+>>>>>>> origin/develop
 
 
 @dataclass

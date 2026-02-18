@@ -23,6 +23,57 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _compute_features_info(app: FastAPI) -> None:
+    """Compute and store features_info on app.state (Issue #1389).
+
+    Called once at startup. The result is immutable and served by
+    GET /api/v2/features with O(1) cost.
+    """
+    from nexus.core.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
+    from nexus.server.api.core.features import FeaturesResponse
+
+    # Read profile from app state (set during server init)
+    profile_str: str = getattr(app.state, "deployment_profile", "full")
+    try:
+        profile = DeploymentProfile(profile_str)
+    except ValueError:
+        logger.warning("Unknown deployment profile '%s', defaulting to 'full'", profile_str)
+        profile = DeploymentProfile.FULL
+
+    # Read enabled_bricks from app state (set during factory wiring)
+    enabled: frozenset[str] = getattr(app.state, "enabled_bricks", profile.default_bricks())
+
+    mode: str = getattr(app.state, "deployment_mode", "standalone")
+
+    # Get version
+    version: str | None = None
+    try:
+        from importlib.metadata import version as _get_version
+
+        version = _get_version("nexus-ai-fs")
+    except Exception:
+        pass
+
+    disabled = sorted(ALL_BRICK_NAMES - enabled)
+
+    features_info = FeaturesResponse(
+        profile=profile.value,
+        mode=mode,
+        enabled_bricks=sorted(enabled),
+        disabled_bricks=disabled,
+        version=version,
+    )
+    app.state.features_info = features_info
+
+    logger.info(
+        "Deployment profile=%s, mode=%s, enabled=%d bricks, disabled=%d bricks",
+        profile.value,
+        mode,
+        len(enabled),
+        len(disabled),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager.
@@ -30,6 +81,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Calls domain-specific initializers during startup and tears them
     down in reverse order during shutdown.
     """
+    from nexus.server.lifespan.a2a_grpc import shutdown_a2a_grpc, startup_a2a_grpc
     from nexus.server.lifespan.observability import (
         shutdown_observability,
         startup_observability,
@@ -46,11 +98,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Startup (order matters: observability first, then core, then services) ---
 
     startup_observability(app)
+    _compute_features_info(app)
     bg_tasks.extend(await startup_permissions(app))
     bg_tasks.extend(await startup_realtime(app))
     bg_tasks.extend(await startup_search(app))
     bg_tasks.extend(await startup_services(app))
     bg_tasks.extend(await startup_uploads(app))
+    bg_tasks.extend(await startup_a2a_grpc(app))
 
     yield
 
@@ -66,6 +120,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
         logger.debug(f"Cancelled {len(bg_tasks)} background tasks")
 
+    await shutdown_a2a_grpc(app)
     await shutdown_services(app)
     await shutdown_realtime(app)
 

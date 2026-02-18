@@ -268,9 +268,6 @@ class TestJsonRoundTrip:
 class TestAgentReconnection:
     """Tests for the agent reconnection use case."""
 
-    @pytest.mark.skip(
-        reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — L3 cache revision bucket mismatch"
-    )
     def test_reconnection_flow(self, engine, store):
         """Full flow: build namespace → clear L2 → restore from L3."""
         from nexus.rebac.manager import EnhancedReBACManager

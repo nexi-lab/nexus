@@ -25,6 +25,7 @@ from nexus.backends.registry import (
 )
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
 
+<<<<<<< HEAD
 # Optional backends - LAZY IMPORTS for faster CLI startup
 # These are imported on-demand when actually used, not at module load time
 # This saves ~500ms+ of startup time by avoiding google.cloud imports
@@ -41,6 +42,10 @@ GoogleCalendarConnectorBackend = None
 
 # Registry: maps module-level name → (module_path, class_name)
 # Adding a new optional backend requires only one entry here.
+=======
+# Optional backends — loaded on first access via __getattr__.
+# Maps attribute name → (module_path, class_name).
+>>>>>>> origin/develop
 _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
     "GCSBackend": ("nexus.backends.gcs", "GCSBackend"),
     "GoogleDriveConnectorBackend": (
@@ -65,11 +70,30 @@ _registration_lock = threading.Lock()
 _logger = logging.getLogger(__name__)
 
 
+<<<<<<< HEAD
 def _register_optional_backends() -> None:
     """Register optional backends on first use (lazy loading)."""
+=======
+def __getattr__(name: str) -> object:
+    """Lazy-load optional backends on first attribute access."""
+    if name in _OPTIONAL_BACKENDS:
+        module_path, class_name = _OPTIONAL_BACKENDS[name]
+        try:
+            module = importlib.import_module(module_path)
+            attr = getattr(module, class_name)
+        except ImportError as e:
+            raise AttributeError(f"Optional backend {name!r} is not available: {e}") from e
+        # Cache in module globals so __getattr__ is not called again.
+        globals()[name] = attr
+        return attr
+    raise AttributeError(f"module 'nexus.backends' has no attribute {name}")
+
+
+def _register_optional_backends() -> None:
+    """Import all optional backend modules to trigger @register_connector."""
+>>>>>>> origin/develop
     global _optional_backends_registered
 
-    # Only register once (fast path without lock)
     if _optional_backends_registered:
         return
     with _registration_lock:
@@ -77,12 +101,24 @@ def _register_optional_backends() -> None:
             return
         _optional_backends_registered = True
 
+<<<<<<< HEAD
         for global_name, (module_path, class_name) in _OPTIONAL_BACKENDS.items():
             try:
                 module = importlib.import_module(module_path)
                 globals()[global_name] = getattr(module, class_name)
             except ImportError as e:
                 _logger.debug("Optional backend %s not available: %s", global_name, e)
+=======
+        seen_modules: set[str] = set()
+        for module_path, _ in _OPTIONAL_BACKENDS.values():
+            if module_path in seen_modules:
+                continue
+            seen_modules.add(module_path)
+            try:
+                importlib.import_module(module_path)
+            except ImportError as e:
+                _logger.debug("Optional backend module %s not available: %s", module_path, e)
+>>>>>>> origin/develop
 
 
 __all__ = [

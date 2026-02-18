@@ -24,10 +24,11 @@ from nexus.cache.backend_wrapper import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
+from nexus.core.config import PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
+from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -346,15 +347,14 @@ class TestCachingPermissions:
         cached_backend = CachingBackendWrapper(inner=inner_backend, config=config)
 
         # Create NexusFS with permissions enabled
-        metadata_store = InMemoryFileMetadataStore()
+        metadata_store = InMemoryMetastore()
         record_store = SQLAlchemyRecordStore()  # in-memory SQLite
 
         nx = create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,  # simplify test — no zone checks
+            permissions=PermissionConfig(enforce=True, enforce_zone_isolation=False),
         )
 
         yield nx, cached_backend
@@ -485,15 +485,14 @@ class TestCachingPermissions:
         )
         cached_backend = CachingBackendWrapper(inner=inner_backend, config=config)
 
-        metadata_store = InMemoryFileMetadataStore()
+        metadata_store = InMemoryMetastore()
         record_store = SQLAlchemyRecordStore()
 
         nx = create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,
+            permissions=PermissionConfig(enforce=True, enforce_zone_isolation=False),
         )
 
         try:
@@ -571,16 +570,16 @@ class TestCachingWithFastAPIServer:
         # Use file-based SQLite so all connections share the same DB
         # (in-memory SQLite gives each connection a separate database)
         db_path = tmp_path / "http_test.db"
-        metadata_store = InMemoryFileMetadataStore()
+        metadata_store = InMemoryMetastore()
         record_store = SQLAlchemyRecordStore(db_path=db_path)
 
         nx = create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,
-            enable_deferred_permissions=False,  # Avoid async parent tuple creation
+            permissions=PermissionConfig(
+                enforce=True, enforce_zone_isolation=False, enable_deferred=False
+            ),
         )
 
         # === Set up data and permissions directly (Python API) ===

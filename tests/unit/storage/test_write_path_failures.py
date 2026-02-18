@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core._metadata_generated import DT_DIR, DT_REG, FileMetadata
+from nexus.core.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel
 from nexus.storage.record_store_syncer import RecordStoreSyncer
 

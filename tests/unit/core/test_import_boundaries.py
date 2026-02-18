@@ -16,6 +16,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+<<<<<<< HEAD
+=======
+import pytest
+
+>>>>>>> origin/develop
 # Project root for src/nexus/
 NEXUS_ROOT = Path(__file__).resolve().parents[3] / "src" / "nexus"
 
@@ -108,6 +113,10 @@ class TestKernelTopLevelImports:
         "core/async_nexus_fs.py",  # async_permissions (TYPE_CHECKING)
         "core/config.py",  # NamespaceManagerProtocol, namespace_manager (TYPE_CHECKING)
         "core/nexus_fs.py",  # memory_api, entity_registry (TYPE_CHECKING)
+<<<<<<< HEAD
+=======
+        "core/permissions.py",  # PermissionEnforcer re-export (TYPE_CHECKING)
+>>>>>>> origin/develop
     }
 
     def test_no_top_level_services_imports_in_core_modules(self):
@@ -179,6 +188,111 @@ class TestRPCTypesInCore:
         assert CoreCode is ServerCode
 
 
+<<<<<<< HEAD
+=======
+class TestFourStoragePillars:
+    """Verify all Four Storage Pillars are importable ABCs (Issue #1525).
+
+    The NEXUS-LEGO-ARCHITECTURE defines exactly four storage pillars:
+    1. MetastoreABC   — inode/path metadata (Raft, redb)
+    2. Backend         — object/blob storage (ObjectStoreABC: Local, GCS, S3)
+    3. RecordStoreABC — relational data (PostgreSQL, SQLite)
+    4. CacheStoreABC  — ephemeral KV + PubSub (Dragonfly, in-memory)
+    """
+
+    PILLARS = [
+        ("nexus.core.metastore", "MetastoreABC"),
+        ("nexus.backends.backend", "Backend"),
+        ("nexus.storage.record_store", "RecordStoreABC"),
+        ("nexus.core.cache_store", "CacheStoreABC"),
+    ]
+
+    @pytest.mark.parametrize(
+        ("module_path", "class_name"),
+        PILLARS,
+        ids=["MetastoreABC", "Backend", "RecordStoreABC", "CacheStoreABC"],
+    )
+    def test_pillar_is_importable_abc(self, module_path: str, class_name: str):
+        """Each storage pillar must be importable and be an ABC."""
+        import importlib
+        from abc import ABC
+
+        mod = importlib.import_module(module_path)
+        cls = getattr(mod, class_name)
+        assert isinstance(cls, type), f"{class_name} is not a class"
+        assert issubclass(cls, ABC), f"{class_name} is not an ABC"
+
+    def test_metastore_has_required_abstract_methods(self):
+        """MetastoreABC must declare the 6 required abstract methods."""
+        from nexus.core.metastore import MetastoreABC
+
+        required = {"get", "put", "delete", "exists", "list", "close"}
+        abstract = getattr(MetastoreABC, "__abstractmethods__", frozenset())
+        missing = required - abstract
+        assert not missing, f"MetastoreABC missing abstract methods: {missing}"
+
+    def test_metastore_implementations_exist(self):
+        """At least RaftMetadataStore and FederatedMetadataProxy implement MetastoreABC."""
+        from nexus.core.metastore import MetastoreABC
+        from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
+        from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+        assert issubclass(RaftMetadataStore, MetastoreABC)
+        assert issubclass(FederatedMetadataProxy, MetastoreABC)
+
+    def test_no_old_name_in_codebase(self):
+        """FileMetadataProtocol should not appear in src/ (clean rename)."""
+        import ast
+
+        for py_file in sorted((NEXUS_ROOT).rglob("*.py")):
+            source = py_file.read_text(encoding="utf-8")
+            if "FileMetadataProtocol" in source:
+                # Verify it's not in a string/comment — check ast
+                tree = ast.parse(source, filename=str(py_file))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Name) and node.id == "FileMetadataProtocol":
+                        rel = py_file.relative_to(NEXUS_ROOT)
+                        raise AssertionError(
+                            f"Old name 'FileMetadataProtocol' found in {rel}:{node.lineno}"
+                        )
+
+
+class TestConfigDoesNotImportServer:
+    """Verify nexus/config.py does not import from nexus.server (Issue #1389).
+
+    The OAuthConfig models were moved to nexus.auth_config so that config.py
+    can use them without reaching into the server layer.
+    """
+
+    def test_config_no_server_imports(self):
+        """nexus/config.py must not import from nexus.server at any level."""
+        config_path = NEXUS_ROOT / "config.py"
+        violations: list[str] = []
+
+        for module, lineno, _kind in _collect_imports(config_path):
+            if module.startswith("nexus.server"):
+                violations.append(f"config.py:{lineno} imports {module}")
+
+        assert violations == [], "config.py→server import violations found:\n" + "\n".join(
+            f"  - {v}" for v in violations
+        )
+
+    def test_auth_config_importable_from_package_level(self):
+        """OAuthConfig should be importable from nexus.auth_config (not server/)."""
+        from nexus.auth_config import OAuthConfig, OAuthProviderConfig
+
+        assert OAuthConfig is not None
+        assert OAuthProviderConfig is not None
+
+    def test_auth_config_re_exported_from_server(self):
+        """Backward-compat: server.auth.oauth_config re-exports from nexus.auth_config."""
+        from nexus.auth_config import OAuthConfig as PkgConfig
+        from nexus.server.auth.oauth_config import OAuthConfig as ServerConfig
+
+        assert PkgConfig is ServerConfig
+
+
+>>>>>>> origin/develop
 class TestZoneHelpersInCore:
     """Verify zone helpers are importable from core (Issue #1519, 3A)."""
 

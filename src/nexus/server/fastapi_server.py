@@ -847,9 +847,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #726: Wire circuit breaker from factory for health endpoint access
     if _app.state.nexus_fs:
         _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
-        _app.state.rebac_circuit_breaker = (
-            _brk.rebac_circuit_breaker if _brk else None
-        )
+        _app.state.rebac_circuit_breaker = _brk.rebac_circuit_breaker if _brk else None
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None

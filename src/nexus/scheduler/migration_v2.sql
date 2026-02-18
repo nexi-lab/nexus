@@ -11,34 +11,13 @@ ALTER TABLE scheduled_tasks
 ALTER TABLE scheduled_tasks
   ADD COLUMN IF NOT EXISTS estimated_service_time REAL NOT NULL DEFAULT 30.0;
 
--- HRRN SQL function for ORDER BY at dequeue time
-CREATE OR REPLACE FUNCTION hrrn_score(
-  enqueued_at TIMESTAMPTZ, est_svc REAL, now_ts TIMESTAMPTZ DEFAULT now()
-) RETURNS REAL AS $$
-BEGIN
-  RETURN (EXTRACT(EPOCH FROM (now_ts - enqueued_at)) + est_svc)
-         / GREATEST(est_svc, 0.001);
-END; $$ LANGUAGE plpgsql IMMUTABLE;
+-- NOTE: hrrn_score() and compute_effective_tier() PL/pgSQL functions removed.
+-- HRRN scoring is now inlined in SQL queries (queue.py).
+-- Effective tier computation uses Python (scheduler/priority.py).
 
--- Unified priority function (replaces Python duplicate)
-CREATE OR REPLACE FUNCTION compute_effective_tier(
-  base_tier SMALLINT, boost_tiers SMALLINT, enqueued_at TIMESTAMPTZ,
-  aging_secs INT DEFAULT 120, max_wait INT DEFAULT 600,
-  now_ts TIMESTAMPTZ DEFAULT now()
-) RETURNS SMALLINT AS $$
-DECLARE
-  wait_secs REAL;
-  aging_boost INT;
-  effective INT;
-BEGIN
-  wait_secs := EXTRACT(EPOCH FROM (now_ts - enqueued_at));
-  aging_boost := FLOOR(wait_secs / aging_secs)::INT;
-  effective := base_tier - boost_tiers - aging_boost;
-  IF wait_secs > max_wait THEN
-    effective := LEAST(effective, 1);  -- Escalate to HIGH
-  END IF;
-  RETURN GREATEST(0, effective)::SMALLINT;
-END; $$ LANGUAGE plpgsql IMMUTABLE;
+-- Drop legacy PL/pgSQL functions if they exist
+DROP FUNCTION IF EXISTS hrrn_score(TIMESTAMPTZ, REAL, TIMESTAMPTZ);
+DROP FUNCTION IF EXISTS compute_effective_tier(SMALLINT, SMALLINT, TIMESTAMPTZ, INT, INT, TIMESTAMPTZ);
 
 -- Indexes for Astraea dequeue pattern
 CREATE INDEX IF NOT EXISTS idx_sched_astraea_dequeue

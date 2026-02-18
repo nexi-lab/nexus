@@ -29,7 +29,7 @@ BACKEND_OPTION = click.option(
 DATA_DIR_OPTION = click.option(
     "--data-dir",
     type=click.Path(),
-    default=lambda: os.getenv("NEXUS_DATA_DIR", "./nexus-data"),
+    default=lambda: os.getenv("NEXUS_DATA_DIR", str(Path(nexus.NEXUS_STATE_DIR) / "data")),
     help="Path to Nexus data directory (for local backend and metadata DB). Can also be set via NEXUS_DATA_DIR environment variable.",
     show_default=True,
 )
@@ -122,7 +122,7 @@ class BackendConfig:
     def __init__(
         self,
         backend: str = "local",
-        data_dir: str = "./nexus-data",
+        data_dir: str = str(Path(nexus.NEXUS_STATE_DIR) / "data"),
         config_path: str | None = None,
         gcs_bucket: str | None = None,
         gcs_project: str | None = None,

@@ -533,6 +533,13 @@ class CreatePolicyRequest(BaseModel):
     priority: int = Field(default=0, description="Priority (higher overrides lower)")
     enabled: bool = Field(default=True, description="Whether policy is active")
 
+    @field_validator("rules")
+    @classmethod
+    def reject_rules_until_phase_4(cls, v: list[dict[str, Any]] | None) -> None:
+        if v is not None:
+            raise ValueError("Phase 4: DSL rules are not yet supported")
+        return v
+
 
 class PolicyResponse(BaseModel):
     """Spending policy details."""

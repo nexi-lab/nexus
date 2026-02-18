@@ -226,7 +226,6 @@ def connect(
     from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
     from nexus.storage.raft_metadata_store import RaftMetadataStore
-    from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # Load configuration
     cfg = load_config(config)
@@ -345,8 +344,16 @@ def connect(
     enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
     enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
 
-    # RecordStore (Four Pillars)
-    record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
+    # RecordStore (Four Pillars) — optional; only created when db_path is
+    # explicitly set.  Passing None gives a bare kernel (storage-only) where
+    # all service-layer features (audit log, versioning, ReBAC, etc.) are
+    # skipped.  The factory handles record_store=None gracefully.
+    if cfg.db_path:
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
+    else:
+        record_store = None
 
     # Build config objects from NexusConfig fields (Issue #1391)
     from nexus.core.config import (

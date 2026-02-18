@@ -695,7 +695,7 @@ async def lifespan(_app: FastAPI) -> Any:
             _nexus_fs_warmup = _app.state.nexus_fs  # Capture for closure
 
             async def _warmup_file_cache() -> None:
-                from nexus.cache.warmer import CacheWarmer, WarmupConfig
+                from nexus.server.cache_warmer import CacheWarmer, WarmupConfig
 
                 config = WarmupConfig(
                     max_files=warmup_max_files,

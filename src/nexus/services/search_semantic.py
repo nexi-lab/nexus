@@ -337,7 +337,8 @@ class SemanticSearchMixin:
             )
 
         if recursive:
-            return await self._semantic_search.index_directory(path)
+            idx_results = await self._semantic_search.index_directory(path)
+            return {p: r.chunks_indexed for p, r in idx_results.items()}
         else:
             files_result = await asyncio.to_thread(self.list, path, False)
             files = files_result.items if hasattr(files_result, "items") else files_result
@@ -531,4 +532,5 @@ class SemanticSearchMixin:
             return {}
 
         assert self._async_search is not None
-        return await self._async_search.index_documents_bulk(documents)
+        idx_results = await self._async_search.index_documents_bulk(documents)
+        return {p: r.chunks_indexed for p, r in idx_results.items()}

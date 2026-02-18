@@ -19,7 +19,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    pass
+    from nexus.core.performance_tuning import ProfileTuning
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,15 @@ class DeploymentProfile(StrEnum):
     def is_brick_enabled(self, brick: str) -> bool:
         """Check if a brick is enabled by default in this profile."""
         return brick in self.default_bricks()
+
+    def tuning(self) -> ProfileTuning:
+        """Return the performance tuning configuration for this profile.
+
+        Issue #2071: Per-profile performance thresholds.
+        """
+        from nexus.core.performance_tuning import resolve_profile_tuning
+
+        return resolve_profile_tuning(self)
 
 
 # ---------------------------------------------------------------------------

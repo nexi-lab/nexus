@@ -30,7 +30,7 @@ def _compute_features_info(app: FastAPI) -> None:
     GET /api/v2/features with O(1) cost.
     """
     from nexus.core.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
-    from nexus.server.api.core.features import FeaturesResponse
+    from nexus.server.api.core.features import FeaturesResponse, PerformanceTuningInfo
 
     # Read profile from app state (set during server init)
     profile_str: str = getattr(app.state, "deployment_profile", "full")
@@ -56,12 +56,26 @@ def _compute_features_info(app: FastAPI) -> None:
 
     disabled = sorted(ALL_BRICK_NAMES - enabled)
 
+    # Issue #2071: include performance tuning summary
+    _pt = getattr(app.state, "profile_tuning", None)
+    _perf_info = None
+    if _pt is not None:
+        _perf_info = PerformanceTuningInfo(
+            thread_pool_size=_pt.concurrency.thread_pool_size,
+            default_workers=_pt.concurrency.default_workers,
+            task_runner_workers=_pt.concurrency.task_runner_workers,
+            default_http_timeout=_pt.network.default_http_timeout,
+            db_pool_size=_pt.storage.db_pool_size,
+            search_max_concurrency=_pt.search.search_max_concurrency,
+        )
+
     features_info = FeaturesResponse(
         profile=profile.value,
         mode=mode,
         enabled_bricks=sorted(enabled),
         disabled_bricks=disabled,
         version=version,
+        performance_tuning=_perf_info,
     )
     app.state.features_info = features_info
 

@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["features"])
 
 
+class PerformanceTuningInfo(BaseModel):
+    """Summarized performance tuning for features endpoint (Issue #2071)."""
+
+    thread_pool_size: int = Field(description="AnyIO limiter tokens")
+    default_workers: int = Field(description="General-purpose worker count")
+    task_runner_workers: int = Field(description="Durable task queue workers")
+    default_http_timeout: float = Field(description="Default HTTP timeout (seconds)")
+    db_pool_size: int = Field(description="DB connection pool size")
+    search_max_concurrency: int = Field(description="Search indexing concurrency")
+
+
 class FeaturesResponse(BaseModel):
     """Response model for the features endpoint."""
 
@@ -29,6 +40,9 @@ class FeaturesResponse(BaseModel):
     enabled_bricks: list[str] = Field(description="List of enabled brick names")
     disabled_bricks: list[str] = Field(description="List of disabled brick names")
     version: str | None = Field(default=None, description="Nexus version")
+    performance_tuning: PerformanceTuningInfo | None = Field(
+        default=None, description="Active performance tuning (Issue #2071)"
+    )
 
 
 @router.get("/api/v2/features", response_model=FeaturesResponse)

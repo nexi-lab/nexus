@@ -105,6 +105,7 @@ class DaemonConfig:
 
     # Performance settings
     query_timeout_seconds: float = 10.0
+    max_indexing_concurrency: int = 10  # Issue #2071: from ProfileTuning.search
 
     # Entropy-aware filtering (Issue #1024)
     entropy_filtering: bool = False
@@ -237,7 +238,7 @@ class SearchDaemon:
             embedding_provider=self._embedding_provider,
             entropy_chunker=self._entropy_chunker,
             async_session_factory=self._async_session,
-            max_concurrency=10,
+            max_concurrency=self.config.max_indexing_concurrency,
             cross_doc_batching=True,
         )
 

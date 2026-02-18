@@ -31,8 +31,28 @@ from nexus.search.hnsw_config import HNSWConfig
 logger = logging.getLogger(__name__)
 
 # Module-level shared thread pool for _run_sync (Issue #1520: replaces per-call creation)
-_SYNC_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="nexus-vdb")
+# Issue #2071: Worker count sourced from ProfileTuning.search.vector_pool_workers at startup.
+# Default 2 (FULL profile) is used if tuning not yet resolved at import time.
+_DEFAULT_VDB_WORKERS = 2
+_SYNC_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_DEFAULT_VDB_WORKERS, thread_name_prefix="nexus-vdb"
+)
 atexit.register(_SYNC_POOL.shutdown, wait=False)
+
+
+def configure_sync_pool(max_workers: int) -> None:
+    """Reconfigure the module-level sync pool with profile-tuned worker count.
+
+    Called once at startup by factory/server init. Thread-safe: old pool
+    is shut down gracefully before replacement.
+    """
+    global _SYNC_POOL  # noqa: PLW0603
+    old = _SYNC_POOL
+    _SYNC_POOL = concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers, thread_name_prefix="nexus-vdb"
+    )
+    atexit.register(_SYNC_POOL.shutdown, wait=False)
+    old.shutdown(wait=False)
 
 
 def _run_sync(coro: Any) -> Any:

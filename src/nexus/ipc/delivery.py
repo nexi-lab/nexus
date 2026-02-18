@@ -36,9 +36,11 @@ from nexus.ipc.exceptions import (
 )
 from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
 from nexus.ipc.storage.protocol import IPCStorageDriver
+from nexus.storage.zone_settings import SigningMode
 
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
+    from nexus.ipc.signing import MessageSigner, MessageVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,7 @@ class MessageSender:
         hot_publisher: HotPathPublisher | None = None,
         delivery_mode: DeliveryMode = DeliveryMode.COLD_ONLY,
         max_cold_concurrency: int = DEFAULT_MAX_COLD_CONCURRENCY,
+        signer: MessageSigner | None = None,
     ) -> None:
         self._storage = storage
         self._publisher = event_publisher
@@ -112,6 +115,7 @@ class MessageSender:
         self._mode = delivery_mode if hot_publisher is not None else DeliveryMode.COLD_ONLY
         self._cold_semaphore = asyncio.Semaphore(max_cold_concurrency)
         self._pending_tasks: set[asyncio.Task[None]] = set()
+        self._signer = signer
 
     async def send(self, envelope: MessageEnvelope) -> str:
         """Send a message to the recipient's inbox.
@@ -128,6 +132,10 @@ class MessageSender:
             InboxFullError: If recipient's inbox exceeds size limit (cold modes).
             EnvelopeValidationError: If envelope is invalid.
         """
+        # Sign envelope before serialization (if signer is configured)
+        if self._signer is not None:
+            envelope = self._signer.sign(envelope)
+
         data = envelope.to_bytes()
         self._validate_envelope(envelope, serialized_size=len(data))
 
@@ -341,6 +349,8 @@ class MessageProcessor:
         dedup_ttl_seconds: int = 3600,
         hot_subscriber: HotPathSubscriber | None = None,
         max_handler_concurrency: int = DEFAULT_MAX_HANDLER_CONCURRENCY,
+        verifier: MessageVerifier | None = None,
+        signing_mode: SigningMode = SigningMode.OFF,
     ) -> None:
         self._storage = storage
         self._agent_id = agent_id
@@ -352,6 +362,8 @@ class MessageProcessor:
         self._hot_task: asyncio.Task[None] | None = None
         self._handler_semaphore = asyncio.Semaphore(max_handler_concurrency)
         self._handler_tasks: set[asyncio.Task[None]] = set()
+        self._verifier = verifier
+        self._signing_mode = signing_mode
 
     def _dedup_key(self, msg_id: str) -> str:
         """Zone-scoped cache key for message dedup."""
@@ -414,6 +426,11 @@ class MessageProcessor:
                         envelope.id,
                         envelope.ttl_seconds,
                     )
+                    await self._track_processed(envelope.id)
+                    continue
+
+                # Signature verification for hot path
+                if not self._verify_signature_hot(envelope):
                     await self._track_processed(envelope.id)
                     continue
 
@@ -539,6 +556,10 @@ class MessageProcessor:
             )
             return
 
+        # Signature verification (when signing_mode != OFF)
+        if not await self._verify_signature(msg_path, envelope):
+            return
+
         # Invoke handler
         try:
             await self._handler(envelope)
@@ -571,6 +592,104 @@ class MessageProcessor:
 
         # Track in dedup cache (TTL-based eviction via CacheStoreABC)
         await self._track_processed(envelope.id)
+
+    def _verify_signature_hot(self, envelope: MessageEnvelope) -> bool:
+        """Verify message signature on the hot path (no dead-letter, just drop).
+
+        Returns True if the message should proceed to the handler.
+        """
+        if self._signing_mode == SigningMode.OFF:
+            return True
+
+        has_signature = envelope.signature is not None
+
+        if not has_signature:
+            if self._signing_mode == SigningMode.ENFORCE:
+                logger.warning(
+                    "Hot-path: unsigned message %s rejected (enforce mode)",
+                    envelope.id,
+                )
+                return False
+            logger.warning(
+                "Hot-path: unsigned message %s (verify_only mode)",
+                envelope.id,
+            )
+            return True
+
+        if self._verifier is None:
+            return True
+
+        result = self._verifier.verify(envelope)
+        if not result.valid:
+            logger.warning(
+                "Hot-path: invalid signature on message %s: %s",
+                envelope.id,
+                result.detail,
+            )
+            return False
+
+        return True
+
+    async def _verify_signature(self, msg_path: str, envelope: MessageEnvelope) -> bool:
+        """Verify message signature based on signing_mode.
+
+        Returns True if the message should proceed to the handler,
+        False if it was dead-lettered or rejected.
+        """
+        if self._signing_mode == SigningMode.OFF:
+            return True
+
+        has_signature = envelope.signature is not None
+
+        if not has_signature:
+            if self._signing_mode == SigningMode.ENFORCE:
+                logger.warning(
+                    "Unsigned message %s rejected (enforce mode) for agent %s",
+                    envelope.id,
+                    self._agent_id,
+                )
+                await self._dead_letter(
+                    msg_path,
+                    DLQReason.UNSIGNED_MESSAGE,
+                    msg_id=envelope.id,
+                    timestamp=envelope.timestamp,
+                    detail="Message has no signature (enforce mode)",
+                )
+                return False
+            # VERIFY_ONLY: warn but allow through
+            logger.warning(
+                "Unsigned message %s (verify_only mode) for agent %s",
+                envelope.id,
+                self._agent_id,
+            )
+            return True
+
+        # Has signature — verify it
+        if self._verifier is None:
+            logger.warning(
+                "No verifier configured but message %s has signature; allowing through",
+                envelope.id,
+            )
+            return True
+
+        result = self._verifier.verify(envelope)
+        if not result.valid:
+            logger.warning(
+                "Invalid signature on message %s for agent %s: %s",
+                envelope.id,
+                self._agent_id,
+                result.detail,
+            )
+            await self._dead_letter(
+                msg_path,
+                DLQReason.INVALID_SIGNATURE,
+                msg_id=envelope.id,
+                timestamp=envelope.timestamp,
+                detail=result.detail,
+            )
+            return False
+
+        return True
 
     async def _dead_letter(
         self,

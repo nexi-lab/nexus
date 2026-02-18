@@ -983,6 +983,7 @@ def create_nexus_services(
     agent_id: str | None = None,
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
+    enabled_bricks: frozenset[str] | None = None,
 ) -> KernelServices:
     """Create default services for NexusFS dependency injection.
 
@@ -1010,14 +1011,36 @@ def create_nexus_services(
         agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
         enable_write_buffer: Use async WriteBuffer for PG sync (Issue #1246).
         resiliency_raw: Raw resiliency policy dict from YAML config.
+        enabled_bricks: Set of brick names to enable. When None, all bricks
+            are enabled (backward-compatible default = FULL profile).
 
     Returns:
-        KernelServices with all services populated.
+        KernelServices with all services populated (None for disabled bricks).
     """
+    import logging as _factory_logging
+
+    _factory_log = _factory_logging.getLogger(__name__)
+
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import PermissionConfig as _PermissionConfig
+
+    # --- Profile-based brick gating (Issue #1389) ---
+    if enabled_bricks is None:
+        from nexus.core.deployment_profile import DeploymentProfile
+
+        enabled_bricks = DeploymentProfile.FULL.default_bricks()
+
+    def _brick_on(name: str) -> bool:
+        return name in enabled_bricks
+
+    _factory_log.info(
+        "Factory: enabled_bricks=%d/%d %s",
+        len(enabled_bricks),
+        20,
+        sorted(enabled_bricks),
+    )
 
     perm = permissions or _PermissionConfig()
     cache_cfg = cache or _CacheConfig()
@@ -1308,6 +1331,7 @@ def create_nexus_fs(
     enable_memory_paging: bool | None = None,
     memory_main_capacity: int | None = None,
     memory_recall_max_age_hours: float | None = None,
+    enabled_bricks: frozenset[str] | None = None,
     # Deprecated — ignored
     zone_id: str | None = None,
     agent_id: str | None = None,
@@ -1463,6 +1487,7 @@ def create_nexus_fs(
             zone_id=zone_id,
             agent_id=agent_id,
             enable_write_buffer=enable_write_buffer,
+            enabled_bricks=enabled_bricks,
         )
     elif services is None:
         from nexus.core.config import KernelServices as _KernelServices

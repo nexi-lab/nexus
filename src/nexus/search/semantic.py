@@ -716,38 +716,6 @@ class SemanticSearch:
             query, path=path, limit=limit, search_mode="semantic", adaptive_k=adaptive_k
         )
 
-    async def hybrid_search(
-        self,
-        query: str,
-        path: str = "/",
-        limit: int = 10,
-        alpha: float = 0.5,
-        fusion_method: str = "rrf",
-        adaptive_k: bool = False,
-    ) -> list[SemanticSearchResult]:
-        """Hybrid search combining keyword (BM25) and semantic (vector) search.
-
-        Args:
-            query: Search query
-            path: Root path to search (default: all files)
-            limit: Maximum results (used as k_base when adaptive_k=True)
-            alpha: Weight for vector search (0.0 = all BM25, 1.0 = all vector)
-            fusion_method: "rrf" (default), "weighted", "rrf_weighted"
-            adaptive_k: If True, dynamically adjust limit based on query complexity
-
-        Returns:
-            List of search results ranked by fusion score
-        """
-        return await self.search(
-            query,
-            path=path,
-            limit=limit,
-            search_mode="hybrid",
-            alpha=alpha,
-            fusion_method=fusion_method,
-            adaptive_k=adaptive_k,
-        )
-
     async def get_stats(self) -> dict[str, Any]:
         """Get stats (wrapper for get_index_stats)."""
         return await self.get_index_stats()
@@ -755,14 +723,3 @@ class SemanticSearch:
     async def delete_document(self, path: str) -> None:
         """Delete document (wrapper for delete_document_index)."""
         return await self.delete_document_index(path)
-
-    async def clear_index(self) -> None:
-        """Clear the entire search index."""
-        with self._get_session() as session:
-            # Delete all chunks
-            session.execute(delete(DocumentChunkModel))
-            session.commit()
-
-    def close(self) -> None:
-        """Close the search engine (no-op for now)."""
-        pass

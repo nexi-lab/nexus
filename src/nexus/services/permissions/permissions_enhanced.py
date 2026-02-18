@@ -7,14 +7,10 @@ from nexus.rebac.permissions_enhanced import (
     AdminCapability,
     AuditLogEntry,
     AuditStore,
-    EnhancedOperationContext,
-    EnhancedPermissionEnforcer,
 )
 
 __all__ = [
     "AdminCapability",
     "AuditLogEntry",
     "AuditStore",
-    "EnhancedOperationContext",
-    "EnhancedPermissionEnforcer",
 ]

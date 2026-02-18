@@ -48,7 +48,7 @@ pytestmark = [
 @pytest.fixture
 async def nats_bus():
     """Create, start, and clean up a NatsEventBus for testing."""
-    from nexus.core.event_bus_nats import NatsEventBus
+    from nexus.services.event_bus_nats import NatsEventBus
 
     bus = NatsEventBus(nats_url=NATS_URL)
     await bus.start()

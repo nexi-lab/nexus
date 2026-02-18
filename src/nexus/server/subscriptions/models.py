@@ -36,6 +36,10 @@ class SubscriptionCreate(BaseModel):
     def validate_url(cls, v: str) -> str:
         if not v.startswith(("http://", "https://")):
             raise ValueError("URL must start with http:// or https://")
+        # SSRF protection: block private/internal IPs (Issue #1596)
+        from nexus.security.url_validator import validate_outbound_url
+
+        validate_outbound_url(v)
         return v
 
     @field_validator("event_types")
@@ -72,6 +76,11 @@ class SubscriptionUpdate(BaseModel):
     def validate_url(cls, v: str | None) -> str | None:
         if v is not None and not v.startswith(("http://", "https://")):
             raise ValueError("URL must start with http:// or https://")
+        if v is not None:
+            # SSRF protection: block private/internal IPs (Issue #1596)
+            from nexus.security.url_validator import validate_outbound_url
+
+            validate_outbound_url(v)
         return v
 
     @field_validator("event_types")

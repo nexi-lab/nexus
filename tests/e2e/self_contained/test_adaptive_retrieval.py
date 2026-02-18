@@ -6,20 +6,15 @@ Tests the adaptive k calculation through the FastAPI /api/search/query endpoint.
 from __future__ import annotations
 
 import logging
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.services.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
+
 # Configure logging to verify adaptive k behavior
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-# Add direct import path for context_builder to avoid Python 3.12+ imports in nexus/__init__.py
-_llm_path = str(Path(__file__).parent.parent.parent.parent / "src" / "nexus" / "llm")
-if _llm_path not in sys.path:
-    sys.path.insert(0, _llm_path)
 
 
 class TestAdaptiveRetrievalFastAPI:
@@ -165,8 +160,6 @@ class TestAdaptiveRetrievalDaemon:
     @pytest.mark.asyncio
     async def test_daemon_applies_adaptive_k(self, caplog):
         """Test that SearchDaemon applies adaptive k when enabled."""
-        # Import directly to avoid Python 3.12+ requirements in nexus/__init__.py
-        from context_builder import ContextBuilder
 
         # Test the context builder directly (daemon uses this)
         builder = ContextBuilder()
@@ -188,9 +181,6 @@ class TestAdaptiveRetrievalDaemon:
     async def test_daemon_search_with_adaptive_k_logging(self, caplog):
         """Test that daemon logs adaptive k adjustments."""
         with caplog.at_level(logging.INFO):
-            # Import directly to avoid Python 3.12+ requirements
-            from context_builder import ContextBuilder
-
             builder = ContextBuilder()
             query = "How does authentication compare to authorization in web security?"
 
@@ -212,8 +202,6 @@ class TestAdaptiveRetrievalComplexity:
 
     def test_simple_queries_low_complexity(self):
         """Test that simple queries have low complexity scores."""
-        # Import directly to avoid Python 3.12+ requirements
-        from context_builder import ContextBuilder
 
         builder = ContextBuilder()
 
@@ -230,8 +218,6 @@ class TestAdaptiveRetrievalComplexity:
 
     def test_complex_queries_high_complexity(self):
         """Test that complex queries have higher complexity scores."""
-        # Import directly to avoid Python 3.12+ requirements
-        from context_builder import ContextBuilder
 
         builder = ContextBuilder()
 
@@ -248,9 +234,6 @@ class TestAdaptiveRetrievalComplexity:
 
     def test_dynamic_k_respects_bounds(self):
         """Test that k_min and k_max bounds are respected."""
-        # Import directly to avoid Python 3.12+ requirements
-        from context_builder import AdaptiveRetrievalConfig, ContextBuilder
-
         config = AdaptiveRetrievalConfig(k_base=10, k_min=5, k_max=15, delta=2.0)
         builder = ContextBuilder(adaptive_config=config)
 

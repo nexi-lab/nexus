@@ -22,11 +22,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from nexus.rebac.entity_registry import EntityRegistry
+from nexus.rebac.manager import EnhancedReBACManager
 from nexus.services.agents.agent_record import AgentState
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

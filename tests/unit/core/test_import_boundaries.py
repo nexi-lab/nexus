@@ -16,11 +16,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-<<<<<<< HEAD
-=======
 import pytest
 
->>>>>>> origin/develop
 # Project root for src/nexus/
 NEXUS_ROOT = Path(__file__).resolve().parents[3] / "src" / "nexus"
 
@@ -113,10 +110,7 @@ class TestKernelTopLevelImports:
         "core/async_nexus_fs.py",  # async_permissions (TYPE_CHECKING)
         "core/config.py",  # NamespaceManagerProtocol, namespace_manager (TYPE_CHECKING)
         "core/nexus_fs.py",  # memory_api, entity_registry (TYPE_CHECKING)
-<<<<<<< HEAD
-=======
         "core/permissions.py",  # PermissionEnforcer re-export (TYPE_CHECKING)
->>>>>>> origin/develop
     }
 
     def test_no_top_level_services_imports_in_core_modules(self):
@@ -188,8 +182,6 @@ class TestRPCTypesInCore:
         assert CoreCode is ServerCode
 
 
-<<<<<<< HEAD
-=======
 class TestFourStoragePillars:
     """Verify all Four Storage Pillars are importable ABCs (Issue #1525).
 
@@ -292,7 +284,6 @@ class TestConfigDoesNotImportServer:
         assert PkgConfig is ServerConfig
 
 
->>>>>>> origin/develop
 class TestZoneHelpersInCore:
     """Verify zone helpers are importable from core (Issue #1519, 3A)."""
 
@@ -301,7 +292,6 @@ class TestZoneHelpersInCore:
 
         assert zone_group_id("acme") == "zone-acme"
 
-<<<<<<< HEAD
     def test_zone_helpers_available_in_server(self):
         """Both core and server layers provide is_zone_admin (separate implementations OK)."""
         from nexus.core.zone_helpers import is_zone_admin as CoreFn
@@ -309,10 +299,3 @@ class TestZoneHelpersInCore:
 
         assert callable(CoreFn)
         assert callable(ServerFn)
-=======
-    def test_zone_helpers_re_exported_from_server(self):
-        from nexus.core.zone_helpers import is_zone_admin as CoreFn
-        from nexus.server.auth.user_helpers import is_zone_admin as ServerFn
-
-        assert CoreFn is ServerFn
->>>>>>> origin/develop

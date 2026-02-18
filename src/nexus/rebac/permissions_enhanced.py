@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-# Import Permission and OperationContext from the original module (don't duplicate)
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 <<<<<<< HEAD

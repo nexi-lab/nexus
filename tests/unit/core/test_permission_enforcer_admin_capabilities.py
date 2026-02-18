@@ -18,7 +18,7 @@ Admin bypass flow:
 """
 
 from nexus.core.permissions import OperationContext, Permission
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 
 
 class MockReBACManager:

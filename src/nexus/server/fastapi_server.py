@@ -1331,10 +1331,7 @@ def create_app(
     app.state.chunked_upload_service = None
     app.state.delegation_service = None
     app.state.reputation_service = None
-<<<<<<< HEAD
     app.state.rlm_service = None  # Issue #1306: RLM inference brick
-=======
->>>>>>> origin/develop
 
     # Initialize subscription manager if we have a metadata store
     try:
@@ -1696,11 +1693,7 @@ def _register_routes(app: FastAPI) -> None:
             except Exception:
                 return None
 
-<<<<<<< HEAD
-        a2a_router = create_a2a_router(
-=======
         a2a_router, a2a_task_manager = create_a2a_router(
->>>>>>> origin/develop
             nexus_fs=app.state.nexus_fs,
             config=None,
             base_url=a2a_base_url,

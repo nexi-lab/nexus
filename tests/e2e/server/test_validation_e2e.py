@@ -30,6 +30,7 @@ from nexus.validation.script_builder import (
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     """Create a FastAPI app with real NexusFS for testing."""
     from nexus.backends.local import LocalBackend
+    from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -47,12 +48,14 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
         backend=backend,
         metadata_store=metadata_store,
         record_store=None,
-        enforce_permissions=enforce_permissions,
-        allow_admin_bypass=True,
-        enforce_zone_isolation=False,
+        permissions=PermissionConfig(
+            enforce=enforce_permissions,
+            allow_admin_bypass=True,
+            enforce_zone_isolation=False,
+            enable_tiger_cache=False,
+            enable_deferred=False,
+        ),
         is_admin=True,
-        enable_tiger_cache=False,
-        enable_deferred_permissions=False,
     )
 
     api_key = "test-api-key-validation"

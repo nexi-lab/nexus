@@ -24,6 +24,7 @@ from nexus.cache.backend_wrapper import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
+from nexus.core.config import PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -353,8 +354,7 @@ class TestCachingPermissions:
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,  # simplify test — no zone checks
+            permissions=PermissionConfig(enforce=True, enforce_zone_isolation=False),
         )
 
         yield nx, cached_backend
@@ -492,8 +492,7 @@ class TestCachingPermissions:
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,
+            permissions=PermissionConfig(enforce=True, enforce_zone_isolation=False),
         )
 
         try:
@@ -578,9 +577,9 @@ class TestCachingWithFastAPIServer:
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=True,
-            enforce_zone_isolation=False,
-            enable_deferred_permissions=False,  # Avoid async parent tuple creation
+            permissions=PermissionConfig(
+                enforce=True, enforce_zone_isolation=False, enable_deferred=False
+            ),
         )
 
         # === Set up data and permissions directly (Python API) ===

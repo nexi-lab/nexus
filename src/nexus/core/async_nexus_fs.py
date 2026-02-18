@@ -108,7 +108,7 @@ class AsyncNexusFS:
 
         # Default context for operations when none is provided
         self._default_context = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             is_system=True,
             zone_id=tenant_id,  # Map tenant_id to zone_id

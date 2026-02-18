@@ -159,7 +159,7 @@ class NexusFUSE:
             subject_type = self._subject_type if self._subject_type is not None else "agent"
 
             context = OperationContext(
-                user=self._owner_id or self._agent_id,
+                user_id=self._owner_id or self._agent_id,
                 agent_id=self._agent_id,
                 subject_type=subject_type,
                 subject_id=self._agent_id,

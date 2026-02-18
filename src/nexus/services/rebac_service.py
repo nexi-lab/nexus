@@ -1614,7 +1614,7 @@ class ReBACService(ReBACShareMixin):
         elif isinstance(context, dict):
             # Create OperationContext from dict
             op_context = OperationContext(
-                user=context.get("user", "unknown"),
+                user_id=context.get("user", "unknown"),
                 groups=context.get("groups", []),
                 zone_id=context.get("zone_id"),
                 is_admin=context.get("is_admin", False),

@@ -662,7 +662,7 @@ class SearchService(SemanticSearchMixin):
             from nexus.core.permissions import OperationContext
 
             list_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path
+                user_id="anonymous", groups=[], backend_path=route.backend_path
             )
 
         # Issue #901: Parallel directory traversal for 5-10x speedup

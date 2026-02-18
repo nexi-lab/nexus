@@ -1859,7 +1859,7 @@ def _register_routes(app: FastAPI) -> None:
             from nexus.core.permissions import OperationContext
 
             context = OperationContext(
-                user="system",
+                user_id="system",
                 groups=[],
                 zone_id=zone_id,
                 subject_type="system",

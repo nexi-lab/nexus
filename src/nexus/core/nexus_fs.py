@@ -212,7 +212,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Create default context
         self._default_context = OperationContext(
-            user="anonymous",
+            user_id="anonymous",
             groups=[],
             zone_id=ROOT_ZONE_ID,
             agent_id=None,
@@ -977,7 +977,7 @@ class NexusFS(  # type: ignore[misc]
             context = {}
 
         return OperationContext(
-            user=context.get("user_id", "system"),
+            user_id=context.get("user_id", "system"),
             groups=context.get("groups", []),
             zone_id=context.get("zone_id"),
             agent_id=context.get("agent_id"),
@@ -1485,7 +1485,7 @@ class NexusFS(  # type: ignore[misc]
                 context
                 if isinstance(context, OperationContext)
                 else OperationContext(
-                    user=context.user_id,
+                    user_id=context.user_id,
                     groups=context.groups,
                     zone_id=context.zone_id or zone_id,
                     agent_id=context.agent_id or agent_id,
@@ -1496,7 +1496,7 @@ class NexusFS(  # type: ignore[misc]
             )
         elif subject is not None:
             ctx = OperationContext(
-                user=subject[1],
+                user_id=subject[1],
                 groups=[],
                 zone_id=zone_id,
                 agent_id=agent_id,
@@ -1509,7 +1509,7 @@ class NexusFS(  # type: ignore[misc]
                 self._default_context
                 if isinstance(self._default_context, OperationContext)
                 else OperationContext(
-                    user=self._default_context.user_id,
+                    user_id=self._default_context.user_id,
                     groups=self._default_context.groups,
                     zone_id=zone_id or self._default_context.zone_id,
                     agent_id=agent_id or self._default_context.agent_id,
@@ -4772,7 +4772,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Use admin context for provisioning
         admin_context = context or OperationContext(
-            user=user_id,
+            user_id=user_id,
             groups=[],
             zone_id=zone_id,
             is_admin=True,
@@ -5110,7 +5110,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Use admin context for deprovisioning
         admin_context = context or OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             zone_id=zone_id or "system",
             is_admin=True,
@@ -5164,7 +5164,7 @@ class NexusFS(  # type: ignore[misc]
             # Update context with proper zone_id
             if zone_id:
                 admin_context = OperationContext(
-                    user="system",
+                    user_id="system",
                     groups=[],
                     zone_id=zone_id,
                     is_admin=True,
@@ -6982,7 +6982,7 @@ class NexusFS(  # type: ignore[misc]
         elif isinstance(context, dict):
             # Create OperationContext from dict
             op_context = OperationContext(
-                user=context.get("user", "unknown"),
+                user_id=context.get("user", "unknown"),
                 groups=context.get("groups", []),
                 zone_id=context.get("zone_id"),
                 is_admin=context.get("is_admin", False),

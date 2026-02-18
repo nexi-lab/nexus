@@ -49,7 +49,7 @@ class PlaybookManager:
         self.agent_id = agent_id
         self.zone_id = zone_id
         self.context = context or OperationContext(
-            user=user_id, groups=[], is_admin=False, is_system=False
+            user_id=user_id, groups=[], is_admin=False, is_system=False
         )
 
     def _check_permission(self, playbook: PlaybookModel, permission: Permission) -> bool:

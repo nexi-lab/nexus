@@ -1058,10 +1058,9 @@ class SkillService:
                     from nexus.core.permissions import OperationContext as OpCtx
 
                     system_ctx = OpCtx(
-                        user="system",
+                        user_id="system",
                         groups=[],
                         zone_id=context.zone_id,
-                        user_id="system",
                         is_system=True,
                     )
                     content = self._gw.read(skill_md_path, context=system_ctx)

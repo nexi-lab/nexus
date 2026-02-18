@@ -65,7 +65,7 @@ async def warmup_cache(
 
     if user:
         stats = await warmer.warmup_from_history(
-            user_id=user,
+            user=user,
             hours=hours,
             max_files=max_files,
             zone_id=zone_id,

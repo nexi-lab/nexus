@@ -37,6 +37,6 @@ def parse_sk_token(token: str) -> SKTokenFields | None:
         return None
     return SKTokenFields(
         zone=parts[0] or None,
-        user_id=parts[1] or None,
+        user=parts[1] or None,
         key_id=parts[2] if len(parts) >= 3 and parts[2] else None,
     )

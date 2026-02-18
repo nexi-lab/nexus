@@ -253,13 +253,13 @@ send_notifications: true
     def _register_oauth_provider(self) -> None:
         """Register OAuth provider with TokenManager using OAuthProviderFactory."""
         try:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth.factory import OAuthProviderFactory
 
             factory = OAuthProviderFactory()
 
             try:
                 provider_instance = factory.create_provider(name=self.provider)
-                self.token_manager.register_provider(self.provider, provider_instance)
+                self.token_manager.register_provider(self.provider, provider_instance)  # type: ignore[arg-type]
                 logger.info(f"Registered OAuth provider '{self.provider}' for Calendar backend")
             except ValueError as e:
                 logger.warning(

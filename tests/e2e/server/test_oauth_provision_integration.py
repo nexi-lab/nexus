@@ -12,9 +12,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from nexus import LocalBackend
+from nexus.auth.oauth.crypto import OAuthCrypto
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
-from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore

@@ -1165,7 +1165,7 @@ class OAuthService:
             OAuthProviderFactory instance
         """
         if self._oauth_factory is None:
-            from nexus.server.auth.oauth_factory import OAuthProviderFactory
+            from nexus.auth.oauth.factory import OAuthProviderFactory
 
             # Get config if available
             oauth_config = None

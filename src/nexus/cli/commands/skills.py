@@ -1651,8 +1651,8 @@ def skills_mcp_mount(
 
                 # Register OAuth provider for automatic token refresh
                 if oauth_provider == "google":
-                    from nexus.server.auth import GoogleOAuthProvider
-                    from nexus.server.auth.oauth_provider import OAuthProvider
+                    from nexus.auth.oauth.base_provider import BaseOAuthProvider as OAuthProvider
+                    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 
                     client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                     client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1667,7 +1667,7 @@ def skills_mcp_mount(
                             ],
                             provider_name="google",
                         )
-                        token_manager.register_provider("google", provider_instance)
+                        token_manager.register_provider("google", provider_instance)  # type: ignore[arg-type]
 
                 # First check if credential exists
                 async def check_credential() -> bool:
@@ -1696,7 +1696,7 @@ def skills_mcp_mount(
 
                     # Get OAuth provider credentials from environment
                     if oauth_provider == "google":
-                        from nexus.server.auth import GoogleOAuthProvider
+                        from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1721,7 +1721,7 @@ def skills_mcp_mount(
                             provider_name="google",
                         )
                     elif oauth_provider in ("twitter", "x"):
-                        from nexus.server.auth.x_oauth import XOAuthProvider
+                        from nexus.auth.oauth.providers.x import XOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
@@ -1781,7 +1781,7 @@ def skills_mcp_mount(
                         await token_manager.store_credential(
                             provider=oauth_provider if oauth_provider != "x" else "twitter",
                             user_email=oauth_user,
-                            credential=credential,
+                            credential=credential,  # type: ignore[arg-type]
                             zone_id=ROOT_ZONE_ID,
                             created_by=oauth_user,
                         )

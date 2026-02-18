@@ -748,10 +748,10 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1355: Initialize KeyService for agent identity
     if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
+            from nexus.auth.oauth.crypto import OAuthCrypto
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
             from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
-            from nexus.server.auth.oauth_crypto import OAuthCrypto
 
             # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
             # after SQLAlchemyRecordStore.create_all already ran)
@@ -1537,18 +1537,30 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
             logger.warning("Cannot initialize OAuth provider: session factory is None")
             return
 
-        # Initialize OAuth provider
+        # Initialize OAuth provider (provider-agnostic via DI)
+        from nexus.auth.oauth.crypto import OAuthCrypto
+        from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+        from nexus.auth.oauth.user_auth import OAuthUserAuth
         from nexus.server.auth.auth_routes import set_oauth_provider
-        from nexus.server.auth.oauth_crypto import OAuthCrypto
-        from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 
         _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
         oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, session_factory=session_factory)
+
+        # Build provider-agnostic providers dict
+        google_provider = GoogleOAuthProvider(
+            client_id=google_client_id,
+            client_secret=google_client_secret,
+            redirect_uri=google_redirect_uri,
+            scopes=[
+                "openid",
+                "https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/userinfo.profile",
+            ],
+            provider_name="google-auth",
+        )
         oauth_provider = OAuthUserAuth(
             session_factory=session_factory,
-            google_client_id=google_client_id,
-            google_client_secret=google_client_secret,
-            google_redirect_uri=google_redirect_uri,
+            providers={"google": google_provider},
             jwt_secret=jwt_secret,
             oauth_crypto=oauth_crypto,
         )

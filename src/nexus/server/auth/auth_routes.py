@@ -388,7 +388,13 @@ async def login(
                 for oauth_key in oauth_api_keys:
                     try:
                         # Verify the key still exists in api_keys and hasn't expired or been revoked
-                        api_key_model = session.get(APIKeyModel, oauth_key.key_id)
+                        # Zone-scoped query (replaces session.get for zone isolation)
+                        key_query = select(APIKeyModel).where(
+                            APIKeyModel.key_id == oauth_key.key_id
+                        )
+                        if user.zone_id is not None:
+                            key_query = key_query.where(APIKeyModel.zone_id == user.zone_id)
+                        api_key_model = session.scalar(key_query)
                         if api_key_model and not api_key_model.revoked:
                             # Check expiration
                             is_expired = False
@@ -1004,7 +1010,13 @@ async def oauth_check(
                 for oauth_key in oauth_api_keys:
                     try:
                         # Verify the key still exists in api_keys and hasn't expired or been revoked
-                        api_key_model = session.get(APIKeyModel, oauth_key.key_id)
+                        # Zone-scoped query (replaces session.get for zone isolation)
+                        key_query = select(APIKeyModel).where(
+                            APIKeyModel.key_id == oauth_key.key_id
+                        )
+                        if user.zone_id is not None:
+                            key_query = key_query.where(APIKeyModel.zone_id == user.zone_id)
+                        api_key_model = session.scalar(key_query)
                         if api_key_model and not api_key_model.revoked:
                             # Check expiration - handle both timezone-aware and naive datetimes
                             is_expired = False

@@ -35,8 +35,8 @@ class MigrationStep:
     to_version: str
     name: str
     description: str
-    migrate_fn: Callable[["MigrationContext"], "MigrationResult"]
-    rollback_fn: Callable[["MigrationContext"], "MigrationResult"] | None = None
+    migrate_fn: Callable[[MigrationContext], MigrationResult]
+    rollback_fn: Callable[[MigrationContext], MigrationResult] | None = None
     requires_backup: bool = True
     is_destructive: bool = False
     alembic_revision: str | None = None
@@ -245,9 +245,9 @@ def _parse_version(version: str) -> tuple[int, ...]:
         return (0, 0, 0)
 
 # Global registry instance
-_global_registry: "MigrationRegistry | None" = None
+_global_registry: MigrationRegistry | None = None
 
-def get_registry() -> "MigrationRegistry":
+def get_registry() -> MigrationRegistry:
     """Get the global migration registry.
 
     Creates the registry and loads built-in migrations on first access.
@@ -261,7 +261,7 @@ def get_registry() -> "MigrationRegistry":
         _register_builtin_migrations(_global_registry)
     return _global_registry
 
-def _register_builtin_migrations(registry: "MigrationRegistry") -> None:
+def _register_builtin_migrations(registry: MigrationRegistry) -> None:
     """Register all built-in migrations.
 
     This function registers the standard migration steps between

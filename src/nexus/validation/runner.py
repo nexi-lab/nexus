@@ -53,7 +53,7 @@ class ValidationRunner:
     async def validate(
         self,
         sandbox_id: str,
-        provider: "SandboxProvider",
+        provider: SandboxProvider,
         workspace_path: str = "/workspace",
         config: ValidationPipelineConfig | None = None,
     ) -> list[ValidationResult]:
@@ -154,7 +154,7 @@ class ValidationRunner:
     async def _resolve_configs(
         self,
         sandbox_id: str,
-        provider: "SandboxProvider",
+        provider: SandboxProvider,
         workspace_path: str,
         explicit_config: ValidationPipelineConfig | None,
     ) -> list[ValidatorConfig]:

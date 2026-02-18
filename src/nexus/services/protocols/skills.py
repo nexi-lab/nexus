@@ -33,46 +33,46 @@ class SkillsProtocol(Protocol):
         self,
         skill_path: str,
         share_with: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str: ...
 
     def unshare(
         self,
         skill_path: str,
         unshare_from: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> bool: ...
 
     # Subscription
     def discover(
         self,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         filter: str = "all",
     ) -> list[Any]: ...
 
     def subscribe(
         self,
         skill_path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> bool: ...
 
     def unsubscribe(
         self,
         skill_path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> bool: ...
 
     # Runner
     def get_prompt_context(
         self,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         max_skills: int = 50,
     ) -> Any: ...
 
     def load(
         self,
         skill_path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> Any: ...
 
     # Package management
@@ -83,7 +83,7 @@ class SkillsProtocol(Protocol):
         output_path: str | None = None,
         format: str = "generic",
         include_dependencies: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     def import_skill(
@@ -93,7 +93,7 @@ class SkillsProtocol(Protocol):
         zip_data: str | None = None,
         target_path: str | None = None,
         allow_overwrite: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         tier: str | None = None,
     ) -> dict[str, Any]: ...
 
@@ -102,5 +102,5 @@ class SkillsProtocol(Protocol):
         source_path: str | None = None,
         zip_bytes: bytes | str | None = None,
         zip_data: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...

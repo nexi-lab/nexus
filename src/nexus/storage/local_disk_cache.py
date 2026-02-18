@@ -737,13 +737,13 @@ class LocalDiskCache:
 # Global instance management
 # =========================================================================
 
-_default_cache: "LocalDiskCache | None" = None
+_default_cache: LocalDiskCache | None = None
 _cache_lock = threading.Lock()
 
 def get_local_disk_cache(
     cache_dir: str | Path | None = None,
     max_size_gb: float | None = None,
-) -> "LocalDiskCache":
+) -> LocalDiskCache:
     """Get or create the global LocalDiskCache instance.
 
     Args:
@@ -773,7 +773,7 @@ def get_local_disk_cache(
 
     return _default_cache
 
-def set_local_disk_cache(cache: "LocalDiskCache | None") -> None:
+def set_local_disk_cache(cache: LocalDiskCache | None) -> None:
     """Set the global LocalDiskCache instance."""
     global _default_cache
     with _cache_lock:

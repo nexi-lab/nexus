@@ -29,10 +29,10 @@ class EntityRegistry:
     This improves resource management and prevents session lifecycle issues.
     """
 
-    _session: "Session | None"
-    _session_factory: "sessionmaker[Session] | None"
+    _session: Session | None
+    _session_factory: sessionmaker[Session] | None
 
-    def __init__(self, session_or_factory: "Session | sessionmaker[Session] | Engine"):
+    def __init__(self, session_or_factory: Session | sessionmaker[Session] | Engine):
         """Initialize entity registry.
 
         Args:
@@ -71,7 +71,7 @@ class EntityRegistry:
             self._session_factory = session_or_factory
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> Generator[Session]:
         """Get a session (creates new if using factory, or uses held session).
 
         Yields:

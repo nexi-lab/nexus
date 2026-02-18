@@ -28,9 +28,7 @@ def get_tc_names(source: str) -> set[str]:
         if isinstance(node, ast.If):
             test = node.test
             is_tc = False
-            if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
-                is_tc = True
-            elif isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
+            if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING" or isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
                 is_tc = True
 
             if is_tc:

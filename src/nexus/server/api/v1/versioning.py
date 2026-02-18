@@ -109,7 +109,7 @@ def build_v1_registry() -> RouterRegistry:
 
     return registry
 
-def register_v1_routers(app: "FastAPI", registry: RouterRegistry) -> None:
+def register_v1_routers(app: FastAPI, registry: RouterRegistry) -> None:
     """Mount every router in *registry* onto *app*."""
     for entry in registry.entries:
         if entry.prefix is not None:

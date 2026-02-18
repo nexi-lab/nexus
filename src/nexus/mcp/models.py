@@ -103,7 +103,7 @@ class MCPToolConfig:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MCPToolConfig":
+    def from_dict(cls, data: dict[str, Any]) -> MCPToolConfig:
         """Create from dictionary."""
         examples = []
         for ex_data in data.get("examples", []):
@@ -225,7 +225,7 @@ class MCPMount:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MCPMount":
+    def from_dict(cls, data: dict[str, Any]) -> MCPMount:
         """Create from dictionary."""
         mounted_at = None
         if data.get("mounted_at"):
@@ -319,7 +319,7 @@ class MCPToolDefinition:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MCPToolDefinition":
+    def from_dict(cls, data: dict[str, Any]) -> MCPToolDefinition:
         """Create from dictionary."""
         mcp_config = None
         if data.get("mcp_config"):

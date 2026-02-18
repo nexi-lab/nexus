@@ -65,7 +65,7 @@ def encode_cursor(
     json_bytes = json.dumps(data, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(json_bytes).decode("ascii")
 
-def decode_cursor(cursor: str, filters: dict[str, Any]) -> "CursorData":
+def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
     """Decode and validate pagination cursor.
 
     Validates that:

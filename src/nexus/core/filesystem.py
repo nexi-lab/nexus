@@ -466,7 +466,7 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
         """
         Check if path is a directory.
 
@@ -1102,7 +1102,7 @@ class NexusFilesystem(ABC):
         """Close the filesystem and release resources."""
         ...
 
-    def __enter__(self) -> "NexusFilesystem":
+    def __enter__(self) -> NexusFilesystem:
         """Context manager entry."""
         return self
 

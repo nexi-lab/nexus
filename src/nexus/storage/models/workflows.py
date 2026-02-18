@@ -35,7 +35,7 @@ class WorkflowModel(TimestampMixin, Base):
 
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    executions: Mapped[list["WorkflowExecutionModel"]] = relationship(
+    executions: Mapped[list[WorkflowExecutionModel]] = relationship(
         "WorkflowExecutionModel", back_populates="workflow", cascade="all, delete-orphan"
     )
 

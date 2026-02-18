@@ -33,7 +33,7 @@ class CacheInvalidationObserver(Protocol):
     def on_read(
         self,
         path: str,
-        metadata: "FileMetadata | None",
+        metadata: FileMetadata | None,
         revision: int,
         zone_id: str,
         resource_type: str = "file",
@@ -62,7 +62,7 @@ class ReadSetCacheObserver:
     def on_read(
         self,
         path: str,
-        metadata: "FileMetadata | None",
+        metadata: FileMetadata | None,
         revision: int,
         zone_id: str,
         resource_type: str = "file",

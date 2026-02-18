@@ -108,7 +108,7 @@ class BatchReadRequest(BaseModel):
 # =============================================================================
 
 def create_async_files_router(
-    async_fs: "AsyncNexusFS | None" = None,
+    async_fs: AsyncNexusFS | None = None,
     get_fs: Any | None = None,
 ) -> APIRouter:
     """
@@ -435,7 +435,7 @@ def create_async_files_router(
 
     @router.post("/batch-read")
     async def batch_read_files(
-        request: "BatchReadRequest",
+        request: BatchReadRequest,
         context: Any = Depends(get_context),
     ) -> dict[str, Any]:
         """

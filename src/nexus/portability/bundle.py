@@ -52,7 +52,7 @@ class BundleReader:
         self._tar: tarfile.TarFile | None = None
         self._manifest: ExportManifest | None = None
 
-    def __enter__(self) -> "BundleReader":
+    def __enter__(self) -> BundleReader:
         """Open the bundle for reading."""
         self.open()
         return self

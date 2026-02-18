@@ -223,7 +223,7 @@ class CacheSettings:
         return self.permission_ttl
 
     @classmethod
-    def from_env(cls) -> "CacheSettings":
+    def from_env(cls) -> CacheSettings:
         """Create settings from environment variables."""
         settings = cls()
         settings.validate()

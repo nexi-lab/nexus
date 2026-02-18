@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-async def startup_search(app: "FastAPI") -> list[asyncio.Task]:
+async def startup_search(app: FastAPI) -> list[asyncio.Task]:
     """Initialize search daemon and return background tasks."""
     search_daemon_enabled = os.getenv("NEXUS_SEARCH_DAEMON", "").lower() in (
         "true",

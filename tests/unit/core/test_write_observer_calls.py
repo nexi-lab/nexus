@@ -25,7 +25,7 @@ from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
+def temp_dir() -> Generator[Path]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
@@ -35,7 +35,7 @@ def observer() -> MagicMock:
     return MagicMock()
 
 @pytest.fixture
-def nx(temp_dir: Path, observer: MagicMock) -> Generator[NexusFS, None, None]:
+def nx(temp_dir: Path, observer: MagicMock) -> Generator[NexusFS]:
     nx = NexusFS(
         backend=LocalBackend(str(temp_dir / "data")),
         metadata_store=InMemoryMetastore(),

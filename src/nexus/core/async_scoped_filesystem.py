@@ -551,7 +551,7 @@ class AsyncScopedFilesystem:
         """Close the filesystem and release resources."""
         await self._fs.close()
 
-    async def __aenter__(self) -> "AsyncScopedFilesystem":
+    async def __aenter__(self) -> AsyncScopedFilesystem:
         """Async context manager entry."""
         return self
 

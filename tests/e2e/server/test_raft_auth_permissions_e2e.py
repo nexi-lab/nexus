@@ -79,7 +79,7 @@ def _rpc(
 @pytest.fixture(scope="module")
 def db_auth_server(
     tmp_path_factory: pytest.TempPathFactory,
-) -> Generator[dict[str, Any], None, None]:
+) -> Generator[dict[str, Any]]:
     """Start a Nexus server with --auth-type database --init.
 
     Yields a dict with server info and the admin API key.
@@ -183,7 +183,7 @@ def admin_headers(db_auth_server: dict[str, Any]) -> dict[str, str]:
 @pytest.fixture(scope="module")
 def admin_client(
     db_auth_server: dict[str, Any], admin_headers: dict[str, str]
-) -> Generator[httpx.Client, None, None]:
+) -> Generator[httpx.Client]:
     """HTTP client with admin credentials."""
     client = httpx.Client(
         base_url=db_auth_server["base_url"],
@@ -246,7 +246,7 @@ def registered_user(db_auth_server: dict[str, Any], admin_client: httpx.Client) 
 @pytest.fixture(scope="module")
 def user_client(
     db_auth_server: dict[str, Any], registered_user: dict[str, Any]
-) -> Generator[httpx.Client, None, None]:
+) -> Generator[httpx.Client]:
     """HTTP client with regular user credentials."""
     client = httpx.Client(
         base_url=db_auth_server["base_url"],

@@ -110,7 +110,7 @@ class DataMigrator:
         )
     """
 
-    def __init__(self, nx: "NexusFilesystem") -> None:
+    def __init__(self, nx: NexusFilesystem) -> None:
         """Initialize data migrator.
 
         Args:

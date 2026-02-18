@@ -533,7 +533,7 @@ def detect_device_tier(
     logger.info(f"Detected device tier: {base_tier}")
     return base_tier
 
-def get_config_for_tier(tier: DeviceTier) -> "MobileSearchConfig":
+def get_config_for_tier(tier: DeviceTier) -> MobileSearchConfig:
     """Get the preset configuration for a device tier.
 
     Args:
@@ -544,7 +544,7 @@ def get_config_for_tier(tier: DeviceTier) -> "MobileSearchConfig":
     """
     return TIER_PRESETS[tier]
 
-def auto_detect_config() -> "MobileSearchConfig":
+def auto_detect_config() -> MobileSearchConfig:
     """Auto-detect device tier and return appropriate configuration.
 
     This is the main entry point for automatic configuration.
@@ -570,7 +570,7 @@ def create_custom_config(
     reranker_name: str | None = None,
     max_memory_mb: int | None = None,
     **kwargs: Any,
-) -> "MobileSearchConfig":
+) -> MobileSearchConfig:
     """Create a custom search configuration.
 
     Allows mixing and matching models and settings beyond the presets.

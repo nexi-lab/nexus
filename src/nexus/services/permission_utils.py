@@ -23,10 +23,10 @@ class PermissionCheckError(Exception):
     """
 
 def check_permission(
-    gw: "NexusFSGateway",
+    gw: NexusFSGateway,
     path: str,
     permission: str,
-    context: "OperationContext | None",
+    context: OperationContext | None,
 ) -> bool:
     """Check if user has permission on path.
 

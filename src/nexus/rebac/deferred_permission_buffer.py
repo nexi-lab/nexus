@@ -39,8 +39,8 @@ class DeferredPermissionBuffer:
 
     def __init__(
         self,
-        rebac_manager: "ReBACManager | None" = None,
-        hierarchy_manager: "HierarchyManager | None" = None,
+        rebac_manager: ReBACManager | None = None,
+        hierarchy_manager: HierarchyManager | None = None,
         flush_interval_sec: float = 0.1,  # 100ms default
         max_batch_size: int = 1000,
     ):
@@ -263,13 +263,13 @@ class DeferredPermissionBuffer:
             )
 
 # Singleton instance for easy access
-_default_buffer: "DeferredPermissionBuffer | None" = None
+_default_buffer: DeferredPermissionBuffer | None = None
 
-def get_default_buffer() -> "DeferredPermissionBuffer | None":
+def get_default_buffer() -> DeferredPermissionBuffer | None:
     """Get the default deferred permission buffer instance."""
     return _default_buffer
 
-def set_default_buffer(buffer: "DeferredPermissionBuffer | None") -> None:
+def set_default_buffer(buffer: DeferredPermissionBuffer | None) -> None:
     """Set the default deferred permission buffer instance."""
     global _default_buffer
     _default_buffer = buffer

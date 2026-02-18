@@ -19,7 +19,7 @@ class TokenUsage:
         """Total tokens used."""
         return self.prompt_tokens + self.completion_tokens
 
-    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+    def __add__(self, other: TokenUsage) -> TokenUsage:
         """Add two token usage objects."""
         return TokenUsage(
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
@@ -99,7 +99,7 @@ class LLMMetrics:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LLMMetrics":
+    def from_dict(cls, data: dict[str, Any]) -> LLMMetrics:
         """Create metrics from dictionary."""
         token_usage_data = data.get("token_usage", {})
         token_usage = TokenUsage(

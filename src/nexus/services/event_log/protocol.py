@@ -41,7 +41,7 @@ class EventLogProtocol(Protocol):
     All sequence numbers are monotonically increasing across appends.
     """
 
-    async def append(self, event: "FileEvent") -> int:
+    async def append(self, event: FileEvent) -> int:
         """Append a single event to the log.
 
         Returns:
@@ -49,7 +49,7 @@ class EventLogProtocol(Protocol):
         """
         ...
 
-    async def append_batch(self, events: list["FileEvent"]) -> list[int]:
+    async def append_batch(self, events: list[FileEvent]) -> list[int]:
         """Append multiple events atomically.
 
         Returns:
@@ -63,7 +63,7 @@ class EventLogProtocol(Protocol):
         limit: int = 1000,
         *,
         zone_id: str | None = None,
-    ) -> list["FileEvent"]:
+    ) -> list[FileEvent]:
         """Read events starting from a sequence number.
 
         Args:

@@ -98,7 +98,7 @@ class FileMetadataModel(Base):
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
-    file_path: Mapped["FilePathModel"] = relationship(
+    file_path: Mapped[FilePathModel] = relationship(
         "FilePathModel", back_populates="metadata_entries"
     )
 

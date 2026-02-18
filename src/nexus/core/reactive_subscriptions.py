@@ -175,7 +175,7 @@ class ReactiveSubscriptionManager:
     async def register(
         self,
         subscription: Subscription,
-        read_set: "ReadSet | None" = None,
+        read_set: ReadSet | None = None,
     ) -> None:
         """Register a subscription.
 
@@ -286,7 +286,7 @@ class ReactiveSubscriptionManager:
             )
             return count
 
-    def _iter_matching_subscriptions(self, event: "FileEvent") -> list[tuple[str, Subscription]]:
+    def _iter_matching_subscriptions(self, event: FileEvent) -> list[tuple[str, Subscription]]:
         """Find all subscriptions matching an event (common core logic).
 
         Uses O(1+d) read-set lookup via ReadSetRegistry reverse index.
@@ -327,7 +327,7 @@ class ReactiveSubscriptionManager:
 
         return results
 
-    def find_affected_connections(self, event: "FileEvent") -> set[str]:
+    def find_affected_connections(self, event: FileEvent) -> set[str]:
         """Find all connection IDs that should receive an event.
 
         Deduplicates by connection_id (a connection appears once even if
@@ -347,7 +347,7 @@ class ReactiveSubscriptionManager:
         self._total_lookup_time += elapsed
         return result
 
-    def find_affected_subscriptions(self, event: "FileEvent") -> dict[str, list[Subscription]]:
+    def find_affected_subscriptions(self, event: FileEvent) -> dict[str, list[Subscription]]:
         """Find all subscriptions affected by an event, grouped by connection.
 
         Returns full Subscription objects grouped by connection_id for

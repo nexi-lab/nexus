@@ -70,7 +70,7 @@ class MountEntry:
 
     virtual_path: str
 
-def build_mount_entries(object_paths: list[tuple[str, str]]) -> list["MountEntry"]:
+def build_mount_entries(object_paths: list[tuple[str, str]]) -> list[MountEntry]:
     """Build mount entries from ReBAC-granted object paths.
 
     Pure function — no side effects, no database access. Takes a list of
@@ -165,14 +165,14 @@ class NamespaceManager:
 
     def __init__(
         self,
-        rebac_manager: "EnhancedReBACManager",
+        rebac_manager: EnhancedReBACManager,
         cache_maxsize: int = 10_000,
         cache_ttl: int = 300,
         revision_window: int = 10,
         dcache_maxsize: int = 100_000,
         dcache_positive_ttl: int = 300,
         dcache_negative_ttl: int = 60,
-        persistent_store: "PersistentViewStore | None" = None,
+        persistent_store: PersistentViewStore | None = None,
     ) -> None:
         self._rebac_manager = rebac_manager
         self._revision_window = revision_window

@@ -190,7 +190,7 @@ class SourceResult:
         source_name: str,
         data: Any,
         elapsed_ms: float = 0.0,
-    ) -> "SourceResult":
+    ) -> SourceResult:
         """Create a successful result."""
         return cls(
             source_type=source_type,
@@ -207,7 +207,7 @@ class SourceResult:
         source_name: str,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> "SourceResult":
+    ) -> SourceResult:
         """Create an error result."""
         return cls(
             source_type=source_type,
@@ -225,7 +225,7 @@ class SourceResult:
         source_name: str,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> "SourceResult":
+    ) -> SourceResult:
         """Create a timeout result."""
         return cls(
             source_type=source_type,
@@ -242,7 +242,7 @@ class SourceResult:
         source_type: str,
         source_name: str,
         error_message: str,
-    ) -> "SourceResult":
+    ) -> SourceResult:
         """Create a skipped result (e.g., no executor registered)."""
         return cls(
             source_type=source_type,
@@ -260,7 +260,7 @@ class SourceResult:
         data: Any,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> "SourceResult":
+    ) -> SourceResult:
         """Create a truncated result."""
         return cls(
             source_type=source_type,

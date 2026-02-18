@@ -135,7 +135,7 @@ class ManifestResolver:
         self._max_resolve_seconds = max_resolve_seconds
         self._metrics = metrics_observer
 
-    def with_executors(self, extra: dict[str, SourceExecutor]) -> "ManifestResolver":
+    def with_executors(self, extra: dict[str, SourceExecutor]) -> ManifestResolver:
         """Return a new resolver with additional executors merged in.
 
         Existing executors are preserved; *extra* executors override on conflict.

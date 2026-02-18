@@ -152,7 +152,7 @@ class SandboxManager:
         logger.info("SandboxRouter wired with providers: %s", list(self.providers.keys()))
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> Generator[Session]:
         """Create a fresh session for a single DB operation."""
         session = self._session_factory()
         try:

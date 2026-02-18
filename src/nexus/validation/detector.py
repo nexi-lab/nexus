@@ -35,7 +35,7 @@ _ALL_MARKER_FILES: frozenset[str] = frozenset(
 
 async def detect_project_validators(
     sandbox_id: str,
-    provider: "SandboxProvider",
+    provider: SandboxProvider,
     workspace_path: str = "/workspace",
 ) -> list[str]:
     """Detect applicable validators by checking workspace files.

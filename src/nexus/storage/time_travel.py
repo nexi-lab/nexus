@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 class TimeTravelReader:
     """Read filesystem state at historical operation points."""
 
-    def __init__(self, session: "Session", backend: "Backend"):
+    def __init__(self, session: Session, backend: Backend):
         """Initialize time-travel reader.
 
         Args:

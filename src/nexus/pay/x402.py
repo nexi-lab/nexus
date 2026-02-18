@@ -222,7 +222,7 @@ class X402Client:
         """Get CAIP-2 formatted network identifier."""
         return NETWORK_CAIP2_MAP.get(self.network, f"eip155:{self.network}")
 
-    async def _get_http_client(self) -> "httpx.AsyncClient":
+    async def _get_http_client(self) -> httpx.AsyncClient:
         """Get or create persistent HTTP client with connection pooling.
 
         Connection pooling reduces TCP/TLS handshake overhead for
@@ -544,7 +544,7 @@ class X402Client:
     async def process_topup_webhook(
         self,
         webhook_payload: dict[str, Any],
-        credits_service: "CreditsService",
+        credits_service: CreditsService,
     ) -> str:
         """Process x402 payment webhook and credit agent in TigerBeetle.
 

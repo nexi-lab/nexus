@@ -123,7 +123,7 @@ class ReadSetEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ReadSetEntry":
+    def from_dict(cls, data: dict[str, Any]) -> ReadSetEntry:
         """Create from dictionary."""
         return cls(
             resource_type=data["resource_type"],
@@ -303,7 +303,7 @@ class ReadSet:
         """Return number of entries in the read set."""
         return len(self.entries)
 
-    def __iter__(self) -> "Iterator[ReadSetEntry]":
+    def __iter__(self) -> Iterator[ReadSetEntry]:
         """Iterate over entries."""
         return iter(self.entries)
 
@@ -318,7 +318,7 @@ class ReadSet:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ReadSet":
+    def from_dict(cls, data: dict[str, Any]) -> ReadSet:
         """Create from dictionary."""
         entries = [ReadSetEntry.from_dict(e) for e in data.get("entries", [])]
         return cls(
@@ -330,7 +330,7 @@ class ReadSet:
         )
 
     @classmethod
-    def create(cls, zone_id: str, ttl_seconds: float | None = None) -> "ReadSet":
+    def create(cls, zone_id: str, ttl_seconds: float | None = None) -> ReadSet:
         """Factory method to create a new read set with auto-generated ID.
 
         Args:
@@ -374,7 +374,7 @@ class RWLock:
         self._pending_writers: int = 0
 
     @contextlib.contextmanager
-    def read_lock(self) -> "Generator[None, None, None]":
+    def read_lock(self) -> Generator[None]:
         """Acquire shared read lock. Blocks if a writer holds or is waiting."""
         with self._condition:
             while self._writer or self._pending_writers > 0:
@@ -389,7 +389,7 @@ class RWLock:
                     self._condition.notify_all()
 
     @contextlib.contextmanager
-    def write_lock(self) -> "Generator[None, None, None]":
+    def write_lock(self) -> Generator[None]:
         """Acquire exclusive write lock. Blocks until all readers/writers release."""
         with self._condition:
             self._pending_writers += 1
@@ -691,10 +691,10 @@ class ReadSetRegistry:
             return len(self._read_sets)
 
 # Module-level singleton for global access
-_global_registry: "ReadSetRegistry | None" = None
+_global_registry: ReadSetRegistry | None = None
 _registry_lock = threading.Lock()
 
-def get_global_registry() -> "ReadSetRegistry":
+def get_global_registry() -> ReadSetRegistry:
     """Get or create the global ReadSetRegistry singleton.
 
     Returns:
@@ -707,7 +707,7 @@ def get_global_registry() -> "ReadSetRegistry":
                 _global_registry = ReadSetRegistry()
     return _global_registry
 
-def set_global_registry(registry: "ReadSetRegistry | None") -> None:
+def set_global_registry(registry: ReadSetRegistry | None) -> None:
     """Set the global ReadSetRegistry (for testing).
 
     Args:

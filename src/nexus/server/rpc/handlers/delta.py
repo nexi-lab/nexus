@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+def handle_delta_read(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_read method for rsync-style incremental updates.
 
     If client provides a content hash matching their cached version,
@@ -107,7 +107,7 @@ def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
         "compression_ratio": 1.0 - delta_ratio,
     }
 
-def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+def handle_delta_write(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_write method for rsync-style incremental updates.
 
     Client sends a binary delta patch instead of full file content.

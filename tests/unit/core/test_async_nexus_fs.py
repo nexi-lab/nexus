@@ -34,7 +34,7 @@ def metadata_store(tmp_path: Path) -> RaftMetadataStore:
 @pytest_asyncio.fixture
 async def async_fs(
     tmp_path: Path, metadata_store: RaftMetadataStore
-) -> AsyncGenerator[AsyncNexusFS, None]:
+) -> AsyncGenerator[AsyncNexusFS]:
     """Create AsyncNexusFS instance for testing."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",

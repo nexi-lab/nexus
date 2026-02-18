@@ -37,11 +37,11 @@ class AgentEventLog:
         session_factory: SQLAlchemy sessionmaker for database access.
     """
 
-    def __init__(self, session_factory: "sessionmaker[Session]") -> None:
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
     @contextmanager
-    def _get_session(self) -> Generator["Session", None, None]:
+    def _get_session(self) -> Generator[Session]:
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:

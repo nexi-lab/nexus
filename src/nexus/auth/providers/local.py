@@ -182,7 +182,7 @@ class LocalAuth(AuthProvider):
         pass
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "LocalAuth":
+    def from_config(cls, config: dict[str, Any]) -> LocalAuth:
         """Create from configuration dictionary."""
         return cls(
             jwt_secret=config.get("jwt_secret"),

@@ -34,7 +34,7 @@ class OAuthProviderFactory:
             self._oauth_config = self._get_default_oauth_config()
 
     @classmethod
-    def from_file(cls, path: Path | str) -> "OAuthProviderFactory":
+    def from_file(cls, path: Path | str) -> OAuthProviderFactory:
         """Create factory from YAML config file.
 
         Args:
@@ -65,7 +65,7 @@ class OAuthProviderFactory:
         return cls(config=oauth_config)
 
     @classmethod
-    def from_dict(cls, config_dict: dict[str, Any]) -> "OAuthProviderFactory":
+    def from_dict(cls, config_dict: dict[str, Any]) -> OAuthProviderFactory:
         """Create factory from dictionary.
 
         Args:

@@ -70,7 +70,7 @@ def build_v2_registry(
     *,
     async_nexus_fs_getter: object | None = None,
     chunked_upload_service_getter: object | None = None,
-) -> "RouterRegistry":
+) -> RouterRegistry:
     """Import all v2 routers and return a populated registry.
 
     Each import is isolated in its own try/except so one broken
@@ -255,7 +255,7 @@ def build_v2_registry(
 
 def register_v2_routers(
     app: FastAPI,
-    registry: "RouterRegistry",
+    registry: RouterRegistry,
 ) -> None:
     """Mount every router in *registry* onto *app*.
 

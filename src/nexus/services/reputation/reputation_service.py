@@ -55,7 +55,7 @@ class ReputationService(SessionMixin):
 
     def __init__(
         self,
-        session_factory: "sessionmaker[Session]",
+        session_factory: sessionmaker[Session],
         cache_maxsize: int = 10_000,
         cache_ttl: int = 60,
     ) -> None:
@@ -293,7 +293,7 @@ class ReputationService(SessionMixin):
 
     def _create_event(
         self,
-        session: "Session",
+        session: Session,
         rater_agent_id: str,
         rated_agent_id: str,
         exchange_id: str,
@@ -346,7 +346,7 @@ class ReputationService(SessionMixin):
 
     def _update_materialized_score(
         self,
-        session: "Session",
+        session: Session,
         rated_agent_id: str,
         zone_id: str,
         outcome: str,

@@ -88,7 +88,7 @@ DISCOVERY_TOOLS = {
 }
 
 def search_tools(
-    index: "ToolIndex",
+    index: ToolIndex,
     query: str,
     top_k: int = 5,
 ) -> dict[str, Any]:
@@ -109,7 +109,7 @@ def search_tools(
         "query": query,
     }
 
-def list_servers(index: "ToolIndex") -> dict[str, Any]:
+def list_servers(index: ToolIndex) -> dict[str, Any]:
     """List all available servers.
 
     Args:
@@ -128,7 +128,7 @@ def list_servers(index: "ToolIndex") -> dict[str, Any]:
     }
 
 def get_tool_details(
-    index: "ToolIndex",
+    index: ToolIndex,
     tool_name: str,
 ) -> dict[str, Any]:
     """Get detailed information about a tool.
@@ -152,7 +152,7 @@ def get_tool_details(
     }
 
 def load_tools(
-    index: "ToolIndex",
+    index: ToolIndex,
     tool_names: list[str],
     active_tools: dict[str, Any],
 ) -> dict[str, Any]:

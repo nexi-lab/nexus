@@ -78,7 +78,7 @@ class UploadSession:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "UploadSession":
+    def from_dict(cls, data: dict[str, Any]) -> UploadSession:
         """Deserialize from a plain dict."""
         created_at = data.get("created_at")
         if isinstance(created_at, str):

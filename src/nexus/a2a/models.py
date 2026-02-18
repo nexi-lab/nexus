@@ -9,7 +9,7 @@ schema generation.
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,7 +29,7 @@ class TaskState(StrEnum):
     REJECTED = "rejected"
 
 #: States from which no further transitions are allowed.
-TERMINAL_STATES: frozenset["TaskState"] = frozenset(
+TERMINAL_STATES: frozenset[TaskState] = frozenset(
     {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELED, TaskState.REJECTED}
 )
 
@@ -52,7 +52,7 @@ VALID_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     TaskState.REJECTED: frozenset(),
 }
 
-def is_valid_transition(from_state: "TaskState", to_state: "TaskState") -> bool:
+def is_valid_transition(from_state: TaskState, to_state: TaskState) -> bool:
     """Check whether a state transition is valid."""
     return to_state in VALID_TRANSITIONS.get(from_state, frozenset())
 
@@ -273,12 +273,12 @@ class A2AResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     @classmethod
-    def success(cls, request_id: str | int, result: Any) -> "A2AResponse":
+    def success(cls, request_id: str | int, result: Any) -> A2AResponse:
         """Create a success response."""
         return cls(id=request_id, result=result)
 
     @classmethod
-    def from_error(cls, request_id: str | int | None, error: A2AErrorData) -> "A2AResponse":
+    def from_error(cls, request_id: str | int | None, error: A2AErrorData) -> A2AResponse:
         """Create an error response."""
         return cls(id=request_id, error=error)
 

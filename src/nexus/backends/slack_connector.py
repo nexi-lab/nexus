@@ -192,7 +192,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         """Slack connector manages OAuth tokens."""
         return True
 
-    def _get_slack_client(self, context: "OperationContext | None" = None) -> Any:
+    def _get_slack_client(self, context: OperationContext | None = None) -> Any:
         """Get Slack WebClient with user's OAuth credentials.
 
         Args:
@@ -307,7 +307,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         return yaml_output.encode("utf-8")
 
     def _get_channel_by_name(
-        self, channel_name: str, context: "OperationContext | None" = None
+        self, channel_name: str, context: OperationContext | None = None
     ) -> dict[str, Any] | None:
         """Get channel info by name or ID.
 
@@ -341,7 +341,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
 
     # === Backend interface methods ===
 
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    def write_content(self, content: bytes, context: OperationContext | None = None) -> str:
         """
         Write content (post message to Slack).
 
@@ -403,8 +403,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
 
     @timed_response
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bytes]:
         """
         Read channel content as YAML file from cache or Slack API.
 
@@ -553,7 +553,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             path=backend_path,
         )
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
         """
         Delete is not supported for Slack connector (read-only for now).
 
@@ -569,7 +569,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             backend="slack",
         )
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_hash: str, context: OperationContext | None = None) -> bool:
         """
         Check if message exists.
 
@@ -591,7 +591,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             logger.debug("Slack content existence check failed: %s", e)
             return False
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
         """Get message content size (cache-first, efficient).
 
         Args:
@@ -618,7 +618,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         content = self.read_content(content_hash, context).unwrap()
         return len(content)
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_hash: str, context: OperationContext | None = None) -> int:
         """Get reference count (always 1 for connector backends).
 
         Args:
@@ -633,7 +633,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
     def get_version(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str | None:
         """
         Get version for a Slack message file.
@@ -671,7 +671,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Create directory (not supported for Slack connector).
 
@@ -693,7 +693,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Remove directory (not supported for Slack connector).
 
@@ -710,7 +710,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             backend="slack",
         )
 
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
         """Check if path is a directory.
 
         Args:
@@ -737,7 +737,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
 
         return False
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """
         List directory contents.
 

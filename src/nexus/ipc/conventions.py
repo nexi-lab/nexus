@@ -62,25 +62,6 @@ def tasks_path(agent_id: str) -> str:
     """Tasks directory: ``/agents/{agent_id}/tasks``."""
     return f"{AGENTS_ROOT}/{agent_id}/{TASKS_DIR}"
 
-def task_file_path(agent_id: str, task_id: str, timestamp: datetime) -> str:
-    """Full path for a task file in an agent's tasks directory.
-
-    Format: ``/agents/{agent_id}/tasks/{ISO_timestamp}_{task_id}.json``
-
-    The timestamp prefix ensures ``ls --sort=name`` gives chronological
-    ordering.  The task_id suffix ensures uniqueness.
-    """
-    ts = timestamp.strftime("%Y%m%dT%H%M%S%fZ")
-    return f"{tasks_path(agent_id)}/{ts}_{task_id}.json"
-
-def task_dead_letter_path(agent_id: str) -> str:
-    """Dead letter directory for deleted tasks: ``/agents/{agent_id}/tasks/_dead_letter``."""
-    return f"{tasks_path(agent_id)}/_dead_letter"
-
-def tasks_path(agent_id: str) -> str:
-    """Tasks directory: ``/agents/{agent_id}/tasks``."""
-    return f"{AGENTS_ROOT}/{agent_id}/{TASKS_DIR}"
-
 
 def task_file_path(agent_id: str, task_id: str, timestamp: datetime) -> str:
     """Full path for a task file in an agent's tasks directory.

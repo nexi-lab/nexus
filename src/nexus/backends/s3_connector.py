@@ -141,7 +141,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         secret_access_key: str | None = None,
         session_token: str | None = None,
         # Session factory for caching support
-        session_factory: "type[Session] | None" = None,
+        session_factory: type[Session] | None = None,
     ):
         """
         Initialize S3 connector backend.
@@ -259,7 +259,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         """Backend identifier name."""
         return "s3_connector"
 
-    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         """
         Verify S3 connection is healthy.
 
@@ -347,7 +347,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
     def get_version(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str | None:
         """
         Get S3 version ID for a file.
@@ -390,7 +390,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
     def get_file_info(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """
         Get file metadata for delta sync change detection (Issue #1127).
@@ -455,7 +455,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         self,
         path: str,
         expires_in: int = 3600,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, str | int]:
         """
         Generate a presigned URL for direct download from S3.
@@ -676,7 +676,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
     def batch_get_versions(
         self,
         backend_paths: list[str],
-        contexts: dict[str, "OperationContext"] | None = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, str | None]:
         """
         Get S3 version IDs for multiple files using parallel head_object calls.
@@ -996,7 +996,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
     def read_content(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[bytes]:
         """
         Read content from S3 with caching support.
@@ -1083,9 +1083,9 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         *,
-        contexts: "dict[str, OperationContext] | None" = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """
         Optimized batch read for S3 backend with parallel downloads.
@@ -1151,7 +1151,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
     def write_content(
         self,
         content: bytes,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[str]:
         """
         Write content to S3 and update cache.
@@ -1212,7 +1212,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
     def write_content_with_version_check(
         self,
         content: bytes,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         expected_version: str | None = None,
     ) -> HandlerResponse[str]:
         """

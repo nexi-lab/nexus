@@ -29,7 +29,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 async def client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[AsyncClient, None]:
+) -> AsyncGenerator[AsyncClient]:
     """Create full FastAPI app via create_app with real AsyncNexusFS.
 
     This tests the real server initialization path:

@@ -113,7 +113,7 @@ class SyncStoreBase:
         session.execute(stmt)
 
     @contextmanager
-    def _with_session(self) -> Generator[Any, None, None]:
+    def _with_session(self) -> Generator[Any]:
         """Context manager for database sessions.
 
         Handles commit on success, rollback on error, and close on exit.

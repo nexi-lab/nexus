@@ -32,13 +32,13 @@ class ShareLinkProtocol(Protocol):
         expires_in_hours: int | None = None,
         max_access_count: int | None = None,
         password: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     async def get_share_link(
         self,
         link_id: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     async def list_share_links(
@@ -46,13 +46,13 @@ class ShareLinkProtocol(Protocol):
         path: str | None = None,
         include_revoked: bool = False,
         include_expired: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     async def revoke_share_link(
         self,
         link_id: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     async def access_share_link(
@@ -61,12 +61,12 @@ class ShareLinkProtocol(Protocol):
         password: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     async def get_share_link_access_logs(
         self,
         link_id: str,
         limit: int = 100,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...

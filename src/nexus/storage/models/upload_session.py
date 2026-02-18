@@ -94,7 +94,7 @@ class UploadSessionModel(Base):
         }
 
     @classmethod
-    def from_upload_session(cls, session: Any) -> "UploadSessionModel":
+    def from_upload_session(cls, session: Any) -> UploadSessionModel:
         """Create model from an UploadSession dataclass."""
         metadata_json = json.dumps(session.metadata) if session.metadata else None
         return cls(

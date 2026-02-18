@@ -358,7 +358,6 @@ class SkillExporter:
             Complete SKILL.md content (frontmatter + content)
         """
         # Build frontmatter dict
-        from typing import Any
 
         frontmatter: dict[str, Any] = {
             "name": skill.metadata.name,

@@ -43,7 +43,7 @@ class ManifestEntry:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ManifestEntry":
+    def from_dict(cls, data: dict[str, Any]) -> ManifestEntry:
         """Deserialize from JSON dict."""
         return cls(
             content_hash=data["hash"],
@@ -108,7 +108,7 @@ class WorkspaceManifest:
         return json.dumps(manifest_dict, separators=(",", ": ")).encode("utf-8")
 
     @classmethod
-    def from_json(cls, data: bytes) -> "WorkspaceManifest":
+    def from_json(cls, data: bytes) -> WorkspaceManifest:
         """Deserialize from JSON bytes.
 
         Args:
@@ -129,7 +129,7 @@ class WorkspaceManifest:
     def from_file_list(
         cls,
         file_entries: list[tuple[str, str, int, str | None]],
-    ) -> "WorkspaceManifest":
+    ) -> WorkspaceManifest:
         """Create manifest from a list of file entries.
 
         This is the primary constructor used by WorkspaceManager.create_snapshot().

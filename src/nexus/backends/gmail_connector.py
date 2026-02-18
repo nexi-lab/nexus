@@ -312,7 +312,7 @@ class GmailConnectorBackend(
             logger.warning(f"Failed to load static SKILL.md: {e}, using auto-generated")
             return super().generate_skill_doc(mount_path)
 
-    def _get_gmail_service(self, context: "OperationContext | None" = None) -> "Resource":
+    def _get_gmail_service(self, context: OperationContext | None = None) -> Resource:
         """Get Gmail service with user's OAuth credentials.
 
         Args:
@@ -506,7 +506,7 @@ class GmailConnectorBackend(
 
         return email_data
 
-    def _fetch_email(self, service: "Resource", message_id: str) -> dict[str, Any]:
+    def _fetch_email(self, service: Resource, message_id: str) -> dict[str, Any]:
         """Fetch full email data from Gmail API.
 
         Args:
@@ -590,7 +590,7 @@ class GmailConnectorBackend(
 
     # === Backend interface methods ===
 
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    def write_content(self, content: bytes, context: OperationContext | None = None) -> str:
         """
         Write content is not supported for Gmail connector (read-only).
 
@@ -608,8 +608,8 @@ class GmailConnectorBackend(
 
     @timed_response
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bytes]:
         """
         Read email content from cache or Gmail API.
 
@@ -729,7 +729,7 @@ class GmailConnectorBackend(
     def _bulk_download_contents(
         self,
         paths: list[str],
-        contexts: dict[str, "OperationContext"] | None = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes]:
         """Bulk download email contents using Gmail batch API.
 
@@ -814,7 +814,7 @@ class GmailConnectorBackend(
 
         return results
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
         """
         Delete is not supported for Gmail connector (read-only).
 
@@ -830,7 +830,7 @@ class GmailConnectorBackend(
             backend="gmail",
         )
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_hash: str, context: OperationContext | None = None) -> bool:
         """
         Check if email exists.
 
@@ -880,7 +880,7 @@ class GmailConnectorBackend(
             logger.debug("Gmail content existence check failed: %s", e)
             return False
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
         """Get email content size (cache-first, efficient).
 
         Performance optimization: Checks cache first to avoid API calls during
@@ -914,7 +914,7 @@ class GmailConnectorBackend(
             return len(content_response.data)
         return 0
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_hash: str, context: OperationContext | None = None) -> int:
         """Get reference count (always 1 for connector backends).
 
         Args:
@@ -929,7 +929,7 @@ class GmailConnectorBackend(
     def get_version(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str | None:
         """
         Get version for a Gmail email file.
@@ -983,7 +983,7 @@ class GmailConnectorBackend(
     def batch_get_versions(
         self,
         backend_paths: list[str],
-        contexts: dict[str, "OperationContext"] | None = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, str | None]:
         """
         Get versions for multiple Gmail email files in batch (optimized).
@@ -1015,7 +1015,7 @@ class GmailConnectorBackend(
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Create directory (not supported for Gmail connector).
 
@@ -1037,7 +1037,7 @@ class GmailConnectorBackend(
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Remove directory (not supported for Gmail connector).
 
@@ -1054,7 +1054,7 @@ class GmailConnectorBackend(
             backend="gmail",
         )
 
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
         """Check if path is a directory.
 
         Args:
@@ -1072,7 +1072,7 @@ class GmailConnectorBackend(
         # Everything else (email files with format LABEL/thread_id-msg_id.yaml) is a file
         return path in self.LABEL_FOLDERS
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """
         List directory contents.
 

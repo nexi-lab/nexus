@@ -83,18 +83,18 @@ class CASMeta:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CASMeta":
+    def from_dict(cls, data: dict[str, Any]) -> CASMeta:
         """Deserialize from a dict, capturing unknown keys in *extra*."""
         ref_count = int(data.get("ref_count", 0))
         size = int(data.get("size", 0))
         extra = tuple((k, v) for k, v in data.items() if k not in ("ref_count", "size"))
         return cls(ref_count=ref_count, size=size, extra=extra)
 
-    def inc_ref(self) -> "CASMeta":
+    def inc_ref(self) -> CASMeta:
         """Return a new CASMeta with ref_count incremented by 1."""
         return CASMeta(ref_count=self.ref_count + 1, size=self.size, extra=self.extra)
 
-    def dec_ref(self) -> "CASMeta":
+    def dec_ref(self) -> CASMeta:
         """Return a new CASMeta with ref_count decremented by 1 (min 0)."""
         return CASMeta(ref_count=max(0, self.ref_count - 1), size=self.size, extra=self.extra)
 

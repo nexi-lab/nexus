@@ -242,7 +242,7 @@ class AsyncLocalBackend(AsyncBackend):
     # === Content Write Operations ===
 
     async def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
         """
         Write content to CAS storage and return its hash.
@@ -281,7 +281,7 @@ class AsyncLocalBackend(AsyncBackend):
     # === Content Read Operations ===
 
     async def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
         """
         Read content by its hash asynchronously.
@@ -334,9 +334,9 @@ class AsyncLocalBackend(AsyncBackend):
     async def batch_read_content(
         self,
         content_hashes: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         *,
-        contexts: "dict[str, OperationContext] | None" = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """
         Optimized batch read for async backend with concurrent I/O.
@@ -387,7 +387,7 @@ class AsyncLocalBackend(AsyncBackend):
     # === Content Delete Operations ===
 
     async def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]:
         """
         Delete content by hash with reference counting.
@@ -428,7 +428,7 @@ class AsyncLocalBackend(AsyncBackend):
     # === Content Existence/Size Operations ===
 
     async def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         """
         Check if content exists asynchronously.
@@ -454,7 +454,7 @@ class AsyncLocalBackend(AsyncBackend):
         )
 
     async def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         """
         Get content size in bytes asynchronously.
@@ -487,7 +487,7 @@ class AsyncLocalBackend(AsyncBackend):
         return await asyncio.to_thread(_get_size)
 
     async def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         """
         Get reference count for content asynchronously.
@@ -527,7 +527,7 @@ class AsyncLocalBackend(AsyncBackend):
         self,
         content_hash: str,
         chunk_size: int = 65536,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> AsyncIterator[bytes]:
         """
         Stream content from disk in chunks using aiofiles (truly async).
@@ -570,7 +570,7 @@ class AsyncLocalBackend(AsyncBackend):
         start: int,
         end: int,
         chunk_size: int = 65536,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> AsyncIterator[bytes]:
         """Stream a byte range [start, end] inclusive from local CAS (async).
 
@@ -616,7 +616,7 @@ class AsyncLocalBackend(AsyncBackend):
     async def write_stream(
         self,
         chunks: AsyncIterator[bytes],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[str]:
         """
         Write content from an async iterator of chunks.
@@ -662,7 +662,7 @@ class AsyncLocalBackend(AsyncBackend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """
         Create directory in virtual directory structure asynchronously.
@@ -701,7 +701,7 @@ class AsyncLocalBackend(AsyncBackend):
         return await asyncio.to_thread(_mkdir)
 
     async def is_directory(
-        self, path: str, context: "OperationContext | None" = None
+        self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         """
         Check if path is a directory asynchronously.
@@ -730,7 +730,7 @@ class AsyncLocalBackend(AsyncBackend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """
         Remove directory from virtual directory structure asynchronously.
@@ -784,7 +784,7 @@ class AsyncLocalBackend(AsyncBackend):
 
         return await asyncio.to_thread(_rmdir)
 
-    async def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    async def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """
         List directory contents asynchronously.
 

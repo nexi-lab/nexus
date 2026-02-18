@@ -37,18 +37,18 @@ def _try_create_raft_store(path: str) -> object | None:
         return None
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
+def temp_dir() -> Generator[Path]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 @pytest.fixture
-def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
     yield rs
     rs.close()
 
 @pytest.fixture
-def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
+def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS]:
     raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
     if raft_store is None:
         # Fallback to InMemoryMetastore with factory-style wiring

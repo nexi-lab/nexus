@@ -159,7 +159,7 @@ class BaseBlobStorageConnector(Backend):
         return backend_path
 
     def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         """
         Get reference count (always 1 for connector backends).
@@ -229,7 +229,7 @@ class BaseBlobStorageConnector(Backend):
     def batch_get_versions(
         self,
         backend_paths: list[str],
-        contexts: dict[str, "OperationContext"] | None = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, str | None]:
         """
         Get versions for multiple files in batch (optimized for bulk operations).
@@ -432,7 +432,7 @@ class BaseBlobStorageConnector(Backend):
     # === Content Operations (Shared Implementation) ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
         """
         Write content to blob storage at actual path (not CAS path).
@@ -484,7 +484,7 @@ class BaseBlobStorageConnector(Backend):
             )
 
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
         """
         Read content from blob storage using backend_path.
@@ -547,7 +547,7 @@ class BaseBlobStorageConnector(Backend):
         self,
         content_hash: str,
         chunk_size: int = 8192,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> Iterator[bytes]:
         """
         Stream content from blob storage in chunks.
@@ -656,7 +656,7 @@ class BaseBlobStorageConnector(Backend):
         return True  # Likely a version ID
 
     def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]:
         """
         Delete content from blob storage using backend_path.
@@ -703,7 +703,7 @@ class BaseBlobStorageConnector(Backend):
             )
 
     def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         """
         Check if content exists at backend_path.
@@ -742,7 +742,7 @@ class BaseBlobStorageConnector(Backend):
             )
 
     def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         """
         Get content size using backend_path (cache-first, efficient).
@@ -812,9 +812,9 @@ class BaseBlobStorageConnector(Backend):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         *,
-        contexts: "dict[str, OperationContext] | None" = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """Read multiple content items in parallel for cloud backends.
 
@@ -859,7 +859,7 @@ class BaseBlobStorageConnector(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """
         Create directory marker in blob storage.
@@ -946,7 +946,7 @@ class BaseBlobStorageConnector(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """
         Remove directory from blob storage.
@@ -1028,7 +1028,7 @@ class BaseBlobStorageConnector(Backend):
             )
 
     def is_directory(
-        self, path: str, context: "OperationContext | None" = None
+        self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         """
         Check if path is a directory.
@@ -1087,7 +1087,7 @@ class BaseBlobStorageConnector(Backend):
                 path=path,
             )
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """
         List directory contents.
 
@@ -1149,7 +1149,7 @@ class BaseBlobStorageConnector(Backend):
         self,
         old_path: str,
         new_path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """
         Rename/move a file in blob storage.

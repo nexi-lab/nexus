@@ -196,7 +196,7 @@ class NexusRPCTransport:
         """Close the HTTP client and release resources."""
         self._client.close()
 
-    def __enter__(self) -> "NexusRPCTransport":
+    def __enter__(self) -> NexusRPCTransport:
         return self
 
     def __exit__(self, *args: Any) -> None:

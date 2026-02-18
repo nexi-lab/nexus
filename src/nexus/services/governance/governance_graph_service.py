@@ -42,7 +42,7 @@ class GovernanceGraphService:
 
     def __init__(
         self,
-        session_factory: "Callable[[], AsyncSession]",
+        session_factory: Callable[[], AsyncSession],
         cache_ttl: float = 60.0,
     ) -> None:
         self._session_factory = session_factory

@@ -46,26 +46,6 @@ def validate_scope_prefix(prefix: str | None) -> None:
     if "/.." in prefix or "/../" in prefix or prefix.endswith("/.."):
         raise InvalidPrefixError(f"scope_prefix must not contain '..': {prefix!r}")
 
-def validate_scope_prefix(prefix: str | None) -> None:
-    """Validate scope_prefix at system boundary.
-
-    Rejects malformed prefixes that could cause path-traversal or
-    matching bugs in _matches_prefix().
-
-    Raises:
-        InvalidPrefixError: If prefix is empty, relative, or malformed.
-    """
-    if prefix is None:
-        return
-    if not prefix:
-        raise InvalidPrefixError("scope_prefix must not be empty string")
-    if not prefix.startswith("/"):
-        raise InvalidPrefixError(f"scope_prefix must be absolute (start with /): {prefix!r}")
-    if "//" in prefix:
-        raise InvalidPrefixError(f"scope_prefix must not contain '//': {prefix!r}")
-    if "/.." in prefix or "/../" in prefix or prefix.endswith("/.."):
-        raise InvalidPrefixError(f"scope_prefix must not contain '..': {prefix!r}")
-
 
 @dataclass(frozen=True)
 class GrantSpec:
@@ -88,7 +68,7 @@ def derive_grants(
     add_grants: list[str] | None = None,
     readonly_paths: list[str] | None = None,
     scope_prefix: str | None = None,
-) -> list["GrantSpec"]:
+) -> list[GrantSpec]:
     """Derive child grants from parent grants according to delegation mode.
 
     This is the core anti-escalation function. For all modes, the returned
@@ -164,9 +144,9 @@ def _derive_copy(
     remove_set: frozenset[str],
     readonly_set: frozenset[str],
     scope_prefix: str | None,
-) -> list["GrantSpec"]:
+) -> list[GrantSpec]:
     """COPY mode: start with parent grants, narrow down."""
-    result: list["GrantSpec"] = []
+    result: list[GrantSpec] = []
     for object_id, relation in sorted(parent_map.items()):
         # Filter by scope prefix
         if not _matches_prefix(object_id, scope_prefix):
@@ -184,9 +164,9 @@ def _derive_clean(
     parent_map: dict[str, str],
     add_set: frozenset[str],
     scope_prefix: str | None,
-) -> list["GrantSpec"]:
+) -> list[GrantSpec]:
     """CLEAN mode: empty set, add only specified grants from parent."""
-    result: list["GrantSpec"] = []
+    result: list[GrantSpec] = []
     # Validate: all add_grants must exist in parent
     parent_ids = frozenset(parent_map.keys())
     escalation = add_set - parent_ids
@@ -202,9 +182,9 @@ def _derive_clean(
 def _derive_shared(
     parent_map: dict[str, str],
     scope_prefix: str | None,
-) -> list["GrantSpec"]:
+) -> list[GrantSpec]:
     """SHARED mode: return all parent grants (within scope_prefix)."""
-    result: list["GrantSpec"] = []
+    result: list[GrantSpec] = []
     for object_id, relation in sorted(parent_map.items()):
         if not _matches_prefix(object_id, scope_prefix):
             continue

@@ -295,7 +295,7 @@ def rrf_weighted_fusion(
 def fuse_results(
     keyword_results: Sequence[dict[str, Any] | Any],
     vector_results: Sequence[dict[str, Any] | Any],
-    config: "FusionConfig | None" = None,
+    config: FusionConfig | None = None,
     limit: int = 10,
     id_key: str | None = "chunk_id",
 ) -> list[dict[str, Any]]:

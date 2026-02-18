@@ -693,7 +693,7 @@ def validate(
     except Exception as e:
         handle_error(e)
 
-def _print_import_result(result: "ImportResult", dry_run: bool) -> None:
+def _print_import_result(result: ImportResult, dry_run: bool) -> None:
     """Print import result summary.
 
     Args:

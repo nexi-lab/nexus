@@ -32,8 +32,8 @@ class TigerFacade:
 
     def __init__(
         self,
-        tiger_cache: "TigerCache | None" = None,
-        tiger_updater: "TigerCacheUpdater | None" = None,
+        tiger_cache: TigerCache | None = None,
+        tiger_updater: TigerCacheUpdater | None = None,
     ) -> None:
         self._cache = tiger_cache
         self._updater = tiger_updater
@@ -41,12 +41,12 @@ class TigerFacade:
     # -- Properties for external inspection --------------------------------
 
     @property
-    def cache(self) -> "TigerCache | None":
+    def cache(self) -> TigerCache | None:
         """Access the underlying TigerCache (or None if disabled)."""
         return self._cache
 
     @property
-    def updater(self) -> "TigerCacheUpdater | None":
+    def updater(self) -> TigerCacheUpdater | None:
         """Access the underlying TigerCacheUpdater (or None if disabled)."""
         return self._updater
 

@@ -226,7 +226,7 @@ def main():
                 return
 
         # Unknown error
-        print(f"\nUnhandled error type:")
+        print("\nUnhandled error type:")
         print(stderr[-800:])
         return
 

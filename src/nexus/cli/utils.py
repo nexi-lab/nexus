@@ -176,7 +176,7 @@ def add_backend_options(func: Any) -> Any:
     return wrapper
 
 def get_filesystem(
-    backend_config: "BackendConfig",
+    backend_config: BackendConfig,
     enforce_permissions: bool | None = None,
     server_mode: str | None = None,
     allow_admin_bypass: bool | None = None,

@@ -93,7 +93,7 @@ class Entity:
         return (self.entity_type, self.entity_id)
 
     @classmethod
-    def from_tuple(cls, tup: tuple[str, str]) -> "Entity":
+    def from_tuple(cls, tup: tuple[str, str]) -> Entity:
         """Create entity from (type, id) tuple."""
         return cls(entity_type=tup[0], entity_id=tup[1])
 
@@ -160,7 +160,7 @@ class ReBACTuple:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ReBACTuple":
+    def from_dict(cls, data: dict[str, Any]) -> ReBACTuple:
         """Create tuple from dictionary."""
         return cls(
             tuple_id=data["tuple_id"],
@@ -395,7 +395,7 @@ class NamespaceConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "NamespaceConfig":
+    def from_dict(cls, data: dict[str, Any]) -> NamespaceConfig:
         """Create from dictionary."""
         return cls(
             namespace_id=data["namespace_id"],
@@ -459,7 +459,7 @@ class CheckCacheEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CheckCacheEntry":
+    def from_dict(cls, data: dict[str, Any]) -> CheckCacheEntry:
         """Create from dictionary."""
         return cls(
             cache_id=data["cache_id"],
@@ -519,7 +519,7 @@ class ChangelogEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChangelogEntry":
+    def from_dict(cls, data: dict[str, Any]) -> ChangelogEntry:
         """Create from dictionary."""
         return cls(
             change_id=data["change_id"],

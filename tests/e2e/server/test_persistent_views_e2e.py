@@ -192,7 +192,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
 # === Fixtures ===
 
 @pytest.fixture(scope="module")
-def server() -> Generator[dict[str, Any], None, None]:
+def server() -> Generator[dict[str, Any]]:
     """Start a real nexus serve process with PERMISSIONS ENABLED + L3.
 
     Uses multi-key StaticAPIKeyAuth so each user (admin, alice, bob)
@@ -276,7 +276,7 @@ def server() -> Generator[dict[str, Any], None, None]:
         shutil.rmtree(data_dir, ignore_errors=True)
 
 @pytest.fixture(scope="module")
-def client(server: dict[str, Any]) -> Generator[httpx.Client, None, None]:
+def client(server: dict[str, Any]) -> Generator[httpx.Client]:
     """Shared httpx client (no proxy)."""
     with _make_client() as c:
         yield c

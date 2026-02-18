@@ -137,7 +137,7 @@ class SyncJobManager:
         logger.info(f"Created sync job {job_id} for mount {mount_point}")
         return job_id
 
-    async def start_job(self, job_id: str, nexus_fs: "NexusFS") -> None:
+    async def start_job(self, job_id: str, nexus_fs: NexusFS) -> None:
         """Start a sync job as a background asyncio task.
 
         Args:
@@ -326,7 +326,7 @@ class SyncJobManager:
 
         return callback
 
-    async def _run_sync(self, job_id: str, nexus_fs: "NexusFS") -> None:
+    async def _run_sync(self, job_id: str, nexus_fs: NexusFS) -> None:
         """Internal: Execute sync with progress updates.
 
         This runs in a background asyncio task.

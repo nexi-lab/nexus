@@ -62,7 +62,7 @@ class AceFacade:
         self._learning_loop: LearningLoop | None = None
 
     @property
-    def trajectory(self) -> "TrajectoryManager":
+    def trajectory(self) -> TrajectoryManager:
         """TrajectoryManager instance (lazy-loaded)."""
         if self._trajectory is None:
             from nexus.services.ace.trajectory import TrajectoryManager
@@ -77,7 +77,7 @@ class AceFacade:
         return self._trajectory
 
     @property
-    def feedback(self) -> "FeedbackManager":
+    def feedback(self) -> FeedbackManager:
         """FeedbackManager instance (lazy-loaded)."""
         if self._feedback is None:
             from nexus.services.ace.feedback import FeedbackManager
@@ -86,7 +86,7 @@ class AceFacade:
         return self._feedback
 
     @property
-    def playbook(self) -> "PlaybookManager":
+    def playbook(self) -> PlaybookManager:
         """PlaybookManager instance (lazy-loaded)."""
         if self._playbook is None:
             from nexus.services.ace.playbook import PlaybookManager
@@ -101,7 +101,7 @@ class AceFacade:
         return self._playbook
 
     @property
-    def reflector(self) -> "Reflector":
+    def reflector(self) -> Reflector:
         """Reflector instance (lazy-loaded)."""
         if self._reflector is None:
             from nexus.services.ace.reflection import Reflector
@@ -118,7 +118,7 @@ class AceFacade:
         return self._reflector
 
     @property
-    def curator(self) -> "Curator":
+    def curator(self) -> Curator:
         """Curator instance (lazy-loaded)."""
         if self._curator is None:
             from nexus.services.ace.curation import Curator
@@ -127,7 +127,7 @@ class AceFacade:
         return self._curator
 
     @property
-    def consolidation(self) -> "ConsolidationEngine":
+    def consolidation(self) -> ConsolidationEngine:
         """ConsolidationEngine instance (lazy-loaded)."""
         if self._consolidation is None:
             from nexus.services.ace.consolidation import ConsolidationEngine
@@ -143,7 +143,7 @@ class AceFacade:
         return self._consolidation
 
     @property
-    def learning_loop(self) -> "LearningLoop":
+    def learning_loop(self) -> LearningLoop:
         """LearningLoop instance (lazy-loaded)."""
         if self._learning_loop is None:
             from nexus.services.ace.learning_loop import LearningLoop

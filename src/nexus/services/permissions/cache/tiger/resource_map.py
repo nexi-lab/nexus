@@ -39,7 +39,7 @@ class TigerResourceMap:
     See: Issue #979 - Cross-zone resource map optimization
     """
 
-    def __init__(self, engine: "Engine"):
+    def __init__(self, engine: Engine):
         self._engine = engine
         self._is_postgresql = "postgresql" in str(engine.url)
 
@@ -53,7 +53,7 @@ class TigerResourceMap:
         self,
         resource_type: str,
         resource_id: str,
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> int:
         """Get or create an integer ID for a resource.
 
@@ -139,7 +139,7 @@ class TigerResourceMap:
         return int_id
 
     def get_resource_id(
-        self, int_id: int, conn: "Connection | None" = None
+        self, int_id: int, conn: Connection | None = None
     ) -> tuple[str, str] | None:
         """Get resource info from integer ID.
 
@@ -183,7 +183,7 @@ class TigerResourceMap:
     def bulk_get_int_ids(
         self,
         resources: list[tuple[str, str]],  # List of (resource_type, resource_id)
-        conn: "Connection",
+        conn: Connection,
     ) -> dict[tuple[str, str], int | None]:
         """Bulk get integer IDs for multiple resources in a single query.
 
@@ -237,7 +237,7 @@ class TigerResourceMap:
     def get_int_ids_batch(
         self,
         resources: list[tuple[str, str]],
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> dict[tuple[str, str], int]:
         """Get integer IDs for multiple resources in batch.
 

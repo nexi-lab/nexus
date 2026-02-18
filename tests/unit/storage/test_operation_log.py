@@ -14,14 +14,14 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
+def temp_dir() -> Generator[Path]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
 @pytest.fixture
-def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore]:
     """Create a SQLAlchemyRecordStore for testing."""
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
     yield rs
@@ -29,7 +29,7 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
+def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),

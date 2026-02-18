@@ -72,7 +72,7 @@ class RankingConfig:
     enable_attribute_boosting: bool = True
     enable_exactness_boost: bool = True
 
-def get_ranking_config_from_env() -> "RankingConfig":
+def get_ranking_config_from_env() -> RankingConfig:
     """Load ranking configuration from environment variables.
 
     Environment variables:
@@ -149,7 +149,7 @@ def check_prefix_match(query: str, text: str) -> bool:
 def apply_attribute_boosting(
     results: list[dict[str, Any]],
     query: str,
-    config: "RankingConfig | None" = None,
+    config: RankingConfig | None = None,
 ) -> list[dict[str, Any]]:
     """Apply attribute-based score boosting to search results.
 

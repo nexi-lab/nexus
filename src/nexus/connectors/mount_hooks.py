@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 def on_mount(
-    backend: "ConnectorProtocol",
+    backend: ConnectorProtocol,
     mount_path: str,
     filesystem: Any = None,
     skill_registry: Any = None,

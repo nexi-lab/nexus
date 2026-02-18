@@ -252,7 +252,7 @@ async def execute_workflow(
     body: ExecuteWorkflowRequest | None = None,
     engine: Any = Depends(_get_workflow_engine),
     _auth_result: dict[str, Any] = Depends(_get_require_auth()),
-) -> "ExecutionResult":
+) -> ExecutionResult:
     """Manually trigger a workflow execution."""
     event_context: dict[str, Any] = {}
     if body:

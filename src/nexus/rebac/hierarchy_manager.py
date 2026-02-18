@@ -44,7 +44,7 @@ class HierarchyManager:
 
     def __init__(
         self,
-        rebac_manager: "EnhancedReBACManager",
+        rebac_manager: EnhancedReBACManager,
         enable_inheritance: bool = True,
     ):
         """Initialize hierarchy manager.

@@ -381,7 +381,7 @@ class NexusConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_url_for_remote(self) -> "NexusConfig":
+    def validate_url_for_remote(self) -> NexusConfig:
         """Validate URL is required for remote mode."""
         if self.mode == "remote" and not self.url:
             env_url = os.getenv("NEXUS_URL")

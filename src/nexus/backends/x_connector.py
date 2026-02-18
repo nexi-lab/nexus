@@ -190,7 +190,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         return True
 
     async def _get_api_client_async(
-        self, context: "OperationContext | None"
+        self, context: OperationContext | None
     ) -> Any:  # Returns XAPIClient but avoid circular import
         """Get authenticated X API client (async version).
 
@@ -235,7 +235,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         return XAPIClient(access_token=access_token)
 
     def _get_api_client(
-        self, context: "OperationContext | None"
+        self, context: OperationContext | None
     ) -> Any:  # Returns XAPIClient but avoid circular import
         """Get authenticated X API client (sync wrapper).
 
@@ -252,7 +252,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
 
         return run_sync(self._get_api_client_async(context))
 
-    async def _get_user_id(self, context: "OperationContext | None") -> str:
+    async def _get_user_id(self, context: OperationContext | None) -> str:
         """Get X user ID for authenticated user.
 
         Args:
@@ -600,7 +600,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
 
     async def _read_content_async(
         self,
-        context: "OperationContext",
+        context: OperationContext,
         endpoint_type: str,
         params: dict[str, Any],
     ) -> bytes:
@@ -635,7 +635,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     def read_content(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[bytes]:
         """
         Read content from X API via virtual path.
@@ -690,7 +690,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     def write_content(
         self,
         content: bytes,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[str]:
         """
         Write content (post tweet or save draft).
@@ -781,7 +781,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     def delete_content(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """
         Delete content (delete tweet or draft).
@@ -879,7 +879,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     def content_exists(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[bool]:
         """
         Check if content exists.
@@ -917,7 +917,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     def get_content_size(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[int]:
         """
         Get content size.
@@ -941,7 +941,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     def get_ref_count(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[int]:
         """
         Get reference count (always 1 for X connector).
@@ -964,7 +964,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Create directory (not supported - fixed structure)."""
         return HandlerResponse.error(
@@ -984,7 +984,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Remove directory (not supported - fixed structure)."""
         return HandlerResponse.error(
@@ -999,7 +999,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     def is_directory(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[bool]:
         """
         Check if path is a directory.
@@ -1034,7 +1034,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     def list_dir(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[str]:
         """
         List virtual directory contents.
@@ -1120,7 +1120,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         self,
         pattern: str,
         path: str = "/",
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[str]:
         """
         Match paths using glob patterns.

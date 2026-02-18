@@ -48,7 +48,7 @@ class ValidationResult:
             f"warnings={len(self.warnings)})"
         )
 
-    def merge(self, other: "ValidationResult") -> "ValidationResult":
+    def merge(self, other: ValidationResult) -> ValidationResult:
         """Merge another validation result into this one.
 
         Args:
@@ -82,7 +82,7 @@ class IntegrityValidator:
             print("Validation failed:", result.errors)
     """
 
-    def __init__(self, nx: "NexusFilesystem") -> None:
+    def __init__(self, nx: NexusFilesystem) -> None:
         """Initialize validator.
 
         Args:

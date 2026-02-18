@@ -134,14 +134,14 @@ def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
 
 
 @pytest.fixture
-def rebac() -> Generator[FakeReBACManager, None, None]:
+def rebac() -> Generator[FakeReBACManager]:
     mgr = FakeReBACManager()
     yield mgr
     mgr.close()
 
 
 @pytest.fixture
-def search_svc(rebac: FakeReBACManager) -> Generator[Any, None, None]:
+def search_svc(rebac: FakeReBACManager) -> Generator[Any]:
     yield from _make_search_service(rebac)
 
 

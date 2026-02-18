@@ -75,7 +75,7 @@ def _parse_sample_rate(env_var: str, default: float = 0.0) -> float:
         return default
     return max(0.0, min(1.0, rate))
 
-def sentry_before_send(event: "Event", hint: "Hint") -> "Event | None":
+def sentry_before_send(event: Event, hint: Hint) -> Event | None:
     """Filter events before sending to Sentry.
 
     - Drops events for expected errors (is_expected=True) — user input

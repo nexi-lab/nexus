@@ -84,13 +84,7 @@ def collect_runtime_name_usages(tree: ast.Module, tc_ranges: list[tuple[int, int
 def already_imported_at_runtime(tree: ast.Module, name: str, tc_ranges: list[tuple[int, int]]) -> bool:
     """Check if a name is already imported at module level (not in TC block)."""
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            if in_tc_block(node.lineno, tc_ranges):
-                continue
-            for alias in node.names:
-                if (alias.asname or alias.name) == name:
-                    return True
-        elif isinstance(node, ast.Import):
+        if isinstance(node, ast.ImportFrom) or isinstance(node, ast.Import):
             if in_tc_block(node.lineno, tc_ranges):
                 continue
             for alias in node.names:

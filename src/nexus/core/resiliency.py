@@ -177,7 +177,7 @@ class AsyncCircuitBreaker:
 
     # -- context manager -----------------------------------------------------
 
-    async def __aenter__(self) -> "AsyncCircuitBreaker":
+    async def __aenter__(self) -> AsyncCircuitBreaker:
         state = self.current_state
 
         if state is CircuitState.CLOSED:
@@ -330,14 +330,14 @@ class ResiliencyManager:
 # 1F: with_resiliency decorator
 # ---------------------------------------------------------------------------
 
-_default_manager: "ResiliencyManager | None" = None
+_default_manager: ResiliencyManager | None = None
 
-def set_default_manager(mgr: "ResiliencyManager") -> None:
+def set_default_manager(mgr: ResiliencyManager) -> None:
     """Set the module-level default ResiliencyManager."""
     global _default_manager
     _default_manager = mgr
 
-def get_default_manager() -> "ResiliencyManager | None":
+def get_default_manager() -> ResiliencyManager | None:
     """Return the module-level default ResiliencyManager (or None)."""
     return _default_manager
 
@@ -347,7 +347,7 @@ def with_resiliency(
     timeout: str | float | None = None,
     retry: str | None = None,
     circuit_breaker: str | None = None,
-    manager: "ResiliencyManager | None" = None,
+    manager: ResiliencyManager | None = None,
 ) -> Callable[[F], F]:
     """Declarative resiliency decorator.
 

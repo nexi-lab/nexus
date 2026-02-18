@@ -218,11 +218,11 @@ def _check_permissions_bulk_python(
     return results
 
 def _compute_permission_simple(
-    subject: "Entity",
+    subject: Entity,
     permission: str,
-    obj: "Entity",
+    obj: Entity,
     tuples: list[dict[str, Any]],
-    namespaces: dict[str, "ReBACNamespaceConfig"],
+    namespaces: dict[str, ReBACNamespaceConfig],
 ) -> bool:
     """
     Simplified permission computation for fallback.

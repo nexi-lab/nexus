@@ -429,7 +429,7 @@ class RustFUSEClient:
         if self.socket_path and self.socket_path.exists():
             self.socket_path.unlink()
 
-    def __enter__(self) -> "RustFUSEClient":
+    def __enter__(self) -> RustFUSEClient:
         """Context manager entry."""
         return self
 

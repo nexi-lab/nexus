@@ -32,13 +32,13 @@ PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
 requires_pandas = pytest.mark.skipif(not PANDAS_AVAILABLE, reason="pandas package not installed")
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
+def temp_dir() -> Generator[Path]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 @pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+def nx(temp_dir: Path) -> Generator[NexusFS]:
     """Create a NexusFS instance with ReBAC enabled."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
@@ -51,7 +51,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     nx.close()
 
 @pytest.fixture
-def nx_no_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
+def nx_no_permissions(temp_dir: Path) -> Generator[NexusFS]:
     """Create a NexusFS instance without permissions enforcement."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),

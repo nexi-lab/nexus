@@ -136,7 +136,7 @@ def start_check_span(
     obj: tuple[str, str],
     zone_id: str | None = None,
     consistency: str | None = None,
-) -> Generator[Any, None, None]:
+) -> Generator[Any]:
     """Context manager that creates the root ``rebac.check`` span.
 
     Yields the span (or *None* when OTel is disabled) so callers can attach
@@ -196,7 +196,7 @@ def record_check_result(
 # ---------------------------------------------------------------------------
 
 @contextmanager
-def start_cache_lookup_span() -> Generator[Any, None, None]:
+def start_cache_lookup_span() -> Generator[Any]:
     """Child span for cache probing (L1, Tiger, Boundary)."""
     tracer = _get_tracer()
     if tracer is None:
@@ -234,7 +234,7 @@ def record_cache_result(
 # ---------------------------------------------------------------------------
 
 @contextmanager
-def start_graph_traversal_span(engine: str = "python") -> Generator[Any, None, None]:
+def start_graph_traversal_span(engine: str = "python") -> Generator[Any]:
     """Child span for the Zanzibar graph walk.
 
     Args:
@@ -294,7 +294,7 @@ def record_graph_limit_exceeded(span: Any, *, limit_type: str) -> None:
 # ---------------------------------------------------------------------------
 
 @contextmanager
-def start_batch_check_span(batch_size: int) -> Generator[Any, None, None]:
+def start_batch_check_span(batch_size: int) -> Generator[Any]:
     """Root span for a batch permission check.
 
     Args:

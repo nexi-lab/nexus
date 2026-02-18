@@ -100,7 +100,7 @@ class TupleRepository:
                 logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
-    def connection(self) -> Generator[Any, None, None]:
+    def connection(self) -> Generator[Any]:
         """Context manager for database connections.
 
         Uses engine.connect() which properly goes through the connection pool

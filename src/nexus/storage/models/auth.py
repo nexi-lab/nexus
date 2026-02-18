@@ -62,7 +62,7 @@ class UserModel(Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
-    oauth_accounts: Mapped[list["UserOAuthAccountModel"]] = relationship(
+    oauth_accounts: Mapped[list[UserOAuthAccountModel]] = relationship(
         "UserOAuthAccountModel", back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -308,7 +308,7 @@ class ZoneModel(Base):
     )
 
     @property
-    def parsed_settings(self) -> "ZoneSettings":
+    def parsed_settings(self) -> ZoneSettings:
         """Parse settings JSON into a ZoneSettings Pydantic model."""
         from nexus.storage.zone_settings import ZoneSettings
 

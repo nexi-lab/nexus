@@ -20,7 +20,7 @@ class TriggerFactory(Protocol):
 
     def __call__(
         self, config: dict[str, Any], *, glob_match: GlobMatchFn | None = None
-    ) -> "BaseTrigger": ...
+    ) -> BaseTrigger: ...
 
 
 logger = logging.getLogger(__name__)

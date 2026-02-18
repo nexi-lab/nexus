@@ -97,7 +97,7 @@ class OAuthCredential:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "OAuthCredential":
+    def from_dict(cls, data: dict[str, Any]) -> OAuthCredential:
         """Create from dictionary.
 
         Args:

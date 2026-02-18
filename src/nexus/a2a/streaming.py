@@ -31,7 +31,7 @@ async def sse_event_loop(
     queue: asyncio.Queue[dict[str, Any] | None],
     stream_registry: StreamRegistry,
     task_id: str,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[str]:
     """Shared SSE event loop with keepalive and max lifetime.
 
     Used by both ``sendStreamingMessage`` and ``subscribeToTask``.

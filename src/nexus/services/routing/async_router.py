@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from nexus.core.router import MountConfig, PathRouter, RouteResult
 
 def _to_resolved_path(
-    result: "RouteResult",
+    result: RouteResult,
     virtual_path: str,
     zone_id: str | None,
 ) -> ResolvedPath:
@@ -31,7 +31,7 @@ def _to_resolved_path(
         zone_id=zone_id,
     )
 
-def _to_mount_info(config: "MountConfig") -> MountInfo:
+def _to_mount_info(config: MountConfig) -> MountInfo:
     """Convert a ``MountConfig`` to the protocol-level ``MountInfo``."""
     return MountInfo(
         mount_point=config.mount_point,
@@ -46,7 +46,7 @@ class AsyncVFSRouter:
     ``PathRouter`` operates on in-memory data structures with no I/O.
     """
 
-    def __init__(self, inner: "PathRouter") -> None:
+    def __init__(self, inner: PathRouter) -> None:
         self._inner = inner
 
     async def route(

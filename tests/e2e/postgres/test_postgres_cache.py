@@ -56,7 +56,7 @@ pytestmark = [
 ]
 
 @pytest.fixture(scope="module")
-def pg_engine() -> Generator[Engine, None, None]:
+def pg_engine() -> Generator[Engine]:
     """Create a shared PostgreSQL engine for the test module.
 
     Drops and recreates cache tables to ensure schema matches current models.

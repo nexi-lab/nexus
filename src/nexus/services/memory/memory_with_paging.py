@@ -46,8 +46,8 @@ class MemoryWithPaging(Memory):
 
     def __init__(
         self,
-        session: "Session",
-        backend: "Backend",
+        session: Session,
+        backend: Backend,
         zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
@@ -58,7 +58,7 @@ class MemoryWithPaging(Memory):
         warm_up: bool = True,
         vector_db: Any = None,
         engine: Any = None,
-        session_factory: Callable[[], "Session"] | None = None,
+        session_factory: Callable[[], Session] | None = None,
     ):
         """Initialize Memory API with paging.
 
@@ -304,7 +304,7 @@ class MemoryWithPaging(Memory):
         hash_val = int(hashlib.sha256(text.encode()).hexdigest(), 16)
         return [(hash_val >> (i % 256)) % 100 / 100.0 for i in range(_EMBEDDING_DIM)]
 
-    def _memory_to_dict(self, memory: "MemoryModel") -> dict:
+    def _memory_to_dict(self, memory: MemoryModel) -> dict:
         """Convert MemoryModel to dict.
 
         Args:

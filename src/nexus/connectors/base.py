@@ -201,7 +201,7 @@ class SkillDocMixin:
     ERROR_REGISTRY: dict[str, ErrorDef] = {}
     EXAMPLES: dict[str, str] = {}  # Example files: {"create_meeting.yaml": "content..."}
 
-    _skill_registry: "SkillRegistry | None" = None
+    _skill_registry: SkillRegistry | None = None
     _mount_path: str | None = None  # Set during mount
 
     @property
@@ -213,7 +213,7 @@ class SkillDocMixin:
             return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
         return "/.skill/SKILL.md"  # Default fallback
 
-    def set_skill_registry(self, registry: "SkillRegistry") -> None:
+    def set_skill_registry(self, registry: SkillRegistry) -> None:
         """Set the skill registry for this connector."""
         self._skill_registry = registry
 

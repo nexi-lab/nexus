@@ -409,10 +409,10 @@ class CacheWarmer:
 
     def __init__(
         self,
-        nexus_fs: "NexusFS",
+        nexus_fs: NexusFS,
         config: WarmupConfig | None = None,
         file_tracker: FileAccessTracker | None = None,
-        local_disk_cache: "LocalDiskCache | None" = None,
+        local_disk_cache: LocalDiskCache | None = None,
     ):
         """Initialize cache warmer.
 
@@ -965,7 +965,7 @@ class BackgroundCacheWarmer:
 # =============================================================================
 
 async def warmup_on_mount(
-    nexus_fs: "NexusFS",
+    nexus_fs: NexusFS,
     mount_path: str,
     depth: int = 2,
     include_content: bool = False,

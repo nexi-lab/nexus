@@ -22,7 +22,7 @@ class TaskStoreProtocol(Protocol):
 
     async def save(
         self,
-        task: "Task",
+        task: Task,
         *,
         zone_id: str,
         agent_id: str | None = None,
@@ -41,7 +41,7 @@ class TaskStoreProtocol(Protocol):
         """
         ...
 
-    async def get(self, task_id: str, *, zone_id: str) -> "Task | None":
+    async def get(self, task_id: str, *, zone_id: str) -> Task | None:
         """Load a task by ID with zone isolation.
 
         Returns *None* if the task does not exist or belongs to a
@@ -62,10 +62,10 @@ class TaskStoreProtocol(Protocol):
         *,
         zone_id: str,
         agent_id: str | None = None,
-        state: "TaskState | None" = None,
+        state: TaskState | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> "list[Task]":
+    ) -> list[Task]:
         """List tasks with optional filters.
 
         Results are ordered by creation time descending (newest first).

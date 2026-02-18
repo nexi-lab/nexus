@@ -207,7 +207,7 @@ class GCSBackend(Backend):
                 f"Failed to write metadata: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    def write_content(self, content: bytes, context: OperationContext | None = None) -> str:
         """
         Write content to CAS storage and return its hash.
 
@@ -248,7 +248,7 @@ class GCSBackend(Backend):
     # GCS uses HTTP/2 multiplexing, so moderate concurrency is optimal.
     batch_read_workers: int = 10
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
         """Read content by its hash.
 
         Args:
@@ -288,9 +288,9 @@ class GCSBackend(Backend):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         *,
-        contexts: "dict[str, OperationContext] | None" = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """
         Optimized batch read for GCS backend with parallel downloads.
@@ -350,7 +350,7 @@ class GCSBackend(Backend):
         self,
         content_hash: str,
         chunk_size: int = 8192,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> Any:
         """
         Stream content from GCS in chunks without loading entire file into memory.
@@ -398,7 +398,7 @@ class GCSBackend(Backend):
     def write_stream(
         self,
         chunks: Iterator[bytes],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str:
         """
         Write content from an iterator of chunks.
@@ -454,7 +454,7 @@ class GCSBackend(Backend):
         except Exception as e:
             raise BackendError(f"Failed to write stream: {e}", backend="gcs", path="stream") from e
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
         """Delete content by hash with reference counting.
 
         Args:
@@ -493,7 +493,7 @@ class GCSBackend(Backend):
                 f"Failed to delete content: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_hash: str, context: OperationContext | None = None) -> bool:
         """Check if content exists.
 
         Args:
@@ -507,7 +507,7 @@ class GCSBackend(Backend):
         except Exception:
             return False
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
         """Get content size in bytes.
 
         Args:
@@ -542,7 +542,7 @@ class GCSBackend(Backend):
                 f"Failed to get content size: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_hash: str, context: OperationContext | None = None) -> int:
         """Get reference count for content.
 
         Args:
@@ -562,7 +562,7 @@ class GCSBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """
         Create directory marker in GCS.
@@ -604,7 +604,7 @@ class GCSBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Remove directory from GCS."""
         # Normalize path
@@ -648,7 +648,7 @@ class GCSBackend(Backend):
         except Exception as e:
             raise BackendError(f"Failed to remove directory: {e}", backend="gcs", path=path) from e
 
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
         """Check if path is a directory."""
         try:
             # Normalize path
@@ -663,7 +663,7 @@ class GCSBackend(Backend):
         except Exception:
             return False
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """List directory contents using GCS list_blobs with delimiter."""
         try:
             # Normalize path

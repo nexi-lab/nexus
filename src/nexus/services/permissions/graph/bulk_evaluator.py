@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 MAX_DEPTH = 50
 
 def compute_permission(
-    subject: "Entity",
+    subject: Entity,
     permission: str,
-    obj: "Entity",
+    obj: Entity,
     zone_id: str,
     tuples_graph: list[dict[str, Any]],
     get_namespace: Any,
@@ -243,9 +243,9 @@ def compute_permission(
     return _store(check_direct_relation(subject, permission, obj, tuples_graph))
 
 def check_direct_relation(
-    subject: "Entity",
+    subject: Entity,
     permission: str,
-    obj: "Entity",
+    obj: Entity,
     tuples_graph: list[dict[str, Any]],
 ) -> bool:
     """Check if a direct relation tuple exists in the pre-fetched graph.
@@ -266,10 +266,10 @@ def check_direct_relation(
     return False
 
 def find_related_objects(
-    obj: "Entity",
+    obj: Entity,
     tupleset_relation: str,
     tuples_graph: list[dict[str, Any]],
-) -> list["Entity"]:
+) -> list[Entity]:
     """Find all objects related to obj via tupleset_relation in the graph.
 
     For parent inheritance: (child, "parent", parent) — obj is the child, returns parents.
@@ -290,10 +290,10 @@ def find_related_objects(
     return related
 
 def find_subjects(
-    obj: "Entity",
+    obj: Entity,
     tupleset_relation: str,
     tuples_graph: list[dict[str, Any]],
-) -> list["Entity"]:
+) -> list[Entity]:
     """Find all subjects that have a relation to obj in the graph.
 
     For group inheritance: (group, "direct_viewer", file) — obj is file, returns groups.

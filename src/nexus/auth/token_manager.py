@@ -81,7 +81,7 @@ class TokenManager:
         encryption_key: str | None = None,
         audit_logger: Any | None = None,
         session_factory: Any | None = None,
-        cache_store: "CacheStoreABC | None" = None,
+        cache_store: CacheStoreABC | None = None,
     ):
         """Initialize token manager.
 

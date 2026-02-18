@@ -291,7 +291,7 @@ class Backend(ABC):
 
     # === Connection Management ===
 
-    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
+    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         """
         Establish connection to the backend.
 
@@ -311,7 +311,7 @@ class Backend(ABC):
         """
         return HandlerStatusResponse(success=True, details={"backend": self.name})
 
-    def disconnect(self, context: "OperationContext | None" = None) -> None:  # noqa: B027
+    def disconnect(self, context: OperationContext | None = None) -> None:  # noqa: B027
         """
         Close connection and release resources.
 
@@ -328,8 +328,8 @@ class Backend(ABC):
         pass
 
     def check_connection(
-        self, context: "OperationContext | None" = None
-    ) -> "HandlerStatusResponse":
+        self, context: OperationContext | None = None
+    ) -> HandlerStatusResponse:
         """
         Verify the backend connection is healthy.
 
@@ -363,8 +363,8 @@ class Backend(ABC):
 
     @abstractmethod
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[str]":
+        self, content: bytes, context: OperationContext | None = None
+    ) -> HandlerResponse[str]:
         """
         Write content to storage and return its content hash.
 
@@ -386,8 +386,8 @@ class Backend(ABC):
 
     @abstractmethod
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bytes]:
         """
         Read content by its hash.
 
@@ -407,9 +407,9 @@ class Backend(ABC):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         *,
-        contexts: "dict[str, OperationContext] | None" = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """
         Read multiple content items by their hashes (batch operation).
@@ -444,7 +444,7 @@ class Backend(ABC):
         return result
 
     def stream_content(
-        self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
+        self, content_hash: str, chunk_size: int = 8192, context: OperationContext | None = None
     ) -> Any:
         """
         Stream content by its hash in chunks (generator).
@@ -482,8 +482,8 @@ class Backend(ABC):
         start: int,
         end: int,
         chunk_size: int = 8192,
-        context: "OperationContext | None" = None,
-    ) -> "Iterator[bytes]":
+        context: OperationContext | None = None,
+    ) -> Iterator[bytes]:
         """Stream a byte range [start, end] inclusive from stored content.
 
         Default implementation reads full content and slices. Backends with
@@ -508,8 +508,8 @@ class Backend(ABC):
     def write_stream(
         self,
         chunks: Iterator[bytes],
-        context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[str]":
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[str]:
         """
         Write content from an iterator of chunks and return its content hash.
 
@@ -544,8 +544,8 @@ class Backend(ABC):
 
     @abstractmethod
     def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[None]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[None]:
         """
         Delete content by hash.
 
@@ -567,8 +567,8 @@ class Backend(ABC):
 
     @abstractmethod
     def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bool]:
         """
         Check if content exists.
 
@@ -587,8 +587,8 @@ class Backend(ABC):
 
     @abstractmethod
     def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[int]:
         """
         Get content size in bytes.
 
@@ -607,8 +607,8 @@ class Backend(ABC):
 
     @abstractmethod
     def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]":
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[int]:
         """
         Get reference count for content.
 
@@ -633,8 +633,8 @@ class Backend(ABC):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[None]:
         """
         Create a directory.
 
@@ -661,8 +661,8 @@ class Backend(ABC):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[None]:
         """
         Remove a directory.
 
@@ -678,8 +678,8 @@ class Backend(ABC):
 
     @abstractmethod
     def is_directory(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
+        self, path: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bool]:
         """
         Check if path is a directory.
 
@@ -692,7 +692,7 @@ class Backend(ABC):
         """
         pass
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """
         List immediate contents of a directory.
 
@@ -725,8 +725,8 @@ class Backend(ABC):
     # === Delta Sync Support (Issue #1127) ===
 
     def get_file_info(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[FileInfo]":
+        self, path: str, context: OperationContext | None = None
+    ) -> HandlerResponse[FileInfo]:
         """
         Get file metadata for delta sync change detection (Issue #1127).
 
@@ -839,24 +839,24 @@ class AsyncBackend(Protocol):
     async def close(self) -> None: ...
 
     async def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]: ...
 
     async def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]: ...
 
     async def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]: ...
 
     async def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]: ...
 
     def stream_content(
         self,
         content_hash: str,
         chunk_size: int = 65536,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> AsyncIterator[bytes]: ...

@@ -70,7 +70,7 @@ def _status_group(status_code: int) -> str:
     """Return a low-cardinality status group like ``2xx``."""
     return f"{status_code // 100}xx"
 
-def _resolve_route_template(scope: "Scope") -> str:
+def _resolve_route_template(scope: Scope) -> str:
     """Resolve the route template from the ASGI scope.
 
     Falls back to the raw path when no matching route is found.
@@ -97,10 +97,10 @@ def _resolve_route_template(scope: "Scope") -> str:
 class PrometheusMiddleware:
     """ASGI middleware that records Prometheus request metrics."""
 
-    def __init__(self, app: "ASGIApp") -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(self, scope: "Scope", receive: "Receive", send: "Send") -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

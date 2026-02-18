@@ -20,10 +20,10 @@ class SessionMixin:
     Subclasses must set ``self._session_factory`` to a ``sessionmaker`` instance.
     """
 
-    _session_factory: "sessionmaker[Session]"
+    _session_factory: sessionmaker[Session]
 
     @contextmanager
-    def _get_session(self) -> Generator["Session", None, None]:
+    def _get_session(self) -> Generator[Session]:
         """Create a session with auto-commit/rollback/close."""
         session = self._session_factory()
         try:

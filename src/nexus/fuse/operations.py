@@ -144,7 +144,7 @@ class MetadataObj:
     is_directory: bool | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "MetadataObj":
+    def from_dict(cls, d: dict[str, Any]) -> MetadataObj:
         return cls(
             path=d.get("path"),
             size=d.get("size"),

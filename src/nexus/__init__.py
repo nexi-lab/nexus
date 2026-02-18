@@ -161,8 +161,8 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 def connect(
-    config: "str | Path | dict | NexusConfig | None" = None,
-) -> "NexusFilesystem":
+    config: str | Path | dict | NexusConfig | None = None,
+) -> NexusFilesystem:
     """
     Connect to Nexus filesystem.
 

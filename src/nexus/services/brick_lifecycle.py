@@ -74,7 +74,7 @@ def _get_tracer() -> Any:
 
 
 @contextmanager
-def _lifecycle_span(operation: str, brick_name: str, **attrs: Any) -> Generator[Any, None, None]:
+def _lifecycle_span(operation: str, brick_name: str, **attrs: Any) -> Generator[Any]:
     """Context manager for a brick lifecycle OTel span.
 
     Zero-overhead: if no tracer, yields None immediately.

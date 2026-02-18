@@ -24,13 +24,13 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
+def temp_dir() -> Generator[Path]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
 @pytest.fixture
-def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "hypothesis_test.db")
     yield rs
     rs.close()

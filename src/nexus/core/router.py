@@ -14,7 +14,7 @@ class MountConfig:
     """Mount configuration for path routing."""
 
     mount_point: str  # Virtual path prefix, e.g., "/workspace"
-    backend: "ConnectorProtocol"  # Backend instance
+    backend: ConnectorProtocol  # Backend instance
     priority: int = 0  # For tie-breaking (higher = preferred)
     readonly: bool = False
     conflict_strategy: str | None = None  # Per-mount override (Issue #1130)
@@ -24,7 +24,7 @@ class MountConfig:
 class RouteResult:
     """Result of path routing."""
 
-    backend: "ConnectorProtocol"
+    backend: ConnectorProtocol
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
@@ -74,7 +74,7 @@ class PathRouter:
     def add_mount(
         self,
         mount_point: str,
-        backend: "ConnectorProtocol",
+        backend: ConnectorProtocol,
         priority: int = 0,
         readonly: bool = False,
         replace: bool = False,
@@ -598,7 +598,7 @@ class PathRouter:
         """
         return self._mounts.copy()
 
-    def get_backend_by_name(self, name: str) -> "ConnectorProtocol | None":
+    def get_backend_by_name(self, name: str) -> ConnectorProtocol | None:
         """
         Look up backend by name.
 

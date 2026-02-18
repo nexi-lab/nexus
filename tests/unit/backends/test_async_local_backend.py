@@ -20,7 +20,7 @@ from nexus.core.hash_fast import hash_content
 # === Fixtures ===
 
 @pytest_asyncio.fixture
-async def temp_backend(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend, None]:
+async def temp_backend(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend]:
     """Create a temporary async local backend for testing."""
     backend = AsyncLocalBackend(root_path=tmp_path / "backend")
     await backend.initialize()
@@ -28,7 +28,7 @@ async def temp_backend(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend, None
     await backend.close()
 
 @pytest_asyncio.fixture
-async def backend_with_cache(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend, None]:
+async def backend_with_cache(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend]:
     """Create a temporary async local backend with content cache enabled."""
     from nexus.storage.content_cache import ContentCache
 

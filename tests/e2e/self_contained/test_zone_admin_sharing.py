@@ -18,13 +18,13 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
+def temp_dir() -> Generator[Path]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         yield Path(tmpdir)
 
 @pytest.fixture
-def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, None, None]:
+def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS]:
     """Create a NexusFS instance with ReBAC enabled and permissions enforced."""
     rebac_db = temp_dir / "rebac.db"
     monkeypatch.setenv("NEXUS_DATABASE_URL", f"sqlite:///{rebac_db}")

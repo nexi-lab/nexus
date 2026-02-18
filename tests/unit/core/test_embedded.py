@@ -16,13 +16,13 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
+def temp_dir() -> Generator[Path]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 @pytest.fixture
-def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
+def embedded(temp_dir: Path) -> Generator[NexusFS]:
     """Create an Embedded filesystem instance."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),

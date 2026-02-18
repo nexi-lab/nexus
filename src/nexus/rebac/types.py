@@ -176,7 +176,7 @@ class CheckResult:
     cache_age_ms: float | None = None
     traversal_stats: TraversalStats | None = None
     indeterminate: bool = False  # BUGFIX (Issue #5): Track limit-driven denials
-    limit_exceeded: "GraphLimitExceeded | None" = None  # BUGFIX (Issue #5): Which limit was hit
+    limit_exceeded: GraphLimitExceeded | None = None  # BUGFIX (Issue #5): Which limit was hit
 
 # ============================================================================
 # P0-5: Graph Limits and DoS Protection

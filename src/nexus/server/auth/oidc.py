@@ -350,7 +350,7 @@ class OIDCAuth(AuthProvider):
             return issuer.replace("https://", "").replace("http://", "").split("/")[0]
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "OIDCAuth":
+    def from_config(cls, config: dict[str, Any]) -> OIDCAuth:
         """Create from configuration dictionary.
 
         Args:
@@ -457,7 +457,7 @@ class MultiOIDCAuth(AuthProvider):
             provider.close()
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "MultiOIDCAuth":
+    def from_config(cls, config: dict[str, Any]) -> MultiOIDCAuth:
         """Create from configuration dictionary.
 
         Args:

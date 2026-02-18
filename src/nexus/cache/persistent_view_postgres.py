@@ -69,7 +69,7 @@ class PostgresPersistentViewStore:
     Routes through RecordStoreABC for engine access (Four Pillars compliance).
     """
 
-    def __init__(self, record_store: "RecordStoreABC") -> None:
+    def __init__(self, record_store: RecordStoreABC) -> None:
         self._engine = record_store.engine
 
     def save_view(

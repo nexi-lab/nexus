@@ -2,10 +2,8 @@
 
 Runs fix_iterative.py logic on each discovered module.
 """
-import importlib
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 

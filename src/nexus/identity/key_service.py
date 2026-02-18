@@ -102,7 +102,7 @@ class KeyService:
         )
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> Generator[Session]:
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:

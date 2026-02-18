@@ -77,7 +77,7 @@ class AsyncHookEngine:
     registry.
     """
 
-    def __init__(self, inner: "PluginHooks") -> None:
+    def __init__(self, inner: PluginHooks) -> None:
         self._inner = inner
         # HookId.id → (HookType, adapted_handler)
         self._registered: dict[str, tuple[HookType, Callable[..., Any]]] = {}

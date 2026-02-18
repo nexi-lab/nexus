@@ -49,7 +49,7 @@ class CollusionService:
 
     def __init__(
         self,
-        session_factory: "Callable[[], AsyncSession]",
+        session_factory: Callable[[], AsyncSession],
         max_nodes: int = 10_000,
         max_edges: int = 50_000,
         max_cycle_length: int = 8,
@@ -65,7 +65,7 @@ class CollusionService:
         since: datetime | None = None,
         *,
         _edges: list[GovernanceEdge] | None = None,
-    ) -> "nx.DiGraph":
+    ) -> nx.DiGraph:
         """Build a NetworkX DiGraph from stored governance edges.
 
         Zone-scoped with size limits to prevent OOM.
@@ -103,7 +103,7 @@ class CollusionService:
         self,
         zone_id: str,
         *,
-        _graph: "nx.DiGraph | None" = None,
+        _graph: nx.DiGraph | None = None,
     ) -> list[FraudRing]:
         """Detect transaction rings (cycles) in the interaction graph.
 

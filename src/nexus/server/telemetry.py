@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Global state
 _initialized = False
-_tracer: "Tracer | None" = None
+_tracer: Tracer | None = None
 
 def is_telemetry_enabled() -> bool:
     """Check if telemetry is enabled via environment variable.
@@ -251,7 +251,7 @@ def instrument_fastapi_app(app: object) -> bool:
         logger.warning(f"Failed to instrument FastAPI: {e}")
         return False
 
-def get_tracer(name: str | None = None) -> "Tracer | None":
+def get_tracer(name: str | None = None) -> Tracer | None:
     """Get a tracer for creating custom spans.
 
     Args:

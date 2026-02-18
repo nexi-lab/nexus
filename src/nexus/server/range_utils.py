@@ -49,7 +49,7 @@ class RangeSpec:
 def parse_range_header(
     range_header: str,
     total_size: int,
-) -> list["RangeSpec"] | None:
+) -> list[RangeSpec] | None:
     """Parse an HTTP Range header into a list of RangeSpec objects.
 
     Args:
@@ -77,7 +77,7 @@ def parse_range_header(
 
     _MAX_RANGES = 100  # Practical limit to prevent DoS via many ranges
 
-    specs: list["RangeSpec"] = []
+    specs: list[RangeSpec] = []
     for part in range_set.split(","):
         if len(specs) >= _MAX_RANGES:
             return None  # Too many ranges → treat as malformed
@@ -96,7 +96,7 @@ def parse_range_header(
 
     return specs
 
-def _parse_single_range(range_str: str, total_size: int) -> "RangeSpec | None":
+def _parse_single_range(range_str: str, total_size: int) -> RangeSpec | None:
     """Parse a single range spec like '0-499', '500-', or '-500'.
 
     Returns None for malformed, raises RangeNotSatisfiableError for unsatisfiable.

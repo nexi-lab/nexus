@@ -90,7 +90,7 @@ class DelegationService:
         logger.info("[DelegationService] Initialized")
 
     @contextmanager
-    def _session(self, *, commit: bool = True) -> Generator[Any, None, None]:
+    def _session(self, *, commit: bool = True) -> Generator[Any]:
         """Context manager for session lifecycle.
 
         Eliminates duplicated try/except/rollback/finally across methods.

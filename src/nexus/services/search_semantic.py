@@ -56,8 +56,8 @@ class SemanticSearchMixin:
             )
 
     # Type hints for attributes provided by SearchService.__init__
-    _semantic_search: "SemanticSearch | None"
-    _async_search: "AsyncSemanticSearch | None"
+    _semantic_search: SemanticSearch | None
+    _async_search: AsyncSemanticSearch | None
     _record_store: Any
     _gw_session_factory: Any
     _gw_backend: Any

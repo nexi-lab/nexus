@@ -54,7 +54,7 @@ def _is_timeout_error(exc: SAOperationalError) -> bool:
 
 
 @contextmanager
-def session_scope(session_factory: Callable[[], Session]) -> Generator[Session, None, None]:
+def session_scope(session_factory: Callable[[], Session]) -> Generator[Session]:
     """Provide a transactional scope around a series of operations.
 
     Commits on success, rolls back on exception, always closes.

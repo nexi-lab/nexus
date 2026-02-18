@@ -71,7 +71,7 @@ class MemoryDetailResponse(MemoryBaseResponse):
         content: str | dict[str, Any] | None = None,
         importance_effective: float | None = None,
         content_hash_override: str | None = None,
-    ) -> "MemoryDetailResponse":
+    ) -> MemoryDetailResponse:
         """Build from a MemoryModel ORM instance.
 
         Args:
@@ -142,7 +142,7 @@ class MemoryQueryResponse(MemoryBaseResponse):
         content: str | dict[str, Any] | None = None,
         importance_effective: float | None = None,
         content_hash_override: str | None = None,
-    ) -> "MemoryQueryResponse":
+    ) -> MemoryQueryResponse:
         """Build from a MemoryModel ORM instance."""
         return cls(
             memory_id=memory.memory_id,
@@ -195,7 +195,7 @@ class MemorySearchResponse(MemoryBaseResponse):
         score: float = 0.0,
         semantic_score: float | None = None,
         keyword_score: float | None = None,
-    ) -> "MemorySearchResponse":
+    ) -> MemorySearchResponse:
         """Build from a MemoryModel ORM instance with search scores."""
         return cls(
             memory_id=memory.memory_id,
@@ -228,7 +228,7 @@ class MemoryRetrieveResponse(MemoryBaseResponse):
         cls,
         memory: Any,
         content: str | dict[str, Any] | None = None,
-    ) -> "MemoryRetrieveResponse":
+    ) -> MemoryRetrieveResponse:
         """Build from a MemoryModel ORM instance."""
         return cls(
             memory_id=memory.memory_id,

@@ -78,7 +78,7 @@ class ReBACManager:
 
     def __init__(
         self,
-        engine: "Engine",
+        engine: Engine,
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
         enable_l1_cache: bool = True,

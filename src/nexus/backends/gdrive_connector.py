@@ -241,7 +241,7 @@ class GoogleDriveConnectorBackend(Backend):
             logger.error(error_msg)
             print(f"[GDRIVE-INIT] ✗ {error_msg}")
 
-    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         """
         Verify Google Drive connection is healthy.
 
@@ -357,7 +357,7 @@ class GoogleDriveConnectorBackend(Backend):
         """GDrive connector manages OAuth tokens."""
         return True
 
-    def _get_drive_service(self, context: "OperationContext | None" = None) -> "Resource":
+    def _get_drive_service(self, context: OperationContext | None = None) -> Resource:
         """Get Google Drive service with user's OAuth credentials.
 
         Args:
@@ -424,8 +424,8 @@ class GoogleDriveConnectorBackend(Backend):
 
     def _get_or_create_root_folder(
         self,
-        service: "Resource",
-        context: "OperationContext | str | None",
+        service: Resource,
+        context: OperationContext | str | None,
     ) -> str:
         """Get or create root folder in Drive.
 
@@ -508,10 +508,10 @@ class GoogleDriveConnectorBackend(Backend):
 
     def _get_or_create_folder(
         self,
-        service: "Resource",
+        service: Resource,
         path: str,
         parent_id: str,
-        context: "OperationContext | str | None",
+        context: OperationContext | str | None,
     ) -> str:
         """Get or create a folder by path.
 
@@ -592,7 +592,7 @@ class GoogleDriveConnectorBackend(Backend):
             ) from e
 
     def _resolve_path_to_folder_id(
-        self, service: "Resource", backend_path: str, context: "OperationContext | str | None"
+        self, service: Resource, backend_path: str, context: OperationContext | str | None
     ) -> tuple[str, str]:
         """Resolve a backend path to parent folder ID and filename.
 
@@ -627,7 +627,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     @timed_response
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
         """
         Write content to Google Drive and return its content hash.
@@ -718,7 +718,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     @timed_response
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
         """
         Read content from Google Drive by path (not hash).
@@ -835,7 +835,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     @timed_response
     def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]:
         """
         Delete content from Google Drive by path.
@@ -910,7 +910,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     @timed_response
     def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         """
         Check if content exists in Google Drive by path.
@@ -967,7 +967,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     @timed_response
     def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         """Get content size from Google Drive.
 
@@ -1004,7 +1004,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     @timed_response
     def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         """Get reference count (always 1 for connector backends).
 
@@ -1030,7 +1030,7 @@ class GoogleDriveConnectorBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Create directory in Google Drive.
 
@@ -1141,7 +1141,7 @@ class GoogleDriveConnectorBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Remove directory from Google Drive.
 
@@ -1199,7 +1199,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     @timed_response
     def is_directory(
-        self, path: str, context: "OperationContext | None" = None
+        self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         """Check if path is a directory in Google Drive.
 
@@ -1298,7 +1298,7 @@ class GoogleDriveConnectorBackend(Backend):
                 path=path,
             )
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """
         List directory contents from Google Drive.
 

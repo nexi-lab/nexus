@@ -56,7 +56,7 @@ class StaticAPIKeyAuth(AuthProvider):
         pass
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "StaticAPIKeyAuth":
+    def from_config(cls, config: dict[str, Any]) -> StaticAPIKeyAuth:
         """Create from configuration dictionary."""
         api_keys = config.get("api_keys", {})
         if not api_keys:

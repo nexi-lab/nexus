@@ -40,7 +40,7 @@ TEST_CONTENT = b"ABCDEFGHIJ" * 100  # 1000 bytes
 async def client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[AsyncClient, None]:
+) -> AsyncGenerator[AsyncClient]:
     """Create full FastAPI app with real AsyncNexusFS for integration testing."""
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")

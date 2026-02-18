@@ -70,7 +70,7 @@ class FilePathModel(Base):
     posix_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Relationships
-    metadata_entries: Mapped[list["FileMetadataModel"]] = relationship(
+    metadata_entries: Mapped[list[FileMetadataModel]] = relationship(
         "FileMetadataModel", back_populates="file_path", cascade="all, delete-orphan"
     )
 

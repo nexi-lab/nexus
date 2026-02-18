@@ -57,11 +57,11 @@ class SandboxAuthService:
 
     def __init__(
         self,
-        agent_registry: "AgentRegistry",
-        sandbox_manager: "SandboxManager",
-        namespace_manager: "NamespaceManager | None" = None,
+        agent_registry: AgentRegistry,
+        sandbox_manager: SandboxManager,
+        namespace_manager: NamespaceManager | None = None,
         nexus_pay: Any = None,
-        event_log: "AgentEventLog | None" = None,
+        event_log: AgentEventLog | None = None,
         budget_enforcement: bool = False,
     ) -> None:
         self._registry = agent_registry

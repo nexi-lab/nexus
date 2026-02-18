@@ -138,7 +138,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         # OAuth access token (alternative to credentials_path)
         access_token: str | None = None,
         # Session factory for caching support
-        session_factory: "type[Session] | None" = None,
+        session_factory: type[Session] | None = None,
     ):
         """
         Initialize GCS connector backend.
@@ -206,7 +206,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         """Backend identifier name."""
         return "gcs_connector"
 
-    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         """
         Verify GCS connection is healthy.
 
@@ -389,7 +389,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def batch_get_versions(
         self,
         backend_paths: list[str],
-        contexts: dict[str, "OperationContext"] | None = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, str | None]:
         """
         Get GCS generation numbers for multiple files in a single API call.
@@ -769,7 +769,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def get_version(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str | None:
         """
         Get GCS generation number for a file.
@@ -808,7 +808,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def get_file_info(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """
         Get file metadata for delta sync change detection (Issue #1127).
@@ -861,7 +861,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         self,
         path: str,
         expires_in: int = 3600,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, str | int]:
         """
         Generate a signed URL for direct download from GCS.
@@ -931,7 +931,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def read_content(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[bytes]:
         """
         Read content from GCS with caching support.
@@ -1014,7 +1014,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def write_content(
         self,
         content: bytes,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[str]:
         """
         Write content to GCS and update cache.
@@ -1077,7 +1077,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def write_content_with_version_check(
         self,
         content: bytes,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         expected_version: str | None = None,
     ) -> HandlerResponse[str]:
         """

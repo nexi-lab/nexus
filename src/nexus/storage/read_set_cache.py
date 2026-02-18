@@ -110,7 +110,7 @@ class ReadSetAwareCache:
     def put_path(
         self,
         path: str,
-        metadata: "FileMetadata | None",
+        metadata: FileMetadata | None,
         read_set: ReadSet | None = None,
         zone_revision: int = 0,
     ) -> None:

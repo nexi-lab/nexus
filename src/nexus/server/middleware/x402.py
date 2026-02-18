@@ -49,7 +49,7 @@ class X402PaymentMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: Any,
-        x402_client: "X402Client",
+        x402_client: X402Client,
         protected_paths: dict[str, Decimal] | None = None,
         price_callback: Callable[[Request], Decimal | None] | None = None,
     ):

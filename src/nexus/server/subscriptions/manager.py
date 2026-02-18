@@ -37,7 +37,7 @@ MAX_CONSECUTIVE_FAILURES = 10  # Disable after this many failures
 class SubscriptionManager:
     """Manages webhook subscriptions and event delivery."""
 
-    def __init__(self, session_factory: "Callable[[], Session]") -> None:
+    def __init__(self, session_factory: Callable[[], Session]) -> None:
         """Initialize subscription manager.
 
         Args:

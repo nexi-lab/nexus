@@ -128,7 +128,7 @@ async def list_alerts(
 async def resolve_alert(
     request: Request,
     alert_id: str,
-    body: "ResolveAlertRequest",
+    body: ResolveAlertRequest,
     zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """Resolve an anomaly alert."""

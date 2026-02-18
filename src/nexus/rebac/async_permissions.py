@@ -36,9 +36,9 @@ class AsyncPermissionEnforcer:
 
     def __init__(
         self,
-        rebac_manager: "AsyncReBACManager | None" = None,
+        rebac_manager: AsyncReBACManager | None = None,
         backends: dict[str, Any] | None = None,
-        namespace_manager: "NamespaceManager | None" = None,
+        namespace_manager: NamespaceManager | None = None,
         agent_registry: Any = None,
     ):
         """Initialize async permission enforcer.

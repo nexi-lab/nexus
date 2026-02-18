@@ -29,7 +29,7 @@ class SnapshotCleanupWorker:
 
     def __init__(
         self,
-        snapshot_service: "TransactionalSnapshotService",
+        snapshot_service: TransactionalSnapshotService,
         sweep_interval: float = 300.0,
         batch_limit: int = 100,
     ) -> None:

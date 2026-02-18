@@ -72,7 +72,7 @@ class NexusErrorCode(enum.IntEnum):
     SETTLEMENT_FAILED = 4002
 
 # Map error codes to HTTP status codes
-_CODE_TO_HTTP_STATUS: dict["NexusErrorCode", int] = {
+_CODE_TO_HTTP_STATUS: dict[NexusErrorCode, int] = {
     NexusErrorCode.UNSPECIFIED: 500,
     NexusErrorCode.INTERNAL: 500,
     NexusErrorCode.INVALID_ARGUMENT: 400,

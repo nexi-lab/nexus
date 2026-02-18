@@ -82,7 +82,7 @@ pytestmark = [
 # =============================================================================
 
 @pytest_asyncio.fixture
-async def engine() -> AsyncGenerator[AsyncEngine, None]:
+async def engine() -> AsyncGenerator[AsyncEngine]:
     """Create async PostgreSQL engine for tests.
 
     Uses the scorpio-postgres Docker container by default.
@@ -248,7 +248,7 @@ async def client(
     mock_credits_service: AsyncMock,
     x402_client: X402Client,
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[AsyncClient, None]:
+) -> AsyncGenerator[AsyncClient]:
     """Full create_app() server with auth, permissions, PostgreSQL, and NexusPay.
 
     Replicates the production server stack:
@@ -633,7 +633,7 @@ async def auth_enforced_client(
     mock_credits_service: AsyncMock,
     x402_client: X402Client,
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[AsyncClient, None]:
+) -> AsyncGenerator[AsyncClient]:
     """Server with api_key auth enforced (no open-access mode).
 
     Unlike the main `client` fixture which overrides auth, this fixture
@@ -833,7 +833,7 @@ async def db_auth_client(
     mock_credits_service: AsyncMock,
     x402_client: X402Client,
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[tuple[AsyncClient, str], None]:
+) -> AsyncGenerator[tuple[AsyncClient, str]]:
     """Server with DatabaseAPIKeyAuth (auth_type=database) backed by PostgreSQL.
 
     Creates a real DatabaseAPIKeyAuth provider, provisions a test API key

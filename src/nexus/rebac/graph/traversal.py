@@ -43,8 +43,8 @@ class PermissionComputer:
 
     def __init__(
         self,
-        repo: "TupleRepository",
-        namespace_resolver: "Callable[[str], NamespaceConfig | None]",
+        repo: TupleRepository,
+        namespace_resolver: Callable[[str], NamespaceConfig | None],
         max_depth: int = 10,
     ) -> None:
         self._repo = repo
@@ -240,7 +240,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: "NamespaceConfig",
+        namespace: NamespaceConfig,
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -300,7 +300,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: "NamespaceConfig",
+        namespace: NamespaceConfig,
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -356,7 +356,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: "NamespaceConfig",
+        namespace: NamespaceConfig,
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None,
@@ -971,7 +971,7 @@ class PermissionComputer:
         subject: Entity,
         permission: str,
         obj: Entity,
-        namespace: "NamespaceConfig",
+        namespace: NamespaceConfig,
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         paths: list[dict[str, Any]],

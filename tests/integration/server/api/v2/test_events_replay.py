@@ -28,7 +28,7 @@ def temp_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "events_test.db")
     yield rs
     rs.close()
@@ -50,7 +50,7 @@ def app(record_store: SQLAlchemyRecordStore) -> FastAPI:
 
 
 @pytest.fixture
-def client(app: FastAPI) -> Generator[TestClient, None, None]:
+def client(app: FastAPI) -> Generator[TestClient]:
     with TestClient(app) as c:
         yield c
 

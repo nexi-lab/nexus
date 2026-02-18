@@ -283,19 +283,19 @@ class EntityModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    source_relationships: Mapped[list["RelationshipModel"]] = relationship(
+    source_relationships: Mapped[list[RelationshipModel]] = relationship(
         "RelationshipModel",
         foreign_keys="RelationshipModel.source_entity_id",
         back_populates="source_entity",
         cascade="all, delete-orphan",
     )
-    target_relationships: Mapped[list["RelationshipModel"]] = relationship(
+    target_relationships: Mapped[list[RelationshipModel]] = relationship(
         "RelationshipModel",
         foreign_keys="RelationshipModel.target_entity_id",
         back_populates="target_entity",
         cascade="all, delete-orphan",
     )
-    mentions: Mapped[list["EntityMentionModel"]] = relationship(
+    mentions: Mapped[list[EntityMentionModel]] = relationship(
         "EntityMentionModel",
         back_populates="entity",
         cascade="all, delete-orphan",

@@ -353,7 +353,7 @@ class DatabaseLocalAuth(LocalAuth):
         return True
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "DatabaseLocalAuth":
+    def from_config(cls, config: dict[str, Any]) -> DatabaseLocalAuth:
         """Create from configuration dictionary."""
         return cls(
             session_factory=config["session_factory"],

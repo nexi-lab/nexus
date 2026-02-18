@@ -64,7 +64,7 @@ class FileContentCache:
     - No false negatives (never skips existing files)
     """
 
-    _bloom: "BloomFilter | None"
+    _bloom: BloomFilter | None
 
     def __init__(
         self,
@@ -607,9 +607,9 @@ class FileContentCache:
         return self.cache_dir
 
 # Global instance (initialized lazily)
-_file_cache: "FileContentCache | None" = None
+_file_cache: FileContentCache | None = None
 
-def get_file_cache(base_dir: str | Path | None = None) -> "FileContentCache":
+def get_file_cache(base_dir: str | Path | None = None) -> FileContentCache:
     """Get the global file cache instance.
 
     Args:

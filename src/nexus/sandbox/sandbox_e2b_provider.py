@@ -194,7 +194,7 @@ class E2BSandboxProvider(SandboxProvider):
 
     async def _run_python_code(
         self,
-        sandbox: "AsyncSandbox",
+        sandbox: AsyncSandbox,
         sandbox_id: str,
         code: str,
         timeout: int,
@@ -267,7 +267,7 @@ class E2BSandboxProvider(SandboxProvider):
 
     async def _run_shell_code(
         self,
-        sandbox: "AsyncSandbox",
+        sandbox: AsyncSandbox,
         sandbox_id: str,
         language: str,
         runtime: str,
@@ -764,7 +764,7 @@ except Exception as e:
                 "files_visible": -1,
             }
 
-    async def _get_sandbox(self, sandbox_id: str) -> "AsyncSandbox":
+    async def _get_sandbox(self, sandbox_id: str) -> AsyncSandbox:
         """Get sandbox by reconnecting (no caching to avoid event loop issues).
 
         Args:

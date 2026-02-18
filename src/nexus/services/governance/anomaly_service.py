@@ -100,7 +100,7 @@ class AnomalyService:
 
     def __init__(
         self,
-        session_factory: "Callable[[], AsyncSession]",
+        session_factory: Callable[[], AsyncSession],
         detector: AnomalyDetectorProtocol | None = None,
         config: AnomalyDetectionConfig | None = None,
     ) -> None:

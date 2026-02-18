@@ -139,7 +139,7 @@ class CacheStoreABC(ABC):
         """Close connections and release resources."""
         ...
 
-    async def __aenter__(self) -> "CacheStoreABC":
+    async def __aenter__(self) -> CacheStoreABC:
         return self
 
     async def __aexit__(self, *args: Any) -> None:

@@ -217,7 +217,7 @@ class LeopardIndex:
     for ultra-fast permission checks.
     """
 
-    def __init__(self, engine: "Engine", cache_enabled: bool = True, cache_max_size: int = 100_000):
+    def __init__(self, engine: Engine, cache_enabled: bool = True, cache_max_size: int = 100_000):
         """Initialize the Leopard index.
 
         Args:
@@ -240,7 +240,7 @@ class LeopardIndex:
         member_type: str,
         member_id: str,
         zone_id: str,
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> set[tuple[str, str]]:
         """Get all groups a member transitively belongs to.
 
@@ -279,7 +279,7 @@ class LeopardIndex:
         member_type: str,
         member_id: str,
         zone_id: str,
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> set[tuple[str, str]]:
         """Fetch transitive groups from database.
 
@@ -330,7 +330,7 @@ class LeopardIndex:
         group_type: str,
         group_id: str,
         zone_id: str,
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> int:
         """Update transitive closure when a membership is added.
 
@@ -443,7 +443,7 @@ class LeopardIndex:
         group_type: str,
         group_id: str,
         zone_id: str,
-        conn: "Connection | None" = None,
+        conn: Connection | None = None,
     ) -> int:
         """Update transitive closure when a membership is removed.
 
@@ -510,7 +510,7 @@ class LeopardIndex:
 
     def _recompute_member_closure(
         self,
-        conn: "Connection",
+        conn: Connection,
         member_type: str,
         member_id: str,
         zone_id: str,
@@ -616,7 +616,7 @@ class LeopardIndex:
 
     def _bulk_upsert_closure(
         self,
-        conn: "Connection",
+        conn: Connection,
         entries: list[dict[str, Any]],
     ) -> int:
         """Bulk upsert closure entries.
@@ -659,7 +659,7 @@ class LeopardIndex:
 
         return count
 
-    def rebuild_closure_for_zone(self, zone_id: str, conn: "Connection | None" = None) -> int:
+    def rebuild_closure_for_zone(self, zone_id: str, conn: Connection | None = None) -> int:
         """Rebuild entire closure table for a zone.
 
         Useful for:

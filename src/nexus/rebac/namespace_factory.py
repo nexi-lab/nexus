@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 def create_namespace_manager(
-    rebac_manager: "EnhancedReBACManager",
-    record_store: "RecordStoreABC | None" = None,
+    rebac_manager: EnhancedReBACManager,
+    record_store: RecordStoreABC | None = None,
 ) -> NamespaceManager:
     """Create NamespaceManager with config from environment variables.
 

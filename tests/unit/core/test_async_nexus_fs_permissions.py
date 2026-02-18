@@ -52,7 +52,7 @@ async def async_fs_with_permissions(
     tmp_path: Path,
     metadata_store: RaftMetadataStore,
     permission_enforcer: AsyncPermissionEnforcer,
-) -> AsyncGenerator[AsyncNexusFS, None]:
+) -> AsyncGenerator[AsyncNexusFS]:
     """Create AsyncNexusFS instance with permission enforcement enabled."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
@@ -69,7 +69,7 @@ async def async_fs_with_permissions(
 async def async_fs_no_permissions(
     tmp_path: Path,
     metadata_store: RaftMetadataStore,
-) -> AsyncGenerator[AsyncNexusFS, None]:
+) -> AsyncGenerator[AsyncNexusFS]:
     """Create AsyncNexusFS instance with permission enforcement disabled."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",

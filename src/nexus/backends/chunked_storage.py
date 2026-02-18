@@ -92,7 +92,7 @@ class ChunkInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChunkInfo":
+    def from_dict(cls, data: dict[str, Any]) -> ChunkInfo:
         """Deserialize from JSON dict."""
         return cls(
             chunk_hash=data["chunk_hash"],
@@ -150,7 +150,7 @@ class ChunkedReference:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChunkedReference":
+    def from_dict(cls, data: dict[str, Any]) -> ChunkedReference:
         """Deserialize from JSON dict."""
         return cls(
             type=data.get("type", "chunked_manifest_v1"),
@@ -166,7 +166,7 @@ class ChunkedReference:
         return json.dumps(self.to_dict(), separators=(",", ":")).encode("utf-8")
 
     @classmethod
-    def from_json(cls, data: bytes) -> "ChunkedReference":
+    def from_json(cls, data: bytes) -> ChunkedReference:
         """Deserialize from JSON bytes."""
         return cls.from_dict(json.loads(data))
 
@@ -224,7 +224,7 @@ class ChunkedStorageMixin:
         - content_cache (optional attribute)
     """
 
-    _cas: "CASBlobStore"
+    _cas: CASBlobStore
 
     # Configuration (can be overridden in subclass or __init__)
     cdc_threshold: int = CDC_THRESHOLD_BYTES
@@ -325,7 +325,7 @@ class ChunkedStorageMixin:
     def _write_chunked(
         self,
         content: bytes,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Write content as CDC chunks with manifest.
 
@@ -438,7 +438,7 @@ class ChunkedStorageMixin:
     def _read_chunked(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> bytes:
         """Read chunked content by reassembling from chunks.
 
@@ -521,7 +521,7 @@ class ChunkedStorageMixin:
     def _delete_chunked(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Delete chunked content, handling chunk reference counts.
 

@@ -78,7 +78,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         ),
     }
 
-    _cas_bloom: "BloomFilter | None"
+    _cas_bloom: BloomFilter | None
 
     def __init__(
         self,
@@ -248,7 +248,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
     @timed_response
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
         """
         Write content to CAS storage and return its hash.
@@ -300,7 +300,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
     @timed_response
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
         """Read content by its hash with retry for Windows file locking.
 
@@ -434,9 +434,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         *,
-        contexts: "dict[str, OperationContext] | None" = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """
         Optimized batch read for local backend with parallel disk I/O.
@@ -500,7 +500,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         return result
 
     def stream_content(
-        self, content_hash: str, chunk_size: int = 65536, context: "OperationContext | None" = None
+        self, content_hash: str, chunk_size: int = 65536, context: OperationContext | None = None
     ) -> Any:
         """
         Stream content from disk in chunks without loading entire file into memory.
@@ -541,8 +541,8 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         start: int,
         end: int,
         chunk_size: int = 65536,
-        context: "OperationContext | None" = None,
-    ) -> "Iterator[bytes]":
+        context: OperationContext | None = None,
+    ) -> Iterator[bytes]:
         """Efficient seek-based range streaming for local CAS.
 
         Uses file seek to jump directly to the requested offset, avoiding
@@ -584,8 +584,8 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
     @timed_response
     def write_stream(
         self,
-        chunks: "Iterator[bytes]",
-        context: "OperationContext | None" = None,
+        chunks: Iterator[bytes],
+        context: OperationContext | None = None,
     ) -> HandlerResponse[str]:
         """
         Write content from an iterator of chunks with true streaming.
@@ -633,7 +633,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
     @timed_response
     def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]:
         """Delete content by hash with reference counting.
 
@@ -676,7 +676,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
     @timed_response
     def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         """Check if content exists.
 
@@ -709,7 +709,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
     @timed_response
     def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         """Get content size in bytes.
 
@@ -744,7 +744,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
     @timed_response
     def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
         """Get reference count for content.
 
@@ -779,7 +779,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Create directory in virtual directory structure.
 
@@ -832,7 +832,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Remove directory from virtual directory structure.
 
@@ -881,7 +881,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
     @timed_response
     def is_directory(
-        self, path: str, context: "OperationContext | None" = None
+        self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
         """Check if path is a directory.
 
@@ -896,7 +896,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             path=path,
         )
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """List directory contents using local filesystem."""
         try:
             full_path = self.dir_root / path.lstrip("/")

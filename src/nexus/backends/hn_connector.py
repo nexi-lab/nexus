@@ -144,7 +144,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         stories_per_feed: int = 10,
         include_comments: bool = True,
         # Database session for L2 caching (optional)
-        session_factory: "type[Session] | None" = None,
+        session_factory: type[Session] | None = None,
     ):
         """
         Initialize HackerNews connector.
@@ -396,7 +396,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def read_content(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[bytes]:
         """
         Read content from HN API via virtual path.
@@ -482,7 +482,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def write_content(
         self,
         content: bytes,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[str]:
         """Write content (not supported - HN is read-only)."""
         return HandlerResponse.error(
@@ -496,7 +496,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def delete_content(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Delete content (not supported - HN is read-only)."""
         return HandlerResponse.error(
@@ -510,7 +510,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def content_exists(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[bool]:
         """Check if content exists."""
         if not context or not context.backend_path:
@@ -537,7 +537,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def get_content_size(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[int]:
         """Get content size (cache-first, efficient).
 
@@ -563,7 +563,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def get_ref_count(
         self,
         content_hash: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[int]:
         """Get reference count (always 1 for HN connector)."""
         return HandlerResponse.ok(
@@ -579,7 +579,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Create directory (not supported - fixed structure)."""
         return HandlerResponse.error(
@@ -595,7 +595,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Remove directory (not supported - fixed structure)."""
         return HandlerResponse.error(
@@ -610,7 +610,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def is_directory(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[bool]:
         """Check if path is a directory."""
         path = path.strip("/")
@@ -637,7 +637,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def list_dir(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[str]:
         """
         List virtual directory contents.
@@ -685,7 +685,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         exclude_patterns: list[str] | None = None,
         max_file_size: int | None = None,
         generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> SyncResult:
         """
         Sync HN content to cache.

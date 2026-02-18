@@ -64,7 +64,7 @@ class XAPIClient:
         """Close HTTP client."""
         await self._client.aclose()
 
-    async def __aenter__(self) -> "XAPIClient":
+    async def __aenter__(self) -> XAPIClient:
         return self
 
     async def __aexit__(

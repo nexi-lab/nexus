@@ -124,7 +124,7 @@ class ShareLinkService:
         if context:
             zone_id = getattr(context, "zone_id", None) or "root"
             user_id = (
-                getattr(context, "user", None)
+                getattr(context, "user_id", None)
                 or getattr(context, "subject_id", None)
                 or "anonymous"
             )
@@ -511,7 +511,7 @@ class ShareLinkService:
             accessed_by_user_id = None
             accessed_by_zone_id = None
             if context:
-                accessed_by_user_id = getattr(context, "user", None) or getattr(
+                accessed_by_user_id = getattr(context, "user_id", None) or getattr(
                     context, "subject_id", None
                 )
                 accessed_by_zone_id = getattr(context, "zone_id", None)

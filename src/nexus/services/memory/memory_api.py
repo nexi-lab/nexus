@@ -139,7 +139,7 @@ class Memory:
 
         # Create operation context
         self.context = OperationContext(
-            user=agent_id or user_id or "system",
+            user_id=agent_id or user_id or "system",
             groups=[],
             is_admin=False,
         )

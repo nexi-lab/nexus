@@ -90,9 +90,9 @@ class TestGetSubjectFromContext:
         result = nx._get_subject_from_context(context)
         assert result == ("agent", "bot1")
 
-    def test_get_subject_from_dict_with_user_fallback(self, nx: NexusFS) -> None:
-        """Test _get_subject_from_context falls back to user field."""
-        context = {"user": "bob"}
+    def test_get_subject_from_dict_with_user_id(self, nx: NexusFS) -> None:
+        """Test _get_subject_from_context extracts from user_id field."""
+        context = {"user_id": "bob"}
         result = nx._get_subject_from_context(context)
         assert result == ("user", "bob")
 
@@ -101,7 +101,7 @@ class TestGetSubjectFromContext:
         from nexus.core.permissions import OperationContext
 
         context = OperationContext(
-            user="charlie",
+            user_id="charlie",
             groups=["admins"],
             subject_type="user",
             subject_id="charlie",

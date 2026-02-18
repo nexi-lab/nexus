@@ -1,7 +1,7 @@
 """Tier-neutral domain types for the Nexus VFS (Issue #1501).
 
 Canonical home for shared types imported by 72+ files across the codebase.
-This module has **zero** runtime imports from ``nexus.*`` — only stdlib — so
+This module has **zero** runtime imports from ``nexus.*`` --- only stdlib --- so
 bricks, services, and backends can depend on it without pulling in kernel
 internals.
 
@@ -59,52 +59,33 @@ class Permission(IntFlag):
 
 @dataclass
 class OperationContext:
-    """Context for file operations with subject identity (v0.5.0).
+    """Context for file operations with subject identity.
 
     This class carries authentication and authorization context through
     all filesystem operations to enable permission checking.
 
-    v0.5.0 ACE: Unified agent identity system
-    - user_id: Human owner (always tracked)
-    - agent_id: Agent identity (optional)
-    - subject_type: "user" or "agent" (for authentication)
-    - subject_id: Actual identity (user_id or agent_id)
-
-    Agent lifecycle managed via API key TTL (no agent_type field needed).
-
-    Subject-based identity supports:
-    - user: Human users (alice, bob)
-    - agent: AI agents (claude_001, gpt4_agent)
-    - service: Backend services (backup_service, indexer)
-    - session: Temporary sessions (session_abc123)
-
     Attributes:
-        user: Subject ID performing the operation (LEGACY: use user_id)
-        user_id: Human owner ID (v0.5.0: NEW, for explicit tracking)
-        agent_id: Agent ID if operation is from agent (optional)
-        subject_type: Type of subject (user, agent, service, session)
-        subject_id: Unique identifier for the subject
-        groups: List of group IDs the subject belongs to
-        zone_id: Zone/organization ID for multi-zone isolation (optional)
-        is_admin: Whether the subject has admin privileges
-        is_system: Whether this is a system operation (bypasses all checks)
-        admin_capabilities: Set of granted admin capabilities (P0-4)
-        request_id: Unique ID for audit trail correlation (P0-4)
-        backend_path: Backend-relative path for connector backends (optional)
+        user_id: Human owner / subject ID performing the operation.
+        agent_id: Agent ID if operation is from agent (optional).
+        subject_type: Type of subject (user, agent, service, session).
+        subject_id: Unique identifier for the subject.
+        groups: List of group IDs the subject belongs to.
+        zone_id: Zone/organization ID for multi-zone isolation (optional).
+        is_admin: Whether the subject has admin privileges.
+        is_system: Whether this is a system operation (bypasses all checks).
+        admin_capabilities: Set of granted admin capabilities.
+        request_id: Unique ID for audit trail correlation.
+        backend_path: Backend-relative path for connector backends (optional).
 
     Examples:
-        >>> # Human user context
         >>> ctx = OperationContext(
-        ...     user="alice",
+        ...     user_id="alice",
         ...     groups=["developers"],
         ...     zone_id="org_acme"
         ... )
-        >>> # Enable read tracking via standalone function
-        >>> from nexus.core.read_set import enable_read_tracking
-        >>> enable_read_tracking(ctx)
     """
 
-    user: str  # LEGACY: Kept for backward compatibility (maps to user_id)
+    user_id: str
     groups: list[str]
     zone_id: str | None = None
     agent_id: str | None = None  # Agent identity (optional)
@@ -112,39 +93,27 @@ class OperationContext:
     is_admin: bool = False
     is_system: bool = False
 
-    # v0.5.0 ACE: Unified agent identity
-    user_id: str | None = None  # NEW: Human owner (auto-populated from user if None)
+    subject_type: str = "user"
+    subject_id: str | None = None  # If None, uses self.user_id
 
-    # P0-2: Subject-based identity
-    subject_type: str = "user"  # Default to "user" for backward compatibility
-    subject_id: str | None = None  # If None, uses self.user
-
-    # P0-4: Admin capabilities and audit trail
-    admin_capabilities: set[str] = field(default_factory=set)  # Scoped admin capabilities
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # Audit trail correlation ID
+    admin_capabilities: set[str] = field(default_factory=set)
+    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # Backend path for path-based connectors (GCS, S3, etc.)
-    backend_path: str | None = None  # Backend-relative path for connector backends
+    backend_path: str | None = None
     virtual_path: str | None = None  # Full virtual path with mount prefix (for cache keys)
 
-    # Issue #1166: Read Set Tracking for Query Dependencies
-    # When track_reads=True, operations automatically record what they read
-    # to enable precise cache invalidation and efficient subscription updates
-    read_set: ReadSet | None = None  # Read set for this operation (lazy-initialized)
-    track_reads: bool = False  # Enable read tracking for this operation
+    # Read Set Tracking for Query Dependencies (Issue #1166)
+    read_set: ReadSet | None = None
+    track_reads: bool = False
 
     def __post_init__(self) -> None:
         """Validate context and apply defaults."""
-        # v0.5.0: Auto-populate user_id from user if not provided
-        if self.user_id is None:
-            self.user_id = self.user
-
-        # P0-2: If subject_id not provided, use user field for backward compatibility
         if self.subject_id is None:
-            self.subject_id = self.user
+            self.subject_id = self.user_id
 
-        if not self.user:
-            raise ValueError("user is required")
+        if not self.user_id:
+            raise ValueError("user_id is required")
         if not isinstance(self.groups, list):
             raise TypeError(f"groups must be list, got {type(self.groups)}")
 
@@ -157,11 +126,11 @@ class OperationContext:
             Tuple of (subject_type, subject_id)
 
         Example:
-            >>> ctx = OperationContext(user="alice", groups=[])
+            >>> ctx = OperationContext(user_id="alice", groups=[])
             >>> ctx.get_subject()
             ('user', 'alice')
             >>> ctx = OperationContext(
-            ...     user="alice",
+            ...     user_id="alice",
             ...     agent_id="agent_data_analyst",
             ...     subject_type="agent",
             ...     subject_id="agent_data_analyst",
@@ -170,7 +139,7 @@ class OperationContext:
             >>> ctx.get_subject()
             ('agent', 'agent_data_analyst')
         """
-        return (self.subject_type, self.subject_id or self.user)
+        return (self.subject_type, self.subject_id or self.user_id)
 
     def record_read(
         self,
@@ -192,7 +161,7 @@ class OperationContext:
 
         Example:
             >>> from nexus.core.read_set import enable_read_tracking
-            >>> ctx = OperationContext(user="alice", groups=[], track_reads=True)
+            >>> ctx = OperationContext(user_id="alice", groups=[], track_reads=True)
             >>> enable_read_tracking(ctx, "zone1")
             >>> ctx.record_read("file", "/inbox/a.txt", revision=10)
             >>> len(ctx.read_set)
@@ -223,7 +192,7 @@ class ContextIdentity:
     Replaces the pattern::
 
         zone_id = getattr(context, "zone_id", None) or "root"
-        user_id = getattr(context, "user", None) or "anonymous"
+        user_id = getattr(context, "user_id", None) or "anonymous"
         is_admin = getattr(context, "is_admin", False)
 
     which appears 10+ times across mixins.
@@ -250,7 +219,7 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
     return ContextIdentity(
         zone_id=getattr(context, "zone_id", None) or "root",
         user_id=(
-            getattr(context, "user", None) or getattr(context, "subject_id", None) or "anonymous"
+            getattr(context, "user_id", None) or getattr(context, "subject_id", None) or "anonymous"
         ),
         is_admin=getattr(context, "is_admin", False),
     )

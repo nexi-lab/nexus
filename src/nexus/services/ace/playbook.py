@@ -49,7 +49,7 @@ class PlaybookManager:
         self.agent_id = agent_id
         self.zone_id = zone_id
         self.context = context or OperationContext(
-            user=user_id, groups=[], is_admin=False, is_system=False
+            user_id=user_id, groups=[], is_admin=False, is_system=False
         )
 
     def _check_permission(self, playbook: PlaybookModel, permission: Permission) -> bool:
@@ -74,11 +74,11 @@ class PlaybookManager:
             return True
 
         # 2. Direct creator access
-        if self.context.user == playbook.agent_id:
+        if self.context.user_id == playbook.agent_id:
             return True
 
         # 3. User ownership
-        if self.context.user == playbook.user_id:
+        if self.context.user_id == playbook.user_id:
             return True
 
         # 4. Zone-scoped sharing

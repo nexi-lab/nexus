@@ -41,7 +41,7 @@ def test_workspace_namespace_operations():
 
         # v0.6.0+: Create OperationContext with subject identity
         ctx = OperationContext(
-            user="agent1",
+            user_id="agent1",
             subject_type="agent",
             subject_id="agent1",
             groups=[],
@@ -83,7 +83,7 @@ def test_shared_namespace_operations():
         )
 
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             subject_type="user",
             subject_id="alice",
             groups=[],
@@ -122,7 +122,11 @@ def test_external_namespace_operations():
         )
 
         ctx = OperationContext(
-            user="anonymous", subject_type="user", subject_id="anonymous", groups=[], is_admin=False
+            user_id="anonymous",
+            subject_type="user",
+            subject_id="anonymous",
+            groups=[],
+            is_admin=False,
         )  # External namespace doesn't require zone_id
 
         # Write to external namespace
@@ -156,7 +160,7 @@ def test_multi_namespace_operations_single_zone():
         )
 
         ctx = OperationContext(
-            user="agent1",
+            user_id="agent1",
             subject_type="agent",
             subject_id="agent1",
             groups=[],
@@ -194,7 +198,7 @@ def test_namespace_isolation_between_zones():
             "/workspace/acme/agent1/secret.txt",
             b"acme secret",
             context=OperationContext(
-                user="agent1",
+                user_id="agent1",
                 subject_type="agent",
                 subject_id="agent1",
                 groups=[],
@@ -208,7 +212,7 @@ def test_namespace_isolation_between_zones():
             "/workspace/globex/agent1/secret.txt",
             b"globex secret",
             context=OperationContext(
-                user="agent1",
+                user_id="agent1",
                 subject_type="agent",
                 subject_id="agent1",
                 groups=[],
@@ -221,7 +225,7 @@ def test_namespace_isolation_between_zones():
         acme_content = nx.read(
             "/workspace/acme/agent1/secret.txt",
             context=OperationContext(
-                user="agent1",
+                user_id="agent1",
                 subject_type="agent",
                 subject_id="agent1",
                 groups=[],
@@ -232,7 +236,7 @@ def test_namespace_isolation_between_zones():
         globex_content = nx.read(
             "/workspace/globex/agent1/secret.txt",
             context=OperationContext(
-                user="agent1",
+                user_id="agent1",
                 subject_type="agent",
                 subject_id="agent1",
                 groups=[],

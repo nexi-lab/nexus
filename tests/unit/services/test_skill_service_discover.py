@@ -50,7 +50,7 @@ def svc(mock_gateway):
 @pytest.fixture
 def ctx():
     return OperationContext(
-        user="alice",
+        user_id="alice",
         groups=["developers"],
         zone_id="acme",
         is_system=False,

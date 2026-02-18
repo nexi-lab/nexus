@@ -105,7 +105,7 @@ class TestGetUserIdentity:
         context.subject_type = "user"
         context.subject_id = None
         context.user_id = None
-        context.user = "charlie"
+        context.user_id = "charlie"
 
         subject_type, subject_id = get_user_identity(context)
         assert subject_type == "user"
@@ -146,7 +146,7 @@ class TestGetUserIdentity:
         context.subject_type = "user"
         context.subject_id = None
         context.user_id = None
-        context.user = None
+        context.user_id = None
 
         subject_type, subject_id = get_user_identity(context)
         assert subject_type == "user"

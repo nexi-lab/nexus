@@ -48,7 +48,7 @@ def nx(tmp_path, record_store):
 def admin_context():
     """Create admin operation context."""
     return OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         zone_id="test_zone",
         is_admin=True,

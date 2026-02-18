@@ -76,7 +76,7 @@ class TestAdminBypassRequiresCapabilities:
         enforcer = PermissionEnforcer(rebac_manager=rebac, allow_admin_bypass=True)
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -94,7 +94,7 @@ class TestAdminBypassRequiresCapabilities:
         enforcer = PermissionEnforcer(rebac_manager=rebac, allow_admin_bypass=True)
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:write:*"},
@@ -113,7 +113,7 @@ class TestAdminBypassRequiresCapabilities:
 
         # Admin with no capabilities
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities=set(),  # Empty capabilities
@@ -134,7 +134,7 @@ class TestAdminBypassRequiresCapabilities:
 
         # Admin with write capability trying to read
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:write:*"},  # Has write, needs read
@@ -152,7 +152,7 @@ class TestAdminBypassRequiresCapabilities:
         enforcer = PermissionEnforcer(rebac_manager=rebac, allow_admin_bypass=True)
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*", "admin:write:*", "admin:delete:*"},
@@ -182,7 +182,7 @@ class TestAdminBypassKillSwitch:
         enforcer = PermissionEnforcer(rebac_manager=rebac, allow_admin_bypass=False)
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*", "admin:write:*"},  # Has all capabilities
@@ -202,7 +202,7 @@ class TestAdminBypassKillSwitch:
         enforcer = PermissionEnforcer(rebac_manager=rebac, allow_admin_bypass=True)
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -228,7 +228,7 @@ class TestAdminBypassPathAllowlist:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -251,7 +251,7 @@ class TestAdminBypassPathAllowlist:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -275,7 +275,7 @@ class TestAdminBypassPathAllowlist:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -299,7 +299,7 @@ class TestAdminBypassPathAllowlist:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -331,7 +331,7 @@ class TestAdminBypassWithReBAC:
 
         # Admin without capabilities
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities=set(),  # No capabilities
@@ -351,7 +351,7 @@ class TestAdminBypassWithReBAC:
         enforcer = PermissionEnforcer(rebac_manager=rebac, allow_admin_bypass=True)
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -377,7 +377,7 @@ class TestAdminBypassAuditLogging:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -390,7 +390,7 @@ class TestAdminBypassAuditLogging:
         assert len(audit_store.entries) == 1
 
         entry = audit_store.entries[0]
-        assert entry.user == "admin"
+        assert entry.user_id == "admin"
         assert entry.path == "/file.txt"
         assert entry.permission == "read"
         assert entry.bypass_type == "admin"
@@ -410,7 +410,7 @@ class TestAdminBypassAuditLogging:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -436,7 +436,7 @@ class TestAdminBypassAuditLogging:
         )
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -456,7 +456,7 @@ class TestCapabilityScoping:
 
         # Only has write capability
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:write:*"},
@@ -473,7 +473,7 @@ class TestCapabilityScoping:
 
         # Only has read capability
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -490,7 +490,7 @@ class TestCapabilityScoping:
 
         # Only has read capability
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             is_admin=True,
             admin_capabilities={"admin:read:*"},

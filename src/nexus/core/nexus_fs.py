@@ -3619,6 +3619,7 @@ class NexusFS(  # type: ignore[misc]
         self,
         user_id: str,
         session: Any,
+        zone_id: str | None = None,
     ) -> datetime:
         """Determine expiration date for agent API key based on owner's key."""
         from datetime import UTC, datetime, timedelta
@@ -3637,6 +3638,9 @@ class NexusFS(  # type: ignore[misc]
             )
             .order_by(APIKeyModel.created_at.desc())
         )  # Get most recent key
+        # Zone isolation
+        if zone_id is not None:
+            stmt = stmt.where(APIKeyModel.zone_id == zone_id)
 
         owner_key = session.scalar(stmt)
 
@@ -3678,7 +3682,7 @@ class NexusFS(  # type: ignore[misc]
 
         try:
             # Determine expiration based on owner's key
-            expires_at = self._determine_agent_key_expiration(user_id, session)
+            expires_at = self._determine_agent_key_expiration(user_id, session, zone_id=zone_id)
 
             # Create the API key (Issue #1519, 3A: uses injected protocol)
             _key_id, raw_key = self._api_key_creator.create_key(
@@ -4157,11 +4161,13 @@ class NexusFS(  # type: ignore[misc]
 
         session = self.SessionLocal()
         try:
-            # Get all agent API keys
+            # Get all agent API keys (zone-scoped)
             agent_keys_stmt = select(APIKeyModel).where(
                 APIKeyModel.subject_type == "agent",
                 APIKeyModel.revoked == 0,  # Only active keys
             )
+            if self.zone_id is not None:
+                agent_keys_stmt = agent_keys_stmt.where(APIKeyModel.zone_id == self.zone_id)
             agent_keys = {key.subject_id: key for key in session.scalars(agent_keys_stmt).all()}
         finally:
             session.close()
@@ -4279,12 +4285,14 @@ class NexusFS(  # type: ignore[misc]
 
         session = self.SessionLocal()
         try:
-            # Check if agent has an API key in database
+            # Check if agent has an API key in database (zone-scoped)
             agent_key_stmt = select(APIKeyModel).where(
                 APIKeyModel.subject_type == "agent",
                 APIKeyModel.subject_id == agent_id,
                 APIKeyModel.revoked == 0,  # Only active keys
             )
+            if self.zone_id is not None:
+                agent_key_stmt = agent_key_stmt.where(APIKeyModel.zone_id == self.zone_id)
             agent_key = session.scalar(agent_key_stmt)
 
             if agent_key:
@@ -4458,14 +4466,17 @@ class NexusFS(  # type: ignore[misc]
 
                     from nexus.storage.models import APIKeyModel
 
-                    # Revoke (soft delete) all API keys for this agent
+                    # Revoke (soft delete) all API keys for this agent (zone-scoped)
+                    revoke_where = [
+                        APIKeyModel.subject_type == "agent",
+                        APIKeyModel.subject_id == agent_id,
+                        APIKeyModel.revoked == 0,  # Only active keys
+                    ]
+                    if self.zone_id is not None:
+                        revoke_where.append(APIKeyModel.zone_id == self.zone_id)
                     stmt = (
                         update(APIKeyModel)
-                        .where(
-                            APIKeyModel.subject_type == "agent",
-                            APIKeyModel.subject_id == agent_id,
-                            APIKeyModel.revoked == 0,  # Only active keys
-                        )
+                        .where(*revoke_where)
                         .values(revoked=1)  # Mark as revoked
                     )
                     result = session.execute(stmt)
@@ -4861,7 +4872,7 @@ class NexusFS(  # type: ignore[misc]
                 if not user_row:
                     raise ValueError(f"User not found: {user_id}")
 
-                # Check if user already has an API key
+                # Check if user already has an API key (zone-scoped)
                 existing_key_stmt = (
                     select(APIKeyModel)
                     .where(
@@ -4871,6 +4882,8 @@ class NexusFS(  # type: ignore[misc]
                     )
                     .limit(1)
                 )
+                if zone_id is not None:
+                    existing_key_stmt = existing_key_stmt.where(APIKeyModel.zone_id == zone_id)
                 existing_key = session.scalar(existing_key_stmt)
 
                 if not existing_key:
@@ -5175,11 +5188,10 @@ class NexusFS(  # type: ignore[misc]
 
                 # Delete ALL API keys for this user (subject_type="user" and "agent")
                 # Agent keys have subject_type="agent" and belong to user's agents
-                deleted_keys = (
-                    session.query(APIKeyModel)
-                    .filter_by(user_id=user_id)  # Remove subject_type filter to delete all keys
-                    .delete()
-                )
+                key_query = session.query(APIKeyModel).filter_by(user_id=user_id)
+                if zone_id is not None:
+                    key_query = key_query.filter(APIKeyModel.zone_id == zone_id)
+                deleted_keys = key_query.delete()
                 session.commit()
                 result["deleted_api_keys"] = deleted_keys
                 logger.info(f"Deleted {deleted_keys} API keys for user {user_id}")
@@ -5336,12 +5348,13 @@ class NexusFS(  # type: ignore[misc]
                     try:
                         from nexus.storage.models import FilePathModel
 
-                        # Delete file paths for directory and all children (paths starting with dir_path)
-                        deleted_count = (
-                            session.query(FilePathModel)
-                            .filter(FilePathModel.virtual_path.like(f"{dir_path}%"))
-                            .delete(synchronize_session=False)
+                        # Delete file paths for directory and all children (zone-scoped)
+                        fp_query = session.query(FilePathModel).filter(
+                            FilePathModel.virtual_path.like(f"{dir_path}%")
                         )
+                        if context.zone_id is not None:
+                            fp_query = fp_query.filter(FilePathModel.zone_id == context.zone_id)
+                        deleted_count = fp_query.delete(synchronize_session=False)
                         session.commit()
                         logger.debug(f"Deleted {deleted_count} file path entries for {dir_path}")
                     finally:

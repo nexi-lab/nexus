@@ -1,8 +1,11 @@
-"""Search brick protocols for dependency inversion (Issue #1520).
+"""Search brick protocols for dependency inversion (Issue #1520, #2075).
 
 Defines FileReaderProtocol to decouple search modules from the NexusFS
 kernel object. Instead of depending on the concrete NexusFilesystem class,
 search components accept any object satisfying FileReaderProtocol.
+
+Also defines SearchableProtocol — the minimal interface that
+GraphEnhancedRetriever needs, replacing the concrete SemanticSearch dependency.
 
 This enables:
 - Zero kernel imports in the search brick
@@ -13,6 +16,8 @@ This enables:
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
+
+from nexus.search.results import BaseSearchResult
 
 
 @runtime_checkable
@@ -99,3 +104,24 @@ class FileReaderProtocol(Protocol):
             Content hash string, or None if not available.
         """
         ...
+
+
+@runtime_checkable
+class SearchableProtocol(Protocol):
+    """Minimal search interface used by GraphEnhancedRetriever.
+
+    Replaces the concrete SemanticSearch dependency with a duck-typed contract.
+    Both QueryService and DaemonSemanticSearchWrapper satisfy this protocol.
+    """
+
+    embedding_provider: Any
+
+    async def search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        search_mode: str = "semantic",
+        alpha: float = 0.5,
+        **kwargs: Any,
+    ) -> list[BaseSearchResult]: ...

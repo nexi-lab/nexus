@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.search.async_search import AsyncSemanticSearch
+from nexus.search import AsyncSemanticSearch  # noqa: F811 — removed in #2075, raises RuntimeError
 from nexus.search.chunking import ChunkStrategy, DocumentChunker
 from nexus.search.contextual_chunking import (
     ChunkContext,
@@ -214,9 +214,12 @@ class TestContextualChunkerDirectE2E:
 
 # ---------------------------------------------------------------------------
 # 2. AsyncSemanticSearch + Contextual Chunking Integration (SQLite)
+#    NOTE: AsyncSemanticSearch deleted in Issue #2075 (CQRS decomposition).
+#    These tests should be rewritten to use IndexingService + QueryService.
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="AsyncSemanticSearch removed in Issue #2075 — migrate to IndexingService")
 class TestAsyncSearchWithContextualChunking:
     """Test AsyncSemanticSearch with contextual chunking enabled (SQLite, no embeddings)."""
 
@@ -428,6 +431,9 @@ class TestContextualChunkingPerformance:
         assert result.total_chunks > 5
         assert max_concurrent <= 3, f"Concurrency exceeded limit: {max_concurrent} > 3"
 
+    @pytest.mark.skip(
+        reason="AsyncSemanticSearch removed in Issue #2075 — migrate to IndexingService"
+    )
     @pytest.mark.asyncio
     async def test_indexing_performance_acceptable(self, tmp_path):
         """Indexing with contextual chunking completes in reasonable time."""

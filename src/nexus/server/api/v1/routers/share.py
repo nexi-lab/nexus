@@ -150,7 +150,7 @@ async def download_via_share_link(
 
     try:
         stream_context = OperationContext(
-            user="share_link",
+            user_id="share_link",
             groups=[],
             zone_id=zone_id,
             subject_type="share_link",

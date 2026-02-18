@@ -119,6 +119,7 @@ sys.path.insert(0, os.environ.get('PYTHONPATH', ''))
 from nexus.backends.local import LocalBackend
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.server.fastapi_server import create_app
 import uvicorn
@@ -131,8 +132,7 @@ nx = create_nexus_fs(
     backend=backend,
     metadata_store=metadata_store,
     record_store=record_store,
-    enforce_permissions=True,
-    enforce_zone_isolation=True,
+    permissions=PermissionConfig(enforce=True, enforce_zone_isolation=True),
 )
 # Open-access mode (no api_key) so X-Nexus-Subject/Zone-ID headers
 # are respected for identity. Static API key auth always returns

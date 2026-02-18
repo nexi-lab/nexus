@@ -53,6 +53,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
+    from nexus.contracts.types import OperationContext
+
 logger = logging.getLogger(__name__)
 
 
@@ -725,3 +727,24 @@ def set_global_registry(registry: ReadSetRegistry | None) -> None:
     global _global_registry
     with _registry_lock:
         _global_registry = registry
+
+
+def enable_read_tracking(ctx: OperationContext, zone_id: str | None = None) -> None:
+    """Enable read tracking and initialize read set on an OperationContext.
+
+    Standalone replacement for the former ``OperationContext.enable_read_tracking()``
+    method.  Lives here (not in ``contracts/``) because it imports ``ReadSet``.
+
+    Args:
+        ctx: The OperationContext to enable tracking on.
+        zone_id: Zone ID for the read set (defaults to ctx.zone_id or "root").
+
+    Example:
+        >>> from nexus.core.read_set import enable_read_tracking
+        >>> ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
+        >>> enable_read_tracking(ctx)
+        >>> ctx.track_reads
+        True
+    """
+    ctx.track_reads = True
+    ctx.read_set = ReadSet.create(zone_id=zone_id or ctx.zone_id or "root")

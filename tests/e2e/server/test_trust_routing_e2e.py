@@ -15,6 +15,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from nexus.rebac.entity_registry import EntityRegistry
+from nexus.rebac.manager import EnhancedReBACManager
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.errors import InsufficientTrustError
 from nexus.services.delegation.models import (
@@ -23,8 +25,6 @@ from nexus.services.delegation.models import (
     DelegationStatus,
 )
 from nexus.services.delegation.service import DelegationService
-from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 from nexus.services.reputation.reputation_service import ReputationService
 from nexus.storage.models import Base
 
@@ -78,8 +78,6 @@ def agent_registry(session_factory, entity_registry):
 def reputation_service(session_factory):
     return ReputationService(
         session_factory=session_factory,
-        cache_maxsize=100,
-        cache_ttl=0,  # no caching for test determinism
     )
 
 

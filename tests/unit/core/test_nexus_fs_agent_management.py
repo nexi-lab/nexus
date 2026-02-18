@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import APIKeyModel
@@ -48,8 +49,8 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,
-        auto_parse=False,
-        enforce_permissions=True,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),
     )
     yield nx
     nx.close()
@@ -78,7 +79,7 @@ class TestExtractZoneId:
     def test_extract_zone_id_from_operation_context(self, nx: NexusFS) -> None:
         """Test extracting zone_id from OperationContext."""
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="acme",
         )
@@ -87,7 +88,7 @@ class TestExtractZoneId:
 
     def test_extract_zone_id_from_operation_context_missing(self, nx: NexusFS) -> None:
         """Test extracting zone_id from OperationContext without zone_id."""
-        context = OperationContext(user="alice", groups=[])
+        context = OperationContext(user_id="alice", groups=[])
         result = nx._extract_zone_id(context)
         assert result is None
 
@@ -106,9 +107,9 @@ class TestExtractUserId:
         result = nx._extract_user_id(context)
         assert result == "alice"
 
-    def test_extract_user_id_from_dict_with_user(self, nx: NexusFS) -> None:
-        """Test extracting user_id from dict with user key (fallback)."""
-        context = {"user": "bob"}
+    def test_extract_user_id_from_dict_with_user_id_key(self, nx: NexusFS) -> None:
+        """Test extracting user_id from dict with user_id key."""
+        context = {"user_id": "bob"}
         result = nx._extract_user_id(context)
         assert result == "bob"
 
@@ -121,16 +122,15 @@ class TestExtractUserId:
     def test_extract_user_id_from_operation_context(self, nx: NexusFS) -> None:
         """Test extracting user_id from OperationContext."""
         context = OperationContext(
-            user="alice",
-            groups=[],
             user_id="alice",
+            groups=[],
         )
         result = nx._extract_user_id(context)
         assert result == "alice"
 
     def test_extract_user_id_from_operation_context_fallback(self, nx: NexusFS) -> None:
         """Test extracting user_id from OperationContext falls back to user."""
-        context = OperationContext(user="bob", groups=[])
+        context = OperationContext(user_id="bob", groups=[])
         result = nx._extract_user_id(context)
         assert result == "bob"
 
@@ -547,7 +547,7 @@ class TestDeleteAgentCleanup:
         ctx = nx._parse_context(context)
         # Create admin context to bypass permission checks
         admin_ctx = OperationContext(
-            user=ctx.user,
+            user_id=ctx.user_id,
             groups=ctx.groups,
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,

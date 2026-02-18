@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -106,8 +107,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),
-        enforce_permissions=True,
-        enable_tiger_cache=True,
+        permissions=PermissionConfig(enforce=True, enable_tiger_cache=True),
         is_admin=True,  # Allow admin operations by default
     )
 
@@ -120,7 +120,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
 
     # Create admin context for tests
     admin_context = OperationContext(
-        user="admin",
+        user_id="admin",
         groups=["admins"],
         zone_id="root",
         is_admin=True,
@@ -178,7 +178,7 @@ class TestDirectoryGrantExpansion:
 
         # Create admin context with zone_id
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -240,7 +240,7 @@ class TestDirectoryGrantExpansion:
         from nexus.core.permissions import OperationContext
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -282,7 +282,7 @@ class TestDirectoryGrantExpansion:
         from nexus.core.permissions import OperationContext
 
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=["admins"],
             zone_id="root",
             is_admin=True,
@@ -386,7 +386,7 @@ class TestDirectoryGrantWorker:
 
     def test_worker_processes_pending_grants(self, standalone_engine):
         """Test that the DirectoryGrantExpander processes pending grants."""
-        from nexus.rebac.tiger_cache import (
+        from nexus.rebac.cache.tiger import (
             DirectoryGrantExpander,
             TigerCache,
             TigerResourceMap,
@@ -423,7 +423,7 @@ class TestDirectoryGrantWorker:
 
     def test_worker_marks_completed_on_empty_directory(self, standalone_engine):
         """Test that worker marks empty directory grants as completed."""
-        from nexus.rebac.tiger_cache import (
+        from nexus.rebac.cache.tiger import (
             DirectoryGrantExpander,
             TigerCache,
             TigerResourceMap,

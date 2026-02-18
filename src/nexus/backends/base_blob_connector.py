@@ -34,6 +34,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
+logger = logging.getLogger(__name__)
+
 
 class BaseBlobStorageConnector(Backend):
     """
@@ -540,7 +544,7 @@ class BaseBlobStorageConnector(Backend):
     def stream_content(
         self,
         content_hash: str,
-        chunk_size: int = 65536,
+        chunk_size: int = 8192,
         context: "OperationContext | None" = None,
     ) -> Iterator[bytes]:
         """
@@ -600,7 +604,7 @@ class BaseBlobStorageConnector(Backend):
     def _stream_blob(
         self,
         blob_path: str,
-        chunk_size: int = 65536,
+        chunk_size: int = 8192,
         version_id: str | None = None,
     ) -> Iterator[bytes]:
         """

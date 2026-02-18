@@ -144,7 +144,7 @@ def operation_context(draw: st.DrawFn) -> OperationContext:
     is_admin = draw(st.booleans())
     subject_type = draw(st.sampled_from(["user", "agent", "service", "session"]))
     return OperationContext(
-        user=user,
+        user_id=user,
         groups=groups,
         zone_id=zone_id,
         is_admin=is_admin,

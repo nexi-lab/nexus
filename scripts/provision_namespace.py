@@ -75,7 +75,7 @@ def provision_system_resources(nx: Any) -> None:
     # Create system context for provisioning
     # Note: Using admin user context as system context may not be fully supported
     context = OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         zone_id="default",
         is_admin=True,
@@ -125,7 +125,7 @@ def provision_zone_resources(nx: Any, zone_id: str) -> None:
     """Create zone-wide resources."""
     # Create admin context for provisioning
     context = OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         zone_id=zone_id,
         is_admin=True,
@@ -168,7 +168,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
 
     # Create admin context for provisioning
     context = OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         zone_id=zone_id,
         is_admin=True,
@@ -225,7 +225,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
 
     # Create context with admin as the user (not system) so agents are owned by admin
     admin_context = OperationContext(
-        user=admin_user_id,  # Set user to admin, not system
+        user_id=admin_user_id,  # Set user to admin, not system
         groups=[],
         zone_id=zone_id,
         is_admin=True,
@@ -521,8 +521,8 @@ def ensure_admin_api_key(zone_id: str = "default", env_file: str = ".env") -> st
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.rebac.entity_registry import EntityRegistry
 
     # Load .env
     env_vars = load_env_file(env_file)
@@ -628,7 +628,7 @@ def provision_user_resources(nx: Any, zone_id: str, user_id: str) -> None:
 
     # Create admin context for provisioning
     context = OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         zone_id=zone_id,
         is_admin=True,
@@ -673,7 +673,7 @@ def provision_user_resources(nx: Any, zone_id: str, user_id: str) -> None:
 
     # Create context with the actual user (not system) so agents are owned by the user
     user_context = OperationContext(
-        user=user_id,  # Set user to the actual user_id, not system
+        user_id=user_id,  # Set user to the actual user_id, not system
         groups=[],
         zone_id=zone_id,
         is_admin=True,

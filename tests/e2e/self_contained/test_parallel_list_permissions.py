@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from nexus.core.permissions import OperationContext
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.services.search_service import SearchService
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ def _make_context(
 ) -> OperationContext:
     """Create an OperationContext for testing."""
     return OperationContext(
-        user=user,
+        user_id=user,
         groups=[],
         zone_id=zone_id,
         is_admin=is_admin,

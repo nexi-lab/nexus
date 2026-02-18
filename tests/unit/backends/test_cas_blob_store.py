@@ -399,3 +399,67 @@ class TestCASBlobStore:
         store_nofsync.write_blob(h, content)
 
         assert store_nofsync.read_blob(h) == content
+
+
+class TestCASBlobStoreHoldReference:
+    """Tests for hold_reference() (Issue #1752)."""
+
+    @pytest.fixture
+    def store(self, tmp_path):
+        cas_root = tmp_path / "cas"
+        cas_root.mkdir()
+        return CASBlobStore(cas_root)
+
+    def test_hold_reference_existing_blob(self, store):
+        """hold_reference on existing blob should increment ref_count."""
+        content = b"holdable content"
+        h = hash_content(content)
+        store.store(h, content)
+
+        initial_meta = store.read_meta(h)
+        assert initial_meta.ref_count == 1
+
+        assert store.hold_reference(h) is True
+
+        held_meta = store.read_meta(h)
+        assert held_meta.ref_count == 2
+
+    def test_hold_reference_nonexistent_blob(self, store):
+        """hold_reference on missing blob should return False."""
+        fake_hash = "a" * 64
+        assert store.hold_reference(fake_hash) is False
+
+    def test_hold_reference_prevents_gc(self, store):
+        """With held reference, release should decrement but not delete."""
+        content = b"protected content"
+        h = hash_content(content)
+        store.store(h, content)
+
+        # Hold reference (ref_count: 1 -> 2)
+        store.hold_reference(h)
+
+        # Release original (ref_count: 2 -> 1)
+        deleted = store.release(h)
+        assert deleted is False
+        assert store.blob_exists(h)
+
+        # Release hold (ref_count: 1 -> 0, deleted)
+        deleted = store.release(h)
+        assert deleted is True
+        assert not store.blob_exists(h)
+
+    def test_hold_reference_multiple_holds(self, store):
+        """Multiple holds should stack ref_count."""
+        content = b"multi-hold content"
+        h = hash_content(content)
+        store.store(h, content)
+
+        store.hold_reference(h)
+        store.hold_reference(h)
+
+        meta = store.read_meta(h)
+        assert meta.ref_count == 3  # 1 (original) + 2 (holds)
+
+    def test_stripe_lock_contention_metric(self, store):
+        """stripe_lock_contention property should be accessible."""
+        assert store.stripe_lock_contention >= 0

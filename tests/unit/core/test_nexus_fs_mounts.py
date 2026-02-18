@@ -22,6 +22,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -41,8 +42,8 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=False,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()
@@ -55,8 +56,8 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),
     )
     yield nx
     nx.close()
@@ -241,7 +242,7 @@ class TestAddMount:
 
         # Use admin context to bypass permission check (testing permission grant, not check)
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -315,8 +316,8 @@ class TestSaveMount:
             backend=LocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-save-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_save_mount.db"),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -364,8 +365,8 @@ class TestListSavedMounts:
                 str(temp_dir / "raft-test-list-saved-mounts")
             ),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_list_saved_mounts.db"),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -385,8 +386,8 @@ class TestLoadMount:
             backend=LocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-load-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_load_mount.db"),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -408,8 +409,8 @@ class TestDeleteSavedMount:
                 str(temp_dir / "raft-test-delete-saved-mount")
             ),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_delete_saved_mount.db"),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -543,7 +544,7 @@ class TestSyncMount:
 
         # Use admin context to bypass permission check (testing sync functionality)
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",
@@ -570,7 +571,7 @@ class TestMountPermissionEnforcement:
 
         # Non-admin user without write permission on /mnt
         context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -597,7 +598,7 @@ class TestMountPermissionEnforcement:
 
         # First create mount as admin
         admin_context = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -613,7 +614,7 @@ class TestMountPermissionEnforcement:
 
         # Non-admin user tries to remove without permission
         user_context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -635,7 +636,7 @@ class TestMountPermissionEnforcement:
 
         # First create mount as admin
         admin_context = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -651,7 +652,7 @@ class TestMountPermissionEnforcement:
 
         # Non-admin user tries to sync without permission
         user_context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -673,7 +674,7 @@ class TestMountPermissionEnforcement:
 
         # First create mount as admin
         admin_context = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -689,7 +690,7 @@ class TestMountPermissionEnforcement:
 
         # Non-admin user tries to get mount without permission
         user_context = OperationContext(
-            user="bob",
+            user_id="bob",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -742,7 +743,7 @@ class TestGrantMountOwnerPermission:
         from nexus.core.permissions import OperationContext
 
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -843,7 +844,7 @@ class TestMountContextUtilsIntegration:
 
         # Use admin context to bypass permission check (testing context_utils usage)
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",
@@ -879,7 +880,7 @@ class TestMountContextUtilsIntegration:
 
         # Use admin context to bypass permission check (testing remove functionality)
         context = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             zone_id="test_zone",
             subject_type="user",

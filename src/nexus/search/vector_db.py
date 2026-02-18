@@ -31,8 +31,28 @@ from nexus.search.hnsw_config import HNSWConfig
 logger = logging.getLogger(__name__)
 
 # Module-level shared thread pool for _run_sync (Issue #1520: replaces per-call creation)
-_SYNC_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="nexus-vdb")
+# Issue #2071: Worker count sourced from ProfileTuning.search.vector_pool_workers at startup.
+# Default 2 (FULL profile) is used if tuning not yet resolved at import time.
+_DEFAULT_VDB_WORKERS = 2
+_SYNC_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_DEFAULT_VDB_WORKERS, thread_name_prefix="nexus-vdb"
+)
 atexit.register(_SYNC_POOL.shutdown, wait=False)
+
+
+def configure_sync_pool(max_workers: int) -> None:
+    """Reconfigure the module-level sync pool with profile-tuned worker count.
+
+    Called once at startup by factory/server init. Thread-safe: old pool
+    is shut down gracefully before replacement.
+    """
+    global _SYNC_POOL  # noqa: PLW0603
+    old = _SYNC_POOL
+    _SYNC_POOL = concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers, thread_name_prefix="nexus-vdb"
+    )
+    atexit.register(_SYNC_POOL.shutdown, wait=False)
+    old.shutdown(wait=False)
 
 
 def _run_sync(coro: Any) -> Any:
@@ -283,14 +303,14 @@ class VectorDatabase:
             List of results if BM25S succeeded, None to fall back to FTS
         """
         try:
-            from nexus.search.bm25s_search import get_bm25s_index, is_bm25s_available
+            from nexus.search.bm25s_search import BM25SIndex, is_bm25s_available
         except ImportError:
             return None
 
         if not is_bm25s_available():
             return None
 
-        index = get_bm25s_index()
+        index = BM25SIndex.get_instance()
 
         # Check if index is initialized and has documents (Issue #1520)
         if not _run_sync(index.initialize()):
@@ -394,14 +414,14 @@ class VectorDatabase:
         )
 
     def get_stats(self) -> dict[str, Any]:
-        """Return diagnostic statistics about the vector database.
+        """Return diagnostic stats about the vector database.
 
         Returns:
-            Dict with database type, extension availability, and init state.
+            Dictionary with vec_enabled, bm25_available, db_type, and initialized status.
         """
         return {
-            "db_type": self.db_type,
             "vec_enabled": self.vec_available,
-            "bm25_enabled": self.bm25_available,
+            "bm25_available": self.bm25_available,
+            "db_type": self.db_type,
             "initialized": self._initialized,
         }

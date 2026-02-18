@@ -54,9 +54,8 @@ def connector(local_folder: Path) -> LocalConnectorBackend:
 def context() -> OperationContext:
     """Create a basic operation context."""
     return OperationContext(
-        user="test_user",
-        groups=[],
         user_id="test_user",
+        groups=[],
         zone_id="test_zone",
     )
 
@@ -366,7 +365,7 @@ class TestPathSecurity:
             pytest.skip("Symlinks not supported")
 
         connector = LocalConnectorBackend(local_folder)
-        context = OperationContext(user="test", groups=[], user_id="test", zone_id="test")
+        context = OperationContext(user_id="test", groups=[], zone_id="test")
         context.backend_path = "escape/secret.txt"
         context.virtual_path = "/mnt/local/escape/secret.txt"
 
@@ -653,9 +652,8 @@ class TestConcurrentAccess:
 
         def read_file(i: int) -> tuple[int, bool, bytes]:
             ctx = OperationContext(
-                user=f"user_{i}",
-                groups=[],
                 user_id=f"user_{i}",
+                groups=[],
                 zone_id="test",
             )
             ctx.backend_path = "concurrent.txt"
@@ -678,9 +676,8 @@ class TestConcurrentAccess:
 
         def write_file(i: int) -> tuple[int, bool]:
             ctx = OperationContext(
-                user=f"user_{i}",
-                groups=[],
                 user_id=f"user_{i}",
+                groups=[],
                 zone_id="test",
             )
             ctx.backend_path = f"concurrent_{i}.txt"

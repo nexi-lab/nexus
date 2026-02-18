@@ -7,6 +7,7 @@ import uuid
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import CacheConfig, ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -53,10 +54,9 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
         metadata_store=metadata_store,
         record_store=record_store,
         is_admin=True,
-        enforce_permissions=False,  # Disable for pure operation benchmarks
-        auto_parse=False,  # Disable for pure write benchmarks
-        enable_metadata_cache=True,
-        enable_content_cache=True,
+        permissions=PermissionConfig(enforce=False),
+        parsing=ParseConfig(auto_parse=False),
+        cache=CacheConfig(enable_metadata_cache=True, enable_content_cache=True),
     )
     yield nx
     nx.close()
@@ -74,10 +74,9 @@ def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
         is_admin=False,  # Not admin - will check permissions
         zone_id="benchmark_zone",
         agent_id="benchmark_agent",
-        enforce_permissions=True,
-        auto_parse=False,
-        enable_metadata_cache=True,
-        enable_content_cache=True,
+        permissions=PermissionConfig(enforce=True),
+        parsing=ParseConfig(auto_parse=False),
+        cache=CacheConfig(enable_metadata_cache=True, enable_content_cache=True),
     )
     yield nx
     nx.close()

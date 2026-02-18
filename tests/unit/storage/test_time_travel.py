@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -47,7 +48,7 @@ class TestTimeTravelDebug:
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=False,
+            permissions=PermissionConfig(enforce=False),
         )
         yield nx
         nx.close()
@@ -283,7 +284,7 @@ class TestTimeTravelDebug:
         from nexus.storage.time_travel import TimeTravelReader
 
         # Use context parameter with agent ID
-        context = OperationContext(user="test", groups=[], agent_id="agent-1", zone_id="root")
+        context = OperationContext(user_id="test", groups=[], agent_id="agent-1", zone_id="root")
 
         path = "/workspace/agent_file.txt"
         nx.write(path, b"Agent 1 content", context=context)

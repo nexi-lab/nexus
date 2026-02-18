@@ -34,6 +34,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     _startup_reputation_service(app)
     _startup_delegation_service(app)
     _startup_sandbox_auth(app)
+    _startup_transactional_snapshot(app)
     _startup_rlm_service(app)
 
     # Agent background tasks depend on agent_registry
@@ -148,7 +149,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             app.state.agent_registry = AgentRegistry(
                 session_factory=app.state.nexus_fs.SessionLocal,
@@ -182,9 +183,9 @@ def _startup_key_service(app: FastAPI) -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
+            from nexus.auth.oauth.crypto import OAuthCrypto
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-            from nexus.server.auth.oauth_crypto import OAuthCrypto
             from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists
@@ -228,8 +229,6 @@ def _startup_reputation_service(app: FastAPI) -> None:
 
         app.state.reputation_service = ReputationService(
             session_factory=app.state.nexus_fs.SessionLocal,
-            cache_maxsize=10_000,
-            cache_ttl=60,
         )
         logger.info("[REPUTATION] ReputationService initialized (singleton)")
     except Exception as e:
@@ -309,7 +308,7 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         sync_rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
         if sync_rebac:
             try:
-                from nexus.services.permissions.namespace_factory import (
+                from nexus.rebac.namespace_factory import (
                     create_namespace_manager,
                 )
 
@@ -342,6 +341,16 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         logger.warning(
             "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
         )
+
+
+def _startup_transactional_snapshot(app: FastAPI) -> None:
+    """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
+    svc = getattr(app.state.nexus_fs, "_snapshot_service", None) if app.state.nexus_fs else None
+    app.state.transactional_snapshot_service = svc
+    if svc is not None:
+        logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
+    else:
+        logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
 
 
 def _startup_rlm_service(app: FastAPI) -> None:
@@ -483,6 +492,16 @@ async def _startup_scheduler(app: FastAPI) -> None:
         async_reg = getattr(app.state, "async_agent_registry", None)
         if async_reg is not None:
             async_reg._state_emitter = state_emitter
+
+        # Wire hook cleanup handler into state emitter (Issue #1257)
+        _nx = getattr(app.state, "nexus_fs", None)
+        _svc = getattr(_nx, "services", None) if _nx else None
+        scoped_hook_engine = getattr(_svc, "scoped_hook_engine", None) if _svc else None
+        if scoped_hook_engine is not None:
+            from nexus.services.hook_engine import create_agent_cleanup_handler
+
+            state_emitter.add_handler(create_agent_cleanup_handler(scoped_hook_engine))
+            logger.debug("Hook cleanup handler registered on AgentStateEmitter")
 
         # Initialize fair-share counters from DB
         await scheduler_service.sync_fair_share()

@@ -21,9 +21,9 @@ import pytest
 from nexus.core.permissions import (
     OperationContext,
     Permission,
+    PermissionEnforcer,
 )
-from nexus.services.permissions.enforcer import PermissionEnforcer
-from nexus.services.permissions.rebac_manager_enhanced import (
+from nexus.rebac.manager import (
     CheckResult,
     ConsistencyLevel,
     ConsistencyRequirement,
@@ -32,7 +32,7 @@ from nexus.services.permissions.rebac_manager_enhanced import (
     TraversalStats,
     WriteResult,
 )
-from nexus.services.permissions.types import ConsistencyMode
+from nexus.rebac.types import ConsistencyMode
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,7 +82,7 @@ class TestPermissionEnforcement:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check("/doc.txt", Permission.READ, ctx) is True
 
@@ -90,7 +90,7 @@ class TestPermissionEnforcement:
         """User without any grant is denied."""
         rebac = _make_mock_rebac({})  # no grants at all
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check("/doc.txt", Permission.READ, ctx) is False
 
@@ -103,7 +103,7 @@ class TestPermissionEnforcement:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check("/doc.txt", Permission.READ, ctx) is True
         assert enforcer.check("/doc.txt", Permission.WRITE, ctx) is False
@@ -116,7 +116,7 @@ class TestPermissionEnforcement:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check("/doc.txt", Permission.WRITE, ctx) is True
 
@@ -130,8 +130,8 @@ class TestPermissionEnforcement:
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
 
-        alice_ctx = OperationContext(user="alice", groups=[])
-        bob_ctx = OperationContext(user="bob", groups=[])
+        alice_ctx = OperationContext(user_id="alice", groups=[])
+        bob_ctx = OperationContext(user_id="bob", groups=[])
 
         assert enforcer.check("/doc.txt", Permission.READ, alice_ctx) is True
         assert enforcer.check("/doc.txt", Permission.READ, bob_ctx) is False
@@ -140,7 +140,7 @@ class TestPermissionEnforcement:
     def test_all_permission_types_denied_without_grant(self, perm):
         """All permission types are denied when no grant exists."""
         enforcer = PermissionEnforcer(rebac_manager=_make_mock_rebac({}))
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
         assert enforcer.check("/file.txt", perm, ctx) is False
 
 
@@ -162,8 +162,8 @@ class TestZoneIsolation:
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
 
-        ctx_a = OperationContext(user="alice", groups=[], zone_id="zone_a")
-        ctx_b = OperationContext(user="alice", groups=[], zone_id="zone_b")
+        ctx_a = OperationContext(user_id="alice", groups=[], zone_id="zone_a")
+        ctx_b = OperationContext(user_id="alice", groups=[], zone_id="zone_b")
 
         assert enforcer.check("/doc.txt", Permission.READ, ctx_a) is True
         assert enforcer.check("/doc.txt", Permission.READ, ctx_b) is False
@@ -174,7 +174,7 @@ class TestZoneIsolation:
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(rebac_manager=rebac)
 
-        ctx = OperationContext(user="alice", groups=[], zone_id="org_secret")
+        ctx = OperationContext(user_id="alice", groups=[], zone_id="org_secret")
         enforcer.check("/file.txt", Permission.READ, ctx)
 
         call_kwargs = rebac.rebac_check.call_args
@@ -185,7 +185,7 @@ class TestZoneIsolation:
         """Admin from zone_a trying /zone/zone_b/ is blocked without MANAGE_ZONES."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=None)
         ctx = OperationContext(
-            user="zone_admin",
+            user_id="zone_admin",
             groups=[],
             is_admin=True,
             zone_id="zone_a",
@@ -199,7 +199,7 @@ class TestZoneIsolation:
         rebac = MagicMock()
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         enforcer.check("/file.txt", Permission.READ, ctx)
 
@@ -225,7 +225,7 @@ class TestPermissionEscalation:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check("/doc.txt", Permission.WRITE, ctx) is False
 
@@ -238,7 +238,7 @@ class TestPermissionEscalation:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check("/script.sh", Permission.EXECUTE, ctx) is False
 
@@ -249,7 +249,7 @@ class TestPermissionEscalation:
             rebac_manager=_make_mock_rebac({}),
         )
         ctx = OperationContext(
-            user="mallory",
+            user_id="mallory",
             groups=[],
             is_admin=True,  # claims admin
             admin_capabilities={"admin:read:*"},
@@ -264,7 +264,7 @@ class TestPermissionEscalation:
             rebac_manager=_make_mock_rebac({}),
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},  # read only
@@ -290,7 +290,7 @@ class TestAdminBehavior:
         )
         enforcer = PermissionEnforcer(allow_admin_bypass=False, rebac_manager=rebac)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -302,7 +302,7 @@ class TestAdminBehavior:
         rebac = _make_mock_rebac({})
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=rebac)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities=set(),
@@ -317,7 +317,7 @@ class TestAdminBehavior:
             admin_bypass_paths=["/admin/*"],
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -339,20 +339,20 @@ class TestPermissionBypassNoEnforcement:
     def test_deny_by_default_without_rebac(self):
         """Without rebac_manager, all non-privileged access is denied."""
         enforcer = PermissionEnforcer(rebac_manager=None)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
         assert enforcer.check("/file.txt", Permission.READ, ctx) is False
 
     def test_system_bypass_works_without_rebac(self):
         """System bypass works even without rebac_manager."""
         enforcer = PermissionEnforcer(rebac_manager=None)
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
         assert enforcer.check("/any.txt", Permission.READ, ctx) is True
 
     def test_admin_bypass_works_without_rebac(self):
         """Admin bypass works even without rebac_manager."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True, rebac_manager=None)
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -370,26 +370,25 @@ class TestEmptyNullContextHandling:
 
     def test_empty_user_rejected(self):
         """Empty user string is rejected at construction."""
-        with pytest.raises(ValueError, match="user is required"):
-            OperationContext(user="", groups=[])
+        with pytest.raises(ValueError, match="user_id is required"):
+            OperationContext(user_id="", groups=[])
 
     def test_many_groups_allowed(self):
         """Large number of groups does not break context creation."""
         groups = [f"group_{i}" for i in range(1000)]
-        ctx = OperationContext(user="alice", groups=groups)
+        ctx = OperationContext(user_id="alice", groups=groups)
         assert len(ctx.groups) == 1000
 
     def test_context_with_all_fields(self):
         """Context with every field set does not break."""
         ctx = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=["g1", "g2"],
             zone_id="zone1",
             agent_id="agent_x",
             agent_generation=3,
             is_admin=True,
             is_system=False,
-            user_id="alice_id",
             subject_type="agent",
             subject_id="agent_x",
             admin_capabilities={"admin:read:*"},
@@ -397,7 +396,7 @@ class TestEmptyNullContextHandling:
             backend_path="/mnt/gcs/data",
             virtual_path="/workspace/data",
         )
-        assert ctx.user == "alice"
+        assert ctx.user_id == "alice"
         assert ctx.agent_generation == 3
         assert ctx.backend_path == "/mnt/gcs/data"
         assert ctx.virtual_path == "/workspace/data"
@@ -419,7 +418,7 @@ class TestPathEdgeCases:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check("/", Permission.READ, ctx) is True
 
@@ -432,7 +431,7 @@ class TestPathEdgeCases:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check(deep_path, Permission.READ, ctx) is True
 
@@ -445,7 +444,7 @@ class TestPathEdgeCases:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check(path, Permission.READ, ctx) is True
 
@@ -453,7 +452,7 @@ class TestPathEdgeCases:
         """Very long path is denied when no grant exists."""
         long_path = "/" + "/".join(["segment"] * 500) + "/file.txt"
         enforcer = PermissionEnforcer(rebac_manager=_make_mock_rebac({}))
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check(long_path, Permission.READ, ctx) is False
 
@@ -472,7 +471,7 @@ class TestPathEdgeCases:
 
         rebac.rebac_check.side_effect = _check
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         result = enforcer.check("/workspace/file.txt", Permission.READ, ctx)
         assert result is True
@@ -481,7 +480,7 @@ class TestPathEdgeCases:
         """No parent has a grant => deny the file."""
         rebac = _make_mock_rebac({})
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         assert enforcer.check("/workspace/file.txt", Permission.READ, ctx) is False
 
@@ -673,7 +672,7 @@ class TestTraversePermission:
         rebac = MagicMock()
         rebac.rebac_check.side_effect = _check
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         result = enforcer.check("/dir", Permission.TRAVERSE, ctx)
         assert result is True
@@ -688,7 +687,7 @@ class TestTraversePermission:
         rebac = MagicMock()
         rebac.rebac_check.side_effect = _check
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         result = enforcer.check("/dir", Permission.TRAVERSE, ctx)
         assert result is True
@@ -697,7 +696,7 @@ class TestTraversePermission:
         """TRAVERSE is denied when user has neither READ nor WRITE."""
         rebac = _make_mock_rebac({})
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         result = enforcer.check("/dir", Permission.TRAVERSE, ctx)
         assert result is False
@@ -715,7 +714,7 @@ class TestBypassAuditLogging:
         """Successful system bypass is logged."""
         audit_store = MagicMock()
         enforcer = PermissionEnforcer(audit_store=audit_store)
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         enforcer.check("/system/config.json", Permission.READ, ctx)
 
@@ -728,7 +727,7 @@ class TestBypassAuditLogging:
         """Denied system bypass (outside /system) is logged."""
         audit_store = MagicMock()
         enforcer = PermissionEnforcer(audit_store=audit_store)
-        ctx = OperationContext(user="system", groups=[], is_system=True)
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         with pytest.raises(PermissionError):
             enforcer.check("/user/data.txt", Permission.WRITE, ctx)
@@ -746,7 +745,7 @@ class TestBypassAuditLogging:
             audit_store=audit_store,
         )
         ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
@@ -775,7 +774,7 @@ class TestCombinedSecurityScenarios:
             rebac_manager=_make_mock_rebac({}),
         )
         ctx = OperationContext(
-            user="evil_admin",
+            user_id="evil_admin",
             groups=[],
             is_admin=True,
             zone_id="zone_a",
@@ -788,7 +787,7 @@ class TestCombinedSecurityScenarios:
         """System context write is scoped to /system/ regardless of admin bypass."""
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             is_system=True,
         )
@@ -804,7 +803,7 @@ class TestCombinedSecurityScenarios:
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=[], zone_id="org_acme")
+        ctx = OperationContext(user_id="alice", groups=[], zone_id="org_acme")
 
         assert enforcer.check("/shared/doc.txt", Permission.READ, ctx) is True
 
@@ -817,7 +816,7 @@ class TestCombinedSecurityScenarios:
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
         ctx = OperationContext(
-            user="owner",
+            user_id="owner",
             groups=[],
             subject_type="agent",
             subject_id="bot_1",
@@ -829,7 +828,7 @@ class TestCombinedSecurityScenarios:
         rebac = _make_mock_rebac({})
         enforcer = PermissionEnforcer(rebac_manager=rebac)
         ctx = OperationContext(
-            user="owner",
+            user_id="owner",
             groups=[],
             subject_type="agent",
             subject_id="bot_1",

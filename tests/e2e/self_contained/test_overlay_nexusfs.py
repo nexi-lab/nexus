@@ -5,7 +5,7 @@ using real LocalBackend, real SQLAlchemyRecordStore, and real WorkspaceRegistry.
 This verifies the overlay hooks in nexus_fs_core.py (read/delete) work
 correctly when wired through the full dependency injection pipeline.
 
-No Raft required — uses InMemoryMetadata implementing FileMetadataProtocol.
+No Raft required — uses InMemoryMetadata implementing MetastoreABC.
 """
 
 from __future__ import annotations
@@ -16,14 +16,15 @@ from typing import Any
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.core.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.services.overlay_resolver import OverlayResolver
 
 
-class InMemoryFileMetadataStore(FileMetadataProtocol):
-    """Full FileMetadataProtocol implementation using an in-memory dict.
+class InMemoryMetastore(MetastoreABC):
+    """Full MetastoreABC implementation using an in-memory dict.
 
     Replaces RaftMetadataStore for tests that don't need the Rust extension.
     """
@@ -77,9 +78,9 @@ def local_backend(storage_dir) -> LocalBackend:
 
 
 @pytest.fixture
-def metadata_store() -> InMemoryFileMetadataStore:
+def metadata_store() -> InMemoryMetastore:
     """In-memory metadata store (replaces Raft)."""
-    return InMemoryFileMetadataStore()
+    return InMemoryMetastore()
 
 
 @pytest.fixture
@@ -118,7 +119,7 @@ def stored_manifest_hash(local_backend: LocalBackend, base_manifest: WorkspaceMa
 
 @pytest.fixture
 def overlay_resolver(
-    metadata_store: InMemoryFileMetadataStore,
+    metadata_store: InMemoryMetastore,
     local_backend: LocalBackend,
 ) -> OverlayResolver:
     """Real OverlayResolver wired to real backend and metadata store."""
@@ -128,7 +129,7 @@ def overlay_resolver(
 @pytest.fixture
 def nexus_fs(
     local_backend: LocalBackend,
-    metadata_store: InMemoryFileMetadataStore,
+    metadata_store: InMemoryMetastore,
     overlay_resolver: OverlayResolver,
     stored_manifest_hash: str,
 ):
@@ -138,6 +139,7 @@ def nexus_fs(
     then injects overlay_resolver post-construction (since factory doesn't
     propagate it yet — that's Phase 5 RPC wiring).
     """
+    from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -147,7 +149,7 @@ def nexus_fs(
         backend=local_backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=False,  # Focus on overlay logic, not ReBAC
+        permissions=PermissionConfig(enforce=False),
     )
     # Inject overlay resolver post-construction (NexusFS.__init__ accepts it,
     # but factory doesn't pass it through yet)

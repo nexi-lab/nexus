@@ -419,7 +419,7 @@ class TestContextPropagation:
         with (
             patch.dict("sys.modules", {"opentelemetry": MagicMock(context=mock_context_module)}),
             patch(
-                "nexus.services.permissions.rebac_tracing.otel_context",
+                "nexus.rebac.rebac_tracing.otel_context",
                 mock_context_module,
                 create=True,
             ),
@@ -465,7 +465,7 @@ class TestContextPropagation:
         mock_context_module.attach.return_value = mock_token
 
         with patch(
-            "nexus.services.permissions.rebac_tracing.otel_context",
+            "nexus.rebac.rebac_tracing.otel_context",
             mock_context_module,
             create=True,
         ):

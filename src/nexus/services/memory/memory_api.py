@@ -19,9 +19,9 @@ from sqlalchemy.orm import Session
 
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
+from nexus.rebac.entity_registry import EntityRegistry
+from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class Memory:
         # Initialize ReBAC manager for permission checks
         from sqlalchemy import Engine
 
-        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.rebac.manager import EnhancedReBACManager
 
         bind = session.get_bind()
         assert isinstance(bind, Engine), "Expected Engine, got Connection"
@@ -139,7 +139,7 @@ class Memory:
 
         # Create operation context
         self.context = OperationContext(
-            user=agent_id or user_id or "system",
+            user_id=agent_id or user_id or "system",
             groups=[],
             is_admin=False,
         )
@@ -1170,13 +1170,18 @@ class Memory:
 
         try:
             # Query memories that haven't hit minimum importance yet
-            memories = (
-                self.session.query(MemoryModel)
-                .filter(
-                    MemoryModel.zone_id == self.zone_id,
-                    MemoryModel.importance > min_importance,
+            from sqlalchemy import select
+
+            memories = list(
+                self.session.execute(
+                    select(MemoryModel)
+                    .where(
+                        MemoryModel.zone_id == self.zone_id,
+                        MemoryModel.importance > min_importance,
+                    )
+                    .limit(batch_size)
                 )
-                .limit(batch_size)
+                .scalars()
                 .all()
             )
 
@@ -1673,16 +1678,22 @@ class Memory:
         target_agent_id = agent_id or self.agent_id
 
         # Query trajectories
-        query = self.session.query(TrajectoryModel).filter_by(agent_id=target_agent_id)
+        from sqlalchemy import select
+
+        stmt = select(TrajectoryModel).filter_by(agent_id=target_agent_id)
 
         if since:
             since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-            query = query.filter(TrajectoryModel.started_at >= since_dt)
+            stmt = stmt.where(TrajectoryModel.started_at >= since_dt)
 
         if task_type:
-            query = query.filter_by(task_type=task_type)
+            stmt = stmt.filter_by(task_type=task_type)
 
-        trajectories = query.order_by(TrajectoryModel.started_at.desc()).limit(100).all()
+        trajectories = list(
+            self.session.execute(stmt.order_by(TrajectoryModel.started_at.desc()).limit(100))
+            .scalars()
+            .all()
+        )
 
         if len(trajectories) < min_trajectories:
             return {

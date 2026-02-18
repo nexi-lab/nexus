@@ -127,7 +127,7 @@ async def get_trajectory_manager(
     return TrajectoryManager(
         session=session,
         backend=backend,
-        user_id=context.user_id or context.user or "anonymous",
+        user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
         context=context,
@@ -158,7 +158,7 @@ async def get_playbook_manager(
     return PlaybookManager(
         session=session,
         backend=backend,
-        user_id=context.user_id or context.user or "anonymous",
+        user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
         context=context,
@@ -184,7 +184,7 @@ async def get_reflector(
     traj_manager = TrajectoryManager(
         session=session,
         backend=backend,
-        user_id=context.user_id or context.user or "anonymous",
+        user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
         context=context,
@@ -195,7 +195,7 @@ async def get_reflector(
         backend=backend,
         llm_provider=llm_provider,  # type: ignore[arg-type]
         trajectory_manager=traj_manager,
-        user_id=context.user_id or context.user or "anonymous",
+        user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
     )
@@ -216,7 +216,7 @@ async def get_curator(
     playbook_manager = PlaybookManager(
         session=session,
         backend=backend,
-        user_id=context.user_id or context.user or "anonymous",
+        user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
         context=context,
@@ -248,7 +248,7 @@ async def get_consolidation_engine(
         session=session,
         backend=backend,
         llm_provider=llm_provider,  # type: ignore[arg-type]
-        user_id=context.user_id or context.user or "anonymous",
+        user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
     )
@@ -292,7 +292,7 @@ async def get_hierarchy_manager(
         session=session,
         backend=backend,
         llm_provider=llm_provider,  # type: ignore[arg-type]
-        user_id=context.user_id or context.user or "anonymous",
+        user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
     )
@@ -353,14 +353,12 @@ async def get_reputation_context(
     # Per-request instantiation (singleton DI via app.state planned in #1619)
     reputation_service = ReputationService(
         session_factory=session_factory,
-        cache_maxsize=10_000,
-        cache_ttl=60,
     )
     dispute_service = DisputeService(session_factory=session_factory)
 
     context = _get_operation_context(auth_result)
     auth_ctx = {
-        "user_id": context.user_id or context.user or "",
+        "user_id": context.user_id or "",
         "subject_id": getattr(context, "subject_id", ""),
         "subject_type": getattr(context, "subject_type", ""),
         "is_admin": getattr(context, "is_admin", False),

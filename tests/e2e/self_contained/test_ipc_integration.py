@@ -256,7 +256,8 @@ class TestDeadLetterAndTTLSweep:
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert len(dl_files) == 1
+        dl_msg_files = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msg_files) == 1
 
     @pytest.mark.asyncio
     async def test_ttl_sweep_cleans_expired(self, vfs: InMemoryVFS) -> None:
@@ -299,7 +300,8 @@ class TestDeadLetterAndTTLSweep:
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 1  # Only the valid message remains
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert len(dl_files) == 1  # Expired message moved here
+        dl_msg_files = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msg_files) == 1  # Expired message moved here
 
 
 class TestBackpressure:

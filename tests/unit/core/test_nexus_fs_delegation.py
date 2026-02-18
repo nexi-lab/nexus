@@ -55,7 +55,7 @@ def mock_fs():
 def context():
     """Standard operation context."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_system=False,
@@ -307,11 +307,11 @@ class TestMCPServiceDelegation:
         )
 
     def test_mcp_unmount_delegates(self, mock_fs, context):
-        """mcp_unmount forwards name and _context."""
+        """mcp_unmount renames _context→context."""
         mock_fs.mcp_service.mcp_unmount = AsyncMock(return_value={"status": "unmounted"})
         result = asyncio.run(mock_fs.mcp_unmount("test", _context=context))
         assert result == {"status": "unmounted"}
-        mock_fs.mcp_service.mcp_unmount.assert_called_once_with(name="test", _context=context)
+        mock_fs.mcp_service.mcp_unmount.assert_called_once_with(name="test", context=context)
 
     def test_mcp_sync_delegates(self, mock_fs, context):
         """mcp_sync renames _context→context."""

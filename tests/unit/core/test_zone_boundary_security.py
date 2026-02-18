@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.rebac.permissions_enhanced import AdminCapability
@@ -35,9 +36,10 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,
-        allow_admin_bypass=True,  # Enable admin bypass for zone boundary tests
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(
+            enforce=True, allow_admin_bypass=True
+        ),  # Enable admin bypass for zone boundary tests
     )
     yield nx
     nx.close()
@@ -50,7 +52,7 @@ class TestZoneBoundarySecurity:
         """Test that zone admin cannot access files from other zones."""
         # Setup: Create file in zone1 as system admin with MANAGE_ZONES
         system_admin = OperationContext(
-            user="system_admin",
+            user_id="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -71,7 +73,7 @@ class TestZoneBoundarySecurity:
 
         # Zone admin from zone2 (techcorp) tries to access zone1 (acme) file
         zone_admin_techcorp = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -90,7 +92,7 @@ class TestZoneBoundarySecurity:
         """Test that system admin with MANAGE_ZONES can access any zone."""
         # Setup: Create file in zone1
         system_admin_setup = OperationContext(
-            user="system_admin",
+            user_id="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -111,7 +113,7 @@ class TestZoneBoundarySecurity:
 
         # System admin from zone2 should be able to access zone1 file
         system_admin_zone2 = OperationContext(
-            user="system_admin",
+            user_id="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -130,7 +132,7 @@ class TestZoneBoundarySecurity:
         """Test that zone admin can access files in their own zone."""
         # Setup: Create file in zone1
         system_admin = OperationContext(
-            user="system_admin",
+            user_id="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -154,7 +156,7 @@ class TestZoneBoundarySecurity:
 
         # Zone admin from same zone should be able to access
         zone_admin_acme = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -173,7 +175,7 @@ class TestZoneBoundarySecurity:
         """Test that zone admin cannot write to other zone's files."""
         # Setup: Create file in zone1
         system_admin = OperationContext(
-            user="system_admin",
+            user_id="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -194,7 +196,7 @@ class TestZoneBoundarySecurity:
 
         # Zone admin from zone2 tries to write to zone1 file
         zone_admin_techcorp = OperationContext(
-            user="alice",
+            user_id="alice",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -212,7 +214,7 @@ class TestZoneBoundarySecurity:
         """Test that admin without MANAGE_ZONES cannot access other zones."""
         # Setup: Create file in zone1
         system_admin = OperationContext(
-            user="system_admin",
+            user_id="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
@@ -233,7 +235,7 @@ class TestZoneBoundarySecurity:
 
         # Admin without MANAGE_ZONES tries to access different zone
         limited_admin = OperationContext(
-            user="limited_admin",
+            user_id="limited_admin",
             groups=[],
             is_admin=True,
             is_system=False,

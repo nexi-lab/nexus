@@ -268,9 +268,6 @@ class TestJsonRoundTrip:
 class TestAgentReconnection:
     """Tests for the agent reconnection use case."""
 
-    @pytest.mark.skip(
-        reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — L3 cache revision bucket mismatch"
-    )
     def test_reconnection_flow(self, engine, store):
         """Full flow: build namespace → clear L2 → restore from L3."""
         from nexus.rebac.manager import EnhancedReBACManager
@@ -299,8 +296,10 @@ class TestAgentReconnection:
             assert len(entries) == 1
             assert entries[0] == MountEntry(virtual_path="/workspace/proj")
 
-            # Simulate reconnection: clear L2
-            ns.invalidate(("user", "agent-1"))
+            # Simulate reconnection: clear L2 only (keep L3 persistent store intact)
+            with ns._lock:
+                ns._cache.pop(("user", "agent-1"), None)
+            ns.invalidate_dcache(("user", "agent-1"))
 
             # Second access: L2 miss → L3 hit → restore
             entries = ns.get_mount_table(("user", "agent-1"))

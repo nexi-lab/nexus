@@ -46,8 +46,6 @@ class EmbeddingModel(StrEnum):
     VOYAGE_3 = "voyage-3"  # Best quality, 1024d, $0.06/1M tokens
     VOYAGE_3_LITE = "voyage-3-lite"  # Fast & cheap, 512d, $0.02/1M tokens
     VOYAGE_3_LARGE = "voyage-3-large"  # Highest quality, 1024d
-    VOYAGE_2 = "voyage-2"  # Legacy
-    VOYAGE_LARGE_2 = "voyage-large-2"  # Legacy
 
     # OpenRouter (via OpenAI-compatible API)
     OPENROUTER_DEFAULT = "openai/text-embedding-3-small"
@@ -100,6 +98,7 @@ class EmbeddingProvider(ABC):
         texts: list[str],
         batch_size: int | None = None,
         parallel: bool = True,
+        max_concurrent: int = 5,
     ) -> list[list[float]]:
         """Embed texts with automatic batching for optimal throughput.
 
@@ -107,6 +106,7 @@ class EmbeddingProvider(ABC):
             texts: List of texts to embed
             batch_size: Batch size (uses provider default if not specified)
             parallel: If True, process batches in parallel (default: True)
+            max_concurrent: Max concurrent embedding API calls (Issue #1094)
 
         Returns:
             List of embeddings in the same order as input texts
@@ -129,8 +129,14 @@ class EmbeddingProvider(ABC):
         )
 
         if parallel:
-            # Process batches in parallel
-            tasks = [self.embed_texts(batch) for batch in batches]
+            # Process batches in parallel with semaphore backpressure (Issue #1094)
+            sem = asyncio.Semaphore(max_concurrent)
+
+            async def _bounded_embed(batch: list[str]) -> list[list[float]]:
+                async with sem:
+                    return await self.embed_texts(batch)
+
+            tasks = [_bounded_embed(batch) for batch in batches]
             results = await asyncio.gather(*tasks)
         else:
             # Process batches sequentially
@@ -575,6 +581,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
         texts: list[str],
         _batch_size: int | None = None,
         _parallel: bool = True,
+        _max_concurrent: int = 5,
     ) -> list[list[float]]:
         """Embed texts with batching and caching.
 

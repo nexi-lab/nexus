@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -36,12 +37,12 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        auto_parse=False,
-        enforce_permissions=True,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),
     )
 
     # Grant admin ownership of root directory for tests
-    admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+    admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
     nx.rebac_create(
         subject=("user", "admin"),
         relation="direct_owner",
@@ -56,7 +57,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 @pytest.fixture
 def admin_context() -> dict:
     """Create an admin operation context."""
-    return {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+    return {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
 
 
 class TestIssue817ShareWithUserSecurity:
@@ -119,7 +120,7 @@ class TestIssue817ShareWithUserSecurity:
 
         # Alice (viewer) should NOT be able to share the file
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -157,7 +158,7 @@ class TestIssue817ShareWithUserSecurity:
 
         # System context can share without ownership
         system_context = {
-            "user": "system",
+            "user_id": "system",
             "groups": [],
             "is_admin": False,
             "is_system": True,
@@ -249,7 +250,7 @@ class TestIssue818ShareWithGroup:
 
         # Alice (viewer) should NOT be able to share with group
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -309,7 +310,7 @@ class TestNonFileResourceSecurity:
     def test_owner_can_share_group(self, nx: NexusFS) -> None:
         """Test that group owner can grant permissions on the group."""
         # Create group ownership
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
         nx.rebac_create(
             subject=("user", "admin"),
             relation="owner-of",
@@ -329,7 +330,7 @@ class TestNonFileResourceSecurity:
     def test_non_owner_cannot_manage_group(self, nx: NexusFS) -> None:
         """Test that non-owner cannot grant permissions on group."""
         # Create group ownership for admin
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
         nx.rebac_create(
             subject=("user", "admin"),
             relation="owner-of",
@@ -347,7 +348,7 @@ class TestNonFileResourceSecurity:
 
         # Alice (viewer) should NOT be able to grant permissions
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -363,7 +364,7 @@ class TestNonFileResourceSecurity:
     def test_workspace_permission_management(self, nx: NexusFS) -> None:
         """Test permission management for workspace resources."""
         # Create workspace ownership
-        admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
+        admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
         nx.rebac_create(
             subject=("user", "admin"),
             relation="owner-of",
@@ -382,7 +383,7 @@ class TestNonFileResourceSecurity:
 
         # Non-owner should not be able to manage workspace permissions
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -417,7 +418,7 @@ class TestHelperMethodIntegration:
 
         # Non-owner should be blocked by helper
         alice_context = {
-            "user": "alice",
+            "user_id": "alice",
             "groups": [],
             "is_admin": False,
             "is_system": False,
@@ -453,8 +454,8 @@ class TestHelperMethodIntegration:
             backend=LocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-            auto_parse=False,
-            enforce_permissions=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
         )
 
         try:
@@ -464,7 +465,7 @@ class TestHelperMethodIntegration:
 
             # Non-owner can share when permissions are not enforced
             alice_context = {
-                "user": "alice",
+                "user_id": "alice",
                 "groups": [],
                 "is_admin": False,
                 "is_system": False,
@@ -493,7 +494,7 @@ class TestCrossZoneSharing:
 
         # Grant admin ownership
         admin_context_zone1 = {
-            "user": "admin",
+            "user_id": "admin",
             "groups": [],
             "is_admin": True,
             "is_system": False,
@@ -528,7 +529,7 @@ class TestCrossZoneSharing:
 
         # Grant admin ownership
         admin_context_zone1 = {
-            "user": "admin",
+            "user_id": "admin",
             "groups": [],
             "is_admin": True,
             "is_system": False,

@@ -97,7 +97,7 @@ def pipeline(connector):
 def test_context():
     """Create test operation context."""
     return OperationContext(
-        user="test_user",
+        user_id="test_user",
         groups=["test_group"],
         zone_id="test_zone",
         is_system=True,
@@ -244,7 +244,7 @@ class TestStep2LoadCache:
 
         # Patch get_file_cache to use a fresh empty disk cache (no stale data)
         file_cache = FileContentCache(tmp_path / "empty_cache")
-        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             cached = pipeline._step2_load_cache(virtual_paths)
 
         assert len(cached) == 0
@@ -292,7 +292,7 @@ class TestStep2LoadCache:
             },
         )
 
-        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             # Load cache
             virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
             cached = pipeline._step2_load_cache(virtual_paths)
@@ -307,7 +307,7 @@ class TestStep2LoadCache:
 
         file_cache = FileContentCache(tmp_path / "cache")
         with (
-            patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache),
+            patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache),
             patch.object(file_cache, "read_meta_bulk", return_value={}) as mock_bulk,
         ):
             pipeline._step2_load_cache(virtual_paths)
@@ -609,7 +609,7 @@ class TestStep6WriteCache:
         ]
 
         file_cache = FileContentCache(tmp_path / "cache")
-        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             result = SyncResult()
             pipeline._step6_write_cache(cache_entries, result)
 
@@ -713,7 +713,7 @@ class TestSyncIntegration:
         }
 
         file_cache = FileContentCache(tmp_path / "cache")
-        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             # Run full sync
             result = connector.sync_content_to_cache(
                 mount_point="/test",

@@ -92,6 +92,7 @@ def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
     subprocess via NEXUS_DATABASE_URL.
     """
     from nexus.backends.local import LocalBackend
+    from nexus.core.config import ParseConfig, PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -103,8 +104,8 @@ def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
         backend=LocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
-        auto_parse=False,
-        enforce_permissions=enforce_permissions,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=enforce_permissions),
     )
 
 
@@ -135,7 +136,7 @@ def e2e_env():
         # ============================================================
         source_fs = _make_nexus_fs(source_dir)
 
-        admin = OperationContext(user="admin", groups=[], is_admin=True)
+        admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write test files
         source_fs.write(

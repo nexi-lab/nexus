@@ -14,7 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 

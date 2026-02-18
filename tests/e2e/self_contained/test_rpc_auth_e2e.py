@@ -3,7 +3,7 @@
 Tests _run_async_safe via sync_bridge with real auth_provider calls.
 """
 
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import Base
 
 

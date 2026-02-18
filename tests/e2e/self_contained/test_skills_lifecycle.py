@@ -13,6 +13,7 @@ import zipfile
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -101,7 +102,7 @@ def nexus_fs(isolated_db, tmp_path):
             )
         ),
         record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
-        enforce_permissions=False,  # Disable permissions for testing
+        permissions=PermissionConfig(enforce=False),  # Disable permissions for testing
     )
     yield nx
     nx.close()
@@ -111,7 +112,6 @@ def nexus_fs(isolated_db, tmp_path):
 def admin_context():
     """Create an admin operation context."""
     return OperationContext(
-        user="admin",
         user_id="admin",
         agent_id=None,
         subject_type="user",
@@ -129,7 +129,6 @@ def admin_context():
 def user_context():
     """Create a regular user operation context."""
     return OperationContext(
-        user="testuser",
         user_id="testuser",
         agent_id=None,
         subject_type="user",

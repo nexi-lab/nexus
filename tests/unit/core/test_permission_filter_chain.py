@@ -48,7 +48,7 @@ def mock_rebac():
 
 @pytest.fixture
 def ctx(mock_cache, mock_rebac):
-    context = OperationContext(user="alice", groups=[], zone_id="root")
+    context = OperationContext(user_id="alice", groups=[], zone_id="root")
     return FilterContext(
         paths=["/workspace/a.txt", "/workspace/b.txt"],
         subject=("user", "alice"),
@@ -67,7 +67,7 @@ def _make_ctx(
     router: object | None = None,
 ) -> FilterContext:
     """Helper to build a FilterContext with custom paths."""
-    context = OperationContext(user="alice", groups=[], zone_id=zone_id)
+    context = OperationContext(user_id="alice", groups=[], zone_id=zone_id)
     return FilterContext(
         paths=paths,
         subject=("user", "alice"),

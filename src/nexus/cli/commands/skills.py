@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -27,6 +28,64 @@ from nexus.cli.utils import (
     handle_error,
 )
 from nexus.raft.zone_manager import ROOT_ZONE_ID
+
+
+class SQLAlchemyDatabaseConnection:
+    """Wrapper for SQLAlchemy session to match DatabaseConnection protocol."""
+
+    def __init__(self, session: Any) -> None:
+        self._session = session
+
+    def execute(self, query: str, params: dict | None = None) -> Any:
+        """Execute a query."""
+        from sqlalchemy import text
+
+        return self._session.execute(text(query), params or {})
+
+    def fetchall(self, query: str, params: dict | None = None) -> list[dict]:
+        """Fetch all results from a query."""
+        from sqlalchemy import text
+
+        result = self._session.execute(text(query), params or {})
+        return [dict(row._mapping) for row in result]
+
+    def fetchone(self, query: str, params: dict | None = None) -> dict | None:
+        """Fetch one result from a query."""
+        from sqlalchemy import text
+
+        result = self._session.execute(text(query), params or {})
+        row = result.fetchone()
+        return dict(row._mapping) if row else None
+
+    def commit(self) -> None:
+        """Commit the transaction."""
+        self._session.commit()
+
+
+def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
+    """Get database connection for skill governance.
+
+    Returns wrapped SQLAlchemy session using NEXUS_DATABASE_URL environment variable.
+    Returns None if not configured (falls back to in-memory storage).
+
+    Delegates to SQLAlchemyRecordStore for engine/session creation (Issue #622).
+    """
+    import os
+
+    db_url = os.getenv("NEXUS_DATABASE_URL")
+    if not db_url:
+        return None
+
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    try:
+        record_store = SQLAlchemyRecordStore(db_url=db_url)
+        session = record_store.session_factory()
+        return SQLAlchemyDatabaseConnection(session)
+    except Exception as e:
+        console.print(f"[yellow]Warning:[/yellow] Could not connect to database: {e}")
+        console.print("[dim]Falling back to in-memory governance storage[/dim]")
+        return None
 
 
 def register_commands(cli: click.Group) -> None:
@@ -1592,8 +1651,8 @@ def skills_mcp_mount(
 
                 # Register OAuth provider for automatic token refresh
                 if oauth_provider == "google":
-                    from nexus.server.auth import GoogleOAuthProvider
-                    from nexus.server.auth.oauth_provider import OAuthProvider
+                    from nexus.auth.oauth.base_provider import BaseOAuthProvider as OAuthProvider
+                    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 
                     client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                     client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1608,7 +1667,7 @@ def skills_mcp_mount(
                             ],
                             provider_name="google",
                         )
-                        token_manager.register_provider("google", provider_instance)
+                        token_manager.register_provider("google", provider_instance)  # type: ignore[arg-type]
 
                 # First check if credential exists
                 async def check_credential() -> bool:
@@ -1637,7 +1696,7 @@ def skills_mcp_mount(
 
                     # Get OAuth provider credentials from environment
                     if oauth_provider == "google":
-                        from nexus.server.auth import GoogleOAuthProvider
+                        from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1662,7 +1721,7 @@ def skills_mcp_mount(
                             provider_name="google",
                         )
                     elif oauth_provider in ("twitter", "x"):
-                        from nexus.server.auth.x_oauth import XOAuthProvider
+                        from nexus.auth.oauth.providers.x import XOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
@@ -1722,7 +1781,7 @@ def skills_mcp_mount(
                         await token_manager.store_credential(
                             provider=oauth_provider if oauth_provider != "x" else "twitter",
                             user_email=oauth_user,
-                            credential=credential,
+                            credential=credential,  # type: ignore[arg-type]
                             zone_id=ROOT_ZONE_ID,
                             created_by=oauth_user,
                         )

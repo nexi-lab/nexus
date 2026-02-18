@@ -105,7 +105,7 @@ def clean_db(pg_engine):
 @pytest.fixture()
 def admin_api_key(pg_engine, clean_db):
     """Create an admin API key directly in the database."""
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import UserModel
 
     sf = sessionmaker(bind=pg_engine)
@@ -224,7 +224,7 @@ class TestServerWithPostgresAuth:
 @pytest.fixture()
 def non_admin_api_key(pg_engine, clean_db):
     """Create a non-admin API key directly in the database."""
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import UserModel
 
     sf = sessionmaker(bind=pg_engine)
@@ -665,7 +665,7 @@ def non_admin_context():
     from nexus.core.permissions import OperationContext
 
     return OperationContext(
-        user="regular_user",
+        user_id="regular_user",
         groups=[],
         zone_id="test-zone",
         is_admin=False,
@@ -737,7 +737,7 @@ class TestNonAdminSyncPermissions:
         backend, _ = local_connector_mount
 
         admin_ctx = OperationContext(
-            user="admin",
+            user_id="admin",
             groups=[],
             zone_id="test-zone",
             is_admin=True,

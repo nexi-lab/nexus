@@ -49,7 +49,7 @@ class PlaybookManager:
         self.agent_id = agent_id
         self.zone_id = zone_id
         self.context = context or OperationContext(
-            user=user_id, groups=[], is_admin=False, is_system=False
+            user_id=user_id, groups=[], is_admin=False, is_system=False
         )
 
     def _check_permission(self, playbook: PlaybookModel, permission: Permission) -> bool:
@@ -74,11 +74,11 @@ class PlaybookManager:
             return True
 
         # 2. Direct creator access
-        if self.context.user == playbook.agent_id:
+        if self.context.user_id == playbook.agent_id:
             return True
 
         # 3. User ownership
-        if self.context.user == playbook.user_id:
+        if self.context.user_id == playbook.user_id:
             return True
 
         # 4. Zone-scoped sharing
@@ -174,7 +174,13 @@ class PlaybookManager:
 
         logger = logging.getLogger(__name__)
 
-        playbook = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id).first()
+        from sqlalchemy import select
+
+        playbook = (
+            self.session.execute(select(PlaybookModel).filter_by(playbook_id=playbook_id))
+            .scalars()
+            .first()
+        )
         if not playbook:
             return None
 
@@ -250,7 +256,13 @@ class PlaybookManager:
             ...     ]
             ... )
         """
-        playbook = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id).first()
+        from sqlalchemy import select
+
+        playbook = (
+            self.session.execute(select(PlaybookModel).filter_by(playbook_id=playbook_id))
+            .scalars()
+            .first()
+        )
         if not playbook:
             raise ValueError(f"Playbook {playbook_id} not found")
 
@@ -324,7 +336,13 @@ class PlaybookManager:
         Example:
             >>> playbook_mgr.record_usage(playbook_id, success=True, improvement_score=0.8)
         """
-        playbook = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id).first()
+        from sqlalchemy import select
+
+        playbook = (
+            self.session.execute(select(PlaybookModel).filter_by(playbook_id=playbook_id))
+            .scalars()
+            .first()
+        )
         if not playbook:
             raise ValueError(f"Playbook {playbook_id} not found")
 
@@ -376,21 +394,23 @@ class PlaybookManager:
         Returns:
             List of playbook summaries (without full content), filtered by permissions
         """
-        query = self.session.query(PlaybookModel)
+        from sqlalchemy import select
+
+        stmt = select(PlaybookModel)
 
         if agent_id:
-            query = query.filter_by(agent_id=agent_id)
+            stmt = stmt.filter_by(agent_id=agent_id)
         if scope:
-            query = query.filter_by(scope=scope)
+            stmt = stmt.filter_by(scope=scope)
         if name_pattern:
-            query = query.filter(PlaybookModel.name.like(name_pattern))
+            stmt = stmt.filter(PlaybookModel.name.like(name_pattern))
         if path:
-            query = query.filter_by(path=path)
+            stmt = stmt.filter_by(path=path)
 
-        query = query.order_by(PlaybookModel.updated_at.desc()).limit(
+        stmt = stmt.order_by(PlaybookModel.updated_at.desc()).limit(
             limit * 2
         )  # Fetch extra for filtering
-        playbooks = query.all()
+        playbooks = self.session.execute(stmt).scalars().all()
 
         # Filter by permissions
         accessible_playbooks = [
@@ -423,7 +443,13 @@ class PlaybookManager:
         Returns:
             True if deleted, False if not found
         """
-        playbook = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id).first()
+        from sqlalchemy import select
+
+        playbook = (
+            self.session.execute(select(PlaybookModel).filter_by(playbook_id=playbook_id))
+            .scalars()
+            .first()
+        )
         if not playbook:
             return False
 

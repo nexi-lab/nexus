@@ -16,9 +16,10 @@ from sqlalchemy.orm import sessionmaker
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from nexus.server.auth.database_local import DatabaseLocalAuth
-from nexus.server.auth.oauth_crypto import OAuthCrypto
-from nexus.server.auth.oauth_user_auth import OAuthUserAuth
+from nexus.auth.oauth.crypto import OAuthCrypto
+from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+from nexus.auth.oauth.user_auth import OAuthUserAuth
+from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.server.auth.user_helpers import (
     check_email_available,
     check_username_available,
@@ -65,11 +66,16 @@ def auth_provider(test_db):
 def oauth_provider(test_db):
     """Create OAuthUserAuth provider for testing."""
     oauth_crypto = OAuthCrypto()
+    google_provider = GoogleOAuthProvider(
+        client_id="test-client-id.apps.googleusercontent.com",
+        client_secret="test-client-secret",
+        redirect_uri="http://localhost:2026/auth/oauth/callback",
+        scopes=["openid", "email", "profile"],
+        provider_name="google-auth",
+    )
     return OAuthUserAuth(
         session_factory=test_db,
-        google_client_id="test-client-id.apps.googleusercontent.com",
-        google_client_secret="test-client-secret",
-        google_redirect_uri="http://localhost:2026/auth/oauth/callback",
+        providers={"google": google_provider},
         jwt_secret="test-secret-key",
         oauth_crypto=oauth_crypto,
     )

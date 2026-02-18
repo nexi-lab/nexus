@@ -22,11 +22,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from nexus.core.permissions import OperationContext
 from nexus.server.batch_executor import BatchExecutor, BatchRequest, BatchResponse
 
 if TYPE_CHECKING:
     from nexus.core.async_nexus_fs import AsyncNexusFS
-    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 

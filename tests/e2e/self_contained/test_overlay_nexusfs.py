@@ -139,6 +139,7 @@ def nexus_fs(
     then injects overlay_resolver post-construction (since factory doesn't
     propagate it yet — that's Phase 5 RPC wiring).
     """
+    from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -148,7 +149,7 @@ def nexus_fs(
         backend=local_backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=False,  # Focus on overlay logic, not ReBAC
+        permissions=PermissionConfig(enforce=False),
     )
     # Inject overlay resolver post-construction (NexusFS.__init__ accepts it,
     # but factory doesn't pass it through yet)

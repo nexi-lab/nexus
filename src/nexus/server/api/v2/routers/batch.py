@@ -80,7 +80,7 @@ def create_batch_router(
 
         async def _context_dep(
             auth_result: dict[str, Any] | None = Depends(_real_get_auth_result),
-        ) -> Any:
+        ) -> OperationContext:
             """Get operation context from auth result."""
             if auth_result is None or not auth_result.get("authenticated"):
                 from nexus.core.permissions import OperationContext as OC

@@ -92,6 +92,7 @@ class _BootContext:
     enable_write_buffer: bool | None
     resiliency_raw: dict[str, Any] | None
     db_url: str
+    profile_tuning: Any  # ProfileTuning (Issue #2071)
 
 
 # =========================================================================
@@ -510,7 +511,12 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         if use_buffer:
             from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
 
-            write_observer = BufferedRecordStoreSyncer(ctx.session_factory)
+            _st = ctx.profile_tuning.storage
+            write_observer = BufferedRecordStoreSyncer(
+                ctx.session_factory,
+                flush_interval_ms=_st.write_buffer_flush_ms,
+                max_buffer_size=_st.write_buffer_max_size,
+            )
         else:
             from nexus.storage.record_store_syncer import RecordStoreSyncer
 
@@ -1046,9 +1052,9 @@ def create_nexus_services(
     from nexus.core.config import PermissionConfig as _PermissionConfig
 
     # --- Profile-based brick gating (Issue #1389) ---
-    if enabled_bricks is None:
-        from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.core.deployment_profile import DeploymentProfile
 
+    if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
 
     def _brick_on(name: str) -> bool:
@@ -1060,6 +1066,18 @@ def create_nexus_services(
         20,
         sorted(enabled_bricks),
     )
+
+    # --- Performance tuning (Issue #2071) ---
+    import os
+
+    from nexus.core.performance_tuning import resolve_profile_tuning
+
+    _profile_str = os.environ.get("NEXUS_PROFILE", "full")
+    try:
+        _factory_profile = DeploymentProfile(_profile_str)
+    except ValueError:
+        _factory_profile = DeploymentProfile.FULL
+    _profile_tuning = resolve_profile_tuning(_factory_profile)
 
     perm = permissions or _PermissionConfig()
     cache_cfg = cache or _CacheConfig()
@@ -1081,6 +1099,7 @@ def create_nexus_services(
         enable_write_buffer=enable_write_buffer,
         resiliency_raw=resiliency_raw,
         db_url=getattr(record_store, "database_url", ""),
+        profile_tuning=_profile_tuning,
     )
 
     # --- Tier 0: KERNEL (fatal on failure) ---

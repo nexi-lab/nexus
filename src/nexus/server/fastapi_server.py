@@ -278,6 +278,11 @@ async def lifespan(_app: FastAPI) -> Any:
     limiter.total_tokens = _app.state.thread_pool_size
     logger.info(f"Thread pool size set to {limiter.total_tokens}")
 
+    # Compute features info once at startup (Issue #1389 / #2071)
+    from nexus.server.lifespan import _compute_features_info
+
+    _compute_features_info(_app)
+
     # Initialize async ReBAC manager if database URL provided
     if _app.state.database_url:
         try:
@@ -537,6 +542,8 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             from nexus.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
 
+            # Issue #2071: source max_indexing_concurrency from profile tuning
+            _search_tuning = _app.state.profile_tuning.search
             config = DaemonConfig(
                 database_url=_app.state.database_url,
                 bm25s_index_dir=os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
@@ -553,6 +560,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 in ("true", "1", "yes"),
                 entropy_threshold=float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
                 entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
+                max_indexing_concurrency=_search_tuning.search_max_concurrency,
             )
 
             # Inject async_session_factory from RecordStoreABC (Issue #615)
@@ -989,11 +997,12 @@ async def lifespan(_app: FastAPI) -> Any:
 
                 from nexus.tasks.runner import AsyncTaskRunner
 
-                runner = AsyncTaskRunner(engine=engine, max_workers=4)
+                _task_workers = _app.state.profile_tuning.concurrency.task_runner_workers
+                runner = AsyncTaskRunner(engine=engine, max_workers=_task_workers)
                 service.set_runner(runner)
                 _app.state.task_runner = runner
                 task_runner_task = asyncio.create_task(runner.run())
-                logger.info("Task Queue runner started (4 workers)")
+                logger.info("Task Queue runner started (%d workers)", _task_workers)
             else:
                 logger.debug("Task Queue: nexus_tasks Rust extension not available")
         except Exception as e:
@@ -1258,6 +1267,9 @@ def create_app(
     app.state.deployment_profile = _profile.value
     app.state.enabled_bricks = resolve_enabled_bricks(_profile)
 
+    # Performance tuning (Issue #2071): resolve per-profile thresholds
+    app.state.profile_tuning = _profile.tuning()
+
     # Expose async_session_factory from RecordStoreABC (if available).
     # This is the canonical way for async endpoints to get database sessions
     # without bypassing the RecordStore abstraction with raw URLs.
@@ -1298,9 +1310,10 @@ def create_app(
     app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
     app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
 
-    # Thread pool and timeout settings (Issue #932)
+    # Thread pool and timeout settings (Issue #932, #2071)
+    _tuning_pool_size = str(app.state.profile_tuning.concurrency.thread_pool_size)
     app.state.thread_pool_size = thread_pool_size or int(
-        os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
+        os.environ.get("NEXUS_THREAD_POOL_SIZE", _tuning_pool_size)
     )
     app.state.operation_timeout = operation_timeout or float(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")

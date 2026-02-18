@@ -180,48 +180,62 @@ class TestRemoteNexusFS:
 )
 @pytest.mark.integration
 class TestRemoteNexusFSIntegration:
-    """Integration tests for RemoteNexusFS with real server."""
+    """Integration tests for RemoteNexusFS with real server (FastAPI)."""
 
     @pytest.fixture
     def server_and_client(self, tmp_path):
-        """Start server and create client."""
+        """Start FastAPI server and create client."""
+        import threading
+
+        import uvicorn
+
         import nexus
-        from nexus.server import NexusRPCServer
+        from nexus.server.fastapi_server import create_app
+        from nexus.storage.models import Base
 
         # Create filesystem
         data_dir = tmp_path / "server-data"
         nx = nexus.connect(
             config={
                 "data_dir": str(data_dir),
-                "enforce_permissions": False,  # Disable permissions for testing
+                "enforce_permissions": False,
             }
         )
-        # Ensure ReBAC schema exists (deferred permission buffer may flush even
-        # when permissions are disabled)
-        from nexus.storage.models import Base
-
         Base.metadata.create_all(nx._record_store.engine)
         nx.mkdir("/test", exist_ok=True)
         nx.write("/test/file.txt", b"test content")
 
-        # Start server in separate thread
-        import threading
+        # Create FastAPI app
+        app = create_app(
+            nexus_fs=nx,
+            api_key="test-secret",
+        )
 
-        server = NexusRPCServer(nx, host="127.0.0.1", port=0, api_key="test-secret")
-        # Get actual port
-        port = server.server.server_address[1]
+        # Start uvicorn in a thread on a random port
+        config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
+        server = uvicorn.Server(config)
 
-        server_thread = threading.Thread(target=server.server.serve_forever, daemon=True)
+        server_thread = threading.Thread(target=server.run, daemon=True)
         server_thread.start()
 
-        # Create client
+        # Wait for server to bind its port
+        import time
+
+        for _ in range(50):
+            if server.started:
+                break
+            time.sleep(0.1)
+
+        # Get the actual bound port
+        port = server.servers[0].sockets[0].getsockname()[1]
+
         client = RemoteNexusFS(f"http://127.0.0.1:{port}", api_key="test-secret", timeout=5)
 
         yield server, client, nx
 
         # Cleanup
         client.close()
-        server.shutdown()
+        server.should_exit = True
         nx.close()
 
     def test_end_to_end_operations(self, server_and_client):

@@ -2048,17 +2048,11 @@ class NexusFSCoreMixin:
                         zone_id=zone_id or "root",
                     )
                     if added_count > 0:
-                        import logging
-
-                        logger = logging.getLogger(__name__)
                         logger.debug(
                             f"[LEOPARD] New file {path} added to {added_count} ancestor directory grants"
                         )
             except Exception as e:
                 # Log but don't fail the write operation
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.warning(f"[LEOPARD] Failed to add new file to ancestor grants: {e}")
 
         # Invalidate cached parsed_text when file is updated
@@ -2073,10 +2067,6 @@ class NexusFSCoreMixin:
 
         # P0-3: Create parent relationship tuples for file inheritance
         # This enables permission inheritance from parent directories
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         # Issue #1071: Use deferred buffer for async permission operations if available
         # This reduces single-file write latency from ~36ms to ~10ms by batching
         # permission operations in the background. Owner access is guaranteed by
@@ -2761,15 +2751,11 @@ class NexusFSCoreMixin:
         # Issue #548: Create parent tuples and grant direct_owner for new files
         # This ensures agents can read files they create (via user inheritance)
         # PERF OPTIMIZATION: Use batch operations instead of individual calls (20x faster)
-        import logging
-        import time as _time
-
-        logger = logging.getLogger(__name__)
         ctx = context if context is not None else self._default_context
         zone_id_for_perms = ctx.zone_id or "root"
 
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
-        _hierarchy_start = _time.perf_counter()
+        _hierarchy_start = time.perf_counter()
         all_paths = [path for path, _ in validated_files]
         if hasattr(self, "_hierarchy_manager") and hasattr(
             self._hierarchy_manager, "ensure_parent_tuples_batch"
@@ -2802,10 +2788,10 @@ class NexusFSCoreMixin:
                     self._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
                 except Exception as e:
                     logger.warning(f"write_batch: Failed to create parent tuples for {path}: {e}")
-        _hierarchy_elapsed = (_time.perf_counter() - _hierarchy_start) * 1000
+        _hierarchy_elapsed = (time.perf_counter() - _hierarchy_start) * 1000
 
         # PERF: Batch direct_owner grants (single transaction instead of N)
-        _rebac_start = _time.perf_counter()
+        _rebac_start = time.perf_counter()
         if (
             hasattr(self, "_rebac_manager")
             and self._rebac_manager
@@ -2857,7 +2843,7 @@ class NexusFSCoreMixin:
                         )
                     except Exception as e:
                         logger.warning(f"write_batch: Failed to grant direct_owner: {e}")
-        _rebac_elapsed = (_time.perf_counter() - _rebac_start) * 1000
+        _rebac_elapsed = (time.perf_counter() - _rebac_start) * 1000
 
         # Log detailed timing breakdown for performance analysis
         logger.warning(
@@ -3296,10 +3282,6 @@ class NexusFSCoreMixin:
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         logger.warning(f"[RENAME-REBAC] Starting ReBAC update: {old_path} -> {new_path}")
         logger.warning(
             f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"

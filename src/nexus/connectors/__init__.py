@@ -26,7 +26,9 @@ from nexus.connectors.base import (
     ValidatedMixin,
     ValidationError,
 )
+from nexus.connectors.error_formatter import SkillErrorFormatter
 from nexus.connectors.mount_hooks import generate_all_skill_docs, on_mount
+from nexus.connectors.schema_generator import SkillDocGenerator
 
 __all__ = [
     "Reversibility",
@@ -38,6 +40,8 @@ __all__ = [
     "ValidatedMixin",
     "TraitBasedMixin",
     "CheckpointMixin",
+    "SkillDocGenerator",
+    "SkillErrorFormatter",
     "on_mount",
     "generate_all_skill_docs",
 ]

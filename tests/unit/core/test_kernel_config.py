@@ -1,10 +1,11 @@
-"""Tests for kernel config dataclasses (Phase 6, Issue #1391).
+"""Tests for kernel config dataclasses (Phase 6, Issue #1391 + Issue #2034).
 
 Validates:
 - Default values for each frozen dataclass
 - frozen=True prevents mutation (raises FrozenInstanceError)
 - dataclasses.replace() creates modified copies
-- KernelServices is frozen (immutable after construction)
+- KernelServices / SystemServices / BrickServices 3-tier split (Issue #2034)
+- Cross-contamination: tier fields do not leak across containers
 """
 
 from __future__ import annotations
@@ -14,12 +15,14 @@ import dataclasses
 import pytest
 
 from nexus.core.config import (
+    BrickServices,
     CacheConfig,
     DistributedConfig,
     KernelServices,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
+    SystemServices,
 )
 
 # ---------------------------------------------------------------------------
@@ -195,20 +198,25 @@ class TestParseConfig:
 
 
 class TestKernelServices:
-    """Tests for KernelServices frozen dataclass."""
+    """Tests for KernelServices frozen dataclass (Tier 0 — kernel only)."""
 
     def test_defaults_all_none(self) -> None:
         ks = KernelServices()
         assert ks.router is None
         assert ks.rebac_manager is None
-        assert ks.event_bus is None
-        assert ks.lock_manager is None
-        assert ks.workflow_engine is None
-        assert ks.version_service is None
+        assert ks.dir_visibility_cache is None
+        assert ks.audit_store is None
+        assert ks.entity_registry is None
+        assert ks.permission_enforcer is None
+        assert ks.hierarchy_manager is None
+        assert ks.deferred_permission_buffer is None
+        assert ks.workspace_registry is None
+        assert ks.mount_manager is None
+        assert ks.workspace_manager is None
         assert ks.write_observer is None
-        assert ks.observability_subsystem is None
-        assert ks.chunked_upload_service is None
-        assert ks.namespace_manager is None
+        assert ks.version_service is None
+        assert ks.overlay_resolver is None
+        assert ks.cache_observer is None
 
     def test_frozen(self) -> None:
         """KernelServices is frozen — attributes cannot be set after init."""
@@ -218,9 +226,9 @@ class TestKernelServices:
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
-        ks = KernelServices(version_service=sentinel, event_bus=sentinel)
+        ks = KernelServices(version_service=sentinel, write_observer=sentinel)
         assert ks.version_service is sentinel
-        assert ks.event_bus is sentinel
+        assert ks.write_observer is sentinel
         assert ks.rebac_manager is None  # others still None
 
     def test_replace(self) -> None:
@@ -235,17 +243,12 @@ class TestKernelServices:
         ks = KernelServices()
         assert dataclasses.is_dataclass(ks)
 
-    def test_all_service_fields_present(self) -> None:
-        """Verify KernelServices has all expected fields.
-
-        All service fields are first-class typed fields (no server_extras dict).
-        """
+    def test_all_kernel_fields_present(self) -> None:
+        """Verify KernelServices has exactly the Tier 0 kernel fields."""
         field_names = {f.name for f in dataclasses.fields(KernelServices)}
         expected_fields = {
-            # Tier 0: KERNEL
             "router",
             "rebac_manager",
-            "rebac_circuit_breaker",
             "dir_visibility_cache",
             "audit_store",
             "entity_registry",
@@ -258,50 +261,183 @@ class TestKernelServices:
             "write_observer",
             "version_service",
             "overlay_resolver",
-            "wallet_provisioner",
-            # Tier 1: SYSTEM
+            "cache_observer",
+        }
+        assert field_names == expected_fields, (
+            f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
+        )
+
+    def test_protocol_type_annotations(self) -> None:
+        """Verify Protocol-typed fields have correct annotation strings."""
+        annotations = KernelServices.__annotations__
+        # cache_observer should reference CacheInvalidationObserver | None
+        co_ann = str(annotations.get("cache_observer", ""))
+        assert "CacheInvalidationObserver" in co_ann
+        assert "None" in co_ann
+
+
+# ---------------------------------------------------------------------------
+# SystemServices (Issue #2034 — Tier 1)
+# ---------------------------------------------------------------------------
+
+
+class TestSystemServices:
+    """Tests for SystemServices frozen dataclass (Tier 1 — degraded-mode)."""
+
+    def test_defaults_all_none(self) -> None:
+        ss = SystemServices()
+        assert ss.agent_registry is None
+        assert ss.async_agent_registry is None
+        assert ss.namespace_manager is None
+        assert ss.async_namespace_manager is None
+        assert ss.context_branch_service is None
+        assert ss.scoped_hook_engine is None
+        assert ss.brick_lifecycle_manager is None
+        assert ss.delivery_worker is None
+        assert ss.observability_subsystem is None
+        assert ss.resiliency_manager is None
+
+    def test_frozen(self) -> None:
+        ss = SystemServices()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            ss.agent_registry = "x"  # type: ignore[misc]
+
+    def test_construct_with_values(self) -> None:
+        sentinel = object()
+        ss = SystemServices(agent_registry=sentinel, resiliency_manager=sentinel)
+        assert ss.agent_registry is sentinel
+        assert ss.resiliency_manager is sentinel
+        assert ss.namespace_manager is None
+
+    def test_replace(self) -> None:
+        ss = SystemServices()
+        new = dataclasses.replace(ss, observability_subsystem="obs")
+        assert new.observability_subsystem == "obs"
+        assert ss.observability_subsystem is None
+
+    def test_all_system_fields_present(self) -> None:
+        """Verify SystemServices has exactly the Tier 1 system fields."""
+        field_names = {f.name for f in dataclasses.fields(SystemServices)}
+        expected_fields = {
             "agent_registry",
             "async_agent_registry",
             "namespace_manager",
             "async_namespace_manager",
-            "async_vfs_router",
-            # Tier 2: BRICK / Infrastructure
-            "event_bus",
-            "lock_manager",
-            "workflow_engine",
-            # Server-layer services (first-class fields)
-            "cache_observer",
-            "observability_subsystem",
-            "chunked_upload_service",
-            "manifest_resolver",
-            "manifest_metrics",
-            "tool_namespace_middleware",
-            "resiliency_manager",
-            "delivery_worker",
-            # Auth services
-            "api_key_creator",
-            # Pre-built domain services
-            "rebac_service",
-            "search_service",
-            "events_service",
-            "snapshot_service",
             "context_branch_service",
+            "scoped_hook_engine",
+            "brick_lifecycle_manager",
+            "delivery_worker",
+            "observability_subsystem",
+            "resiliency_manager",
         }
-        assert expected_fields.issubset(field_names), f"Missing: {expected_fields - field_names}"
+        assert field_names == expected_fields, (
+            f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
+        )
 
     def test_protocol_type_annotations(self) -> None:
-        """Verify Protocol-typed fields have correct annotation strings.
-
-        Uses ``__annotations__`` (string form) instead of ``get_type_hints()``
-        because the Protocol imports live behind TYPE_CHECKING and are not
-        resolvable at runtime.
-        """
-        annotations = KernelServices.__annotations__
-        # workflow_engine should reference WorkflowProtocol | None
-        wf_ann = str(annotations.get("workflow_engine", ""))
-        assert "WorkflowProtocol" in wf_ann
-        assert "None" in wf_ann
-        # namespace_manager should reference NamespaceManagerProtocol | None
+        annotations = SystemServices.__annotations__
         ns_ann = str(annotations.get("namespace_manager", ""))
         assert "NamespaceManagerProtocol" in ns_ann
         assert "None" in ns_ann
+
+
+# ---------------------------------------------------------------------------
+# BrickServices (Issue #2034 — Tier 2)
+# ---------------------------------------------------------------------------
+
+
+class TestBrickServices:
+    """Tests for BrickServices frozen dataclass (Tier 2 — optional)."""
+
+    def test_defaults_all_none(self) -> None:
+        bs = BrickServices()
+        assert bs.event_bus is None
+        assert bs.lock_manager is None
+        assert bs.workflow_engine is None
+        assert bs.rebac_circuit_breaker is None
+        assert bs.wallet_provisioner is None
+        assert bs.chunked_upload_service is None
+        assert bs.manifest_resolver is None
+        assert bs.tool_namespace_middleware is None
+        assert bs.api_key_creator is None
+        assert bs.snapshot_service is None
+        assert bs.task_queue_service is None
+
+    def test_frozen(self) -> None:
+        bs = BrickServices()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            bs.event_bus = "x"  # type: ignore[misc]
+
+    def test_construct_with_values(self) -> None:
+        sentinel = object()
+        bs = BrickServices(event_bus=sentinel, lock_manager=sentinel)
+        assert bs.event_bus is sentinel
+        assert bs.lock_manager is sentinel
+        assert bs.workflow_engine is None
+
+    def test_replace(self) -> None:
+        bs = BrickServices()
+        new = dataclasses.replace(bs, workflow_engine="wf")
+        assert new.workflow_engine == "wf"
+        assert bs.workflow_engine is None
+
+    def test_all_brick_fields_present(self) -> None:
+        """Verify BrickServices has exactly the Tier 2 brick fields."""
+        field_names = {f.name for f in dataclasses.fields(BrickServices)}
+        expected_fields = {
+            "event_bus",
+            "lock_manager",
+            "workflow_engine",
+            "rebac_circuit_breaker",
+            "wallet_provisioner",
+            "chunked_upload_service",
+            "manifest_resolver",
+            "tool_namespace_middleware",
+            "api_key_creator",
+            "snapshot_service",
+            "task_queue_service",
+        }
+        assert field_names == expected_fields, (
+            f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
+        )
+
+    def test_protocol_type_annotations(self) -> None:
+        annotations = BrickServices.__annotations__
+        wf_ann = str(annotations.get("workflow_engine", ""))
+        assert "WorkflowProtocol" in wf_ann
+        assert "None" in wf_ann
+
+
+# ---------------------------------------------------------------------------
+# Cross-contamination tests (Issue #2034)
+# ---------------------------------------------------------------------------
+
+
+class TestCrossContamination:
+    """Verify tier fields do NOT leak across containers."""
+
+    def test_kernel_has_no_system_fields(self) -> None:
+        kernel_fields = {f.name for f in dataclasses.fields(KernelServices)}
+        system_fields = {f.name for f in dataclasses.fields(SystemServices)}
+        overlap = kernel_fields & system_fields
+        assert overlap == set(), f"Kernel/System overlap: {overlap}"
+
+    def test_kernel_has_no_brick_fields(self) -> None:
+        kernel_fields = {f.name for f in dataclasses.fields(KernelServices)}
+        brick_fields = {f.name for f in dataclasses.fields(BrickServices)}
+        overlap = kernel_fields & brick_fields
+        assert overlap == set(), f"Kernel/Brick overlap: {overlap}"
+
+    def test_system_has_no_brick_fields(self) -> None:
+        system_fields = {f.name for f in dataclasses.fields(SystemServices)}
+        brick_fields = {f.name for f in dataclasses.fields(BrickServices)}
+        overlap = system_fields & brick_fields
+        assert overlap == set(), f"System/Brick overlap: {overlap}"
+
+    def test_all_three_tiers_frozen(self) -> None:
+        for cls in (KernelServices, SystemServices, BrickServices):
+            assert dataclasses.fields(cls)  # is a dataclass
+            instance = cls()
+            first_field = dataclasses.fields(cls)[0].name
+            with pytest.raises(dataclasses.FrozenInstanceError):
+                setattr(instance, first_field, "mutated")

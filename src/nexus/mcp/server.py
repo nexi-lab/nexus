@@ -1339,7 +1339,9 @@ def create_mcp_server(
     def _get_branch_service(ctx: Context | None = None):  # type: ignore[no-untyped-def]
         """Get ContextBranchService from NexusFS services."""
         nx_instance = _get_nexus_instance(ctx)
-        svc = getattr(getattr(nx_instance, "_services", None), "context_branch_service", None)
+        svc = getattr(
+            getattr(nx_instance, "_system_services", None), "context_branch_service", None
+        )
         if not svc:
             return None
         return svc

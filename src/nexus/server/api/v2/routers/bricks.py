@@ -68,11 +68,11 @@ def _get_lifecycle_manager(request: Request) -> Any:
     if nx is None:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
-    services = getattr(nx, "services", None)
-    if services is None:
-        raise HTTPException(status_code=503, detail="Kernel services not available")
+    _sys = getattr(nx, "_system_services", None)
+    if _sys is None:
+        raise HTTPException(status_code=503, detail="System services not available")
 
-    manager = getattr(services, "brick_lifecycle_manager", None)
+    manager = getattr(_sys, "brick_lifecycle_manager", None)
     if manager is None:
         raise HTTPException(status_code=503, detail="Brick lifecycle manager not available")
 

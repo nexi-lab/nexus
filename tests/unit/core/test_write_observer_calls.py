@@ -45,7 +45,7 @@ def nx(temp_dir: Path, observer: MagicMock) -> Generator[NexusFS, None, None]:
         metadata_store=InMemoryMetastore(),
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
-        services=KernelServices(write_observer=observer),
+        kernel_services=KernelServices(write_observer=observer),
     )
     yield nx
     nx.close()

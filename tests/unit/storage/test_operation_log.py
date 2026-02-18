@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -35,8 +36,8 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,
-        auto_parse=False,
-        enforce_permissions=False,  # Disable permissions for tests
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()

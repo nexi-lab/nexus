@@ -11,9 +11,9 @@ from nexus.workflows.engine import WorkflowEngine
 from nexus.workflows.loader import WorkflowLoader
 from nexus.workflows.protocol import (
     GlobMatchFn,
-    LLMProviderProtocol,
     MetadataStoreProtocol,
     NexusOperationsProtocol,
+    WorkflowLLMProtocol,
     WorkflowProtocol,
     WorkflowServices,
 )
@@ -44,7 +44,7 @@ __all__ = [
     "GlobMatchFn",
     "NexusOperationsProtocol",
     "MetadataStoreProtocol",
-    "LLMProviderProtocol",
+    "WorkflowLLMProtocol",
     # Types
     "WorkflowDefinition",
     "WorkflowAction",

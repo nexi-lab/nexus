@@ -6159,6 +6159,5 @@ class ReBACManager:
 # Backward Compatibility Alias
 # ====================================================================================
 
-# Backward-compat aliases (Issue #1385)
+# Backward-compat alias (Issue #1385)
 EnhancedReBACManager = ReBACManager
-ZoneAwareReBACManager = ReBACManager

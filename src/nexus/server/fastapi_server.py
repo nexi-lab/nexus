@@ -278,6 +278,11 @@ async def lifespan(_app: FastAPI) -> Any:
     limiter.total_tokens = _app.state.thread_pool_size
     logger.info(f"Thread pool size set to {limiter.total_tokens}")
 
+    # Compute features info once at startup (Issue #1389 / #2071)
+    from nexus.server.lifespan import _compute_features_info
+
+    _compute_features_info(_app)
+
     # Initialize async ReBAC manager if database URL provided
     if _app.state.database_url:
         try:

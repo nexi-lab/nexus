@@ -237,6 +237,9 @@ class TestWaitThenRead:
         """Agent A waits but no file written -> timeout returns None."""
         nexus_fs.mkdir("/empty", parents=True)
 
+        # Drain any stale events from mkdir before subscribing
+        await asyncio.sleep(0.3)
+
         change = await nexus_fs.events_service.wait_for_changes("/empty/", timeout=0.5)
 
         assert change is None

@@ -27,9 +27,9 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from nexus.auth.oauth.providers.x import XOAuthProvider
 from nexus.cli.utils import console
-from nexus.server.auth import TokenManager
-from nexus.server.auth.x_oauth import XOAuthProvider
+from nexus.server.auth.token_manager import TokenManager
 
 # Rich console for output
 _console = Console()
@@ -314,7 +314,7 @@ def setup_gdrive(
         nexus oauth setup-gdrive --user-email "alice@example.com"
     """
 
-    from nexus.server.auth import GoogleOAuthProvider
+    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 
     # Validate that credentials are provided (either via options or environment)
     if not client_id:
@@ -375,7 +375,7 @@ def setup_gdrive(
         cred_id = await manager.store_credential(
             provider="google",
             user_email=user_email,
-            credential=credential,
+            credential=credential,  # type: ignore[arg-type]
             zone_id=zone_id or "root",
             created_by=user_email,
         )
@@ -537,7 +537,7 @@ def setup_x(
         cred_id = await manager.store_credential(
             provider="twitter",
             user_email=user_email,
-            credential=credential,
+            credential=credential,  # type: ignore[arg-type]
             zone_id=zone_id or "root",
             created_by=user_email,
         )

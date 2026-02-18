@@ -9,9 +9,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
+from nexus.auth.oauth.user_auth import OAuthUserAuth
 from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.raft.zone_manager import ROOT_ZONE_ID
-from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 
 logger = logging.getLogger(__name__)
 
@@ -891,12 +891,13 @@ async def oauth_check(
 
     try:
         # Exchange code for tokens to get user info
-        from nexus.server.auth.pending_oauth import get_pending_oauth_manager
+        from nexus.auth.oauth.pending import get_pending_oauth_manager
 
-        oauth_credential = await oauth_provider.google_provider.exchange_code(
+        google_provider = oauth_provider._get_provider("google")
+        oauth_credential = await google_provider.exchange_code(
             request.code, redirect_uri=request.redirect_uri
         )
-        user_info = await oauth_provider._extract_google_user_info(oauth_credential.access_token)
+        user_info = await oauth_provider._extract_user_info("google", oauth_credential.access_token)
 
         provider_user_id = user_info.get("sub")
         provider_email = user_info.get("email")
@@ -1187,7 +1188,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
     try:
         # Validate and consume pending token (one-time use)
-        from nexus.server.auth.pending_oauth import get_pending_oauth_manager
+        from nexus.auth.oauth.pending import get_pending_oauth_manager
 
         pending_manager = get_pending_oauth_manager()
         registration = pending_manager.consume(request.pending_token)

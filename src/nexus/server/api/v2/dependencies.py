@@ -353,8 +353,6 @@ async def get_reputation_context(
     # Per-request instantiation (singleton DI via app.state planned in #1619)
     reputation_service = ReputationService(
         session_factory=session_factory,
-        cache_maxsize=10_000,
-        cache_ttl=60,
     )
     dispute_service = DisputeService(session_factory=session_factory)
 

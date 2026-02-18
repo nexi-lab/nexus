@@ -51,6 +51,7 @@ class AgentRequest:
     deadline: str | None = None
     boost_amount: str = "0"
     estimated_service_time: float = 30.0
+    idempotency_key: str | None = None
 
 
 @runtime_checkable
@@ -141,13 +142,13 @@ class InMemoryScheduler:
             return self._completed[task_id]
         if task_id in self._task_map:
             req = self._task_map[task_id]
-            return {"task_id": task_id, "status": "queued", "agent_id": req.agent_id}
+            return {"id": task_id, "status": "queued", "agent_id": req.agent_id}
         return None
 
     async def complete(self, task_id: str, *, error: str | None = None) -> None:
         status = "failed" if error else "completed"
         self._completed[task_id] = {
-            "task_id": task_id,
+            "id": task_id,
             "status": status,
             "error": error,
         }

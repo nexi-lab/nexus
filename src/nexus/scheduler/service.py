@@ -23,7 +23,6 @@ from nexus.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
-    TASK_STATUS_QUEUED,
     PriorityClass,
     PriorityTier,
     RequestState,
@@ -81,10 +80,18 @@ class SchedulerService:
     async def submit(self, request: AgentRequest) -> str:
         """Submit an AgentRequest, auto-classify, and enqueue.
 
+        1. Converts AgentRequest to internal TaskSubmission
+        2. Validates the submission
+        3. Auto-classifies priority_class if not set
+        4. Checks fair-share admission
+        5. Reserves credits for boost if needed
+        6. Computes effective tier
+        7. Enqueues in PostgreSQL
+
         Returns:
             Task ID string.
         """
-        # Map AgentRequest fields to TaskSubmission
+        # Map AgentRequest fields to internal types
         try:
             tier = PriorityTier(request.priority)
         except ValueError:
@@ -95,10 +102,16 @@ class SchedulerService:
         except ValueError:
             req_state = RequestState.PENDING
 
+        # Auto-classify priority_class
         priority_class_str = request.priority_class
         if not priority_class_str or priority_class_str == "batch":
-            # Auto-classify
             priority_class_str = classify_request(tier, req_state)
+        priority_class = PriorityClass(priority_class_str)
+
+        # Parse deadline
+        deadline = None
+        if request.deadline:
+            deadline = datetime.fromisoformat(request.deadline)
 
         submission = TaskSubmission(
             agent_id=request.agent_id,
@@ -106,15 +119,61 @@ class SchedulerService:
             task_type=request.task_type or "default",
             payload=request.payload,
             priority=tier,
-            deadline=None,
+            deadline=deadline,
             boost_amount=Decimal(request.boost_amount),
             request_state=req_state,
-            priority_class=PriorityClass(priority_class_str),
+            priority_class=priority_class,
             estimated_service_time=request.estimated_service_time,
+            idempotency_key=request.idempotency_key,
         )
 
-        task = await self.submit_task(submission)
-        return task.id
+        validate_submission(submission)
+
+        now = datetime.now(UTC)
+
+        # Check fair-share admission
+        if not self._fair_share.admit(submission.executor_id):
+            snap = self._fair_share.snapshot(submission.executor_id)
+            raise ValueError(
+                f"Agent {submission.executor_id} is at capacity "
+                f"({snap.running_count}/{snap.max_concurrent})"
+            )
+
+        # Reserve credits for boost if needed
+        boost_tiers = compute_boost_tiers(submission.boost_amount)
+        boost_reservation_id: str | None = None
+
+        if submission.boost_amount > 0 and self._credits is not None:
+            boost_reservation_id = await self._credits.reserve(
+                agent_id=submission.agent_id,
+                amount=submission.boost_amount,
+                timeout_seconds=3600,
+            )
+
+        # Compute effective tier
+        effective_tier = compute_effective_tier(submission, enqueued_at=now, now=now)
+
+        # Enqueue with Astraea fields
+        async with self._pool.acquire() as conn:
+            task_id = await self._queue.enqueue(
+                conn,
+                agent_id=submission.agent_id,
+                executor_id=submission.executor_id,
+                task_type=submission.task_type,
+                payload=submission.payload,
+                priority_tier=submission.priority.value,
+                effective_tier=effective_tier,
+                deadline=submission.deadline,
+                boost_amount=submission.boost_amount,
+                boost_tiers=boost_tiers,
+                boost_reservation_id=boost_reservation_id,
+                idempotency_key=submission.idempotency_key,
+                request_state=req_state.value,
+                priority_class=priority_class.value,
+                estimated_service_time=submission.estimated_service_time,
+            )
+
+        return str(task_id)
 
     async def next(self, *, executor_id: str | None = None) -> AgentRequest | None:
         """Dequeue the next task and return as AgentRequest."""
@@ -144,18 +203,20 @@ class SchedulerService:
         if task is None:
             return None
         return {
-            "task_id": task.id,
+            "id": task.id,
             "status": task.status,
             "agent_id": task.agent_id,
             "executor_id": task.executor_id,
             "task_type": task.task_type,
-            "priority_tier": task.priority_tier.value,
+            "priority_tier": PriorityTier(task.priority_tier).name.lower(),
             "effective_tier": task.effective_tier,
             "priority_class": task.priority_class,
             "request_state": task.request_state,
             "enqueued_at": task.enqueued_at.isoformat() if task.enqueued_at else "",
             "started_at": task.started_at.isoformat() if task.started_at else None,
             "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "deadline": task.deadline.isoformat() if task.deadline else None,
+            "boost_amount": str(task.boost_amount),
             "error_message": task.error_message,
         }
 
@@ -213,101 +274,11 @@ class SchedulerService:
             return await self._queue.cancel_by_agent(conn, agent_id)
 
     # =========================================================================
-    # Original service methods (backward compatible)
+    # Single-task operations
     # =========================================================================
 
-    async def submit_task(self, submission: TaskSubmission) -> ScheduledTask:
-        """Submit a task for scheduling.
-
-        1. Validates the submission
-        2. If boost > 0, reserves credits
-        3. Auto-classifies priority_class if not provided
-        4. Checks fair-share admission
-        5. Computes effective tier
-        6. Enqueues in PostgreSQL
-        7. Returns the scheduled task
-        """
-        validate_submission(submission)
-
-        now = datetime.now(UTC)
-
-        # Auto-classify priority_class if not provided
-        priority_class = submission.priority_class
-        if priority_class is None:
-            priority_class = PriorityClass(
-                classify_request(submission.priority, submission.request_state)
-            )
-
-        # Check fair-share admission
-        executor_id = submission.executor_id
-        if not self._fair_share.admit(executor_id):
-            raise ValueError(
-                f"Agent {executor_id} is at capacity "
-                f"({self._fair_share.snapshot(executor_id).running_count}/"
-                f"{self._fair_share.snapshot(executor_id).max_concurrent})"
-            )
-
-        # Reserve credits for boost if needed
-        boost_tiers = compute_boost_tiers(submission.boost_amount)
-        boost_reservation_id: str | None = None
-
-        if submission.boost_amount > 0 and self._credits is not None:
-            boost_reservation_id = await self._credits.reserve(
-                agent_id=submission.agent_id,
-                amount=submission.boost_amount,
-                timeout_seconds=3600,
-            )
-
-        # Compute effective tier
-        effective_tier = compute_effective_tier(submission, enqueued_at=now, now=now)
-
-        # Enqueue with Astraea fields
-        async with self._pool.acquire() as conn:
-            task_id = await self._queue.enqueue(
-                conn,
-                agent_id=submission.agent_id,
-                executor_id=submission.executor_id,
-                task_type=submission.task_type,
-                payload=submission.payload,
-                priority_tier=submission.priority.value,
-                effective_tier=effective_tier,
-                deadline=submission.deadline,
-                boost_amount=submission.boost_amount,
-                boost_tiers=boost_tiers,
-                boost_reservation_id=boost_reservation_id,
-                idempotency_key=submission.idempotency_key,
-                request_state=submission.request_state.value,
-                priority_class=priority_class.value,
-                estimated_service_time=submission.estimated_service_time,
-            )
-
-        return ScheduledTask(
-            id=task_id,
-            agent_id=submission.agent_id,
-            executor_id=submission.executor_id,
-            task_type=submission.task_type,
-            payload=submission.payload,
-            priority_tier=submission.priority,
-            effective_tier=effective_tier,
-            enqueued_at=now,
-            status=TASK_STATUS_QUEUED,
-            deadline=submission.deadline,
-            boost_amount=submission.boost_amount,
-            boost_tiers=boost_tiers,
-            boost_reservation_id=boost_reservation_id,
-            idempotency_key=submission.idempotency_key,
-            request_state=submission.request_state.value,
-            priority_class=priority_class.value,
-            estimated_service_time=submission.estimated_service_time,
-        )
-
-    async def get_task_status(self, task_id: str) -> ScheduledTask | None:
-        """Get task as ScheduledTask (for backward compat with router)."""
-        async with self._pool.acquire() as conn:
-            return await self._queue.get_task(conn, task_id)
-
-    async def cancel_task(self, task_id: str, agent_id: str = "") -> bool:  # noqa: ARG002
-        """Cancel a queued task with credit release."""
+    async def cancel_by_id(self, task_id: str) -> bool:
+        """Cancel a single queued task with credit release."""
         async with self._pool.acquire() as conn:
             task = await self._queue.get_task(conn, task_id)
             cancelled = await self._queue.cancel(conn, task_id)
@@ -316,6 +287,10 @@ class SchedulerService:
                 await self._credits.release_reservation(task.boost_reservation_id)
 
             return cancelled
+
+    # =========================================================================
+    # Queue operations
+    # =========================================================================
 
     async def dequeue_next(self, *, executor_id: str | None = None) -> ScheduledTask | None:
         """Dequeue the highest-priority task for execution.

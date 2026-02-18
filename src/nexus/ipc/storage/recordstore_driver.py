@@ -110,9 +110,6 @@ class RecordStoreStorageDriver:
     async def list_dir(self, path: str, zone_id: str) -> list[str]:
         normalized = path.rstrip("/")
 
-        if not await self._dir_exists(normalized, zone_id):
-            raise FileNotFoundError(f"No such directory: {path}")
-
         def _list() -> list[str]:
             with self._session_factory() as session:
                 stmt = (
@@ -126,13 +123,17 @@ class RecordStoreStorageDriver:
                 rows = session.execute(stmt).all()
             return [row[0] for row in rows]
 
-        return await asyncio.to_thread(_list)
+        results = await asyncio.to_thread(_list)
+
+        # Lazy exists check: only verify directory marker when listing is empty
+        # (common case — non-empty directory — needs only 1 query)
+        if not results and not await self._dir_exists(normalized, zone_id):
+            raise FileNotFoundError(f"No such directory: {path}")
+
+        return results
 
     async def count_dir(self, path: str, zone_id: str) -> int:
         normalized = path.rstrip("/")
-
-        if not await self._dir_exists(normalized, zone_id):
-            raise FileNotFoundError(f"No such directory: {path}")
 
         def _count() -> int:
             with self._session_factory() as session:
@@ -148,7 +149,13 @@ class RecordStoreStorageDriver:
                 result = session.execute(stmt).scalar()
             return result or 0
 
-        return await asyncio.to_thread(_count)
+        count = await asyncio.to_thread(_count)
+
+        # Lazy exists check: only verify directory marker when count is zero
+        if count == 0 and not await self._dir_exists(normalized, zone_id):
+            raise FileNotFoundError(f"No such directory: {path}")
+
+        return count
 
     async def rename(self, src: str, dst: str, zone_id: str) -> None:
         dst_dir = _parent_dir(dst)

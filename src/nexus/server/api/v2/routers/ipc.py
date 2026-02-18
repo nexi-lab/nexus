@@ -174,14 +174,16 @@ async def send_message(
             f"Valid types: {[t.value for t in MessageType]}",
         ) from exc
 
-    envelope = MessageEnvelope.model_validate({
-        "from": body.sender,
-        "to": body.recipient,
-        "type": msg_type,
-        "payload": body.payload,
-        "ttl_seconds": body.ttl_seconds,
-        "correlation_id": body.correlation_id,
-    })
+    envelope = MessageEnvelope.model_validate(
+        {
+            "from": body.sender,
+            "to": body.recipient,
+            "type": msg_type,
+            "payload": body.payload,
+            "ttl_seconds": body.ttl_seconds,
+            "correlation_id": body.correlation_id,
+        }
+    )
 
     sender = MessageSender(storage, zone_id=zone_id)
     try:

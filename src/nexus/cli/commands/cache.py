@@ -82,7 +82,7 @@ def warmup(
         nx = get_filesystem(backend_config)
 
         # Import here to avoid circular imports
-        from nexus.cache.warmer import (
+        from nexus.server.cache_warmer import (
             CacheWarmer,
             WarmupConfig,
             get_file_access_tracker,
@@ -207,7 +207,7 @@ def stats(
                 cache_stats["dir_visibility_cache"] = dvc.get_metrics()
 
         # File access tracker stats
-        from nexus.cache.warmer import get_file_access_tracker
+        from nexus.server.cache_warmer import get_file_access_tracker
 
         tracker = get_file_access_tracker()
         cache_stats["file_access_tracker"] = tracker.get_stats()
@@ -338,7 +338,7 @@ def clear(
 
         # Clear file access tracker
         if clear_all:
-            from nexus.cache.warmer import get_file_access_tracker
+            from nexus.server.cache_warmer import get_file_access_tracker
 
             tracker = get_file_access_tracker()
             tracker.clear()
@@ -375,7 +375,7 @@ def hot(
         nexus cache hot --user alice
     """
     try:
-        from nexus.cache.warmer import get_file_access_tracker
+        from nexus.server.cache_warmer import get_file_access_tracker
 
         tracker = get_file_access_tracker()
         hot_files = tracker.get_hot_files(

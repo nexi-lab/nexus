@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from nexus import NexusFS
 from nexus.backends.local import LocalBackend
-from nexus.cache.warmer import CacheWarmer, WarmupConfig
+from nexus.server.cache_warmer import CacheWarmer, WarmupConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

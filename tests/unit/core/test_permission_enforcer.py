@@ -352,16 +352,9 @@ class TestHasAccessibleDescendantsBatch:
 
     def test_no_bitmap_returns_all_true(self):
         """When bitmap is None for the user, fallback returns True for all."""
-        import threading
-
-        class MockResourceMap:
-            _lock = threading.Lock()
-            _int_to_uuid = {}
 
         class MockTigerCache:
-            _resource_map = MockResourceMap()
-
-            def get_bitmap_bytes(self, **kwargs):
+            def get_accessible_paths_list(self, **kwargs):
                 return None  # No bitmap
 
         class MockReBACManager:
@@ -374,26 +367,10 @@ class TestHasAccessibleDescendantsBatch:
 
     def test_all_accessible(self):
         """All prefixes have matching descendants in the bitmap."""
-        import threading
-
-        from pyroaring import BitMap
-
-        class MockResourceMap:
-            _lock = threading.Lock()
-            _int_to_uuid = {
-                1: ("file", "/docs/readme.md"),
-                2: ("file", "/skills/python.md"),
-                3: ("file", "/archive/old.txt"),
-            }
-
-        bitmap = BitMap([1, 2, 3])
-        bitmap_bytes = bitmap.serialize()
 
         class MockTigerCache:
-            _resource_map = MockResourceMap()
-
-            def get_bitmap_bytes(self, **kwargs):
-                return bitmap_bytes
+            def get_accessible_paths_list(self, **kwargs):
+                return ["/docs/readme.md", "/skills/python.md", "/archive/old.txt"]
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -405,26 +382,10 @@ class TestHasAccessibleDescendantsBatch:
 
     def test_mixed_accessible(self):
         """Some prefixes have descendants, some don't."""
-        import threading
-
-        from pyroaring import BitMap
-
-        class MockResourceMap:
-            _lock = threading.Lock()
-            _int_to_uuid = {
-                1: ("file", "/docs/readme.md"),
-                2: ("file", "/docs/guide.md"),
-                # No files under /skills/ or /archive/
-            }
-
-        bitmap = BitMap([1, 2])
-        bitmap_bytes = bitmap.serialize()
 
         class MockTigerCache:
-            _resource_map = MockResourceMap()
-
-            def get_bitmap_bytes(self, **kwargs):
-                return bitmap_bytes
+            def get_accessible_paths_list(self, **kwargs):
+                return ["/docs/readme.md", "/docs/guide.md"]
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -440,8 +401,8 @@ class TestHasAccessibleDescendantsBatch:
         """On decode error, fallback returns True for all prefixes."""
 
         class MockTigerCache:
-            def get_bitmap_bytes(self, **kwargs):
-                return b"invalid_bitmap_data"
+            def get_accessible_paths_list(self, **kwargs):
+                raise RuntimeError("bitmap decode error")
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -451,6 +412,97 @@ class TestHasAccessibleDescendantsBatch:
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills"], ctx)
         # Should fallback to all True on decode error
         assert result == {"/docs": True, "/skills": True}
+
+    def test_prefix_collision_workspace_old(self):
+        """/workspace must NOT match /workspace-old/x (Issue #1565)."""
+
+        class MockTigerCache:
+            def get_accessible_paths_list(self, **kwargs):
+                return ["/workspace-old/file.txt"]
+
+        class MockReBACManager:
+            _tiger_cache = MockTigerCache()
+
+        enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
+        ctx = OperationContext(user="alice", groups=["dev"])
+        result = enforcer.has_accessible_descendants_batch(["/workspace"], ctx)
+        assert result["/workspace"] is False
+
+    def test_trailing_slash_normalization(self):
+        """/a/b/ and /a/b should be equivalent prefixes."""
+
+        class MockTigerCache:
+            def get_accessible_paths_list(self, **kwargs):
+                return ["/a/b/c.txt"]
+
+        class MockReBACManager:
+            _tiger_cache = MockTigerCache()
+
+        enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
+        ctx = OperationContext(user="alice", groups=["dev"])
+        result = enforcer.has_accessible_descendants_batch(["/a/b/", "/a/b"], ctx)
+        assert result["/a/b/"] is True
+        assert result["/a/b"] is True
+
+    def test_exact_path_match(self):
+        """path /a/b matches prefix /a/b (exact match, not just descendants)."""
+
+        class MockTigerCache:
+            def get_accessible_paths_list(self, **kwargs):
+                return ["/a/b"]
+
+        class MockReBACManager:
+            _tiger_cache = MockTigerCache()
+
+        enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
+        ctx = OperationContext(user="alice", groups=["dev"])
+        result = enforcer.has_accessible_descendants_batch(["/a/b"], ctx)
+        assert result["/a/b"] is True
+
+    def test_root_prefix_matches_all(self):
+        """prefix '/' matches everything."""
+
+        class MockTigerCache:
+            def get_accessible_paths_list(self, **kwargs):
+                return ["/docs/readme.md"]
+
+        class MockReBACManager:
+            _tiger_cache = MockTigerCache()
+
+        enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
+        ctx = OperationContext(user="alice", groups=["dev"])
+        result = enforcer.has_accessible_descendants_batch(["/"], ctx)
+        assert result["/"] is True
+
+    def test_empty_accessible_paths(self):
+        """Bitmap exists but maps to no paths."""
+
+        class MockTigerCache:
+            def get_accessible_paths_list(self, **kwargs):
+                return []
+
+        class MockReBACManager:
+            _tiger_cache = MockTigerCache()
+
+        enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
+        ctx = OperationContext(user="alice", groups=["dev"])
+        result = enforcer.has_accessible_descendants_batch(["/docs"], ctx)
+        assert result["/docs"] is False
+
+    def test_single_wraps_batch(self):
+        """has_accessible_descendants() delegates to batch."""
+
+        class MockTigerCache:
+            def get_accessible_paths_list(self, **kwargs):
+                return ["/docs/readme.md"]
+
+        class MockReBACManager:
+            _tiger_cache = MockTigerCache()
+
+        enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
+        ctx = OperationContext(user="alice", groups=["dev"])
+        assert enforcer.has_accessible_descendants("/docs", ctx) is True
+        assert enforcer.has_accessible_descendants("/skills", ctx) is False
 
 
 class TestFailClosedOnError:

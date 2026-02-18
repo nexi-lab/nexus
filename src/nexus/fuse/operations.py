@@ -338,12 +338,13 @@ class NexusFUSEOperations(Operations):
         Finds the longest mount_point prefix that matches path and returns its
         io_profile. Falls back to "balanced" when no match or list_mounts fails.
 
-        Results are cached for the lifetime of the FUSE mount (mounts don't change often).
+        Results are cached with bounded LRU (Issue #13A: prevent unbounded growth).
         """
-        if not hasattr(self, "_io_profile_cache"):
-            self._io_profile_cache: dict[str, str] = {}
+        if not hasattr(self, "_io_profile_mounts"):
             self._io_profile_mounts: list[tuple[str, str]] = []
             self._io_profile_loaded = False
+            self._io_profile_cache: dict[str, str] = {}
+            self._IO_PROFILE_CACHE_MAXSIZE = 10000
 
         # Lazy-load mount→profile mapping once
         if not self._io_profile_loaded:
@@ -359,8 +360,9 @@ class NexusFUSEOperations(Operations):
                 pass
 
         # Check cache
-        if path in self._io_profile_cache:
-            return self._io_profile_cache[path]
+        cached = self._io_profile_cache.get(path)
+        if cached is not None:
+            return cached
 
         # Longest prefix match
         profile = "balanced"
@@ -368,6 +370,14 @@ class NexusFUSEOperations(Operations):
             if path == mount_point or path.startswith(mount_point.rstrip("/") + "/"):
                 profile = mp_profile
                 break
+
+        # Bounded cache: evict oldest entries when full
+        if len(self._io_profile_cache) >= self._IO_PROFILE_CACHE_MAXSIZE:
+            # Remove ~10% of oldest entries to amortize eviction cost
+            evict_count = self._IO_PROFILE_CACHE_MAXSIZE // 10
+            keys_to_remove = list(self._io_profile_cache.keys())[:evict_count]
+            for key in keys_to_remove:
+                del self._io_profile_cache[key]
 
         self._io_profile_cache[path] = profile
         return profile
@@ -380,6 +390,17 @@ class NexusFUSEOperations(Operations):
         - use_rust flag is enabled
         - Rust client is connected
         - No namespace context (Rust daemon doesn't handle ReBAC)
+
+        IMPORTANT — Single-zone limitation (Issue #1569, Decision 1B):
+        The Rust daemon operates with ONE API key set at startup. It has no
+        per-request zone_id or subject context. Therefore Rust delegation is
+        ONLY safe for global/admin mounts (no namespace context). When a
+        context is present (agent mount with ReBAC), we MUST fall back to
+        Python which passes the correct zone_id and subject to the kernel.
+
+        DO NOT remove the ``not self._context`` guard without first adding
+        per-request zone_id + subject metadata to the JSON-RPC protocol
+        (tracked as a future enhancement).
         """
         return bool(self._use_rust and self._rust_client and not self._context)
 

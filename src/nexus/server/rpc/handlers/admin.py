@@ -21,6 +21,48 @@ def require_admin(context: Any) -> None:
         raise NexusPermissionError("Admin privileges required for this operation")
 
 
+def require_database_auth(auth_provider: Any) -> None:
+    """Validate that a database auth provider with session_factory is configured.
+
+    Raises:
+        ConfigurationError: If auth_provider is missing or lacks session_factory.
+    """
+    from nexus.core.exceptions import ConfigurationError
+
+    if not auth_provider or not hasattr(auth_provider, "session_factory"):
+        raise ConfigurationError(
+            "Admin operations require DatabaseAPIKeyAuth provider with session_factory"
+        )
+
+
+def format_api_key_response(api_key: Any, *, include_sensitive: bool = False) -> dict[str, Any]:
+    """Serialize an APIKeyModel to a response dict.
+
+    Args:
+        api_key: SQLAlchemy APIKeyModel instance.
+        include_sensitive: If True, include revocation and usage fields.
+
+    Returns:
+        Dict with key metadata, safe for JSON serialization.
+    """
+    result: dict[str, Any] = {
+        "key_id": api_key.key_id,
+        "user_id": api_key.user_id,
+        "subject_type": api_key.subject_type,
+        "subject_id": api_key.subject_id,
+        "name": api_key.name,
+        "zone_id": api_key.zone_id,
+        "is_admin": bool(api_key.is_admin),
+        "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
+        "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
+    }
+    if include_sensitive:
+        result["revoked"] = bool(api_key.revoked)
+        result["revoked_at"] = api_key.revoked_at.isoformat() if api_key.revoked_at else None
+        result["last_used_at"] = api_key.last_used_at.isoformat() if api_key.last_used_at else None
+    return result
+
+
 def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_create_key method."""
     import uuid
@@ -30,9 +72,7 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     from nexus.rebac.entity_registry import EntityRegistry
 
     require_admin(context)
-
-    if not auth_provider or not hasattr(auth_provider, "session_factory"):
-        raise RuntimeError("Database auth provider not configured")
+    require_database_auth(auth_provider)
 
     user_id = params.user_id
     if not user_id:
@@ -87,9 +127,7 @@ def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dic
     from nexus.storage.models import APIKeyModel
 
     require_admin(context)
-
-    if not auth_provider or not hasattr(auth_provider, "session_factory"):
-        raise RuntimeError("Database auth provider not configured")
+    require_database_auth(auth_provider)
 
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel)
@@ -119,25 +157,7 @@ def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dic
         stmt = stmt.limit(params.limit).offset(params.offset)
         api_keys = list(session.scalars(stmt).all())
 
-        keys = []
-        for key in api_keys:
-            keys.append(
-                {
-                    "key_id": key.key_id,
-                    "user_id": key.user_id,
-                    "subject_type": key.subject_type,
-                    "subject_id": key.subject_id,
-                    "name": key.name,
-                    "zone_id": key.zone_id,
-                    "is_admin": bool(key.is_admin),
-                    "created_at": key.created_at.isoformat() if key.created_at else None,
-                    "expires_at": key.expires_at.isoformat() if key.expires_at else None,
-                    "revoked": bool(key.revoked),
-                    "revoked_at": key.revoked_at.isoformat() if key.revoked_at else None,
-                    "last_used_at": (key.last_used_at.isoformat() if key.last_used_at else None),
-                }
-            )
-
+        keys = [format_api_key_response(key, include_sensitive=True) for key in api_keys]
         return {"keys": keys, "total": total}
 
 
@@ -149,31 +169,18 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
     from nexus.storage.models import APIKeyModel
 
     require_admin(context)
-
-    if not auth_provider or not hasattr(auth_provider, "session_factory"):
-        raise RuntimeError("Database auth provider not configured")
+    require_database_auth(auth_provider)
 
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+        if params.zone_id:
+            stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
         api_key = session.scalar(stmt)
 
         if not api_key:
             raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
 
-        return {
-            "key_id": api_key.key_id,
-            "user_id": api_key.user_id,
-            "subject_type": api_key.subject_type,
-            "subject_id": api_key.subject_id,
-            "name": api_key.name,
-            "zone_id": api_key.zone_id,
-            "is_admin": bool(api_key.is_admin),
-            "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
-            "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
-            "revoked": bool(api_key.revoked),
-            "revoked_at": api_key.revoked_at.isoformat() if api_key.revoked_at else None,
-            "last_used_at": (api_key.last_used_at.isoformat() if api_key.last_used_at else None),
-        }
+        return format_api_key_response(api_key, include_sensitive=True)
 
 
 def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
@@ -182,12 +189,10 @@ def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> di
     from nexus.core.exceptions import NexusFileNotFoundError
 
     require_admin(context)
-
-    if not auth_provider or not hasattr(auth_provider, "session_factory"):
-        raise RuntimeError("Database auth provider not configured")
+    require_database_auth(auth_provider)
 
     with auth_provider.session_factory() as session:
-        success = DatabaseAPIKeyAuth.revoke_key(session, params.key_id)
+        success = DatabaseAPIKeyAuth.revoke_key(session, params.key_id, zone_id=params.zone_id)
         if not success:
             raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
 
@@ -201,20 +206,34 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
 
     from sqlalchemy import select
 
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.core.exceptions import NexusFileNotFoundError, ValidationError
     from nexus.storage.models import APIKeyModel
 
     require_admin(context)
-
-    if not auth_provider or not hasattr(auth_provider, "session_factory"):
-        raise RuntimeError("Database auth provider not configured")
+    require_database_auth(auth_provider)
 
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+        if params.zone_id:
+            stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
         api_key = session.scalar(stmt)
 
         if not api_key:
             raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
+
+        # Self-demotion guard: prevent removing admin from the last admin key
+        if params.is_admin is False and api_key.is_admin:
+            from sqlalchemy import func
+
+            count_stmt = select(func.count()).where(
+                APIKeyModel.is_admin == 1,
+                APIKeyModel.revoked == 0,
+            )
+            if api_key.zone_id:
+                count_stmt = count_stmt.where(APIKeyModel.zone_id == api_key.zone_id)
+            admin_count = session.scalar(count_stmt)
+            if admin_count is not None and admin_count <= 1:
+                raise ValidationError("Cannot remove admin privileges from the last admin key")
 
         if params.name is not None:
             api_key.name = params.name
@@ -227,8 +246,5 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
 
         return {
             "success": True,
-            "key_id": api_key.key_id,
-            "name": api_key.name,
-            "is_admin": bool(api_key.is_admin),
-            "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
+            **format_api_key_response(api_key),
         }

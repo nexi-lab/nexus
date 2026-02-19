@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import (
     BranchConflictError,
     BranchExistsError,
@@ -153,7 +154,7 @@ class ContextBranchService:
         self._wm = workspace_manager
         self._session_factory = session_factory
         self._rebac_manager = rebac_manager
-        self._default_zone_id = default_zone_id or "root"
+        self._default_zone_id = default_zone_id or ROOT_ZONE_ID
         self._default_agent_id = default_agent_id
 
     def _check_permission(

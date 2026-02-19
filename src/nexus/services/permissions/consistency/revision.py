@@ -27,6 +27,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.storage.models.permissions import ReBACVersionSequenceModel as RBVS
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 def increment_version_token(
     engine: Engine,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     *,
     is_postgresql: bool = False,
 ) -> str:

@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.rebac.batch.bulk_checker import BulkPermissionChecker
 from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.cache.tiger.facade import TigerFacade
@@ -727,7 +728,7 @@ class ReBACManager:
                     f"rebac_check called without zone_id, defaulting to 'root'. "
                     f"This is only allowed in development. Stack:\n{''.join(traceback.format_stack()[-5:])}"
                 )
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
@@ -1972,7 +1973,7 @@ class ReBACManager:
         self,
         permission: str,
         object: tuple[str, str],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> list[tuple[str, str]]:
         """Find all subjects with permission on object (zone-scoped).
 
@@ -1989,7 +1990,7 @@ class ReBACManager:
             return self._expander.expand(permission, object)
 
         if not zone_id:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
 
         object_entity = Entity(object[0], object[1])
         subjects: set[tuple[str, str]] = set()
@@ -2417,7 +2418,7 @@ class ReBACManager:
                         row["relation"],
                         row["object_type"],
                         row["object_id"],
-                        row["zone_id"] or "root",
+                        row["zone_id"] or ROOT_ZONE_ID,
                         now,
                     ),
                 )
@@ -2657,7 +2658,7 @@ class ReBACManager:
                 return True
 
         # Try Boundary Cache (O(1) inheritance shortcut for files)
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         if (
             object[0] == "file"
             and permission in ("read", "write", "execute")
@@ -2867,7 +2868,7 @@ class ReBACManager:
             context,
         )
 
-    def _get_version_token(self, zone_id: str = "root") -> str:
+    def _get_version_token(self, zone_id: str = ROOT_ZONE_ID) -> str:
         """Get current version token (P0-1).
 
         Delegates to consistency.revision module (Issue #1459).
@@ -3868,7 +3869,7 @@ class ReBACManager:
         object_entity = Entity(object[0], object[1])
 
         if zone_id is None:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
         if subject_zone_id is None:
             subject_zone_id = zone_id
         if object_zone_id is None:
@@ -3954,7 +3955,7 @@ class ReBACManager:
                 relation=relation,
                 object_type=object_entity.entity_type,
                 object_id=object_entity.entity_id,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
             )
 
             self._increment_zone_revision(zone_id, conn)
@@ -4078,7 +4079,7 @@ class ReBACManager:
 
                     # Issue #773: Default zone_id values if not provided
                     if zone_id is None:
-                        zone_id = "root"
+                        zone_id = ROOT_ZONE_ID
                     if subject_zone_id is None:
                         subject_zone_id = zone_id
                     if object_zone_id is None:
@@ -4194,7 +4195,7 @@ class ReBACManager:
                         pt["relation"],
                         pt["object_type"],
                         pt["object_id"],
-                        pt["zone_id"] or "root",
+                        pt["zone_id"] or ROOT_ZONE_ID,
                         now,
                     )
                     for pt in tuples_to_create
@@ -4254,7 +4255,9 @@ class ReBACManager:
                             "(zone_id = ? AND subject_type = ? AND subject_id = ? "
                             "AND object_type = ? AND object_id = ?)"
                         )
-                        delete_params.extend([tid or "root", subj_type, subj_id, obj_type, obj_id])
+                        delete_params.extend(
+                            [tid or ROOT_ZONE_ID, subj_type, subj_id, obj_type, obj_id]
+                        )
 
                     # Chunk the deletes to avoid too large SQL
                     CHUNK_SIZE = 50
@@ -4273,7 +4276,7 @@ class ReBACManager:
                 if created_count > 0:
                     affected_zones = set()
                     for pt in parsed_tuples:
-                        affected_zones.add(pt["zone_id"] or "root")
+                        affected_zones.add(pt["zone_id"] or ROOT_ZONE_ID)
                         if pt["subject_zone_id"] and pt["subject_zone_id"] != pt["zone_id"]:
                             affected_zones.add(pt["subject_zone_id"])
                     for zone in affected_zones:
@@ -4400,7 +4403,7 @@ class ReBACManager:
                     relation,
                     obj.entity_type,
                     obj.entity_id,
-                    zone_id or "root",
+                    zone_id or ROOT_ZONE_ID,
                     now,
                 ),
             )
@@ -4575,7 +4578,7 @@ class ReBACManager:
                             row["relation"],
                             object_type,
                             new_object_id,
-                            row["zone_id"] or "root",
+                            row["zone_id"] or ROOT_ZONE_ID,
                             now_iso,
                         )
                     )
@@ -4620,7 +4623,7 @@ class ReBACManager:
                             self.tiger_invalidate_cache(
                                 subject=(subject.entity_type, subject.entity_id),
                                 resource_type=old_obj.entity_type,
-                                zone_id=zone_id or "root",
+                                zone_id=zone_id or ROOT_ZONE_ID,
                             )
                         except Exception as e:
                             logger.warning(f"Tiger Cache invalidation failed during rename: {e}")
@@ -4743,7 +4746,7 @@ class ReBACManager:
                             row["relation"],
                             row["object_type"],
                             row["object_id"],
-                            row["zone_id"] or "root",
+                            row["zone_id"] or ROOT_ZONE_ID,
                             now_iso,
                         )
                     )
@@ -4902,7 +4905,7 @@ class ReBACManager:
 
         # Issue #773: Default zone_id to "root" if not provided
         if zone_id is None:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
@@ -5781,7 +5784,7 @@ class ReBACManager:
         expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
 
         # Use "root" zone if not specified
-        effective_zone_id = zone_id if zone_id is not None else "root"
+        effective_zone_id = zone_id if zone_id is not None else ROOT_ZONE_ID
 
         # Use provided connection or create new one (avoids SQLite lock contention)
         should_close = conn is None
@@ -5877,7 +5880,7 @@ class ReBACManager:
         logger = logging.getLogger(__name__)
 
         # Use "root" zone if not specified
-        effective_zone_id = zone_id if zone_id is not None else "root"
+        effective_zone_id = zone_id if zone_id is not None else ROOT_ZONE_ID
 
         # Track write for adaptive TTL (Phase 4)
         if self._l1_cache:
@@ -6276,7 +6279,7 @@ class ReBACManager:
                         relation,
                         object_type,
                         object_id,
-                        zone_id or "root",
+                        zone_id or ROOT_ZONE_ID,
                         datetime.now(UTC).isoformat(),
                     ),
                 )

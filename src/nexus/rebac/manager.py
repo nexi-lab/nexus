@@ -5275,7 +5275,7 @@ class ReBACManager:
 
     def _fetch_all_tuples_for_batch(
         self,
-        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],  # noqa: ARG002
+        _checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
     ) -> list[dict[str, Any]]:
         """Fetch all ReBAC tuples that might be relevant for batch checks.
 

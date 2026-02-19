@@ -79,7 +79,7 @@ class TestNullRevisionNotifier:
         null = NullRevisionNotifier()
         null.notify_revision("z", 1)  # should not raise
         assert null.get_latest_revision("z") == 0
-        assert null.wait_for_revision("z", 1, timeout_ms=10) is False
+        assert null.wait_for_revision("z", 1, 10) is False
 
 
 class TestABC:

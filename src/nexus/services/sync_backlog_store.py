@@ -47,8 +47,13 @@ class SyncBacklogStore(SyncStoreBase):
     Supports upsert coalescing, FIFO fetch, status transitions, and TTL expiry.
     """
 
-    def __init__(self, session_factory: Callable[..., Any] | None) -> None:
-        super().__init__(session_factory)
+    def __init__(
+        self,
+        session_factory: Callable[..., Any] | None,
+        *,
+        is_postgresql: bool = False,
+    ) -> None:
+        super().__init__(session_factory, is_postgresql=is_postgresql)
 
     def enqueue(
         self,

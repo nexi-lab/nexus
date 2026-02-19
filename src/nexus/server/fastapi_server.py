@@ -478,15 +478,16 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # ConflictLogStore is always available for the REST API,
             # even if the full write-back pipeline can't start (no event bus).
-            conflict_log_store = ConflictLogStore(gw.session_factory)
+            _is_pg = gw.is_postgresql
+            conflict_log_store = ConflictLogStore(gw.session_factory, is_postgresql=_is_pg)
             _app.state.conflict_log_store = conflict_log_store
 
             wb_event_bus = None
             if hasattr(_app.state.nexus_fs, "_event_bus"):
                 wb_event_bus = _app.state.nexus_fs._event_bus
             if wb_event_bus:
-                backlog_store = SyncBacklogStore(gw.session_factory)
-                change_log_store = ChangeLogStore(gw.session_factory)
+                backlog_store = SyncBacklogStore(gw.session_factory, is_postgresql=_is_pg)
+                change_log_store = ChangeLogStore(gw.session_factory, is_postgresql=_is_pg)
 
                 # Map env var to ConflictStrategy (backward compat)
                 _policy_map = {

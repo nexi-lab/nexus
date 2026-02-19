@@ -999,6 +999,17 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         except Exception as _ipc_exc:
             logger.warning("[BOOT:BRICK] IPC brick unavailable: %s", _ipc_exc)
 
+    # --- Sandbox Brick: AgentEventLog (Issue #1307) ---
+    agent_event_log: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.bricks.sandbox.events import AgentEventLog
+
+            agent_event_log = AgentEventLog(session_factory=ctx.session_factory)
+            logger.debug("[BOOT:BRICK] AgentEventLog created")
+        except Exception as _ael_exc:
+            logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
+
     # --- Skills Brick (Issue #2035) ---
     skill_service: Any = None
     skill_package_service: Any = None
@@ -1025,6 +1036,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "ipc_storage_driver": ipc_storage_driver,
         "ipc_vfs_driver": ipc_vfs_driver,
         "ipc_provisioner": ipc_provisioner,
+        "agent_event_log": agent_event_log,
         "skill_service": skill_service,
         "skill_package_service": skill_package_service,
     }
@@ -1233,6 +1245,8 @@ def create_nexus_services(
         ipc_storage_driver=brick_dict["ipc_storage_driver"],
         ipc_vfs_driver=brick_dict["ipc_vfs_driver"],
         ipc_provisioner=brick_dict["ipc_provisioner"],
+        # Sandbox Brick (Issue #1307)
+        agent_event_log=brick_dict["agent_event_log"],
         # Skills Brick (Issue #2035)
         skill_service=brick_dict["skill_service"],
         skill_package_service=brick_dict["skill_package_service"],

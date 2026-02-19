@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass
 from typing import Any, cast
 
 from sqlalchemy import Table, delete, event, func, select, update
@@ -19,21 +18,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from nexus.proxy.queue_protocol import QueuedOperation
 from nexus.storage.models._base import Base
 from nexus.storage.models.sync import PendingOperationModel as PO
-
-
-@dataclass(frozen=True, slots=True)
-class QueuedOperation:
-    """A single queued operation awaiting replay."""
-
-    id: int
-    method: str
-    args_json: str
-    kwargs_json: str
-    payload_ref: str | None
-    retry_count: int
-    created_at: float
 
 
 class OfflineQueue:

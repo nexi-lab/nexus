@@ -223,6 +223,7 @@ class GmailConnectorBackend(
             For multi-user production, leave user_email=None to auto-detect from context.
             This ensures each user accesses their own Gmail.
         """
+        super().__init__()
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
         # Store session factory for caching (CacheConnectorMixin)

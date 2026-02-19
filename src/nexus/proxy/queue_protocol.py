@@ -11,9 +11,21 @@ from __future__ import annotations
 import itertools
 import time
 from collections import deque
+from dataclasses import dataclass
 from typing import Any, Protocol
 
-from nexus.proxy.offline_queue import QueuedOperation
+
+@dataclass(frozen=True, slots=True)
+class QueuedOperation:
+    """A single queued operation awaiting replay."""
+
+    id: int
+    method: str
+    args_json: str
+    kwargs_json: str
+    payload_ref: str | None
+    retry_count: int
+    created_at: float
 
 
 class QueueFullError(Exception):

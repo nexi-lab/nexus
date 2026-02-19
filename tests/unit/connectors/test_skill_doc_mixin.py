@@ -1,4 +1,9 @@
-"""Characterization tests for SkillDocMixin — captures current behavior before refactoring."""
+"""Tests for SkillDocMixin public API — generate_skill_doc and format_error_with_skill_ref.
+
+Private method tests (schema_to_yaml_lines, is_nested_model, format_type_hint,
+generate_errors_section, get_field_example) have been migrated to
+test_schema_generator.py which tests SkillDocGenerator directly.
+"""
 
 from __future__ import annotations
 
@@ -29,28 +34,6 @@ class OptionalSchema(BaseModel):
     description: str = "default description"
     color_id: int = 1
     notify: bool = False
-
-
-class NestedChild(BaseModel):
-    date_time: str
-    time_zone: str
-
-
-class NestedSchema(BaseModel):
-    summary: str
-    start: NestedChild
-    end: NestedChild
-
-
-class ListSchema(BaseModel):
-    summary: str
-    attendees: list[str]
-    tags: list[int] = []
-
-
-class OptionalModelSchema(BaseModel):
-    summary: str
-    start: NestedChild | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -98,80 +81,7 @@ def mixin() -> FakeConnector:
 
 
 # ---------------------------------------------------------------------------
-# _schema_to_yaml_lines
-# ---------------------------------------------------------------------------
-
-
-class TestSchemaToYamlLines:
-    def test_simple_fields(self, mixin: FakeConnector) -> None:
-        lines = mixin._schema_to_yaml_lines(SimpleSchema)
-        text = "\n".join(lines)
-        assert "summary:" in text
-        assert "count:" in text
-        assert "active:" in text
-
-    def test_optional_fields(self, mixin: FakeConnector) -> None:
-        lines = mixin._schema_to_yaml_lines(OptionalSchema)
-        text = "\n".join(lines)
-        # Fields with defaults should show the default
-        assert "description: default description" in text
-        assert "color_id: 1" in text
-        assert "notify: false" in text
-
-    def test_nested_model(self, mixin: FakeConnector) -> None:
-        lines = mixin._schema_to_yaml_lines(NestedSchema)
-        text = "\n".join(lines)
-        assert "start:" in text
-        assert "end:" in text
-        # Nested example lines should be indented
-        assert "  dateTime:" in text or "  date_time:" in text or '  dateTime: "2024' in text
-
-    def test_list_field(self, mixin: FakeConnector) -> None:
-        lines = mixin._schema_to_yaml_lines(ListSchema)
-        text = "\n".join(lines)
-        # tags has default [] so should show []
-        assert "tags: []" in text
-
-
-# ---------------------------------------------------------------------------
-# _is_nested_model
-# ---------------------------------------------------------------------------
-
-
-class TestIsNestedModel:
-    def test_pydantic_model(self, mixin: FakeConnector) -> None:
-        assert mixin._is_nested_model(NestedChild) is True
-
-    def test_primitive(self, mixin: FakeConnector) -> None:
-        assert mixin._is_nested_model(str) is False
-        assert mixin._is_nested_model(int) is False
-
-    def test_optional_model(self, mixin: FakeConnector) -> None:
-        # NestedChild | None should still be detected as nested
-        assert mixin._is_nested_model(NestedChild | None) is True
-
-
-# ---------------------------------------------------------------------------
-# _format_type_hint
-# ---------------------------------------------------------------------------
-
-
-class TestFormatTypeHint:
-    def test_str(self, mixin: FakeConnector) -> None:
-        assert mixin._format_type_hint(str) == "string"
-
-    def test_int(self, mixin: FakeConnector) -> None:
-        assert mixin._format_type_hint(int) == "integer"
-
-    def test_bool(self, mixin: FakeConnector) -> None:
-        assert mixin._format_type_hint(bool) == "boolean"
-
-    def test_list(self, mixin: FakeConnector) -> None:
-        assert mixin._format_type_hint(list) == "list"
-
-
-# ---------------------------------------------------------------------------
-# generate_skill_doc
+# generate_skill_doc (public API)
 # ---------------------------------------------------------------------------
 
 
@@ -187,22 +97,7 @@ class TestGenerateSkillDoc:
 
 
 # ---------------------------------------------------------------------------
-# _generate_errors_section
-# ---------------------------------------------------------------------------
-
-
-class TestGenerateErrorsSection:
-    def test_errors_section(self, mixin: FakeConnector) -> None:
-        lines = mixin._generate_errors_section()
-        text = "\n".join(lines)
-        assert "## Error Codes" in text
-        assert "### MISSING_AGENT_INTENT" in text
-        assert "Operations require agent_intent" in text
-        assert "# agent_intent: User requested meeting" in text
-
-
-# ---------------------------------------------------------------------------
-# format_error_with_skill_ref
+# format_error_with_skill_ref (public API)
 # ---------------------------------------------------------------------------
 
 
@@ -227,19 +122,3 @@ class TestFormatErrorWithSkillRef:
         # NexusError.__init__ overwrites self.message with format_message() output
         assert "[CUSTOM_ERROR] Something went wrong" in err.message
         assert "operations" in err.message
-
-
-# ---------------------------------------------------------------------------
-# _get_field_example
-# ---------------------------------------------------------------------------
-
-
-class TestGetFieldExample:
-    def test_known_field_summary(self, mixin: FakeConnector) -> None:
-        result = mixin._get_field_example("summary", None, str, True)
-        assert result == '"Meeting Title"'
-
-    def test_unknown_field(self, mixin: FakeConnector) -> None:
-        result = mixin._get_field_example("custom_field", None, str, True)
-        assert "string" in result
-        assert "required" in result

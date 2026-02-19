@@ -116,6 +116,22 @@ class GoogleCalendarConnectorBackend(
     SKILL_NAME = "gcalendar"
     SKILL_DIR = ".skill"  # Will be at <mount_path>/.skill/
 
+    # Domain-specific examples for SKILL.md generation
+    NESTED_EXAMPLES: dict[str, list[str]] = {
+        "start": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
+        "end": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
+        "attendees": ["- email: attendee@example.com"],
+    }
+    FIELD_EXAMPLES: dict[str, str] = {
+        "summary": '"Meeting Title"',
+        "description": '"Event description"',
+        "location": '"Conference Room A"',
+        "visibility": "default  # default, public, private, confidential",
+        "colorId": '"1"  # 1-11',
+        "recurrence": '["RRULE:FREQ=WEEKLY;BYDAY=MO"]',
+        "send_notifications": "true",
+    }
+
     # Example YAML files for agents
     EXAMPLES = {
         "create_meeting.yaml": """# agent_intent: User requested to schedule a team meeting
@@ -242,6 +258,7 @@ send_notifications: true
             For single-user scenarios (demos), set user_email explicitly.
             For multi-user production, leave user_email=None to auto-detect from context.
         """
+        super().__init__()
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
         self.session_factory = session_factory
         self.max_events_per_calendar = max_events_per_calendar

@@ -35,17 +35,27 @@ Usage::
 
 from nexus.factory.adapters import _NexusFSFileReader
 from nexus.factory.boot_context import _BootContext
-from nexus.factory.bricks import _boot_brick_services
+from nexus.factory.bricks import (
+    _boot_brick_services,
+    _FACTORY_BRICKS,
+    _FACTORY_SKIP,
+    _register_factory_bricks,
+    _WorkflowLifecycleAdapter,
+)
 from nexus.factory.compose import create_nexus_fs, create_nexus_services, create_record_store
 from nexus.factory.kernel import _boot_kernel_services
 from nexus.factory.system import _boot_system_services, _start_background_services
 
 __all__ = [
     "_BootContext",
+    "_FACTORY_BRICKS",
+    "_FACTORY_SKIP",
     "_NexusFSFileReader",
+    "_WorkflowLifecycleAdapter",
     "_boot_brick_services",
     "_boot_kernel_services",
     "_boot_system_services",
+    "_register_factory_bricks",
     "_start_background_services",
     "create_nexus_fs",
     "create_nexus_services",

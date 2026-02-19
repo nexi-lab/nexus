@@ -269,3 +269,89 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     active = sum(1 for v in result.values() if v is not None)
     logger.info("[BOOT:BRICK] %d/%d services ready (%.3fs)", active, len(result), elapsed)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Issue #1704: WorkflowEngine lifecycle adapter
+# ---------------------------------------------------------------------------
+
+
+class _WorkflowLifecycleAdapter:
+    """Adapter: BrickLifecycleProtocol -> WorkflowEngine.
+
+    WorkflowEngine exposes ``startup()`` but BrickLifecycleManager expects
+    ``start()``.  This thin adapter bridges the naming mismatch.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    async def start(self) -> None:
+        if hasattr(self._engine, "startup"):
+            await self._engine.startup()
+
+    async def stop(self) -> None:
+        pass  # WorkflowEngine has no explicit shutdown
+
+    async def health_check(self) -> bool:
+        if hasattr(self._engine, "health_check"):
+            result: bool = await self._engine.health_check()
+            return result
+        return self._engine is not None
+
+
+# ---------------------------------------------------------------------------
+# Issue #1704: Register factory-created bricks with lifecycle manager
+# ---------------------------------------------------------------------------
+
+_FACTORY_BRICKS: list[tuple[str, str]] = [
+    ("manifest_resolver", "ManifestProtocol"),
+    ("chunked_upload_service", "ChunkedUploadProtocol"),
+    ("snapshot_service", "SnapshotProtocol"),
+    ("task_queue_service", "TaskQueueProtocol"),
+    ("ipc_vfs_driver", "IPCProtocol"),
+    ("wallet_provisioner", "WalletProtocol"),
+]
+
+# Entries intentionally NOT registered with lifecycle manager.
+# CI test ``test_all_brick_dict_keys_accounted_for`` will fail if a new
+# key appears in ``_boot_brick_services()`` without being added here or
+# to ``_FACTORY_BRICKS``.
+_FACTORY_SKIP: frozenset[str] = frozenset(
+    {
+        "event_bus",  # infrastructure, not a brick
+        "lock_manager",  # infrastructure, not a brick
+        "api_key_creator",  # class reference, not instance
+        "tool_namespace_middleware",  # stateless middleware, no lifecycle
+        "manifest_metrics",  # observability helper, not a brick
+        "ipc_storage_driver",  # internal to ipc_vfs_driver
+        "ipc_provisioner",  # provisioning helper, not a brick
+        "skill_service",  # wired later via NexusFS gateway adapters
+        "skill_package_service",  # wired later via NexusFS gateway adapters
+        "agent_event_log",  # event log, not a lifecycle brick
+    }
+)
+
+
+def _register_factory_bricks(
+    manager: Any,
+    brick_dict: dict[str, Any],
+) -> None:
+    """Register Tier 2 bricks from ``_boot_brick_services()`` with the lifecycle manager.
+
+    Skips infrastructure entries (event_bus, lock_manager, etc.) and None values.
+    WorkflowEngine gets a thin adapter since its startup API differs.
+    """
+    for name, protocol in _FACTORY_BRICKS:
+        instance = brick_dict.get(name)
+        if instance is not None:
+            manager.register(name, instance, protocol_name=protocol)
+
+    # WorkflowEngine needs adapter (startup() != start())
+    wf = brick_dict.get("workflow_engine")
+    if wf is not None:
+        manager.register(
+            "workflow_engine",
+            _WorkflowLifecycleAdapter(wf),
+            protocol_name="WorkflowProtocol",
+        )

@@ -250,6 +250,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.vfs_hooks import VFSHookPipeline
 
         self._hook_pipeline: VFSHookPipeline = VFSHookPipeline()
+        self._post_mutation_hooks: builtins.list[Any] = []
 
         # Wire self-dependent services, then register hooks
         self._wire_services()
@@ -1091,6 +1092,28 @@ class NexusFS(  # type: ignore[misc]
 
         return directories
 
+    # ------------------------------------------------------------------
+    # Internal helpers restored for backward compatibility (Issue #2033)
+    # ------------------------------------------------------------------
+
+    @property
+    def _require_rebac(self) -> Any:
+        """Return the ReBAC manager or raise if unavailable."""
+        mgr = self._rebac_manager
+        if mgr is None:
+            raise RuntimeError("ReBAC manager not available")
+        return mgr
+
+    def register_mutation_hook(self, hook: Any) -> None:
+        """Register a post-mutation hook (Issue #625)."""
+        self._post_mutation_hooks.append(hook)
+
+    # ------------------------------------------------------------------
+    # ReBAC delegation stubs (Issue #2033)
+    # Previously on NexusFSReBACMixin, now forwarded to rebac_service.
+    # Generated dynamically below via _rebac_delegate().
+    # ------------------------------------------------------------------
+
     # Service forwarding: __getattr__ routes method calls to services (Issue #2033)
 
     _SERVICE_METHODS: dict[str, str] = {
@@ -1154,6 +1177,12 @@ class NexusFS(  # type: ignore[misc]
         # TaskQueueService
         "get_task": "task_queue_service",
         "cancel_task": "task_queue_service",
+        # MCPService
+        "mcp_list_mounts": "mcp_service",
+        # OAuthService
+        "oauth_list_providers": "oauth_service",
+        # LLMService
+        "create_llm_reader": "llm_service",
     }
 
     # Special aliases where service method name differs
@@ -1179,6 +1208,19 @@ class NexusFS(  # type: ignore[misc]
         "alist_versions": ("version_service", "list_versions"),
         "arollback": ("version_service", "rollback"),
         "adiff_versions": ("version_service", "diff_versions"),
+        # ReBACService async methods (Issue #2033)
+        "arebac_create": ("rebac_service", "rebac_create"),
+        "arebac_delete": ("rebac_service", "rebac_delete"),
+        "arebac_check": ("rebac_service", "rebac_check"),
+        "arebac_check_batch": ("rebac_service", "rebac_check_batch"),
+        "arebac_expand": ("rebac_service", "rebac_expand"),
+        "arebac_explain": ("rebac_service", "rebac_explain"),
+        "arebac_list_tuples": ("rebac_service", "rebac_list_tuples"),
+        "aget_namespace": ("rebac_service", "get_namespace"),
+        # SkillService (Issue #2035): NexusFS facade → skill_service RPC methods
+        "skills_share": ("skill_service", "rpc_share"),
+        "skills_discover": ("skill_service", "rpc_discover"),
+        "skills_get_prompt_context": ("skill_service", "rpc_get_prompt_context"),
     }
 
     def __getattr__(self, name: str) -> Any:
@@ -1791,14 +1833,10 @@ class NexusFS(  # type: ignore[misc]
 
     def rebac_check_batch(
         self,
-        checks: builtins.list[dict[str, Any]],
-        context: Any = None,
-    ) -> builtins.list[dict[str, Any]]:
+        checks: builtins.list[tuple[tuple[str, str], str, tuple[str, str]]],
+    ) -> builtins.list[bool]:
         """Batch check permissions — delegates to rebac_service."""
-        return self.rebac_service.rebac_check_batch_sync(
-            checks=checks,
-            context=context,
-        )
+        return self.rebac_service.rebac_check_batch_sync(checks=checks)
 
     def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple — delegates to rebac_service."""
@@ -1809,16 +1847,15 @@ class NexusFS(  # type: ignore[misc]
         subject: tuple[str, str] | None = None,
         relation: str | None = None,
         object: tuple[str, str] | None = None,
-        zone_id: str | None = None,
-        context: Any = None,
+        relation_in: builtins.list[str] | None = None,
+        **_kw: Any,
     ) -> builtins.list[dict[str, Any]]:
         """List relationship tuples — delegates to rebac_service."""
         return self.rebac_service.rebac_list_tuples_sync(
             subject=subject,
             relation=relation,
             object=object,
-            zone_id=zone_id,
-            context=context,
+            relation_in=relation_in,
         )
 
     # ------------------------------------------------------------------

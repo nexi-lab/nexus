@@ -1997,6 +1997,19 @@ class NexusFSCoreMixin:
         if cache_observer is not None:
             cache_observer.on_write(path, new_revision, zone_id or "root")
 
+        # Issue #625: Fire post-mutation hooks for single-file write
+        self._fire_post_mutation_hooks(
+            MutationOp.WRITE,
+            path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            etag=content_hash,
+            size=len(content),
+            version=new_version,
+            is_new=(meta is None),
+        )
+
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
         # the file should inherit those permissions (if include_future_files=True)
@@ -3071,6 +3084,17 @@ class NexusFSCoreMixin:
         if cache_observer is not None:
             cache_observer.on_delete(path, new_revision, zone_id or "root")
 
+        # Issue #625: Fire post-mutation hooks for delete
+        self._fire_post_mutation_hooks(
+            MutationOp.DELETE,
+            path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            etag=meta.etag,
+            size=meta.size,
+        )
+
         # v0.7.0: Fire workflow event for automatic trigger execution
         self._fire_workflow_event(
             "file_delete",
@@ -3259,6 +3283,16 @@ class NexusFSCoreMixin:
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
             cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "root")
+
+        # Issue #625: Fire post-mutation hooks for rename
+        self._fire_post_mutation_hooks(
+            MutationOp.RENAME,
+            old_path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            new_path=new_path,
+        )
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved

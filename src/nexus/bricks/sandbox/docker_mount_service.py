@@ -109,9 +109,7 @@ class DockerMountService:
 
         # Phase 4: Build and execute mount command
         api_key_source = await self._write_api_key(container, api_key)
-        mount_cmd = self._build_mount_command(
-            mount_path, nexus_url, api_key_source, agent_id
-        )
+        mount_cmd = self._build_mount_command(mount_path, nexus_url, api_key_source, agent_id)
 
         logger.info("[MOUNT] Executing mount command...")
         start_time = time.time()
@@ -127,9 +125,7 @@ class DockerMountService:
         )
 
         if mount_result.exit_code != 0:
-            error_msg = (
-                f"Failed to start mount: {mount_result.output.decode()}"
-            )
+            error_msg = f"Failed to start mount: {mount_result.output.decode()}"
             logger.error("[MOUNT] %s", error_msg)
             return {
                 "success": False,
@@ -198,21 +194,15 @@ class DockerMountService:
         """
         nexus_url = validate_nexus_url(nexus_url)
 
-        if self._docker_host_alias and (
-            "localhost" in nexus_url or "127.0.0.1" in nexus_url
-        ):
+        if self._docker_host_alias and ("localhost" in nexus_url or "127.0.0.1" in nexus_url):
             original = nexus_url
             nexus_url = nexus_url.replace("localhost", self._docker_host_alias)
             nexus_url = nexus_url.replace("127.0.0.1", self._docker_host_alias)
-            logger.info(
-                "[MOUNT] Transformed URL: %s -> %s", original, nexus_url
-            )
+            logger.info("[MOUNT] Transformed URL: %s -> %s", original, nexus_url)
 
         return nexus_url
 
-    async def _prepare_container(
-        self, container: Any, mount_path: str
-    ) -> dict[str, Any]:
+    async def _prepare_container(self, container: Any, mount_path: str) -> dict[str, Any]:
         """Create mount directory and configure FUSE.
 
         Args:
@@ -228,10 +218,7 @@ class DockerMountService:
             ["mkdir", "-p", mount_path],
         )
         if mkdir_result.exit_code != 0:
-            error_msg = (
-                f"Failed to create mount directory: "
-                f"{mkdir_result.output.decode()}"
-            )
+            error_msg = f"Failed to create mount directory: {mkdir_result.output.decode()}"
             logger.error("[MOUNT] %s", error_msg)
             return {
                 "success": False,
@@ -297,19 +284,14 @@ class DockerMountService:
         elapsed = time.time() - start_time
 
         if install_result.exit_code != 0:
-            error_msg = (
-                f"Failed to install nexus-ai-fs: "
-                f"{install_result.output.decode()}"
-            )
+            error_msg = f"Failed to install nexus-ai-fs: {install_result.output.decode()}"
             logger.error("[MOUNT] %s (%.2fs)", error_msg, elapsed)
             return {"success": False, "message": error_msg}
 
         logger.info("[MOUNT] Installed nexus-ai-fs in %.2fs", elapsed)
         return {"success": True, "message": "installed"}
 
-    async def _write_api_key(
-        self, container: Any, api_key: str
-    ) -> str:
+    async def _write_api_key(self, container: Any, api_key: str) -> str:
         """Write API key to a temp file inside container (CWE-214 prevention).
 
         Args:
@@ -321,19 +303,14 @@ class DockerMountService:
         """
         api_key_file = "/tmp/.nexus_api_key"
         quoted_key = shlex.quote(api_key)
-        write_cmd = (
-            f"printf '%s' {quoted_key} > {api_key_file} && "
-            f"chmod 600 {api_key_file}"
-        )
+        write_cmd = f"printf '%s' {quoted_key} > {api_key_file} && chmod 600 {api_key_file}"
         result = await asyncio.to_thread(
             container.exec_run,
             ["sh", "-c", write_cmd],
         )
 
         if result.exit_code != 0:
-            logger.warning(
-                "[MOUNT] Failed to write API key file, falling back to env var"
-            )
+            logger.warning("[MOUNT] Failed to write API key file, falling back to env var")
             return f"NEXUS_API_KEY={shlex.quote(api_key)} "
 
         return f"NEXUS_API_KEY=$(cat {api_key_file}) "
@@ -398,14 +375,10 @@ class DockerMountService:
                 ["test", "-d", mount_path],
             )
             if result.exit_code == 0:
-                logger.info(
-                    "[MOUNT] Mount ready after %d polls", attempt + 1
-                )
+                logger.info("[MOUNT] Mount ready after %d polls", attempt + 1)
                 return True
 
-        logger.warning(
-            "[MOUNT] Mount not ready after %d polls", max_attempts
-        )
+        logger.warning("[MOUNT] Mount not ready after %d polls", max_attempts)
         return False
 
     async def _verify_mount(
@@ -446,9 +419,7 @@ class DockerMountService:
             )
         except TimeoutError:
             ls_result = None
-            logger.warning(
-                "[MOUNT] ls timed out, checking mount log..."
-            )
+            logger.warning("[MOUNT] ls timed out, checking mount log...")
 
         # Check mount log
         log_result = await asyncio.to_thread(
@@ -465,11 +436,7 @@ class DockerMountService:
         if ls_result and ls_result.exit_code == 0:
             output = ls_result.output.decode() if ls_result.output else ""
             if output.strip():
-                lines = [
-                    line
-                    for line in output.strip().split("\n")
-                    if line.strip()
-                ]
+                lines = [line for line in output.strip().split("\n") if line.strip()]
                 return {
                     "success": True,
                     "mount_path": mount_path,
@@ -480,9 +447,7 @@ class DockerMountService:
             # Strategy 2: ls empty but mount log or prewarm success
             if mount_log_success or prewarm_success:
                 reason = (
-                    "mount log confirms success"
-                    if mount_log_success
-                    else "pre-warm test succeeded"
+                    "mount log confirms success" if mount_log_success else "pre-warm test succeeded"
                 )
                 logger.info("[MOUNT] ls empty but %s", reason)
                 return {

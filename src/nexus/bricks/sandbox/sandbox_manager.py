@@ -51,9 +51,7 @@ class _ProvidersDictProxy(dict):
 
     def __delitem__(self, name: str) -> None:
         super().__delitem__(name)
-        # Remove from registry internals
-        self._registry._providers.pop(name, None)
-        self._registry._factories.pop(name, None)
+        self._registry.unregister(name)
 
 
 class SandboxManager:
@@ -77,6 +75,7 @@ class SandboxManager:
         *,
         repository: SandboxRepository | None = None,
         registry: ProviderRegistry | None = None,
+        validation_runner: Any = None,
     ):
         """Initialize sandbox manager.
 
@@ -88,7 +87,9 @@ class SandboxManager:
             config: Nexus configuration (for Docker templates).
             repository: Optional pre-built repository (for testing).
             registry: Optional pre-built registry (for testing).
+            validation_runner: Optional validation runner instance (injected via DI).
         """
+        self._validation_runner = validation_runner
         self._repository = repository or SandboxRepository(session_factory)
         self._registry = registry or self._build_default_registry(
             e2b_api_key, e2b_team_id, e2b_template_id, config
@@ -434,14 +435,14 @@ class SandboxManager:
         Returns:
             List of validation result dicts.
         """
-        from nexus.validation import ValidationRunner
+        if self._validation_runner is None:
+            raise RuntimeError("No validation runner configured")
 
         meta_dict = self._repository.get_metadata(sandbox_id)
         provider_name = meta_dict["provider"]
         provider = self._registry.get(provider_name)
 
-        runner = ValidationRunner()
-        results = await runner.validate(sandbox_id, provider, workspace_path)
+        results = await self._validation_runner.validate(sandbox_id, provider, workspace_path)
         return [r.model_dump() for r in results]
 
     async def pause_sandbox(self, sandbox_id: str) -> dict[str, Any]:
@@ -581,9 +582,7 @@ class SandboxManager:
                     sb_dict["status"] = actual_status
 
             except SandboxNotFoundError:
-                logger.warning(
-                    "Sandbox %s not found in provider. Marking as stopped.", sb_id
-                )
+                logger.warning("Sandbox %s not found in provider. Marking as stopped.", sb_id)
                 sb_dict["verified"] = True
                 sb_dict["provider_status"] = "stopped"
                 if sb_status != "stopped":
@@ -675,9 +674,7 @@ class SandboxManager:
                             expires_at=None,
                         )
                     else:
-                        logger.warning(
-                            "Provider '%s' not available for verification", sb_provider
-                        )
+                        logger.warning("Provider '%s' not available for verification", sb_provider)
                 except SandboxNotFoundError:
                     logger.warning(
                         "Sandbox %s not found in provider. Marking as stopped and creating new.",
@@ -814,9 +811,7 @@ class SandboxManager:
         now = datetime.now(UTC)
 
         if mount_result["success"]:
-            logger.info(
-                "Successfully mounted Nexus in sandbox %s at %s", sandbox_id, mount_path
-            )
+            logger.info("Successfully mounted Nexus in sandbox %s at %s", sandbox_id, mount_path)
         else:
             logger.warning(
                 "Failed to mount Nexus in sandbox %s: %s",

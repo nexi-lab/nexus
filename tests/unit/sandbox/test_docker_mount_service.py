@@ -204,3 +204,113 @@ class TestBuildMountCommand:
         )
 
         assert "--agent-id" not in cmd
+
+
+class TestMountPipelineIntegration:
+    """Integration test for the full mount_nexus() pipeline (Issue #2051 #10A).
+
+    Mocks container.exec_run with a side-effect chain that simulates
+    all 5 phases in order.
+    """
+
+    @pytest.mark.asyncio
+    async def test_full_mount_pipeline_success(self):
+        """Happy path: all 5 phases succeed."""
+        svc = DockerMountService(docker_host_alias="host.docker.internal")
+        container = MagicMock()
+
+        # Phase 2: mkdir succeeds
+        mkdir_result = make_exec_result(0, "")
+        # Phase 2: fuse config succeeds
+        fuse_result = make_exec_result(0, "")
+        # Phase 3: which nexus succeeds (already installed)
+        which_result = make_exec_result(0, "/usr/bin/nexus")
+        # Phase 4: write API key succeeds
+        write_key_result = make_exec_result(0, "")
+        # Phase 4: mount command succeeds
+        mount_result = make_exec_result(0, "")
+        # Phase 5: poll test -d succeeds (first attempt)
+        poll_result = make_exec_result(0, "")
+        # Phase 5: prewarm test -d succeeds
+        prewarm_result = make_exec_result(0, "")
+        # Phase 5: ls with files
+        ls_result = make_exec_result(0, "agents\nworkspace\nsettings")
+        # Phase 5: mount log check
+        log_result = make_exec_result(0, "Mounted Nexus to /mnt/nexus")
+
+        container.exec_run.side_effect = [
+            mkdir_result,
+            fuse_result,
+            which_result,
+            write_key_result,
+            mount_result,
+            poll_result,
+            prewarm_result,
+            ls_result,
+            log_result,
+        ]
+
+        result = await svc.mount_nexus(
+            container=container,
+            mount_path="/mnt/nexus",
+            nexus_url="http://localhost:8000",
+            api_key="test-key-123",
+            agent_id="agent-001",
+        )
+
+        assert result["success"] is True
+        assert result["mount_path"] == "/mnt/nexus"
+        assert result["files_visible"] == 3
+
+    @pytest.mark.asyncio
+    async def test_full_mount_pipeline_install_failure(self):
+        """Phase 3 failure: nexus CLI not found and install fails."""
+        svc = DockerMountService()
+        container = MagicMock()
+
+        # Phase 2: mkdir succeeds
+        mkdir_result = make_exec_result(0, "")
+        # Phase 2: fuse config succeeds
+        fuse_result = make_exec_result(0, "")
+        # Phase 3: which nexus fails (not installed)
+        which_result = make_exec_result(1, "")
+        # Phase 3: install fails
+        install_result = make_exec_result(1, "pip install failed: network error")
+
+        container.exec_run.side_effect = [
+            mkdir_result,
+            fuse_result,
+            which_result,
+            install_result,
+        ]
+
+        result = await svc.mount_nexus(
+            container=container,
+            mount_path="/mnt/nexus",
+            nexus_url="http://example.com:8000",
+            api_key="test-key-123",
+        )
+
+        assert result["success"] is False
+        assert "pip install failed" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_full_mount_pipeline_mkdir_failure(self):
+        """Phase 2 failure: can't create mount directory."""
+        svc = DockerMountService()
+        container = MagicMock()
+
+        # Phase 2: mkdir fails
+        mkdir_result = make_exec_result(1, "Permission denied")
+
+        container.exec_run.side_effect = [mkdir_result]
+
+        result = await svc.mount_nexus(
+            container=container,
+            mount_path="/mnt/nexus",
+            nexus_url="http://example.com:8000",
+            api_key="test-key-123",
+        )
+
+        assert result["success"] is False
+        assert "mount directory" in result["message"]

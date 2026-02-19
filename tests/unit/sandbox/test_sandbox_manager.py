@@ -32,7 +32,9 @@ class FakeProvider(SandboxProvider):
     def __init__(self, name: str = "fake") -> None:
         self.name = name
 
-    async def create(self, template_id=None, timeout_minutes=10, metadata=None, security_profile=None) -> str:
+    async def create(
+        self, template_id=None, timeout_minutes=10, metadata=None, security_profile=None
+    ) -> str:
         return f"sandbox-{self.name}-001"
 
     async def run_code(self, sandbox_id, language, code, timeout=300, as_script=False):
@@ -58,7 +60,15 @@ class FakeProvider(SandboxProvider):
     async def is_available(self) -> bool:
         return True
 
-    async def mount_nexus(self, sandbox_id, mount_path, nexus_url, api_key, agent_id=None, skip_dependency_checks=False):
+    async def mount_nexus(
+        self,
+        sandbox_id,
+        mount_path,
+        nexus_url,
+        api_key,
+        agent_id=None,
+        skip_dependency_checks=False,
+    ):
         return {"success": True, "mount_path": mount_path, "message": "ok", "files_visible": 5}
 
 
@@ -258,9 +268,7 @@ class TestRaceCondition:
         }
         mgr = _make_manager(providers={"docker": docker}, repo_overrides=repo_overrides)
 
-        result = await mgr.get_or_create_sandbox(
-            name="test", user_id="user-1", zone_id="zone-1"
-        )
+        result = await mgr.get_or_create_sandbox(name="test", user_id="user-1", zone_id="zone-1")
 
         assert result["sandbox_id"] == "sb-existing"
         assert result["verified"] is True
@@ -475,9 +483,7 @@ class TestDisconnectSandbox:
         mgr = _make_manager(providers={"docker": FakeProvider("docker")})
 
         with pytest.raises(ValueError, match="API key required"):
-            await mgr.disconnect_sandbox(
-                sandbox_id="sb-1", provider="docker", sandbox_api_key=None
-            )
+            await mgr.disconnect_sandbox(sandbox_id="sb-1", provider="docker", sandbox_api_key=None)
 
     @pytest.mark.asyncio
     async def test_disconnect_succeeds_without_unmount_support(self):
@@ -578,3 +584,183 @@ class TestCleanupExpired:
 
         assert count == 2  # sb-1 and sb-3 succeeded
         assert call_count["n"] == 3  # all three attempted
+
+
+# -- Race Condition Edge Cases (Issue #2051 #11A) ----------------------------
+
+
+class TestRaceConditionEdgeCases:
+    """Edge case tests for get_or_create_sandbox race handling."""
+
+    @pytest.mark.asyncio
+    async def test_double_race_fails_gracefully(self):
+        """Both create attempts hit 'already exists' — second should propagate."""
+        docker = FakeProvider("docker")
+        mgr = _make_manager(providers={"docker": docker})
+        mgr._repository.find_active_by_name.side_effect = [
+            None,  # First check
+            _make_metadata(sandbox_id="sb-stale"),  # Stale cleanup lookup
+        ]
+
+        async def _always_conflict(**kwargs):
+            raise ValueError("Active sandbox with name 'test' already exists for user user-1")
+
+        with (
+            patch.object(mgr, "create_sandbox", side_effect=_always_conflict),
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            # Second create also raises 'already exists' — should propagate
+            await mgr.get_or_create_sandbox(name="test", user_id="user-1", zone_id="zone-1")
+
+    @pytest.mark.asyncio
+    async def test_stale_cleanup_db_error_propagates(self):
+        """DB error during stale sandbox cleanup should propagate."""
+        from sqlalchemy.exc import SQLAlchemyError
+
+        docker = FakeProvider("docker")
+        mgr = _make_manager(providers={"docker": docker})
+        mgr._repository.find_active_by_name.side_effect = [
+            None,  # First check
+            _make_metadata(sandbox_id="sb-stale"),  # Stale lookup
+        ]
+
+        # First create fails with name conflict
+        call_count = {"n": 0}
+
+        async def _first_fails(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise ValueError("Active sandbox with name 'test' already exists for user user-1")
+            return _make_metadata(sandbox_id="sb-new")
+
+        # Make stale cleanup fail with DB error
+        mgr._repository.update_metadata.side_effect = SQLAlchemyError("connection lost")
+
+        with (
+            patch.object(mgr, "create_sandbox", side_effect=_first_fails),
+            pytest.raises(SQLAlchemyError, match="connection lost"),
+        ):
+            await mgr.get_or_create_sandbox(name="test", user_id="user-1", zone_id="zone-1")
+
+    @pytest.mark.asyncio
+    async def test_non_conflict_valueerror_propagates(self):
+        """ValueError that is NOT 'already exists' should propagate immediately."""
+        docker = FakeProvider("docker")
+        mgr = _make_manager(providers={"docker": docker})
+
+        async def _invalid_provider(**kwargs):
+            raise ValueError("Provider 'invalid' not available")
+
+        with (
+            patch.object(mgr, "create_sandbox", side_effect=_invalid_provider),
+            pytest.raises(ValueError, match="not available"),
+        ):
+            await mgr.get_or_create_sandbox(name="test", user_id="user-1", zone_id="zone-1")
+
+
+# -- Build Default Registry Tests (Issue #2051 #9A) -------------------------
+
+
+class TestBuildDefaultRegistry:
+    """Tests for SandboxManager._build_default_registry.
+
+    _build_default_registry uses lazy imports inside try/except blocks,
+    so we patch at the *source* modules (not sandbox_manager) and use
+    ``patch.dict("sys.modules", {module: None})`` to simulate missing packages.
+    """
+
+    _DOCKER_MOD = "nexus.bricks.sandbox.sandbox_docker_provider"
+    _E2B_MOD = "nexus.bricks.sandbox.sandbox_e2b_provider"
+    _MONTY_MOD = "nexus.bricks.sandbox.sandbox_monty_provider"
+
+    def test_docker_registered_when_available(self):
+        """Docker provider is registered when docker package is importable."""
+        with (
+            patch(f"{self._DOCKER_MOD}.DockerSandboxProvider") as mock_docker_cls,
+            patch.dict("sys.modules", {self._MONTY_MOD: None}),
+        ):
+            mock_docker_cls.return_value = MagicMock(spec=SandboxProvider)
+            registry = SandboxManager._build_default_registry(
+                e2b_api_key=None,
+                e2b_team_id=None,
+                e2b_template_id=None,
+                config=None,
+            )
+
+        assert registry.has("docker")
+
+    def test_docker_skipped_on_import_error(self):
+        """Docker provider gracefully skipped when docker not installed."""
+        with patch.dict(
+            "sys.modules",
+            {
+                self._DOCKER_MOD: None,
+                self._MONTY_MOD: None,
+            },
+        ):
+            registry = SandboxManager._build_default_registry(
+                e2b_api_key=None,
+                e2b_team_id=None,
+                e2b_template_id=None,
+                config=None,
+            )
+
+        assert not registry.has("docker")
+
+    def test_docker_skipped_on_runtime_error(self):
+        """Docker provider skipped when Docker daemon not running."""
+        with (
+            patch(
+                f"{self._DOCKER_MOD}.DockerSandboxProvider",
+                side_effect=RuntimeError("Docker not running"),
+            ),
+            patch.dict("sys.modules", {self._MONTY_MOD: None}),
+        ):
+            registry = SandboxManager._build_default_registry(
+                e2b_api_key=None,
+                e2b_team_id=None,
+                e2b_template_id=None,
+                config=None,
+            )
+
+        assert not registry.has("docker")
+
+    def test_e2b_registered_when_key_provided(self):
+        """E2B provider registered when API key is provided."""
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    self._DOCKER_MOD: None,
+                    self._MONTY_MOD: None,
+                },
+            ),
+            patch(f"{self._E2B_MOD}.E2BSandboxProvider") as mock_e2b_cls,
+        ):
+            mock_e2b_cls.return_value = MagicMock(spec=SandboxProvider)
+            registry = SandboxManager._build_default_registry(
+                e2b_api_key="test-key",
+                e2b_team_id="team-1",
+                e2b_template_id="tmpl-1",
+                config=None,
+            )
+
+        assert registry.has("e2b")
+
+    def test_e2b_skipped_without_key(self):
+        """E2B provider not registered when no API key."""
+        with patch.dict(
+            "sys.modules",
+            {
+                self._DOCKER_MOD: None,
+                self._MONTY_MOD: None,
+            },
+        ):
+            registry = SandboxManager._build_default_registry(
+                e2b_api_key=None,
+                e2b_team_id=None,
+                e2b_template_id=None,
+                config=None,
+            )
+
+        assert not registry.has("e2b")

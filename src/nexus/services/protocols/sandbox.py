@@ -1,7 +1,7 @@
 """Sandbox service protocol (Issue #2051: Decompose SandboxManager).
 
 Defines the contract for sandbox lifecycle management across providers.
-Concrete implementation: ``nexus.sandbox.sandbox_manager.SandboxManager``.
+Concrete implementation: ``nexus.bricks.sandbox.sandbox_manager.SandboxManager``.
 
 Storage Affinity: **RecordStore** — sandbox metadata persistence.
 
@@ -15,8 +15,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
 
 
@@ -276,24 +274,6 @@ class SandboxProtocol(Protocol):
         """
         ...
 
-    def set_monty_host_functions(
-        self,
-        sandbox_id: str,
-        host_functions: dict[str, Callable[..., Any]],
-    ) -> None:
-        """Set host function callbacks for a Monty sandbox.
-
-        No-op if the sandbox is not a Monty sandbox.
-
-        Args:
-            sandbox_id: Sandbox ID.
-            host_functions: Mapping of function name to callable.
-        """
-        ...
-
-    def wire_router(self) -> None:
-        """Attach a SandboxRouter for smart tier selection.
-
-        Idempotent — safe to call multiple times.
-        """
-        ...
+    # NOTE: set_monty_host_functions() and wire_router() are implementation
+    # details on SandboxManager, not part of the service contract.
+    # See SandboxManager for these lifecycle/wiring methods.

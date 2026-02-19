@@ -36,6 +36,7 @@ class ProviderRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, SandboxProvider] = {}
         self._factories: dict[str, Callable[[], SandboxProvider]] = {}
+        self._frozen = False
 
     def register(self, name: str, provider: SandboxProvider) -> None:
         """Register an already-initialized provider.
@@ -43,14 +44,17 @@ class ProviderRegistry:
         Args:
             name: Provider name ("docker", "e2b", "monty").
             provider: Provider instance.
+
+        Raises:
+            RuntimeError: If the registry has been frozen.
         """
+        if self._frozen:
+            raise RuntimeError(f"Cannot register provider '{name}': registry is frozen")
         self._providers[name] = provider
         self._factories.pop(name, None)
         logger.info("Registered sandbox provider: %s", name)
 
-    def register_lazy(
-        self, name: str, factory: Callable[[], SandboxProvider]
-    ) -> None:
+    def register_lazy(self, name: str, factory: Callable[[], SandboxProvider]) -> None:
         """Register a provider factory for lazy initialization.
 
         The factory is called on the first ``get()`` for this provider.
@@ -60,9 +64,40 @@ class ProviderRegistry:
         Args:
             name: Provider name.
             factory: Callable that creates a SandboxProvider.
+
+        Raises:
+            RuntimeError: If the registry has been frozen.
         """
+        if self._frozen:
+            raise RuntimeError(f"Cannot register lazy provider '{name}': registry is frozen")
         self._factories[name] = factory
         logger.debug("Registered lazy sandbox provider: %s", name)
+
+    def unregister(self, name: str) -> None:
+        """Remove a provider from the registry.
+
+        Removes from both eager and lazy registrations.
+
+        Args:
+            name: Provider name to remove.
+        """
+        if self._frozen:
+            raise RuntimeError(f"Cannot unregister provider '{name}': registry is frozen")
+        self._providers.pop(name, None)
+        self._factories.pop(name, None)
+        logger.info("Unregistered sandbox provider: %s", name)
+
+    def freeze(self) -> None:
+        """Freeze the registry, preventing further registration or removal.
+
+        Call after startup to ensure the provider set is immutable for
+        the lifetime of the application. Idempotent.
+        """
+        self._frozen = True
+        logger.info(
+            "Provider registry frozen with providers: %s",
+            self.available_names(),
+        )
 
     def get(self, name: str) -> SandboxProvider:
         """Get a provider by name, initializing lazily if needed.
@@ -92,15 +127,11 @@ class ProviderRegistry:
                 return provider
             except Exception:
                 # Factory stays in _factories so next get() can retry
-                logger.warning(
-                    "Failed to lazily initialize provider '%s'", name
-                )
+                logger.warning("Failed to lazily initialize provider '%s'", name)
                 raise
 
         available = ", ".join(self.available_names()) or "none"
-        raise ValueError(
-            f"Provider '{name}' not available. Available providers: {available}"
-        )
+        raise ValueError(f"Provider '{name}' not available. Available providers: {available}")
 
     def has(self, name: str) -> bool:
         """Check if a provider is registered (eager or lazy).
@@ -139,9 +170,7 @@ class ProviderRegistry:
             ValueError: If no providers are registered.
         """
         if self.is_empty():
-            raise ValueError(
-                "No sandbox providers available. Available providers: none"
-            )
+            raise ValueError("No sandbox providers available. Available providers: none")
 
         for name in _AUTO_SELECT_ORDER:
             if self.has(name):
@@ -153,9 +182,7 @@ class ProviderRegistry:
                 return name
 
         available = ", ".join(self.available_names()) or "none"
-        raise ValueError(
-            f"No sandbox providers available. Available providers: {available}"
-        )
+        raise ValueError(f"No sandbox providers available. Available providers: {available}")
 
     def items(self) -> list[tuple[str, SandboxProvider]]:
         """Get all eagerly initialized providers as (name, provider) pairs.

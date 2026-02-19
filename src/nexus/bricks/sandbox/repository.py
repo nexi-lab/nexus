@@ -53,9 +53,7 @@ class SandboxRepository:
         finally:
             session.close()
 
-    def _execute_with_retry(
-        self, operation: Callable[[Session], _T], context: str = "query"
-    ) -> _T:
+    def _execute_with_retry(self, operation: Callable[[Session], _T], context: str = "query") -> _T:
         """Execute a database operation with one retry on PendingRollbackError.
 
         Each attempt gets a fresh session from the factory.
@@ -101,9 +99,7 @@ class SandboxRepository:
 
         def _query(session: Session) -> dict[str, Any] | None:
             result = session.execute(
-                select(SandboxMetadataModel).where(
-                    SandboxMetadataModel.sandbox_id == sandbox_id
-                )
+                select(SandboxMetadataModel).where(SandboxMetadataModel.sandbox_id == sandbox_id)
             )
             metadata = result.scalar_one_or_none()
             if metadata is None:
@@ -133,9 +129,7 @@ class SandboxRepository:
 
         def _query(session: Session) -> Any:
             result = session.execute(
-                select(SandboxMetadataModel).where(
-                    SandboxMetadataModel.sandbox_id == sandbox_id
-                )
+                select(SandboxMetadataModel).where(SandboxMetadataModel.sandbox_id == sandbox_id)
             )
             metadata = result.scalar_one_or_none()
             if not metadata:
@@ -159,9 +153,7 @@ class SandboxRepository:
         """
         with self._get_session() as session:
             metadata = session.execute(
-                select(SandboxMetadataModel).where(
-                    SandboxMetadataModel.sandbox_id == sandbox_id
-                )
+                select(SandboxMetadataModel).where(SandboxMetadataModel.sandbox_id == sandbox_id)
             ).scalar_one_or_none()
             if not metadata:
                 raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
@@ -227,9 +219,7 @@ class SandboxRepository:
             session.refresh(metadata)
             return self._metadata_to_dict(metadata)
 
-    def find_active_by_name(
-        self, user_id: str, name: str
-    ) -> dict[str, Any] | None:
+    def find_active_by_name(self, user_id: str, name: str) -> dict[str, Any] | None:
         """Find an active sandbox by user and name.
 
         Args:
@@ -338,15 +328,9 @@ class SandboxRepository:
             "status": metadata.status,
             "created_at": metadata.created_at.isoformat(),
             "last_active_at": metadata.last_active_at.isoformat(),
-            "paused_at": metadata.paused_at.isoformat()
-            if metadata.paused_at
-            else None,
-            "stopped_at": metadata.stopped_at.isoformat()
-            if metadata.stopped_at
-            else None,
+            "paused_at": metadata.paused_at.isoformat() if metadata.paused_at else None,
+            "stopped_at": metadata.stopped_at.isoformat() if metadata.stopped_at else None,
             "ttl_minutes": metadata.ttl_minutes,
-            "expires_at": metadata.expires_at.isoformat()
-            if metadata.expires_at
-            else None,
+            "expires_at": metadata.expires_at.isoformat() if metadata.expires_at else None,
             "uptime_seconds": (datetime.now(UTC) - created_at).total_seconds(),
         }

@@ -19,7 +19,9 @@ class FakeProvider(SandboxProvider):
     def __init__(self, name: str = "fake") -> None:
         self.name = name
 
-    async def create(self, template_id=None, timeout_minutes=10, metadata=None, security_profile=None) -> str:
+    async def create(
+        self, template_id=None, timeout_minutes=10, metadata=None, security_profile=None
+    ) -> str:
         return "fake-id"
 
     async def run_code(self, sandbox_id, language, code, timeout=300, as_script=False):
@@ -40,7 +42,15 @@ class FakeProvider(SandboxProvider):
     async def is_available(self) -> bool:
         return True
 
-    async def mount_nexus(self, sandbox_id, mount_path, nexus_url, api_key, agent_id=None, skip_dependency_checks=False):
+    async def mount_nexus(
+        self,
+        sandbox_id,
+        mount_path,
+        nexus_url,
+        api_key,
+        agent_id=None,
+        skip_dependency_checks=False,
+    ):
         return {"success": True}
 
 
@@ -198,3 +208,83 @@ class TestLazyInitialization:
         registry.register_lazy("docker", lambda: FakeProvider())
 
         assert registry.is_empty() is False
+
+
+class TestUnregister:
+    """Tests for unregister (Issue #2051 architecture fix)."""
+
+    def test_unregister_removes_eager_provider(self):
+        registry = ProviderRegistry()
+        registry.register("docker", FakeProvider("docker"))
+
+        registry.unregister("docker")
+
+        assert registry.has("docker") is False
+        assert registry.is_empty() is True
+
+    def test_unregister_removes_lazy_provider(self):
+        registry = ProviderRegistry()
+        registry.register_lazy("docker", lambda: FakeProvider())
+
+        registry.unregister("docker")
+
+        assert registry.has("docker") is False
+
+    def test_unregister_noop_for_nonexistent(self):
+        """unregister is a no-op for nonexistent providers (no error)."""
+        registry = ProviderRegistry()
+
+        registry.unregister("nonexistent")  # Should not raise
+
+
+class TestFreeze:
+    """Tests for freeze() (Issue #2051 code quality fix)."""
+
+    def test_freeze_prevents_register(self):
+        registry = ProviderRegistry()
+        registry.register("docker", FakeProvider("docker"))
+        registry.freeze()
+
+        with pytest.raises(RuntimeError, match="frozen"):
+            registry.register("e2b", FakeProvider("e2b"))
+
+    def test_freeze_prevents_register_lazy(self):
+        registry = ProviderRegistry()
+        registry.freeze()
+
+        with pytest.raises(RuntimeError, match="frozen"):
+            registry.register_lazy("docker", lambda: FakeProvider())
+
+    def test_freeze_prevents_unregister(self):
+        registry = ProviderRegistry()
+        registry.register("docker", FakeProvider("docker"))
+        registry.freeze()
+
+        with pytest.raises(RuntimeError, match="frozen"):
+            registry.unregister("docker")
+
+    def test_freeze_allows_get(self):
+        """Frozen registry still serves get() requests."""
+        registry = ProviderRegistry()
+        docker = FakeProvider("docker")
+        registry.register("docker", docker)
+        registry.freeze()
+
+        assert registry.get("docker") is docker
+
+    def test_freeze_allows_lazy_get(self):
+        """Frozen registry allows lazy init on get() (reading, not mutating API)."""
+        registry = ProviderRegistry()
+        provider = FakeProvider("docker")
+        registry.register_lazy("docker", lambda: provider)
+        registry.freeze()
+
+        # Lazy init still works (get() is a read operation that materializes)
+        result = registry.get("docker")
+        assert result is provider
+
+    def test_freeze_is_idempotent(self):
+        """Calling freeze() multiple times is safe."""
+        registry = ProviderRegistry()
+        registry.freeze()
+        registry.freeze()  # Should not raise

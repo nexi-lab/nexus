@@ -6100,7 +6100,10 @@ class NexusFS(  # type: ignore[misc]
         return bool(self._sandbox_manager and self._sandbox_manager.providers)
 
     def _ensure_sandbox_manager(self) -> None:
-        """Ensure sandbox manager is initialized (lazy initialization)."""
+        """Ensure sandbox manager is initialized (lazy initialization).
+
+        TODO(#2051): Move to factory.py _boot_brick_services() per NEXUS-LEGO-ARCHITECTURE §5.6.
+        """
         if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
             import os
 

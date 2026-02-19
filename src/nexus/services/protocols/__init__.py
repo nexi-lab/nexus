@@ -63,8 +63,8 @@ from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
-from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.sandbox import SandboxProtocol
+from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
 from nexus.services.protocols.skills import SkillsProtocol

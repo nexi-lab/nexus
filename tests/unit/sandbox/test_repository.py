@@ -179,26 +179,20 @@ class TestFindActiveSandbox:
     """Tests for SandboxRepository.find_active_by_name."""
 
     def test_finds_active_sandbox_by_name(self, repo, active_sandbox):
-        result = repo.find_active_by_name(
-            user_id="user-1", name="test-sandbox"
-        )
+        result = repo.find_active_by_name(user_id="user-1", name="test-sandbox")
 
         assert result is not None
         assert result["sandbox_id"] == "sb-001"
         assert result["status"] == "active"
 
     def test_returns_none_when_no_match(self, repo, active_sandbox):
-        result = repo.find_active_by_name(
-            user_id="user-1", name="nonexistent"
-        )
+        result = repo.find_active_by_name(user_id="user-1", name="nonexistent")
         assert result is None
 
     def test_returns_none_for_stopped_sandbox(self, repo, active_sandbox):
         repo.update_metadata("sb-001", status="stopped")
 
-        result = repo.find_active_by_name(
-            user_id="user-1", name="test-sandbox"
-        )
+        result = repo.find_active_by_name(user_id="user-1", name="test-sandbox")
         assert result is None
 
 
@@ -288,9 +282,72 @@ class TestFindExpired:
 
 
 class TestRetryBehavior:
-    """Tests for database retry logic."""
+    """Tests for database retry logic (Issue #2051 #12A)."""
 
     def test_succeeds_on_first_try(self, repo, active_sandbox):
         # Normal operation should work without retry
         result = repo.get_metadata("sb-001")
         assert result["sandbox_id"] == "sb-001"
+
+    def test_retries_on_pending_rollback_error(self, session_factory, active_sandbox):
+        """PendingRollbackError on first try triggers retry that succeeds."""
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        from sqlalchemy.exc import PendingRollbackError
+
+        repo = SandboxRepository(session_factory=session_factory)
+
+        call_count = {"n": 0}
+        original_get_session = repo._get_session
+
+        @contextmanager
+        def _flaky_session():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise PendingRollbackError("simulated rollback")
+            with original_get_session() as session:
+                yield session
+
+        with patch.object(repo, "_get_session", side_effect=_flaky_session):
+            result = repo.get_metadata("sb-001")
+
+        assert result["sandbox_id"] == "sb-001"
+        assert call_count["n"] == 2  # First failed, second succeeded
+
+    def test_both_tries_fail_propagates_error(self, session_factory, active_sandbox):
+        """SQLAlchemyError on both tries propagates the second error."""
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        from sqlalchemy.exc import SQLAlchemyError
+
+        repo = SandboxRepository(session_factory=session_factory)
+
+        @contextmanager
+        def _always_fail():
+            raise SQLAlchemyError("database down")
+
+        with (
+            patch.object(repo, "_get_session", side_effect=_always_fail),
+            pytest.raises(SQLAlchemyError, match="database down"),
+        ):
+            repo.get_metadata("sb-001")
+
+    def test_find_expired_returns_empty_on_db_failure(self, session_factory):
+        """find_expired returns empty list on database failure (graceful degradation)."""
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        from sqlalchemy.exc import SQLAlchemyError
+
+        repo = SandboxRepository(session_factory=session_factory)
+
+        @contextmanager
+        def _always_fail():
+            raise SQLAlchemyError("connection lost")
+
+        with patch.object(repo, "_get_session", side_effect=_always_fail):
+            result = repo.find_expired()
+
+        assert result == []

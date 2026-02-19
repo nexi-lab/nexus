@@ -1275,17 +1275,47 @@ def create_app(
     app.state.database_url = database_url
     app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
-    # Deployment profile (Issue #1389): resolve enabled bricks from NEXUS_PROFILE env
+    # Deployment profile (Issue #1389, #1708): resolve enabled bricks from NEXUS_PROFILE env
     from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
-    try:
-        _profile = DeploymentProfile(_profile_str)
-    except ValueError:
-        logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
-        _profile = DeploymentProfile.FULL
+    if _profile_str == "auto":
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
+
+        _caps = detect_capabilities()
+        _profile = suggest_profile(_caps)
+        logger.info(
+            "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
+            _profile,
+            _caps.memory_mb,
+            _caps.has_gpu,
+            _caps.cpu_cores,
+        )
+    else:
+        try:
+            _profile = DeploymentProfile(_profile_str)
+        except ValueError:
+            logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
+            _profile = DeploymentProfile.FULL
+        # Warn if explicit profile may exceed device capabilities
+        from nexus.core.device_capabilities import (
+            detect_capabilities as _detect_caps,
+        )
+        from nexus.core.device_capabilities import (
+            warn_if_profile_exceeds_device,
+        )
+
+        _caps = _detect_caps()
+        warn_if_profile_exceeds_device(_profile, _caps)
+
+    # Apply FeaturesConfig overrides (Issue #1389 — was unused in server)
+    _features_overrides: dict[str, bool] = {}
+    _nx_config = getattr(nexus_fs, "_config", None)
+    if _nx_config is not None and hasattr(_nx_config, "features") and _nx_config.features:
+        _features_overrides = _nx_config.features.to_overrides()
+
     app.state.deployment_profile = _profile.value
-    app.state.enabled_bricks = resolve_enabled_bricks(_profile)
+    app.state.enabled_bricks = resolve_enabled_bricks(_profile, overrides=_features_overrides)
 
     # Performance tuning (Issue #2071): resolve per-profile thresholds
     app.state.profile_tuning = _profile.tuning()

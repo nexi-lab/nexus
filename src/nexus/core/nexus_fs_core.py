@@ -2861,7 +2861,7 @@ class NexusFSCoreMixin:
             method = getattr(self._write_observer, f"on_{operation}")
             method(**kwargs)
         except Exception as e:
-            from nexus.core.exceptions import AuditLogError
+            from nexus.contracts.exceptions import AuditLogError
 
             if self._audit_strict_mode:
                 logger.error(

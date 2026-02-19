@@ -79,7 +79,7 @@ class TestRenameErrorPaths:
     """Error conditions that should raise specific exceptions."""
 
     def test_rename_nonexistent_source(self, nx):
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             nx.rename("/files/nonexistent.txt", "/files/new.txt")
@@ -99,7 +99,7 @@ class TestRenameErrorPaths:
 
     def test_rename_invalid_path(self, nx):
         """Invalid paths should raise InvalidPathError."""
-        from nexus.core.exceptions import InvalidPathError
+        from nexus.contracts.exceptions import InvalidPathError
 
         nx.write("/files/valid.txt", b"content")
         with pytest.raises(InvalidPathError):
@@ -136,7 +136,7 @@ class TestRenameMetadataConsistency:
         nx.write("/files/old.txt", b"content")
         nx.rename("/files/old.txt", "/files/new.txt")
         assert nx.stat("/files/new.txt") is not None
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             nx.stat("/files/old.txt")

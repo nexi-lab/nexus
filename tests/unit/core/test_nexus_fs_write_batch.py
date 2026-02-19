@@ -153,7 +153,7 @@ class TestWriteBatchPathValidation:
 
     def test_invalid_path_in_batch(self, nx):
         """An invalid path should raise InvalidPathError."""
-        from nexus.core.exceptions import InvalidPathError
+        from nexus.contracts.exceptions import InvalidPathError
 
         with pytest.raises(InvalidPathError):
             nx.write_batch([("", b"content")])

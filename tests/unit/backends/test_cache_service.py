@@ -23,7 +23,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.cache_service import CacheService
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import Base, FilePathModel
 

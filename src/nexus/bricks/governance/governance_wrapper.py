@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import TransactionProtocol
 from nexus.utils.async_helpers import fire_and_forget
 
@@ -77,7 +78,9 @@ class GovernanceEnforcedPayment:
         Pre-check: governance constraint check (~1ms).
         Post-analysis: fire-and-forget anomaly detection.
         """
-        zone_id = request.metadata.get("zone_id", "root") if request.metadata else "root"
+        zone_id = (
+            request.metadata.get("zone_id", ROOT_ZONE_ID) if request.metadata else ROOT_ZONE_ID
+        )
 
         # 1. Pre-check: governance constraints
         from nexus.bricks.governance.models import ConstraintType

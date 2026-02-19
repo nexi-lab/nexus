@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.services.search_service import SearchService
 

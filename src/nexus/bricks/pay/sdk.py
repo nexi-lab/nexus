@@ -40,6 +40,7 @@ from nexus.bricks.pay.protocol import (
     get_protocol_method_name,
 )
 from nexus.bricks.pay.x402 import validate_wallet_address
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -201,7 +202,7 @@ class NexusPay:
         x402_client: X402Client | None = None,
         x402_enabled: bool = True,
         scheduler_service: Any | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         match = _API_KEY_PATTERN.match(api_key)
         if not match:

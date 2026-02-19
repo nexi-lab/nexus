@@ -18,9 +18,9 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 
+from nexus.contracts.types import OperationContext
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.core.exceptions import NexusPermissionError
-from nexus.core.permissions import OperationContext
 from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 

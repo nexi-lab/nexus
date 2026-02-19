@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from nexus.core.exceptions import MetadataError
+from nexus.contracts.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nexus.core.exceptions import ValidationError
+from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, uuid_pk
 
 

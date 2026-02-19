@@ -44,7 +44,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
@@ -583,12 +583,13 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         mount_manager = MountManager(ctx.record_store)
 
         # --- Workspace Manager ---
+        from nexus.services.protocols.rebac import ReBACBrickProtocol
         from nexus.services.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager(
             metadata=ctx.metadata_store,
             backend=ctx.backend,
-            rebac_manager=rebac_manager,
+            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             session_factory=ctx.session_factory,

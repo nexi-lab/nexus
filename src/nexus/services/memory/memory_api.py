@@ -548,7 +548,7 @@ class Memory:
             _store = SQLAlchemyRecordStore(db_url=db_url)
             try:
                 async with _store.async_session_factory() as session:
-                    graph_store = GraphStore(session, zone_id=effective_zone_id)
+                    graph_store = GraphStore(_store, session, zone_id=effective_zone_id)
 
                     # Store entities
                     entity_id_map: dict[str, str] = {}  # name -> entity_id

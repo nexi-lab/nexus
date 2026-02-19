@@ -8136,7 +8136,7 @@ class NexusFS(  # type: ignore[misc]
         # Import NamespaceConfig
         import uuid
 
-        from nexus.core.rebac import NamespaceConfig
+        from nexus.rebac.domain import NamespaceConfig
 
         # Create NamespaceConfig object
         ns = NamespaceConfig(
@@ -8223,7 +8223,7 @@ class NexusFS(  # type: ignore[misc]
         import uuid
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import NamespaceConfig
+        from nexus.rebac.domain import NamespaceConfig
 
         ns = NamespaceConfig(
             namespace_id=str(uuid.uuid4()),

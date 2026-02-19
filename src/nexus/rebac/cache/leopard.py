@@ -222,18 +222,26 @@ class LeopardIndex:
     for ultra-fast permission checks.
     """
 
-    def __init__(self, engine: Engine, cache_enabled: bool = True, cache_max_size: int = 100_000):
+    def __init__(
+        self,
+        engine: Engine,
+        cache_enabled: bool = True,
+        cache_max_size: int = 100_000,
+        *,
+        is_postgresql: bool = False,
+    ):
         """Initialize the Leopard index.
 
         Args:
             engine: SQLAlchemy database engine
             cache_enabled: Whether to enable in-memory caching
             cache_max_size: Maximum entries in memory cache
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         self._engine = engine
         self._cache_enabled = cache_enabled
         self._cache = LeopardCache(max_size=cache_max_size) if cache_enabled else None
-        self._is_postgresql = "postgresql" in str(engine.url)
+        self._is_postgresql = is_postgresql
 
     @property
     def _now_sql(self) -> str:

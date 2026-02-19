@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -46,6 +45,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from nexus.search.embeddings import EmbeddingProvider
+    from nexus.storage.record_store import RecordStoreABC
 
 
 # =============================================================================
@@ -260,7 +260,9 @@ class GraphStore:
 
     def __init__(
         self,
+        record_store: RecordStoreABC,
         session: AsyncSession,
+        *,
         zone_id: str = "root",
         embedding_provider: EmbeddingProvider | None = None,
         merge_threshold: float = 0.85,
@@ -268,35 +270,28 @@ class GraphStore:
     ):
         """Initialize GraphStore.
 
+        GraphStore is a RecordStore consumer — it receives its session and
+        dialect flag from the injected ``RecordStoreABC``.
+
         Args:
-            session: SQLAlchemy async session
-            zone_id: Zone ID for multi-zone isolation
-            embedding_provider: Provider for generating entity embeddings
-            merge_threshold: Similarity threshold for entity merging (0.0-1.0)
-            confidence_threshold: Minimum confidence for relationships
+            record_store: RecordStoreABC that owns the database connection.
+            session: SQLAlchemy async session (from record_store.async_session_factory).
+            zone_id: Zone ID for multi-zone isolation.
+            embedding_provider: Provider for generating entity embeddings.
+            merge_threshold: Similarity threshold for entity merging (0.0-1.0).
+            confidence_threshold: Minimum confidence for relationships.
         """
+        self._record_store = record_store
         self.session = session
         self.zone_id = zone_id
         self.embedding_provider = embedding_provider
         self.merge_threshold = merge_threshold
         self.confidence_threshold = confidence_threshold
+        self._is_postgresql: bool = getattr(record_store, "_is_postgresql", False)
 
     def _is_postgres(self) -> bool:
-        """Check if the database is PostgreSQL (vs SQLite).
-
-        Uses the session's engine URL to determine the database type.
-        """
-        bind = self.session.get_bind()
-        if bind is None:
-            # Fallback to environment variable
-            db_url = os.environ.get("NEXUS_DATABASE_URL", "")
-            return db_url.startswith(("postgres", "postgresql"))
-        # Handle both Engine and Connection types
-        url = getattr(bind, "url", None)
-        if url is None:
-            return False
-        db_url = str(url)
-        return db_url.startswith(("postgres", "postgresql"))
+        """Check if the database is PostgreSQL (vs SQLite)."""
+        return self._is_postgresql
 
     # =========================================================================
     # Entity CRUD Operations

@@ -50,9 +50,11 @@ class ConnectionHelper(Protocol):
 
 
 def increment_version_token(
-    engine: Engine,
+    _engine: Engine,
     conn_helper: ConnectionHelper,
     zone_id: str = "root",
+    *,
+    is_postgresql: bool = False,
 ) -> str:
     """Atomically increment and return the version token for a zone.
 
@@ -77,7 +79,7 @@ def increment_version_token(
     with conn_helper.connection() as conn:
         cursor = conn_helper.create_cursor(conn)
 
-        if engine.dialect.name == "postgresql":
+        if is_postgresql:
             # Atomic increment-and-return
             cursor.execute(
                 """

@@ -371,7 +371,7 @@ class TestCrossZoneRustPathFix:
 
     def test_fetch_tuples_for_rust_includes_cross_zone(self, enhanced_manager):
         """Test that _fetch_tuples_for_rust includes cross-zone tuples."""
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         # Create cross-zone share: partner-zone user gets access to acme-zone file
         enhanced_manager.rebac_write(

@@ -1,0 +1,66 @@
+"""Brick lifecycle startup/shutdown (Issue #1704).
+
+Calls ``BrickLifecycleManager.mount_all()`` during server startup and
+``unmount_all()`` during shutdown.  No-ops gracefully when NexusFS or the
+lifecycle manager are absent.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+logger = logging.getLogger(__name__)
+
+
+async def startup_bricks(app: FastAPI) -> list[asyncio.Task[None]]:
+    """Mount all registered bricks via BrickLifecycleManager."""
+    nx = getattr(app.state, "nexus_fs", None)
+    if nx is None:
+        return []
+
+    _sys = getattr(nx, "_system_services", None)
+    manager = getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
+    if manager is None:
+        return []
+
+    try:
+        t0 = time.perf_counter()
+        report = await manager.mount_all()
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "[LIFECYCLE] mount_all complete: %d/%d active, %d failed (%.3fs)",
+            report.active,
+            report.total,
+            report.failed,
+            elapsed,
+        )
+    except Exception as exc:
+        logger.error("[LIFECYCLE] mount_all failed: %s", exc)
+    return []
+
+
+async def shutdown_bricks(app: FastAPI) -> None:
+    """Unmount all active bricks in reverse-DAG order."""
+    nx = getattr(app.state, "nexus_fs", None)
+    if nx is None:
+        return
+
+    _sys = getattr(nx, "_system_services", None)
+    manager = getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
+    if manager is None:
+        return
+
+    try:
+        report = await manager.unmount_all()
+        logger.info(
+            "[LIFECYCLE] unmount_all complete: %d remaining active",
+            report.active,
+        )
+    except Exception as exc:
+        logger.error("[LIFECYCLE] unmount_all failed: %s", exc)

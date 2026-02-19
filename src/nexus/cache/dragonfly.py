@@ -342,6 +342,13 @@ class DragonflyCacheStore(CacheStoreABC):
             deleted += sum(1 for r in results if r)
         return deleted
 
+    async def keys_by_pattern(self, pattern: str) -> list[str]:
+        """Return keys matching pattern using SCAN cursor."""
+        result: list[str] = []
+        async for key in self._client.client.scan_iter(match=pattern, count=1000):
+            result.append(key.decode() if isinstance(key, bytes) else key)
+        return result
+
     # --- Batch KV operations (Decision #13) ---
 
     async def get_many(self, keys: list[str]) -> dict[str, bytes | None]:

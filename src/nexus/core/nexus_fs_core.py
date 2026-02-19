@@ -851,7 +851,7 @@ class NexusFSCoreMixin:
 
         # Check read permission (handles virtual views by checking original file)
         perm_check_start = time.time()
-        self._check_permission(path, Permission.READ, context)
+        self._permission_checker.check(path, Permission.READ, context)
         perm_check_elapsed = time.time() - perm_check_start
 
         # Log slow permission checks
@@ -1471,7 +1471,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Check read permission
-        self._check_permission(path, Permission.READ, context)
+        self._permission_checker.check(path, Permission.READ, context)
 
         # Route to backend with access control
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -1539,7 +1539,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Check read permission
-        self._check_permission(path, Permission.READ, context)
+        self._permission_checker.check(path, Permission.READ, context)
 
         # Route to backend with access control
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -1584,7 +1584,7 @@ class NexusFSCoreMixin:
             bytes: Chunks of file content within the requested range
         """
         path = self._validate_path(path)
-        self._check_permission(path, Permission.READ, context)
+        self._permission_checker.check(path, Permission.READ, context)
 
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
@@ -1657,7 +1657,7 @@ class NexusFSCoreMixin:
             raise PermissionError(f"Path is read-only: {path}")
 
         # Check write permission
-        self._check_permission(path, Permission.WRITE, context)
+        self._permission_checker.check(path, Permission.WRITE, context)
 
         # Get existing metadata for version tracking
         now = datetime.now(UTC)
@@ -1863,12 +1863,12 @@ class NexusFSCoreMixin:
 
             if meta is not None:
                 # For existing files, check permission on the file itself
-                self._check_permission(path, Permission.WRITE, ctx, file_metadata=meta)
+                self._permission_checker.check(path, Permission.WRITE, ctx, file_metadata=meta)
             else:
                 # For new files, check permission on parent directory
                 parent_path = self._get_parent_path(path)  # type: ignore[attr-defined]
                 if parent_path:
-                    self._check_permission(parent_path, Permission.WRITE, ctx)
+                    self._permission_checker.check(parent_path, Permission.WRITE, ctx)
 
         # Optimistic concurrency control
         if not force:
@@ -2600,7 +2600,7 @@ class NexusFSCoreMixin:
             for path in paths:
                 meta = existing_metadata.get(path)
                 if meta is not None:
-                    self._check_permission(path, Permission.WRITE, context, file_metadata=meta)
+                    self._permission_checker.check(path, Permission.WRITE, context, file_metadata=meta)
 
         now = datetime.now(UTC)
         metadata_list: list[FileMetadata] = []
@@ -2965,7 +2965,7 @@ class NexusFSCoreMixin:
         }
 
         # Check write permission for delete        # This comes AFTER zone isolation check so AccessDeniedError takes precedence
-        self._check_permission(path, Permission.WRITE, context)
+        self._permission_checker.check(path, Permission.WRITE, context)
 
         # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
         _snapshot_svc = getattr(self, "_snapshot_service", None)
@@ -3522,7 +3522,7 @@ class NexusFSCoreMixin:
                         f"permission for '{path}'"
                     )
         else:
-            self._check_permission(path, Permission.READ, context)
+            self._permission_checker.check(path, Permission.READ, context)
 
         # Return directory info for implicit directories
         if is_implicit_dir:
@@ -4184,7 +4184,7 @@ class NexusFSCoreMixin:
             raise PermissionError(f"Cannot remove read-only directory: {path}")
 
         # Check write permission
-        self._check_permission(path, Permission.WRITE, context)
+        self._permission_checker.check(path, Permission.WRITE, context)
 
         # Check if path exists (explicit or implicit)
         meta = self.metadata.get(path)

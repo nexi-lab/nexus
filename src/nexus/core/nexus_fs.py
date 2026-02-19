@@ -739,119 +739,6 @@ class NexusFS(  # type: ignore[misc]
             # No parent (shouldn't happen for valid paths)
             return None
 
-    def _check_permission(
-        self,
-        path: str,
-        permission: Permission,
-        context: OperationContext | None = None,
-        file_metadata: FileMetadata | None = None,
-    ) -> None:
-        """Check if operation is permitted.
-
-        Args:
-            path: Virtual file path
-            permission: Permission to check (READ, WRITE, EXECUTE)
-            context: Optional operation context (defaults to self._default_context)
-            file_metadata: Pre-fetched metadata for owner fast-path (avoids redundant
-                metadata lookup when caller already has it)
-
-        Raises:
-            PermissionError: If access is denied
-        """
-
-
-        # Skip if permission enforcement is disabled
-        if not self._enforce_permissions:
-            return
-
-        # Use default context if none provided
-        ctx_raw = context or self._default_context
-        assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
-        ctx: OperationContext = ctx_raw
-
-        # P0-4: Zone boundary security check (Issue #819)
-        # Even admins need zone boundary checks (unless they have MANAGE_ZONES capability)
-        if ctx.is_admin and self._permission_enforcer:
-            from nexus.rebac.permissions_enhanced import AdminCapability
-
-            # Extract zone from path (format: /zone/{zone_id}/...)
-            path_zone_id = None
-            if path.startswith("/zone/"):
-                parts = path[6:].split("/", 1)  # Remove "/zone/" prefix
-                if parts:
-                    path_zone_id = parts[0]
-
-            # Check if admin is attempting cross-zone access without MANAGE_ZONES
-            if (
-                path_zone_id
-                and ctx.zone_id
-                and path_zone_id != ctx.zone_id
-                and AdminCapability.MANAGE_ZONES not in ctx.admin_capabilities
-            ):
-                # Cross-zone access requires MANAGE_ZONES capability
-                raise PermissionError(
-                    f"Access denied: Cross-zone access requires MANAGE_ZONES capability. "
-                    f"Context zone: {ctx.zone_id}, Path zone: {path_zone_id}"
-                )
-
-        # Skip permission checks for admin/system users during provisioning
-        # This significantly speeds up operations like skill imports (82s -> ~10s)
-        if ctx.is_admin or ctx.is_system:
-            logger.debug(
-                f"_check_permission: SKIPPED (admin/system bypass) - path={path}, permission={permission.name}, user={ctx.user_id}"
-            )
-            return
-
-        logger.debug(
-            f"_check_permission: path={path}, permission={permission.name}, user={ctx.user_id}, zone={getattr(ctx, 'zone_id', None)}"
-        )
-
-        # Fix #332: Virtual parsed views (e.g., report_parsed.pdf.md) should inherit
-        # permissions from their original files (e.g., report.pdf)
-        from nexus.core.virtual_views import parse_virtual_path
-
-        # Use metadata.exists to avoid circular dependency with self.exists()
-        def metadata_exists(check_path: str) -> bool:
-            return self.metadata.exists(check_path)
-
-        original_path, view_type = parse_virtual_path(path, metadata_exists)
-        if view_type == "md":
-            # This is a virtual view - check permissions on the original file instead
-            logger.debug(
-                f"  -> Virtual view detected: checking permissions on original file {original_path}"
-            )
-            permission_path = original_path
-        else:
-            permission_path = path
-
-        # Issue #920: O(1) owner fast-path check
-        # If the file has posix_uid set and it matches the requesting user, skip ReBAC
-        # This avoids expensive graph traversal for owner accessing their own files
-        # Use pre-fetched metadata when available (avoids redundant FFI call)
-        # Use pre-fetched metadata when path wasn't redirected to a virtual view's original
-        file_meta = (
-            file_metadata
-            if (file_metadata is not None and permission_path == path)
-            else self.metadata.get(permission_path)
-        )
-        if file_meta and file_meta.owner_id:
-            subject_id = ctx.subject_id or ctx.user_id
-            if file_meta.owner_id == subject_id:
-                logger.debug(
-                    f"  -> OWNER FAST-PATH: {subject_id} owns {permission_path}, skipping ReBAC"
-                )
-                return  # Owner has all permissions
-
-        # Check permission using enforcer (ReBAC graph traversal)
-        result = self._permission_enforcer.check(permission_path, permission, ctx)
-        logger.debug(f"  -> permission_enforcer.check returned: {result}")
-
-        if not result:
-            raise PermissionError(
-                f"Access denied: User '{ctx.user_id}' does not have {permission.name} "
-                f"permission for '{path}'"
-            )
-
     def _create_directory_metadata(
         self, path: str, context: OperationContext | None = None
     ) -> None:
@@ -936,7 +823,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Check WRITE permission on the existing ancestor
             if check_path and self.metadata.exists(check_path):
-                self._check_permission(check_path, Permission.WRITE, ctx)
+                self._permission_checker.check(check_path, Permission.WRITE, ctx)
 
         # Route to backend with write access check (mkdir requires write permission)
         route = self.router.route(
@@ -1140,7 +1027,7 @@ class NexusFS(  # type: ignore[misc]
         logger.debug(
             f"rmdir: path={path}, recursive={recursive}, user={ctx.user_id}, is_admin={ctx.is_admin}"
         )
-        self._check_permission(path, Permission.WRITE, ctx)
+        self._permission_checker.check(path, Permission.WRITE, ctx)
         logger.debug(f"  -> Permission check PASSED for rmdir on {path}")
 
         # Route to backend with write access check (rmdir requires write permission)

@@ -249,3 +249,13 @@ def wire_services(fs: Any) -> None:
         permission_enforcer=fs._permission_enforcer,
         metadata_store=fs.metadata,
     )
+
+    # PermissionChecker: extracted from NexusFS._check_permission (Issue #2033)
+    from nexus.core.permission_checker import PermissionChecker
+
+    fs._permission_checker = PermissionChecker(
+        permission_enforcer=fs._permission_enforcer,
+        metadata_store=fs.metadata,
+        default_context=fs._default_context,
+        enforce_permissions=fs._enforce_permissions,
+    )

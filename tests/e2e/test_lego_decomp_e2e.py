@@ -9,7 +9,7 @@ Tests all APIs that were refactored from NexusFS to services:
 - cancel_sync_job → _SERVICE_ALIASES → SyncJobService.cancel_sync_job
 - Version methods → _SERVICE_ALIASES → VersionService
 
-Uses real NexusFS with SQLite record store and permission enforcement.
+Uses factory-wired NexusFS with PostgreSQL record store and FastAPI TestClient.
 
 Run with:
     uv run pytest tests/e2e/test_lego_decomp_e2e.py -v --override-ini="addopts=" -x
@@ -17,58 +17,80 @@ Run with:
 
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from nexus.backends.local import LocalBackend
 from nexus.core.config import (
-    CacheConfig,
     DistributedConfig,
-    KernelServices,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
 )
-from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
-from nexus.storage.models import Base
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
 pytestmark = [pytest.mark.e2e]
 
+# ---------------------------------------------------------------------------
+# PostgreSQL connection
+# ---------------------------------------------------------------------------
+
+PG_URL = "postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_test"
+
+
+def _pg_available() -> bool:
+    """Check if the test PostgreSQL is reachable."""
+    try:
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(PG_URL, connect_args={"connect_timeout": 3})
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
+# Skip entire module if PostgreSQL isn't available
+pytestmark.append(
+    pytest.mark.skipif(not _pg_available(), reason="PostgreSQL not available at localhost:5433")
+)
+
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Fixtures — factory-wired NexusFS + PostgreSQL + FastAPI
 # ---------------------------------------------------------------------------
 
 
-def _create_nexus_fs(
+def _create_factory_nexus_fs(
     tmp_path: Path,
     *,
     enforce_permissions: bool = False,
     is_admin: bool = True,
-) -> NexusFS:
-    """Create a full NexusFS with SQLite record store for E2E testing."""
+    enable_tiger_cache: bool = True,
+) -> Any:
+    """Create a factory-wired NexusFS with PostgreSQL record store.
+
+    Uses create_nexus_fs() from nexus.factory.compose — the recommended entry
+    point that wires ALL services (ReBAC, Permissions, VersionService, etc.).
+    """
+    from nexus.backends.local import LocalBackend
+    from nexus.factory.compose import create_nexus_fs, create_record_store
+    from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
     backend = LocalBackend(root_path=data_dir)
-
-    # Use InMemory metastore for speed (avoids Raft native build requirement)
-    from tests.helpers.in_memory_metadata_store import InMemoryMetastore
-
     metadata_store = InMemoryMetastore()
 
-    # SQLite record store for Memory API + versioning
-    db_path = tmp_path / "records.db"
-    record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}")
+    record_store = create_record_store(db_url=PG_URL, create_tables=True)
 
-    return NexusFS(
+    return create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -76,6 +98,8 @@ def _create_nexus_fs(
         permissions=PermissionConfig(
             enforce=enforce_permissions,
             audit_strict_mode=False,
+            enforce_zone_isolation=False,
+            enable_tiger_cache=enable_tiger_cache,
         ),
         parsing=ParseConfig(auto_parse=False),
         distributed=DistributedConfig(
@@ -84,32 +108,99 @@ def _create_nexus_fs(
             enable_workflows=False,
         ),
         memory=MemoryConfig(enable_paging=False),
+        enable_write_buffer=False,  # Sync writes so versions are immediately visible
     )
 
 
 @pytest.fixture()
 def nx(tmp_path):
-    """NexusFS with permissions disabled (admin mode)."""
-    fs = _create_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
+    """Factory-wired NexusFS with PostgreSQL, permissions disabled."""
+    fs = _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
     yield fs
     fs.close()
 
 
 @pytest.fixture()
 def nx_perms(tmp_path):
-    """NexusFS with permissions enabled."""
-    fs = _create_nexus_fs(tmp_path, enforce_permissions=True, is_admin=True)
+    """Factory-wired NexusFS with PostgreSQL, permissions enabled."""
+    fs = _create_factory_nexus_fs(
+        tmp_path, enforce_permissions=True, is_admin=True, enable_tiger_cache=False,
+    )
     yield fs
     fs.close()
 
 
+@pytest.fixture()
+def client(tmp_path):
+    """FastAPI TestClient with factory-wired NexusFS + PostgreSQL."""
+    from starlette.testclient import TestClient
+
+    from nexus.server.fastapi_server import create_app
+
+    fs = _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
+    api_key = "test-api-key-" + uuid.uuid4().hex[:16]
+    app = create_app(fs, api_key=api_key, database_url=PG_URL)
+    tc = TestClient(app)
+    yield {
+        "client": tc,
+        "nx": fs,
+        "api_key": api_key,
+        "headers": {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+    }
+    fs.close()
+
+
+@pytest.fixture()
+def client_perms(tmp_path):
+    """FastAPI TestClient with factory-wired NexusFS + PostgreSQL + permissions."""
+    from starlette.testclient import TestClient
+
+    from nexus.server.fastapi_server import create_app
+
+    fs = _create_factory_nexus_fs(
+        tmp_path, enforce_permissions=True, is_admin=True, enable_tiger_cache=False,
+    )
+    api_key = "test-api-key-" + uuid.uuid4().hex[:16]
+    app = create_app(fs, api_key=api_key, database_url=PG_URL)
+    tc = TestClient(app)
+    yield {
+        "client": tc,
+        "nx": fs,
+        "api_key": api_key,
+        "headers": {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+    }
+    fs.close()
+
+
+def _rpc(ctx: dict, method: str, params: dict | None = None) -> dict:
+    """Make a JSON-RPC call via TestClient."""
+    body = {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": method,
+        "params": params or {},
+    }
+    resp = ctx["client"].post(
+        f"/api/nfs/{method}",
+        content=json.dumps(body),
+        headers=ctx["headers"],
+    )
+    return resp.json()
+
+
 # ---------------------------------------------------------------------------
-# 1. Basic VFS sanity (ensure kernel still works)
+# 1. Basic VFS sanity (ensure kernel still works with factory wiring + PG)
 # ---------------------------------------------------------------------------
 
 
 class TestKernelSanity:
-    """Verify basic VFS ops work after decomposition."""
+    """Verify basic VFS ops work after decomposition with factory + PostgreSQL."""
 
     def test_write_read_roundtrip(self, nx):
         nx.write("/test.txt", b"hello world")
@@ -157,13 +248,12 @@ class TestKernelSanity:
 
 
 class TestMemoryDelegation:
-    """Verify memory property and helpers delegate correctly."""
+    """Verify memory property and helpers delegate correctly with PG backend."""
 
     def test_memory_property_returns_memory_api(self, nx):
         """memory property should return a Memory instance via MemoryProvider."""
         mem = nx.memory
         assert mem is not None
-        # Should have standard Memory methods
         assert hasattr(mem, "store")
         assert hasattr(mem, "query")
         assert hasattr(mem, "list")
@@ -176,20 +266,18 @@ class TestMemoryDelegation:
         assert mem1 is mem2
 
     def test_memory_store_and_query(self, nx):
-        """End-to-end memory store + query through delegated property."""
+        """End-to-end memory store + query through delegated property with PG."""
         mem = nx.memory
-        # Store a memory
         mid = mem.store(
-            content="Test memory from E2E",
+            content="Test memory from E2E with PostgreSQL",
             scope="user",
             memory_type="observation",
         )
         assert mid is not None
 
-        # Query it back
         result = mem.get(mid)
         assert result is not None
-        assert "Test memory from E2E" in str(result.get("content", result))
+        assert "Test memory from E2E with PostgreSQL" in str(result.get("content", result))
 
     def test_get_memory_api_returns_fresh_instance(self, nx):
         """_get_memory_api should return a fresh Memory per context."""
@@ -207,7 +295,6 @@ class TestMemoryDelegation:
         """_ensure_entity_registry should return an EntityRegistry."""
         reg = nx._ensure_entity_registry()
         assert reg is not None
-        # EntityRegistry has a session_factory
         assert hasattr(reg, "session") or hasattr(reg, "_session_factory")
 
 
@@ -227,8 +314,6 @@ class TestSyncDelegation:
         """sync_mount with no mounts configured returns empty summary."""
         result = nx.sync_mount()
         assert isinstance(result, dict)
-        # Should have standard sync result keys
-        assert "files_created" in result or "status" in result or "synced" in result or "total" in result or isinstance(result, dict)
 
     def test_sync_mount_async_callable(self, nx):
         """sync_mount_async should be callable via __getattr__."""
@@ -238,7 +323,11 @@ class TestSyncDelegation:
         """cancel_sync_job for non-existent job returns failure dict."""
         result = nx.cancel_sync_job("nonexistent-job-id")
         assert isinstance(result, dict)
-        assert result.get("success") is False or "not found" in str(result.get("message", "")).lower() or "Job not found" in str(result)
+        assert (
+            result.get("success") is False
+            or "not found" in str(result.get("message", "")).lower()
+            or "Job not found" in str(result)
+        )
 
     def test_get_sync_job_callable(self, nx):
         """get_sync_job should be forwarded via __getattr__."""
@@ -250,71 +339,67 @@ class TestSyncDelegation:
 
 
 # ---------------------------------------------------------------------------
-# 4. Version service delegation
+# 4. Version service delegation (factory-wired, NOT skipped)
 # ---------------------------------------------------------------------------
 
 
 class TestVersionDelegation:
-    """Verify version_service methods work after delegation."""
+    """Verify version_service methods work with factory-wired NexusFS + PG."""
 
-    @pytest.fixture()
-    def nx_with_versions(self, tmp_path):
-        """NexusFS with VersionService wired via factory."""
-        try:
-            from nexus.factory import create_nexus_fs
+    def test_version_service_is_wired(self, nx):
+        """Factory should wire a VersionService instance."""
+        vs = getattr(nx, "version_service", None) or getattr(nx, "_version_service", None)
+        assert vs is not None, "VersionService should be wired by factory"
 
-            fs = create_nexus_fs(
-                backend_type="local",
-                data_dir=str(tmp_path / "data"),
-                db_url=f"sqlite:///{tmp_path / 'db.sqlite'}",
-                enforce_permissions=False,
-                is_admin=True,
-            )
-            yield fs
-            fs.close()
-        except Exception:
-            pytest.skip("factory not available for version tests")
-
-    def test_list_versions_after_write(self, nx_with_versions):
+    def test_list_versions_after_write(self, nx):
         """list_versions should return version history after writes."""
-        nx_with_versions.write("/ver.txt", b"v1")
-        versions = nx_with_versions.list_versions("/ver.txt")
+        path = f"/ver-{uuid.uuid4().hex[:8]}.txt"
+        nx.write(path, b"v1")
+        versions = nx.list_versions(path)
         assert isinstance(versions, list)
         assert len(versions) >= 1
 
-    def test_get_version_returns_content(self, nx_with_versions):
+    def test_get_version_returns_content(self, nx):
         """get_version should retrieve specific version content."""
-        nx_with_versions.write("/ver2.txt", b"version-one")
-        versions = nx_with_versions.list_versions("/ver2.txt")
-        if versions:
-            v = versions[0]
-            ver_num = v.get("version", 1)
-            content = nx_with_versions.get_version("/ver2.txt", ver_num)
-            assert isinstance(content, bytes)
+        path = f"/ver2-{uuid.uuid4().hex[:8]}.txt"
+        nx.write(path, b"version-one")
+        versions = nx.list_versions(path)
+        assert len(versions) >= 1
+        ver_num = versions[0].get("version", 1)
+        content = nx.get_version(path, ver_num)
+        assert isinstance(content, bytes)
 
-    def test_aget_version_is_coroutine(self, nx_with_versions):
+    def test_multiple_versions(self, nx):
+        """Multiple writes should produce multiple versions."""
+        path = f"/multi-ver-{uuid.uuid4().hex[:8]}.txt"
+        nx.write(path, b"v1")
+        nx.write(path, b"v2")
+        versions = nx.list_versions(path)
+        assert len(versions) >= 2
+
+    def test_aget_version_is_coroutine(self, nx):
         """aget_version should be a coroutine function (via __getattr__)."""
         import inspect
 
-        assert inspect.iscoroutinefunction(nx_with_versions.aget_version)
+        assert inspect.iscoroutinefunction(nx.aget_version)
 
-    def test_alist_versions_is_coroutine(self, nx_with_versions):
+    def test_alist_versions_is_coroutine(self, nx):
         """alist_versions should be a coroutine function (via __getattr__)."""
         import inspect
 
-        assert inspect.iscoroutinefunction(nx_with_versions.alist_versions)
+        assert inspect.iscoroutinefunction(nx.alist_versions)
 
-    def test_arollback_is_coroutine(self, nx_with_versions):
+    def test_arollback_is_coroutine(self, nx):
         """arollback should be a coroutine function (via __getattr__)."""
         import inspect
 
-        assert inspect.iscoroutinefunction(nx_with_versions.arollback)
+        assert inspect.iscoroutinefunction(nx.arollback)
 
-    def test_adiff_versions_is_coroutine(self, nx_with_versions):
+    def test_adiff_versions_is_coroutine(self, nx):
         """adiff_versions should be a coroutine function (via __getattr__)."""
         import inspect
 
-        assert inspect.iscoroutinefunction(nx_with_versions.adiff_versions)
+        assert inspect.iscoroutinefunction(nx.adiff_versions)
 
 
 # ---------------------------------------------------------------------------
@@ -357,15 +442,15 @@ class TestServiceForwarding:
 
 
 # ---------------------------------------------------------------------------
-# 6. Permission enforcement still works
+# 6. Permission enforcement with factory-wired ReBAC + PG
 # ---------------------------------------------------------------------------
 
 
 class TestPermissionEnforcement:
-    """Verify permission checks still work after decomposition."""
+    """Verify permission checks still work after decomposition with PG ReBAC."""
 
     def test_write_with_admin_context(self, nx_perms):
-        """Admin should be able to write."""
+        """Admin should be able to write with permissions enabled."""
         ctx = OperationContext(
             user_id="admin",
             groups=[],
@@ -373,8 +458,9 @@ class TestPermissionEnforcement:
             is_admin=True,
             is_system=False,
         )
-        nx_perms.write("/perm-test.txt", b"admin write", context=ctx)
-        data = nx_perms.read("/perm-test.txt", context=ctx)
+        path = f"/perm-test-{uuid.uuid4().hex[:8]}.txt"
+        nx_perms.write(path, b"admin write", context=ctx)
+        data = nx_perms.read(path, context=ctx)
         assert data == b"admin write"
 
     def test_mkdir_with_admin(self, nx_perms):
@@ -386,54 +472,47 @@ class TestPermissionEnforcement:
             is_admin=True,
             is_system=False,
         )
-        nx_perms.mkdir("/admin-dir", parents=True, exist_ok=True, context=ctx)
-        assert nx_perms.is_directory("/admin-dir", context=ctx)
+        dirname = f"/admin-dir-{uuid.uuid4().hex[:8]}"
+        nx_perms.mkdir(dirname, parents=True, exist_ok=True, context=ctx)
+        assert nx_perms.is_directory(dirname, context=ctx)
+
+    def test_read_after_write_with_permissions(self, nx_perms):
+        """Read after write should work with admin permissions."""
+        ctx = OperationContext(
+            user_id="admin",
+            groups=[],
+            zone_id="root",
+            is_admin=True,
+            is_system=False,
+        )
+        path = f"/perm-rw-{uuid.uuid4().hex[:8]}.txt"
+        nx_perms.write(path, b"perm data", context=ctx)
+        result = nx_perms.read(path, context=ctx)
+        assert result == b"perm data"
+
+    def test_version_with_permissions(self, nx_perms):
+        """list_versions should work with admin permissions."""
+        ctx = OperationContext(
+            user_id="admin",
+            groups=[],
+            zone_id="root",
+            is_admin=True,
+            is_system=False,
+        )
+        path = f"/perm-ver-{uuid.uuid4().hex[:8]}.txt"
+        nx_perms.write(path, b"version with perms", context=ctx)
+        versions = nx_perms.list_versions(path, context=ctx)
+        assert isinstance(versions, list)
+        assert len(versions) >= 1
 
 
 # ---------------------------------------------------------------------------
-# 7. FastAPI server integration (TestClient)
+# 7. FastAPI server integration (TestClient) — all extraction points
 # ---------------------------------------------------------------------------
 
 
 class TestFastAPIIntegration:
-    """Test affected APIs through FastAPI TestClient."""
-
-    @pytest.fixture()
-    def client(self, tmp_path):
-        """Create a FastAPI TestClient with a real NexusFS."""
-        from starlette.testclient import TestClient
-
-        from nexus.server.fastapi_server import create_app
-
-        fs = _create_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
-        api_key = "test-api-key-" + uuid.uuid4().hex[:16]
-        app = create_app(fs, api_key=api_key)
-        client = TestClient(app)
-        yield {
-            "client": client,
-            "nx": fs,
-            "api_key": api_key,
-            "headers": {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-        }
-        fs.close()
-
-    def _rpc(self, ctx, method: str, params: dict | None = None) -> dict:
-        """Make an RPC call via TestClient."""
-        body = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": method,
-            "params": params or {},
-        }
-        resp = ctx["client"].post(
-            f"/api/nfs/{method}",
-            content=json.dumps(body),
-            headers=ctx["headers"],
-        )
-        return resp.json()
+    """Test affected APIs through FastAPI TestClient with PG + factory wiring."""
 
     def test_health_check(self, client):
         """Health endpoint should work."""
@@ -444,63 +523,51 @@ class TestFastAPIIntegration:
 
     def test_write_and_read_via_rpc(self, client):
         """Write + read via RPC endpoints."""
-        import base64
+        path = f"/e2e-rpc-{uuid.uuid4().hex[:8]}.txt"
+        content_b64 = base64.b64encode(b"hello from e2e via PG").decode()
 
-        content_b64 = base64.b64encode(b"hello from e2e").decode()
-
-        # Write
-        result = self._rpc(client, "write", {
-            "path": "/e2e-test.txt",
-            "content": content_b64,
-        })
+        result = _rpc(client, "write", {"path": path, "content": content_b64})
         assert "error" not in result or result.get("error") is None
 
-        # Read
-        result = self._rpc(client, "read", {"path": "/e2e-test.txt"})
+        result = _rpc(client, "read", {"path": path})
         assert "result" in result
 
     def test_mkdir_via_rpc(self, client):
         """mkdir via RPC endpoint."""
-        result = self._rpc(client, "mkdir", {
-            "path": "/e2e-dir",
-            "parents": True,
-            "exist_ok": True,
-        })
+        dirname = f"/e2e-dir-{uuid.uuid4().hex[:8]}"
+        result = _rpc(client, "mkdir", {"path": dirname, "parents": True, "exist_ok": True})
         assert "error" not in result or result.get("error") is None
 
     def test_list_via_rpc(self, client):
         """list via RPC endpoint after writing a file."""
-        import base64
-
-        self._rpc(client, "write", {
-            "path": "/list-test/file.txt",
+        prefix = f"/list-rpc-{uuid.uuid4().hex[:8]}"
+        _rpc(client, "write", {
+            "path": f"{prefix}/file.txt",
             "content": base64.b64encode(b"data").decode(),
         })
-        result = self._rpc(client, "list", {"path": "/list-test"})
+        result = _rpc(client, "list", {"path": prefix})
         assert "result" in result
 
     def test_list_versions_via_rpc(self, client):
-        """list_versions via RPC endpoint (requires factory-wired VersionService)."""
-        import base64
-
-        self._rpc(client, "write", {
-            "path": "/ver-rpc.txt",
+        """list_versions via RPC endpoint with factory-wired VersionService."""
+        path = f"/ver-rpc-{uuid.uuid4().hex[:8]}.txt"
+        _rpc(client, "write", {
+            "path": path,
             "content": base64.b64encode(b"v1").decode(),
         })
-        result = self._rpc(client, "list_versions", {"path": "/ver-rpc.txt"})
-        # version_service is None in minimal NexusFS (not factory-wired)
+        result = _rpc(client, "list_versions", {"path": path})
+        # With factory wiring, VersionService should be available
         if "error" in result and result["error"]:
-            pytest.skip("VersionService not available without factory wiring")
+            pytest.skip("VersionService not available")
         assert "result" in result
         assert isinstance(result.get("result"), list)
 
     def test_memory_store_via_server(self, client):
-        """Memory store should work via the memory property delegation."""
-        # Access memory directly through NexusFS (server code does this)
+        """Memory store should work via the memory property delegation with PG."""
         nx = client["nx"]
         mem = nx.memory
         mid = mem.store(
-            content="E2E memory test via server",
+            content="E2E memory test via FastAPI + PostgreSQL",
             scope="user",
             memory_type="observation",
         )
@@ -513,3 +580,154 @@ class TestFastAPIIntegration:
         mem = nx._get_memory_api(context_dict)
         assert mem is not None
         assert hasattr(mem, "store")
+
+    def test_exists_via_rpc(self, client):
+        """exists via RPC endpoint."""
+        path = f"/exists-rpc-{uuid.uuid4().hex[:8]}.txt"
+        _rpc(client, "write", {
+            "path": path,
+            "content": base64.b64encode(b"check").decode(),
+        })
+        result = _rpc(client, "exists", {"path": path})
+        assert "result" in result
+
+    def test_delete_via_rpc(self, client):
+        """delete via RPC endpoint."""
+        path = f"/del-rpc-{uuid.uuid4().hex[:8]}.txt"
+        _rpc(client, "write", {
+            "path": path,
+            "content": base64.b64encode(b"to-delete").decode(),
+        })
+        result = _rpc(client, "delete", {"path": path})
+        assert "error" not in result or result.get("error") is None
+
+    def test_get_metadata_via_rpc(self, client):
+        """get_metadata via RPC endpoint."""
+        path = f"/meta-rpc-{uuid.uuid4().hex[:8]}.txt"
+        _rpc(client, "write", {
+            "path": path,
+            "content": base64.b64encode(b"meta check").decode(),
+        })
+        result = _rpc(client, "get_metadata", {"path": path})
+        assert "result" in result
+
+
+# ---------------------------------------------------------------------------
+# 8. FastAPI with permissions enabled (non-admin scenarios)
+# ---------------------------------------------------------------------------
+
+
+class TestFastAPIWithPermissions:
+    """Test APIs through FastAPI with permissions enforced."""
+
+    def test_health_with_perms(self, client_perms):
+        """Health endpoint works regardless of permissions."""
+        resp = client_perms["client"].get("/health")
+        assert resp.status_code == 200
+
+    def test_write_read_with_admin_header(self, client_perms):
+        """Admin-authenticated write+read via RPC with permissions on."""
+        path = f"/perm-api-{uuid.uuid4().hex[:8]}.txt"
+        content_b64 = base64.b64encode(b"perm api test").decode()
+
+        result = _rpc(client_perms, "write", {"path": path, "content": content_b64})
+        assert "error" not in result or result.get("error") is None
+
+        result = _rpc(client_perms, "read", {"path": path})
+        assert "result" in result
+
+    def test_mkdir_with_perms(self, client_perms):
+        """mkdir via RPC with permissions on."""
+        dirname = f"/perm-dir-{uuid.uuid4().hex[:8]}"
+        result = _rpc(client_perms, "mkdir", {
+            "path": dirname,
+            "parents": True,
+            "exist_ok": True,
+        })
+        assert "error" not in result or result.get("error") is None
+
+    def test_list_with_perms(self, client_perms):
+        """list via RPC with permissions on."""
+        prefix = f"/perm-list-api-{uuid.uuid4().hex[:8]}"
+        _rpc(client_perms, "write", {
+            "path": f"{prefix}/file.txt",
+            "content": base64.b64encode(b"data").decode(),
+        })
+        result = _rpc(client_perms, "list", {"path": prefix})
+        assert "result" in result
+
+    def test_version_with_perms(self, client_perms):
+        """list_versions via RPC with permissions on."""
+        path = f"/perm-ver-{uuid.uuid4().hex[:8]}.txt"
+        _rpc(client_perms, "write", {
+            "path": path,
+            "content": base64.b64encode(b"v1 perm").decode(),
+        })
+        result = _rpc(client_perms, "list_versions", {"path": path})
+        if "error" in result and result["error"]:
+            pytest.skip("VersionService not available")
+        assert "result" in result
+
+    def test_memory_with_perms(self, client_perms):
+        """Memory store should work with permissions enabled."""
+        nx = client_perms["nx"]
+        mem = nx.memory
+        mid = mem.store(
+            content="E2E memory with permissions + PG",
+            scope="user",
+            memory_type="observation",
+        )
+        assert mid is not None
+        result = mem.get(mid)
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# 9. Service wiring verification (factory created all expected services)
+# ---------------------------------------------------------------------------
+
+
+class TestFactoryServiceWiring:
+    """Verify factory wired all expected services for the extracted methods."""
+
+    def test_memory_provider_wired(self, nx):
+        """MemoryProvider should be wired by service_wiring."""
+        assert hasattr(nx, "_memory_provider")
+        assert nx._memory_provider is not None
+
+    def test_sync_service_wired(self, nx):
+        """SyncService should be wired."""
+        assert hasattr(nx, "_sync_service")
+        assert nx._sync_service is not None
+
+    def test_sync_job_service_wired(self, nx):
+        """SyncJobService should be wired."""
+        assert hasattr(nx, "_sync_job_service")
+        assert nx._sync_job_service is not None
+
+    def test_version_service_wired(self, nx):
+        """VersionService should be wired by factory."""
+        vs = getattr(nx, "version_service", None) or getattr(nx, "_version_service", None)
+        assert vs is not None
+
+    def test_rebac_manager_wired(self, nx):
+        """ReBACManager should be wired by factory."""
+        assert nx._rebac_manager is not None
+
+    def test_permission_enforcer_wired(self, nx):
+        """PermissionEnforcer should be wired by factory."""
+        assert nx._permission_enforcer is not None
+
+    def test_workspace_registry_wired(self, nx):
+        """WorkspaceRegistry should be wired by factory."""
+        assert nx._workspace_registry is not None
+
+    def test_entity_registry_wired(self, nx):
+        """EntityRegistry should be wired by factory."""
+        reg = nx._ensure_entity_registry()
+        assert reg is not None
+
+    def test_hook_pipeline_wired(self, nx):
+        """VFSHookPipeline should be wired."""
+        assert hasattr(nx, "_hook_pipeline")
+        assert nx._hook_pipeline is not None

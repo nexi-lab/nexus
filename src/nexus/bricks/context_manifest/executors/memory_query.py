@@ -17,12 +17,12 @@ import time
 from concurrent.futures import Executor
 from typing import Any
 
-from nexus.services.context_manifest.executors.executor_utils import (
+from nexus.bricks.context_manifest.executors.executor_utils import (
     MemoryQuerySourceProtocol,
     resolve_source_template,
 )
-from nexus.services.context_manifest.executors.memory_search_adapter import MemorySearch
-from nexus.services.context_manifest.models import ContextSourceProtocol, SourceResult
+from nexus.bricks.context_manifest.executors.memory_search_adapter import MemorySearch
+from nexus.bricks.context_manifest.models import ContextSourceProtocol, SourceResult
 
 logger = logging.getLogger(__name__)
 

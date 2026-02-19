@@ -845,9 +845,11 @@ async def lifespan(_app: FastAPI) -> Any:
         _app.state.chunked_upload_service = None
 
     # Issue #726: Wire circuit breaker from factory for health endpoint access
+    # Issue #2130: Wire manifest_resolver to app.state for DI
     if _app.state.nexus_fs:
         _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
         _app.state.rebac_circuit_breaker = _brk.rebac_circuit_breaker if _brk else None
+        _app.state.manifest_resolver = getattr(_brk, "manifest_resolver", None) if _brk else None
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
@@ -1345,6 +1347,7 @@ def create_app(
     app.state.delegation_service = None
     app.state.reputation_service = None
     app.state.rlm_service = None  # Issue #1306: RLM inference brick
+    app.state.manifest_resolver = None  # Issue #2130: context manifest brick
 
     # Initialize subscription manager if we have a metadata store
     try:

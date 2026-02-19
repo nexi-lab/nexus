@@ -95,12 +95,9 @@ class CASManifestReader:
                 logger.warning("Manifest hash %s not found in CAS", manifest_hash)
                 return None
 
-            from nexus.core.workspace_manifest import WorkspaceManifest
-
-            manifest = WorkspaceManifest.from_json(
-                content if isinstance(content, bytes) else content.encode("utf-8")
-            )
-            return sorted(manifest.paths())
+            raw = content if isinstance(content, bytes) else content.encode("utf-8")
+            parsed = json.loads(raw)
+            return sorted(parsed.keys())
         except Exception as exc:
             logger.warning("Failed to read manifest %s: %s", manifest_hash, exc)
             return None

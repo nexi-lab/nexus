@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.config import PermissionConfig
-from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore

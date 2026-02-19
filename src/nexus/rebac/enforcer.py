@@ -48,7 +48,7 @@ def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
 
     current_record = agent_registry.get(agent_id)
 
-    from nexus.core.exceptions import StaleSessionError
+    from nexus.contracts.exceptions import StaleSessionError
 
     # Issue #1445: Agent deleted but JWT still valid → stale session
     if current_record is None:
@@ -467,7 +467,7 @@ class PermissionEnforcer:
         if self.namespace_manager is not None:
             subject = context.get_subject()
             if not self.namespace_manager.is_visible(subject, path, context.zone_id):
-                from nexus.core.exceptions import NexusFileNotFoundError
+                from nexus.contracts.exceptions import NexusFileNotFoundError
 
                 raise NexusFileNotFoundError(
                     path=path,

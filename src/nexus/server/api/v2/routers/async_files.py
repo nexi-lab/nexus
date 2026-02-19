@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusFileNotFoundError,

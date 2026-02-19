@@ -515,7 +515,7 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_read_nonexistent_file_after_wait(self, nexus_fs):
         """Wait returns event but file doesn't exist -> graceful error."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             nexus_fs.read("/nonexistent/file.txt")

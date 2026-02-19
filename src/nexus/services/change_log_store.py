@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.exceptions import DatabaseError
+from nexus.contracts.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.bricks.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 
 def _make_event(**kwargs) -> AgentStateEvent:

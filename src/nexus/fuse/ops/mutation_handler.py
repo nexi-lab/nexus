@@ -1,0 +1,205 @@
+"""File/directory mutation operations: create, unlink, mkdir, rmdir, rename."""
+
+from __future__ import annotations
+
+import errno
+import logging
+import os
+from typing import Any
+
+from fuse import FuseOSError
+
+from nexus.core.filters import is_os_metadata_file
+from nexus.fuse.ops._shared import (
+    FUSESharedContext,
+    check_namespace_visible,
+    parse_virtual_path_for_fuse,
+    try_rust,
+)
+
+# Import event types
+try:
+    from nexus.core.event_bus import FileEventType
+
+    HAS_EVENT_BUS = True
+except ImportError:
+    HAS_EVENT_BUS = False
+    FileEventType = None  # type: ignore[misc,assignment]
+
+logger = logging.getLogger(__name__)
+
+
+class MutationHandler:
+    """Handles create, unlink, mkdir, rmdir, rename operations."""
+
+    def __init__(self, ctx: FUSESharedContext) -> None:
+        self._ctx = ctx
+
+    def create(self, path: str, mode: int, fi: Any = None) -> int:  # noqa: ARG002
+        """Create a new file."""
+        ctx = self._ctx
+
+        # Block OS metadata files
+        basename = path.split("/")[-1]
+        if is_os_metadata_file(basename):
+            logger.debug(f"Blocked creation of OS metadata file: {path}")
+            raise FuseOSError(errno.EPERM)
+
+        original_path, view_type = parse_virtual_path_for_fuse(ctx, path)
+        if view_type:
+            raise FuseOSError(errno.EROFS)
+
+        check_namespace_visible(ctx, original_path)
+
+        ctx.nexus_fs.write(original_path, b"", context=ctx.context)
+
+        # Invalidate caches
+        ctx.cache.invalidate_path(original_path)
+        if path != original_path:
+            ctx.cache.invalidate_path(path)
+
+        # Generate file descriptor
+        with ctx.files_lock:
+            ctx.fd_counter += 1
+            fd = ctx.fd_counter
+
+            ctx.open_files[fd] = {
+                "path": original_path,
+                "view_type": None,
+                "flags": os.O_RDWR,
+                "auth_verified": ctx.context is not None,
+            }
+
+        if HAS_EVENT_BUS and FileEventType is not None:
+            ctx.events.fire(FileEventType.FILE_WRITE, original_path, size=0)
+
+        return fd
+
+    def unlink(self, path: str) -> None:
+        """Delete a file."""
+        ctx = self._ctx
+
+        original_path, view_type = parse_virtual_path_for_fuse(ctx, path)
+        if view_type:
+            raise FuseOSError(errno.EROFS)
+
+        check_namespace_visible(ctx, original_path)
+
+        ok, _ = try_rust(ctx, "UNLINK", "delete", original_path)
+        if not ok:
+            ctx.nexus_fs.delete(original_path)
+
+        ctx.cache.invalidate_path(original_path)
+        if path != original_path:
+            ctx.cache.invalidate_path(path)
+
+        if HAS_EVENT_BUS and FileEventType is not None:
+            ctx.events.fire(FileEventType.FILE_DELETE, original_path)
+
+    def mkdir(self, path: str, mode: int) -> None:  # noqa: ARG002
+        """Create a directory."""
+        ctx = self._ctx
+
+        if path.startswith("/.raw/"):
+            raise FuseOSError(errno.EROFS)
+
+        check_namespace_visible(ctx, path)
+
+        ok, _ = try_rust(ctx, "MKDIR", "mkdir", path)
+        if not ok:
+            ctx.nexus_fs.mkdir(path, parents=True, exist_ok=True)
+
+        if HAS_EVENT_BUS and FileEventType is not None:
+            ctx.events.fire(FileEventType.DIR_CREATE, path)
+
+    def rmdir(self, path: str) -> None:
+        """Remove a directory."""
+        ctx = self._ctx
+
+        if path == "/.raw":
+            raise FuseOSError(errno.EROFS)
+
+        check_namespace_visible(ctx, path)
+
+        ctx.nexus_fs.rmdir(path, recursive=False)
+
+        if HAS_EVENT_BUS and FileEventType is not None:
+            ctx.events.fire(FileEventType.DIR_DELETE, path)
+
+    def rename(self, old: str, new: str) -> None:
+        """Rename/move a file or directory."""
+        ctx = self._ctx
+
+        old_path, old_view = parse_virtual_path_for_fuse(ctx, old)
+        new_path, new_view = parse_virtual_path_for_fuse(ctx, new)
+
+        if old_view or new_view:
+            raise FuseOSError(errno.EROFS)
+
+        if old.startswith("/.raw/") or new.startswith("/.raw/"):
+            raise FuseOSError(errno.EROFS)
+
+        check_namespace_visible(ctx, old_path)
+        check_namespace_visible(ctx, new_path)
+
+        if ctx.nexus_fs.exists(new_path):
+            logger.error(f"Destination {new_path} already exists")
+            raise FuseOSError(errno.EEXIST)
+
+        if ctx.nexus_fs.is_directory(old_path, context=ctx.context):
+            self._rename_directory(old_path, new_path)
+        else:
+            self._rename_file(old_path, new_path)
+
+        # Invalidate caches for both paths
+        ctx.cache.invalidate_path(old_path)
+        ctx.cache.invalidate_path(new_path)
+
+        old_parent = old_path.rsplit("/", 1)[0] or "/"
+        new_parent = new_path.rsplit("/", 1)[0] or "/"
+        ctx.cache.invalidate_path(old_parent)
+        if old_parent != new_parent:
+            ctx.cache.invalidate_path(new_parent)
+            new_grandparent = new_parent.rsplit("/", 1)[0] or "/"
+            if new_grandparent != new_parent:
+                ctx.cache.invalidate_path(new_grandparent)
+        if old != old_path:
+            ctx.cache.invalidate_path(old)
+        if new != new_path:
+            ctx.cache.invalidate_path(new)
+
+        if HAS_EVENT_BUS and FileEventType is not None:
+            ctx.events.fire(FileEventType.FILE_RENAME, new_path, old_path=old_path)
+
+    def _rename_file(self, old_path: str, new_path: str) -> None:
+        """Metadata-only file rename."""
+        ctx = self._ctx
+        logger.debug(f"Renaming file {old_path} to {new_path}")
+
+        ok, _ = try_rust(ctx, "RENAME", "rename", old_path, new_path)
+        if not ok:
+            ctx.nexus_fs.rename(old_path, new_path)
+
+    def _rename_directory(self, old_path: str, new_path: str) -> None:
+        """Recursive directory rename: list + move files + rmdir source."""
+        ctx = self._ctx
+        logger.debug(f"Renaming directory {old_path} to {new_path}")
+
+        try:
+            ctx.nexus_fs.mkdir(new_path, parents=True, exist_ok=True)
+        except Exception as e:
+            logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
+
+        files = ctx.nexus_fs.list(old_path, recursive=True, details=True, context=ctx.context)
+
+        for file_info in files:
+            if not isinstance(file_info, dict):
+                continue
+            if not file_info.get("is_directory", False):
+                src_file = file_info["path"]
+                dest_file = src_file.replace(old_path, new_path, 1)
+                logger.debug(f"  Moving file {src_file} to {dest_file}")
+                ctx.nexus_fs.rename(src_file, dest_file)
+
+        logger.debug(f"Removing source directory {old_path}")
+        ctx.nexus_fs.rmdir(old_path, recursive=True)

@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.a2a.router import build_router
+from nexus.bricks.a2a.router import build_router
 
 # ======================================================================
 # Fixtures
@@ -317,7 +317,7 @@ class TestNarrowedExceptionHandlers:
             {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
         )
         # Mock dispatch to raise an unexpected exception
-        with patch("nexus.a2a.router.dispatch", new_callable=AsyncMock) as mock_dispatch:
+        with patch("nexus.bricks.a2a.router.dispatch", new_callable=AsyncMock) as mock_dispatch:
             mock_dispatch.side_effect = RuntimeError("unexpected crash")
             resp = client.post("/a2a", json=body)
 

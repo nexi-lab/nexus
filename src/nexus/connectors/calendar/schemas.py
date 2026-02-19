@@ -27,14 +27,11 @@ Example event creation:
 
 from __future__ import annotations
 
-import re
 from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
-# ISO 8601 datetime pattern with timezone offset
-# Examples: 2024-01-15T09:00:00-08:00, 2024-01-15T09:00:00Z, 2024-01-15T09:00:00+05:30
-ISO8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)$")
+from nexus.contracts.validators import EmailAddress, ISODateTimeStr
 
 
 class TimeSlot(BaseModel):
@@ -45,7 +42,7 @@ class TimeSlot(BaseModel):
     """
 
     dateTime: Annotated[
-        str,
+        ISODateTimeStr,
         Field(
             description="ISO 8601 datetime with timezone offset (e.g., 2024-01-15T09:00:00-08:00)"
         ),
@@ -58,22 +55,11 @@ class TimeSlot(BaseModel):
         ),
     ]
 
-    @field_validator("dateTime")
-    @classmethod
-    def validate_datetime_format(cls, v: str) -> str:
-        """Validate ISO 8601 format with timezone."""
-        if not ISO8601_PATTERN.match(v):
-            raise ValueError(
-                f"Invalid datetime format: {v}. "
-                "Use ISO 8601 with timezone offset (e.g., 2024-01-15T09:00:00-08:00)"
-            )
-        return v
-
 
 class Attendee(BaseModel):
     """Event attendee."""
 
-    email: Annotated[str, Field(description="Attendee email address")]
+    email: Annotated[EmailAddress, Field(description="Attendee email address")]
     displayName: Annotated[str | None, Field(default=None, description="Display name (optional)")]
     optional: Annotated[bool, Field(default=False, description="Whether attendance is optional")]
     responseStatus: Annotated[

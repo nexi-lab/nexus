@@ -157,7 +157,7 @@ class EnrichmentPipeline:
     def _resolve_coreferences(self, text: str, context: str | None) -> str:
         """Apply coreference resolution (#1027)."""
         try:
-            from nexus.core.coref_resolver import resolve_coreferences as resolve_coref
+            from nexus.services.memory.coref_resolver import resolve_coreferences as resolve_coref
 
             return resolve_coref(
                 text=text,

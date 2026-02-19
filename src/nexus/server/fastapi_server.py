@@ -10,7 +10,7 @@ Performance improvements:
 - Non-blocking I/O
 - 10-50x throughput improvement under concurrent load
 
-The server maintains the same API contract as rpc_server.py:
+The server exposes the following API contract:
 - POST /api/nfs/{method} - JSON-RPC endpoints
 - GET /health - Health check
 - GET /api/auth/whoami - Authentication info
@@ -51,6 +51,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
+from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -59,7 +60,6 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 
 # --- Extracted modules (re-exported for backward compatibility) ---
 from nexus.server.dependencies import (  # noqa: F401, E402
@@ -695,7 +695,7 @@ async def lifespan(_app: FastAPI) -> Any:
             _nexus_fs_warmup = _app.state.nexus_fs  # Capture for closure
 
             async def _warmup_file_cache() -> None:
-                from nexus.cache.warmer import CacheWarmer, WarmupConfig
+                from nexus.server.cache_warmer import CacheWarmer, WarmupConfig
 
                 config = WarmupConfig(
                     max_files=warmup_max_files,
@@ -791,7 +791,8 @@ async def lifespan(_app: FastAPI) -> Any:
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        _app.state.nexus_fs._service_extras.get("chunked_upload_service")
+        getattr(_app.state.nexus_fs, "_brick_services", None)
+        and _app.state.nexus_fs._brick_services.chunked_upload_service
         if _app.state.nexus_fs
         else None
     )
@@ -845,9 +846,8 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #726: Wire circuit breaker from factory for health endpoint access
     if _app.state.nexus_fs:
-        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
-            "rebac_circuit_breaker"
-        )
+        _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
+        _app.state.rebac_circuit_breaker = _brk.rebac_circuit_breaker if _brk else None
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
@@ -873,9 +873,9 @@ async def lifespan(_app: FastAPI) -> Any:
         )
     if _app.state.nexus_fs and _app.state.agent_registry:
         try:
-            from nexus.sandbox.auth_service import SandboxAuthService
-            from nexus.sandbox.events import AgentEventLog
-            from nexus.sandbox.sandbox_manager import SandboxManager
+            from nexus.bricks.sandbox.auth_service import SandboxAuthService
+            from nexus.bricks.sandbox.events import AgentEventLog
+            from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
             session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
@@ -935,9 +935,9 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             import asyncpg
 
-            from nexus.pay.credits import CreditsService
-            from nexus.scheduler.queue import TaskQueue
-            from nexus.scheduler.service import SchedulerService
+            from nexus.bricks.pay.credits import CreditsService
+            from nexus.bricks.scheduler.queue import TaskQueue
+            from nexus.bricks.scheduler.service import SchedulerService
 
             # Convert SQLAlchemy URL to asyncpg DSN
             pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
@@ -1494,7 +1494,8 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        _sys = getattr(nexus_fs, "_system_services", None)
+        obs_sub = getattr(_sys, "observability_subsystem", None)
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except ImportError:
@@ -1615,6 +1616,12 @@ def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
             attr = getattr(nexus_fs, name)
             if callable(attr) and hasattr(attr, "_rpc_exposed"):
                 method_name = getattr(attr, "_rpc_name", name)
+                # Issue #2136: Block rpc_name bypass — skip private method names
+                if method_name.startswith("_"):
+                    logger.warning(
+                        "Skipping RPC method with private rpc_name: %s -> %s", name, method_name
+                    )
+                    continue
                 exposed[method_name] = attr
                 logger.debug(f"Discovered RPC method: {method_name}")
         except Exception:
@@ -1694,7 +1701,7 @@ def _register_routes(app: FastAPI) -> None:
 
     # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
     try:
-        from nexus.a2a import create_a2a_router
+        from nexus.bricks.a2a import create_a2a_router
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
@@ -1733,6 +1740,15 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
     except ImportError as e:
         logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+
+    # IPC Brick endpoints (Issue #1727, LEGO §8)
+    try:
+        from nexus.server.api.v2.routers.ipc import router as ipc_router
+
+        app.include_router(ipc_router)
+        logger.info("IPC endpoints registered (/api/v2/ipc/*)")
+    except ImportError as e:
+        logger.debug(f"IPC router unavailable: {e}")
 
     # Secrets audit log endpoints (Issue #997)
     try:

@@ -95,7 +95,7 @@ def test_auth_brick_no_rebac_import():
 
 
 def test_auth_brick_no_pay_import():
-    """Auth brick does not import from nexus.pay."""
+    """Auth brick does not import from nexus.bricks.pay."""
     modules_before = set(sys.modules.keys())
 
     auth_modules = [k for k in sys.modules if k.startswith("nexus.auth")]
@@ -107,7 +107,7 @@ def test_auth_brick_no_pay_import():
         importlib.import_module("nexus.auth.constants")
 
         new_modules = set(sys.modules.keys()) - modules_before
-        pay_imports = [m for m in new_modules if m.startswith("nexus.pay")]
+        pay_imports = [m for m in new_modules if m.startswith("nexus.bricks.pay")]
         assert not pay_imports, f"Auth brick pulled in pay modules: {pay_imports}"
     finally:
         for mod in auth_modules:

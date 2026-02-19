@@ -246,7 +246,7 @@ async def get_nexuspay(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> Any:
     """Construct a NexusPay SDK instance per-request from auth context."""
-    from nexus.pay.sdk import NexusPay
+    from nexus.bricks.pay.sdk import NexusPay
 
     agent_id = _extract_agent_id(auth_result)
     zone_id = auth_result.get("zone_id", "root")
@@ -269,13 +269,13 @@ def _register_pay_exception_handlers(app: Any) -> None:
 
     Call this after including the router in the app.
     """
-    from nexus.pay.credits import (
+    from nexus.bricks.pay.credits import (
         InsufficientCreditsError,
         ReservationError,
         WalletNotFoundError,
     )
-    from nexus.pay.sdk import BudgetExceededError, NexusPayError
-    from nexus.pay.spending_policy import (
+    from nexus.bricks.pay.sdk import BudgetExceededError, NexusPayError
+    from nexus.bricks.pay.spending_policy import (
         ApprovalRequiredError,
         PolicyDeniedError,
         SpendingRateLimitError,
@@ -413,7 +413,7 @@ async def transfer_batch(
 
     All transfers succeed or all fail. Maximum 1000 transfers per batch.
     """
-    from nexus.pay.credits import TransferRequest
+    from nexus.bricks.pay.credits import TransferRequest
 
     transfer_requests = [
         TransferRequest(

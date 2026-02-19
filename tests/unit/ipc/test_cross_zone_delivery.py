@@ -9,6 +9,7 @@ Issue: #1727
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -135,6 +136,20 @@ class FakePermissionChecker:
 # ── Fixtures ───────────────────────────────────────────────────────────
 
 
+@dataclass
+class TwoZoneEnv:
+    """Type-safe fixture for two-zone cross-zone tests."""
+
+    storage: InMemoryStorageDriver
+    cross_zone: CrossZoneStorageDriver
+    registry: FakeAgentRegistry
+    publisher: InMemoryHotPathPublisher
+    event_pub: InMemoryEventPublisher
+    permissions: FakePermissionChecker
+    zone_a: str
+    zone_b: str
+
+
 async def _provision_agent(storage: InMemoryStorageDriver, agent_id: str, zone_id: str) -> None:
     """Set up IPC directory structure for an agent in the given zone."""
     for subdir in ("inbox", "outbox", "processed", "dead_letter"):
@@ -142,7 +157,7 @@ async def _provision_agent(storage: InMemoryStorageDriver, agent_id: str, zone_i
 
 
 @pytest.fixture()
-async def setup():
+async def setup() -> TwoZoneEnv:
     """Build a two-zone test environment with CrossZoneStorageDriver."""
     storage = InMemoryStorageDriver()
     registry = FakeAgentRegistry()
@@ -169,16 +184,16 @@ async def setup():
         hot_publisher=publisher,
     )
 
-    return {
-        "storage": storage,
-        "cross_zone": cross_zone,
-        "registry": registry,
-        "publisher": publisher,
-        "event_pub": event_pub,
-        "permissions": permissions,
-        "zone_a": zone_a,
-        "zone_b": zone_b,
-    }
+    return TwoZoneEnv(
+        storage=storage,
+        cross_zone=cross_zone,
+        registry=registry,
+        publisher=publisher,
+        event_pub=event_pub,
+        permissions=permissions,
+        zone_a=zone_a,
+        zone_b=zone_b,
+    )
 
 
 # ── Tests ──────────────────────────────────────────────────────────────
@@ -188,12 +203,9 @@ class TestCrossZoneDelivery:
     """Unit tests for CrossZoneStorageDriver wrapping IPCStorageDriver."""
 
     @pytest.mark.asyncio
-    async def test_send_cross_zone_resolves_target_zone(self, setup: dict) -> None:
+    async def test_send_cross_zone_resolves_target_zone(self, setup: TwoZoneEnv) -> None:
         """Agent-A (zone-a) sends to Agent-B (zone-b): message lands in zone-b inbox."""
-        cross_zone = setup["cross_zone"]
-        storage = setup["storage"]
-
-        sender = MessageSender(cross_zone, setup["event_pub"], zone_id=setup["zone_a"])
+        sender = MessageSender(setup.cross_zone, setup.event_pub, zone_id=setup.zone_a)
         env = MessageEnvelope(
             sender="agent-a",
             recipient="agent-b",
@@ -203,17 +215,16 @@ class TestCrossZoneDelivery:
         await sender.send(env)
 
         # Message should exist in zone-b's inbox (not zone-a's)
-        inbox_files = await storage.list_dir(inbox_path("agent-b"), setup["zone_b"])
+        inbox_files = await setup.storage.list_dir(inbox_path("agent-b"), setup.zone_b)
         msg_files = [f for f in inbox_files if f.endswith(".json")]
         assert len(msg_files) == 1
 
     @pytest.mark.asyncio
-    async def test_send_cross_zone_event_notification_to_target_zone(self, setup: dict) -> None:
+    async def test_send_cross_zone_event_notification_to_target_zone(
+        self, setup: TwoZoneEnv
+    ) -> None:
         """Cross-zone send fires NATS notification on target zone subject."""
-        cross_zone = setup["cross_zone"]
-        publisher = setup["publisher"]
-
-        sender = MessageSender(cross_zone, setup["event_pub"], zone_id=setup["zone_a"])
+        sender = MessageSender(setup.cross_zone, setup.event_pub, zone_id=setup.zone_a)
         env = MessageEnvelope(
             sender="agent-a",
             recipient="agent-b",
@@ -223,18 +234,14 @@ class TestCrossZoneDelivery:
         await sender.send(env)
 
         # Verify NATS notification was published with target zone prefix
-        assert len(publisher.published) >= 1
-        subjects = [s for s, _ in publisher.published]
+        assert len(setup.publisher.published) >= 1
+        subjects = [s for s, _ in setup.publisher.published]
         assert any("zone-b" in s or "agent-b" in s for s in subjects)
 
     @pytest.mark.asyncio
-    async def test_send_cross_zone_permission_denied_dead_letters(self, setup: dict) -> None:
+    async def test_send_cross_zone_permission_denied_dead_letters(self, setup: TwoZoneEnv) -> None:
         """ReBAC rejection → CrossZoneDeliveryError with PERMISSION_DENIED reason."""
-        permissions = setup["permissions"]
-        permissions._allow_all = False
-        # Don't grant any permission
-
-        cross_zone = setup["cross_zone"]
+        setup.permissions._allow_all = False
 
         # Attempt a cross-zone write — should raise CrossZoneDeliveryError
         env = MessageEnvelope(
@@ -247,14 +254,14 @@ class TestCrossZoneDelivery:
         msg_path = message_path_in_inbox("agent-b", env.id, env.timestamp)
 
         with pytest.raises(CrossZoneDeliveryError) as exc_info:
-            await cross_zone.write(msg_path, data, setup["zone_a"])
+            await setup.cross_zone.write(msg_path, data, setup.zone_a)
 
         assert exc_info.value.reason == DLQReason.PERMISSION_DENIED
 
     @pytest.mark.asyncio
-    async def test_send_cross_zone_zone_unreachable_dead_letters(self, setup: dict) -> None:
+    async def test_send_cross_zone_zone_unreachable_dead_letters(self, setup: TwoZoneEnv) -> None:
         """Target zone not found in registry → CrossZoneDeliveryError ZONE_UNREACHABLE."""
-        storage = setup["storage"]
+        storage = setup.storage
         registry = FakeAgentRegistry()
         registry.add("agent-a", "zone-a")
         registry.add("agent-x", "zone-x")  # zone-x has no provisioned inbox
@@ -280,9 +287,9 @@ class TestCrossZoneDelivery:
         assert exc_info.value.reason == DLQReason.ZONE_UNREACHABLE
 
     @pytest.mark.asyncio
-    async def test_send_cross_zone_mount_not_found_dead_letters(self, setup: dict) -> None:
+    async def test_send_cross_zone_mount_not_found_dead_letters(self, setup: TwoZoneEnv) -> None:
         """Agent not found in registry → CrossZoneDeliveryError MOUNT_NOT_FOUND."""
-        storage = setup["storage"]
+        storage = setup.storage
         registry = FakeAgentRegistry()
         # No agents registered at all
 
@@ -307,11 +314,8 @@ class TestCrossZoneDelivery:
         assert exc_info.value.reason == DLQReason.MOUNT_NOT_FOUND
 
     @pytest.mark.asyncio
-    async def test_cross_zone_routing_metadata_in_envelope(self, setup: dict) -> None:
-        """Delivered envelope should contain RoutingMetadata in .reason.json."""
-        cross_zone = setup["cross_zone"]
-        storage = setup["storage"]
-
+    async def test_cross_zone_routing_metadata_in_envelope(self, setup: TwoZoneEnv) -> None:
+        """Delivered message should have a .routing sidecar with zone routing info."""
         env = MessageEnvelope(
             sender="agent-a",
             recipient="agent-b",
@@ -321,30 +325,26 @@ class TestCrossZoneDelivery:
         data = env.to_bytes()
         msg_path = message_path_in_inbox("agent-b", env.id, env.timestamp)
 
-        await cross_zone.write(msg_path, data, setup["zone_a"])
+        await setup.cross_zone.write(msg_path, data, setup.zone_a)
 
         # Verify routing metadata file was written (.routing extension)
         routing_path = msg_path + ".routing"
-        routing_data = await storage.read(routing_path, setup["zone_b"])
+        routing_data = await setup.storage.read(routing_path, setup.zone_b)
         routing_info = json.loads(routing_data)
         assert routing_info["source_zone"] == "zone-a"
         assert routing_info["target_zone"] == "zone-b"
         assert routing_info["hop_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_cross_zone_agent_registry_resolution(self, setup: dict) -> None:
+    async def test_cross_zone_agent_registry_resolution(self, setup: TwoZoneEnv) -> None:
         """AgentRegistry.get() returns correct zone for recipient."""
-        registry = setup["registry"]
-        info = await registry.get("agent-b")
+        info = await setup.registry.get("agent-b")
         assert info is not None
         assert info.zone_id == "zone-b"
 
     @pytest.mark.asyncio
-    async def test_cross_zone_lru_cache_avoids_repeated_resolution(self, setup: dict) -> None:
+    async def test_cross_zone_lru_cache_avoids_repeated_resolution(self, setup: TwoZoneEnv) -> None:
         """Second send to same agent skips registry lookup (uses cache)."""
-        cross_zone = setup["cross_zone"]
-        storage = setup["storage"]
-
         for i in range(3):
             env = MessageEnvelope(
                 sender="agent-a",
@@ -355,32 +355,29 @@ class TestCrossZoneDelivery:
             )
             data = env.to_bytes()
             msg_path = message_path_in_inbox("agent-b", env.id, env.timestamp)
-            await cross_zone.write(msg_path, data, setup["zone_a"])
+            await setup.cross_zone.write(msg_path, data, setup.zone_a)
 
         # All 3 messages should arrive in zone-b (filter out .routing sidecars)
-        inbox_files = await storage.list_dir(inbox_path("agent-b"), setup["zone_b"])
+        inbox_files = await setup.storage.list_dir(inbox_path("agent-b"), setup.zone_b)
         msg_files = [f for f in inbox_files if f.endswith(".json")]
         assert len(msg_files) == 3
 
         # Verify cache stats (implementation detail: _zone_cache)
-        assert cross_zone._zone_cache.get("agent-b") == "zone-b"
+        assert setup.cross_zone._zone_cache.get("agent-b") == "zone-b"
 
     @pytest.mark.asyncio
-    async def test_same_zone_send_unchanged(self, setup: dict) -> None:
+    async def test_same_zone_send_unchanged(self, setup: TwoZoneEnv) -> None:
         """Local delivery (same zone) works exactly as before — no cross-zone overhead."""
-        cross_zone = setup["cross_zone"]
-        storage = setup["storage"]
-
         # Agent-A is in zone-a (local zone for our driver)
         # Send within zone-a: provision a second agent in zone-a
-        setup["registry"].add("agent-c", "zone-a")
-        await storage.mkdir("/agents/agent-c", "zone-a")
-        await storage.mkdir("/agents/agent-c/inbox", "zone-a")
-        await storage.mkdir("/agents/agent-c/outbox", "zone-a")
-        await storage.mkdir("/agents/agent-c/processed", "zone-a")
-        await storage.mkdir("/agents/agent-c/dead_letter", "zone-a")
+        setup.registry.add("agent-c", "zone-a")
+        await setup.storage.mkdir("/agents/agent-c", "zone-a")
+        await setup.storage.mkdir("/agents/agent-c/inbox", "zone-a")
+        await setup.storage.mkdir("/agents/agent-c/outbox", "zone-a")
+        await setup.storage.mkdir("/agents/agent-c/processed", "zone-a")
+        await setup.storage.mkdir("/agents/agent-c/dead_letter", "zone-a")
 
-        sender = MessageSender(cross_zone, setup["event_pub"], zone_id=setup["zone_a"])
+        sender = MessageSender(setup.cross_zone, setup.event_pub, zone_id=setup.zone_a)
         env = MessageEnvelope(
             sender="agent-a",
             recipient="agent-c",
@@ -390,17 +387,13 @@ class TestCrossZoneDelivery:
         await sender.send(env)
 
         # Message in zone-a inbox
-        inbox_files = await storage.list_dir(inbox_path("agent-c"), "zone-a")
+        inbox_files = await setup.storage.list_dir(inbox_path("agent-c"), "zone-a")
         assert len(inbox_files) == 1
 
     @pytest.mark.asyncio
-    async def test_dead_letter_has_structured_reason_file(self, setup: dict) -> None:
+    async def test_dead_letter_has_structured_reason_file(self, setup: TwoZoneEnv) -> None:
         """DLQ entry has a .reason.json sidecar with structured DLQReason."""
-        permissions = setup["permissions"]
-        permissions._allow_all = False
-
-        cross_zone = setup["cross_zone"]
-        storage = setup["storage"]
+        setup.permissions._allow_all = False
 
         env = MessageEnvelope(
             sender="agent-a",
@@ -412,15 +405,15 @@ class TestCrossZoneDelivery:
         msg_path = message_path_in_inbox("agent-b", env.id, env.timestamp)
 
         with pytest.raises(CrossZoneDeliveryError):
-            await cross_zone.write(msg_path, data, setup["zone_a"])
+            await setup.cross_zone.write(msg_path, data, setup.zone_a)
 
         # Check that a DLQ reason file was written in the sender's zone
         dlq_dir = dead_letter_path("agent-a")
         try:
-            dlq_files = await storage.list_dir(dlq_dir, "zone-a")
+            dlq_files = await setup.storage.list_dir(dlq_dir, "zone-a")
             reason_files = [f for f in dlq_files if f.endswith(".reason.json")]
             if reason_files:
-                reason_data = await storage.read(f"{dlq_dir}/{reason_files[0]}", "zone-a")
+                reason_data = await setup.storage.read(f"{dlq_dir}/{reason_files[0]}", "zone-a")
                 reason_info = json.loads(reason_data)
                 assert reason_info["reason"] == DLQReason.PERMISSION_DENIED
         except FileNotFoundError:

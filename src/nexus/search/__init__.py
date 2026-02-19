@@ -39,7 +39,6 @@ Hot Search Daemon (Issue #951):
 - Integrates BM25S, pgvector, and Zoekt for multi-modal search
 """
 
-from nexus.search.async_search import AsyncSearchResult, AsyncSemanticSearch
 from nexus.search.bm25s_search import (
     BM25SIndex,
     BM25SSearchResult,
@@ -105,6 +104,7 @@ from nexus.search.hnsw_config import (
     get_vector_count,
 )
 from nexus.search.indexing import IndexingPipeline, IndexProgress, IndexResult
+from nexus.search.indexing_service import IndexingService
 from nexus.search.manifest import SearchBrickManifest, verify_imports
 from nexus.search.mobile_config import (
     EMBEDDING_MODELS,
@@ -161,6 +161,7 @@ from nexus.search.query_router import (
     RoutedQuery,
     RoutingConfig,
 )
+from nexus.search.query_service import QueryService
 from nexus.search.ranking import (
     AttributeWeights,
     RankingConfig,
@@ -169,7 +170,6 @@ from nexus.search.ranking import (
 )
 from nexus.search.result_builders import build_result_from_row, build_semantic_result
 from nexus.search.results import BaseSearchResult, detect_matched_field
-from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.strategies import (
     AGGREGATION_WORDS,
     COMPARISON_WORDS,
@@ -193,6 +193,23 @@ from nexus.search.zoekt_client import (
     is_zoekt_available,
     zoekt_search,
 )
+
+# Issue #2075: Backward-compat aliases for deleted modules
+SemanticSearch = QueryService  # Use QueryService directly
+SemanticSearchResult = BaseSearchResult  # Merged into BaseSearchResult (decision 8A)
+AsyncSearchResult = BaseSearchResult  # Merged into BaseSearchResult
+
+
+class AsyncSemanticSearch:
+    """Removed in Issue #2075. Use QueryService + IndexingService instead."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:  # noqa: ARG002
+        raise RuntimeError(
+            "AsyncSemanticSearch was removed in Issue #2075. "
+            "Use nexus.search.QueryService for search and "
+            "nexus.search.IndexingService for indexing."
+        )
+
 
 __all__ = [
     # Search Brick (Issue #1520)
@@ -253,10 +270,13 @@ __all__ = [
     "IndexingPipeline",
     "IndexResult",
     "IndexProgress",
-    # Semantic Search (sync)
+    # CQRS Services (Issue #2075)
+    "IndexingService",
+    "QueryService",
+    # Semantic Search (legacy — use IndexingService + QueryService)
     "SemanticSearch",
     "SemanticSearchResult",
-    # Async Semantic Search (high-throughput)
+    # Async Semantic Search (legacy — use IndexingService + QueryService)
     "AsyncSemanticSearch",
     "AsyncSearchResult",
     # Hybrid Search Fusion (Issue #798)

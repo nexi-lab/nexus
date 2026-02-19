@@ -12,6 +12,7 @@ Each connector configures these mixins via class attributes.
 from __future__ import annotations
 
 import logging
+import posixpath
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,8 @@ from pydantic import ValidationError as PydanticValidationError
 from nexus.core.exceptions import ValidationError as CoreValidationError
 
 if TYPE_CHECKING:
+    from nexus.connectors.error_formatter import SkillErrorFormatter
+    from nexus.connectors.schema_generator import SkillDocGenerator
     from nexus.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -200,6 +203,8 @@ class SkillDocMixin:
         - Auto-generates .skill/ directory with SKILL.md and examples
         - Integrates with SkillRegistry for discovery
         - Formats errors with skill references
+
+    Delegates heavy lifting to ``SkillDocGenerator`` and ``SkillErrorFormatter``.
     """
 
     SKILL_NAME: str = ""
@@ -218,8 +223,6 @@ class SkillDocMixin:
     def skill_md_path(self) -> str:
         """Get path to SKILL.md (for error messages)."""
         if self._mount_path:
-            import posixpath
-
             return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
         return "/.skill/SKILL.md"  # Default fallback
 
@@ -231,108 +234,40 @@ class SkillDocMixin:
         """Set the mount path (called during mount)."""
         self._mount_path = mount_path
 
+    def _get_doc_generator(self) -> SkillDocGenerator:
+        """Lazy-create the SkillDocGenerator."""
+        from nexus.connectors.schema_generator import SkillDocGenerator
+
+        return SkillDocGenerator(
+            skill_name=self.SKILL_NAME,
+            schemas=self.SCHEMAS,
+            operation_traits=self.OPERATION_TRAITS,
+            error_registry=self.ERROR_REGISTRY,
+            examples=self.EXAMPLES,
+            skill_dir=self.SKILL_DIR,
+        )
+
+    def _get_error_formatter(self) -> SkillErrorFormatter:
+        """Lazy-create the SkillErrorFormatter."""
+        from nexus.connectors.error_formatter import SkillErrorFormatter
+
+        return SkillErrorFormatter(
+            skill_name=self.SKILL_NAME,
+            mount_path=self._mount_path or "",
+        )
+
     def generate_skill_doc(self, mount_path: str) -> str:
-        """Auto-generate SKILL.md from connector metadata.
-
-        Args:
-            mount_path: The mount path for this connector (e.g., "/mnt/calendar/")
-
-        Returns:
-            Generated SKILL.md content as string
-        """
-        lines = [
-            f"# {self._format_display_name()} Connector",
-            "",
-            "## Mount Path",
-            f"`{mount_path}`",
-            "",
-        ]
-
-        # Operations section from SCHEMAS
-        if self.SCHEMAS:
-            lines.extend(self._generate_operations_section())
-
-        # Required format section from OPERATION_TRAITS
-        if self.OPERATION_TRAITS:
-            lines.extend(self._generate_required_format_section())
-
-        # Error codes section from ERROR_REGISTRY
-        if self.ERROR_REGISTRY:
-            lines.extend(self._generate_errors_section())
-
-        return "\n".join(lines)
+        """Auto-generate SKILL.md from connector metadata."""
+        return self._get_doc_generator().generate_skill_doc(mount_path)
 
     def get_skill_path(self, mount_path: str) -> str:
-        """Get the full path to the .skill directory.
-
-        Args:
-            mount_path: The mount path for this connector
-
-        Returns:
-            Full path to .skill directory (e.g., "/mnt/calendar/.skill")
-        """
-        import posixpath
-
-        return posixpath.join(mount_path.rstrip("/"), self.SKILL_DIR)
+        """Get the full path to the .skill directory."""
+        return self._get_doc_generator().get_skill_path(mount_path)
 
     def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, str]:
-        """Generate and write .skill/ directory to the filesystem.
-
-        Creates:
-            <mount_path>/.skill/
-                SKILL.md           # Main documentation
-                examples/          # Example YAML files
-                    <example>.yaml
-
-        Args:
-            mount_path: The mount path for this connector
-            filesystem: NexusFS instance to write to (optional)
-
-        Returns:
-            Dict of written paths: {"skill_md": path, "examples": [paths...]}
-        """
-        import posixpath
-
-        result: dict[str, Any] = {"skill_md": None, "examples": []}
-
-        if not self.SKILL_NAME:
-            logger.warning("Cannot write skill docs: SKILL_NAME not configured")
-            return result
-
+        """Generate and write .skill/ directory to the filesystem."""
         self._mount_path = mount_path
-        skill_dir = self.get_skill_path(mount_path)
-
-        if filesystem is None:
-            logger.debug(f"No filesystem provided for {self.SKILL_NAME}")
-            return result
-
-        try:
-            # Create .skill directory
-            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
-
-            # Write SKILL.md
-            skill_md_path = posixpath.join(skill_dir, "SKILL.md")
-            content = self.generate_skill_doc(mount_path)
-            filesystem.write(skill_md_path, content.encode("utf-8"))
-            result["skill_md"] = skill_md_path
-            logger.info(f"Generated SKILL.md at {skill_md_path}")
-
-            # Write examples if any
-            if self.EXAMPLES:
-                examples_dir = posixpath.join(skill_dir, "examples")
-                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
-
-                for filename, content in self.EXAMPLES.items():
-                    example_path = posixpath.join(examples_dir, filename)
-                    filesystem.write(example_path, content.encode("utf-8"))
-                    result["examples"].append(example_path)
-                    logger.debug(f"Generated example at {example_path}")
-
-            return result
-
-        except Exception as e:
-            logger.warning(f"Failed to write skill docs to {skill_dir}: {e}")
-            return result
+        return self._get_doc_generator().write_skill_docs(mount_path, filesystem)
 
     def _format_display_name(self) -> str:
         """Format SKILL_NAME as display name."""
@@ -340,213 +275,39 @@ class SkillDocMixin:
 
     def _generate_operations_section(self) -> list[str]:
         """Generate Operations section from SCHEMAS."""
-        lines = ["## Operations", ""]
-
-        for op_name, schema in self.SCHEMAS.items():
-            display_name = op_name.replace("_", " ").title()
-            lines.append(f"### {display_name}")
-            lines.append("")
-
-            # Get traits for this operation
-            traits = self.OPERATION_TRAITS.get(op_name, OpTraits())
-
-            # Generate YAML example from schema
-            lines.append("```yaml")
-
-            # Add agent_intent if required
-            if traits.confirm >= ConfirmLevel.INTENT:
-                lines.append("# agent_intent: <reason for this operation>")
-
-            # Add confirm if required
-            if traits.confirm >= ConfirmLevel.EXPLICIT:
-                lines.append("# confirm: true")
-
-            # Add schema fields
-            lines.extend(self._schema_to_yaml_lines(schema))
-            lines.append("```")
-            lines.append("")
-
-            # Add warnings if any
-            for warning in traits.warnings:
-                lines.append(f"> **Warning:** {warning}")
-                lines.append("")
-
-        return lines
+        return self._get_doc_generator()._generate_operations_section()
 
     def _schema_to_yaml_lines(self, schema: type[BaseModel]) -> list[str]:
         """Convert Pydantic schema to YAML example lines."""
-        lines = []
-
-        for field_name, field_info in schema.model_fields.items():
-            # Skip agent_intent and confirm - handled separately
-            if field_name in ("agent_intent", "confirm"):
-                continue
-
-            annotation = field_info.annotation
-            required = field_info.is_required()
-            default = field_info.default
-
-            # Get example value
-            example = self._get_field_example(field_name, field_info, annotation, required)
-
-            # Check if this is a nested object (like TimeSlot)
-            if self._is_nested_model(annotation):
-                lines.append(f"{field_name}:")
-                nested_lines = self._get_nested_example(field_name, annotation, required)
-                lines.extend(f"  {line}" for line in nested_lines)
-            elif default is not None and str(default) not in ("PydanticUndefined", "..."):
-                # Has a real default value
-                if isinstance(default, bool):
-                    lines.append(f"{field_name}: {str(default).lower()}")
-                elif isinstance(default, list):
-                    lines.append(f"{field_name}: []")
-                else:
-                    lines.append(f"{field_name}: {default}")
-            else:
-                lines.append(f"{field_name}: {example}")
-
-        return lines
+        return self._get_doc_generator()._schema_to_yaml_lines(schema)
 
     def _is_nested_model(self, annotation: Any) -> bool:
         """Check if annotation is a nested Pydantic model."""
-        try:
-            import types
-
-            # Handle Python 3.10+ union types (X | None)
-            if isinstance(annotation, types.UnionType):
-                args = getattr(annotation, "__args__", ())
-                return any(arg is not type(None) and hasattr(arg, "model_fields") for arg in args)
-
-            # Handle typing.Optional and typing.Union
-            origin = getattr(annotation, "__origin__", None)
-            if origin is type(None) or str(origin) == "typing.Union":
-                args = getattr(annotation, "__args__", ())
-                for arg in args:
-                    if arg is not type(None) and hasattr(arg, "model_fields"):
-                        return True
-            return hasattr(annotation, "model_fields")
-        except Exception:
-            return False
+        return self._get_doc_generator()._is_nested_model(annotation)
 
     def _get_nested_example(self, field_name: str, _annotation: Any, required: bool) -> list[str]:
         """Get example lines for nested model."""
-        # Common nested examples
-        if field_name in ("start", "end"):
-            return [
-                'dateTime: "2024-01-15T09:00:00-08:00"',
-                "timeZone: America/Los_Angeles",
-            ]
-        elif field_name == "attendees":
-            return ["- email: attendee@example.com"]
-
-        # Generic nested
-        suffix = ", required" if required else ", optional"
-        return [f"# <nested object{suffix}>"]
+        return self._get_doc_generator()._get_nested_example(field_name, _annotation, required)
 
     def _get_field_example(
         self, field_name: str, _field_info: Any, annotation: Any, required: bool
     ) -> str:
         """Get example value for a field."""
-        # Field-specific examples
-        examples = {
-            "summary": '"Meeting Title"',
-            "description": '"Event description"',
-            "location": '"Conference Room A"',
-            "visibility": "default  # default, public, private, confidential",
-            "colorId": '"1"  # 1-11',
-            "recurrence": '["RRULE:FREQ=WEEKLY;BYDAY=MO"]',
-            "send_notifications": "true",
-        }
-
-        if field_name in examples:
-            return examples[field_name]
-
-        # Type-based examples
-        type_hint = self._format_type_hint(annotation)
-        suffix = ", required" if required else ", optional"
-
-        if "list" in type_hint.lower():
-            return "[]"
-        elif "bool" in type_hint.lower():
-            return "true"
-        elif "int" in type_hint.lower():
-            return "0"
-
-        return f"<{type_hint}{suffix}>"
+        return self._get_doc_generator()._get_field_example(
+            field_name, _field_info, annotation, required
+        )
 
     def _format_type_hint(self, annotation: Any) -> str:
         """Format type annotation as readable string."""
-        if annotation is None:
-            return "any"
-
-        type_name = getattr(annotation, "__name__", str(annotation))
-
-        # Handle common types
-        if "str" in type_name.lower():
-            return "string"
-        elif "int" in type_name.lower():
-            return "integer"
-        elif "bool" in type_name.lower():
-            return "boolean"
-        elif "list" in type_name.lower():
-            return "list"
-        elif "dict" in type_name.lower():
-            return "object"
-
-        return type_name
+        return self._get_doc_generator()._format_type_hint(annotation)
 
     def _generate_required_format_section(self) -> list[str]:
         """Generate Required Format section from OPERATION_TRAITS."""
-        lines = ["## Required Format", ""]
-
-        intent_ops = []
-        explicit_ops = []
-        user_ops = []
-
-        for op_name, traits in self.OPERATION_TRAITS.items():
-            if traits.confirm == ConfirmLevel.USER:
-                user_ops.append(op_name)
-            elif traits.confirm == ConfirmLevel.EXPLICIT:
-                explicit_ops.append(op_name)
-            elif traits.confirm == ConfirmLevel.INTENT:
-                intent_ops.append(op_name)
-
-        if intent_ops or explicit_ops or user_ops:
-            lines.append("All operations require `# agent_intent: <reason>` as the first line.")
-            lines.append("")
-
-        if explicit_ops:
-            ops_str = ", ".join(f"`{op}`" for op in explicit_ops)
-            lines.append(f"Operations requiring explicit confirmation ({ops_str}):")
-            lines.append("- Add `# confirm: true` after agent_intent")
-            lines.append("")
-
-        if user_ops:
-            ops_str = ", ".join(f"`{op}`" for op in user_ops)
-            lines.append(f"Operations requiring user confirmation ({ops_str}):")
-            lines.append("- Add `# user_confirmed: true` after getting explicit user approval")
-            lines.append("- **These operations CANNOT be undone**")
-            lines.append("")
-
-        return lines
+        return self._get_doc_generator()._generate_required_format_section()
 
     def _generate_errors_section(self) -> list[str]:
         """Generate Error Codes section from ERROR_REGISTRY."""
-        lines = ["## Error Codes", ""]
-
-        for code, error_def in self.ERROR_REGISTRY.items():
-            lines.append(f"### {code}")
-            lines.append(error_def.message)
-            lines.append("")
-
-            if error_def.fix_example:
-                lines.append("**Fix:**")
-                lines.append("```yaml")
-                lines.append(error_def.fix_example)
-                lines.append("```")
-                lines.append("")
-
-        return lines
+        return self._get_doc_generator()._generate_errors_section()
 
     def format_error_with_skill_ref(
         self,
@@ -555,32 +316,12 @@ class SkillDocMixin:
         section: str | None = None,
         fix_example: str | None = None,
     ) -> ValidationError:
-        """Create ValidationError with skill reference.
-
-        Args:
-            code: Error code (e.g., "MISSING_AGENT_INTENT")
-            message: Error message
-            section: SKILL.md section anchor (optional)
-            fix_example: Example fix (optional)
-
-        Returns:
-            ValidationError with skill reference
-        """
-        # Try to get from ERROR_REGISTRY
-        error_def = self.ERROR_REGISTRY.get(code)
-        if error_def:
-            section = section or error_def.skill_section
-            fix_example = fix_example or error_def.fix_example
-            message = message or error_def.message
-
-        # Get skill_md_path if available (from SkillDocMixin)
-        skill_path = getattr(self, "skill_md_path", "/.skill/SKILL.md")
-
-        return ValidationError(
+        """Create ValidationError with skill reference."""
+        return self._get_error_formatter().format_error_with_skill_ref(
             code=code,
             message=message,
-            skill_path=skill_path,
-            skill_section=section,
+            error_registry=self.ERROR_REGISTRY,
+            section=section,
             fix_example=fix_example,
         )
 
@@ -627,22 +368,17 @@ class ValidatedMixin:
         try:
             return schema.model_validate(data)
         except PydanticValidationError as e:
-            # Convert to our ValidationError with field-level details
+            from nexus.connectors.error_formatter import SkillErrorFormatter
+
             field_errors = {}
             for error in e.errors():
                 loc = ".".join(str(x) for x in error["loc"])
                 field_errors[loc] = error["msg"]
 
-            # Get skill_md_path if available (from SkillDocMixin)
-            skill_path = getattr(self, "skill_md_path", "/.skill/SKILL.md")
-
-            raise ValidationError(
-                code="SCHEMA_VALIDATION_ERROR",
-                message=f"Invalid {operation} data",
-                skill_path=skill_path,
-                skill_section=operation.replace("_", "-"),
-                field_errors=field_errors,
-            ) from e
+            skill_name = getattr(self, "SKILL_NAME", "")
+            mount_path = getattr(self, "_mount_path", "") or ""
+            formatter = SkillErrorFormatter(skill_name=skill_name, mount_path=mount_path)
+            raise formatter.format_validation_error(operation, field_errors) from e
 
 
 # =============================================================================
@@ -729,21 +465,17 @@ class TraitBasedMixin:
 
     def _trait_error(self, code: str, message: str, section: str, fix: str) -> ValidationError:
         """Create ValidationError for trait validation failure."""
-        # Check ERROR_REGISTRY first
-        error_def = self.ERROR_REGISTRY.get(code)
-        if error_def:
-            fix = error_def.fix_example or fix
-            section = error_def.skill_section or section
+        from nexus.connectors.error_formatter import SkillErrorFormatter
 
-        # Get skill_md_path if available (from SkillDocMixin)
-        skill_path = getattr(self, "skill_md_path", "/.skill/SKILL.md")
-
-        return ValidationError(
+        skill_name = getattr(self, "SKILL_NAME", "")
+        mount_path = getattr(self, "_mount_path", "") or ""
+        formatter = SkillErrorFormatter(skill_name=skill_name, mount_path=mount_path)
+        return formatter.format_trait_error(
             code=code,
             message=message,
-            skill_path=skill_path,
-            skill_section=section,
-            fix_example=fix,
+            section=section,
+            fix=fix,
+            error_registry=self.ERROR_REGISTRY,
         )
 
     def get_operation_traits(self, operation: str) -> OpTraits | None:
@@ -784,8 +516,9 @@ class CheckpointMixin:
 
     OPERATION_TRAITS: dict[str, OpTraits] = {}
 
-    # In-memory checkpoint storage (override for persistent storage)
-    _checkpoints: dict[str, Checkpoint] = {}
+    def __init__(self) -> None:
+        # Instance-level checkpoint storage (fix for shared-dict bug #7-A)
+        self._checkpoints: dict[str, Checkpoint] = {}
 
     def create_checkpoint(
         self,

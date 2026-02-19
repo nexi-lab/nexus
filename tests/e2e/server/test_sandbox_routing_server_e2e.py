@@ -35,9 +35,9 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not MONTY_AVAILABLE, reason="pydantic-monty not installed")
 
-from nexus.sandbox.sandbox_manager import SandboxManager  # noqa: E402
-from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
-from nexus.sandbox.sandbox_provider import (  # noqa: E402
+from nexus.bricks.sandbox.sandbox_manager import SandboxManager  # noqa: E402
+from nexus.bricks.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
+from nexus.bricks.sandbox.sandbox_provider import (  # noqa: E402
     CodeExecutionResult,
     SandboxProvider,
 )
@@ -181,7 +181,7 @@ class TestServerRoutingPipeline:
         )
         sid = sandbox["sandbox_id"]
 
-        with caplog.at_level(logging.INFO, logger="nexus.sandbox"):
+        with caplog.at_level(logging.INFO, logger="nexus.bricks.sandbox"):
             result = await mgr.run_code(sid, "python", "import json\nprint(json.dumps({'a':1}))")
 
         # Result comes from mock Docker provider (escalation succeeded)

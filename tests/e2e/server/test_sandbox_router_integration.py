@@ -27,9 +27,9 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not MONTY_AVAILABLE, reason="pydantic-monty not installed")
 
-from nexus.sandbox.sandbox_manager import SandboxManager  # noqa: E402
-from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
-from nexus.sandbox.sandbox_provider import (  # noqa: E402
+from nexus.bricks.sandbox.sandbox_manager import SandboxManager  # noqa: E402
+from nexus.bricks.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
+from nexus.bricks.sandbox.sandbox_provider import (  # noqa: E402
     CodeExecutionResult,
     SandboxProvider,
 )
@@ -155,7 +155,7 @@ class TestEscalationChain:
 
         # Run code that imports os — Monty should raise EscalationNeeded
         # (The Monty provider detects import failures and raises EscalationNeeded)
-        with caplog.at_level(logging.INFO, logger="nexus.sandbox"):
+        with caplog.at_level(logging.INFO, logger="nexus.bricks.sandbox"):
             result = await manager_with_router.run_code(
                 sandbox_id, "python", "import os\nprint(os.getcwd())"
             )

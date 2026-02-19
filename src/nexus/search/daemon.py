@@ -45,7 +45,6 @@ from nexus.search.results import BaseSearchResult
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.bm25s_search import BM25SIndex
     from nexus.search.chunking import EntropyAwareChunker
     from nexus.search.indexing import IndexingPipeline
@@ -150,7 +149,7 @@ class SearchDaemon:
         self._bm25s_index: BM25SIndex | None = None
         self._async_engine: AsyncEngine | None = None
         self._async_session: Any | None = None  # async_sessionmaker (Issue #1597)
-        self._async_search: AsyncSemanticSearch | None = None
+        self._async_search: Any | None = None  # AsyncSemanticSearch (legacy)
         self._embedding_provider: Any = None
         self._record_store: Any | None = None  # SQLAlchemyRecordStore fallback
         self._owns_engine = False  # True only when we created the engine ourselves

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.workflows.actions import (
+from nexus.bricks.workflows.actions import (
     BUILTIN_ACTIONS,
     BaseAction,
     BashAction,
@@ -16,7 +16,7 @@ from nexus.workflows.actions import (
     TagAction,
     WebhookAction,
 )
-from nexus.workflows.types import TriggerType, WorkflowContext
+from nexus.bricks.workflows.types import TriggerType, WorkflowContext
 
 
 @dataclass

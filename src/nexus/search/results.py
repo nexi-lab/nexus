@@ -32,6 +32,10 @@ class BaseSearchResult:
     line_end: int | None = None
     keyword_score: float | None = None
     vector_score: float | None = None
+    # Issue #1092: Attribute ranking metadata (merged from SemanticSearchResult)
+    matched_field: str | None = None  # Which field matched (filename, path, content, etc.)
+    attribute_boost: float | None = None  # Boost multiplier applied
+    original_score: float | None = None  # Score before attribute boosting
 
 
 def detect_matched_field(

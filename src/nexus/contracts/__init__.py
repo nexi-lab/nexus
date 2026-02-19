@@ -10,6 +10,7 @@ Usage:
     from nexus.contracts.exceptions import BackendError, ValidationError
 """
 
+from nexus.contracts.constants import TIER_ALIASES, PriorityTier
 from nexus.contracts.exceptions import (
     AccessDeniedError,
     AuditLogError,
@@ -54,14 +55,33 @@ from nexus.contracts.exceptions import (
     ValidationError,
 )
 from nexus.contracts.registry import BaseRegistry, BrickInfo, BrickRegistry
+from nexus.contracts.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
 from nexus.contracts.types import (
     ContextIdentity,
     OperationContext,
     Permission,
     extract_context_identity,
 )
+from nexus.contracts.validators import (
+    EmailAddress,
+    EmailList,
+    EmailListRequired,
+    ISODateTimeStr,
+)
 
 __all__ = [
+    # Constants (shared across bricks)
+    "PriorityTier",
+    "TIER_ALIASES",
+    # Validators
+    "EmailAddress",
+    "EmailList",
+    "EmailListRequired",
+    "ISODateTimeStr",
+    # RPC codec
+    "RPCEncoder",
+    "decode_rpc_message",
+    "encode_rpc_message",
     # Registry
     "BaseRegistry",
     "BrickInfo",

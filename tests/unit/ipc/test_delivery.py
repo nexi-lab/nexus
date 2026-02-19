@@ -358,6 +358,99 @@ class TestMessageProcessor:
         assert received_ids == ["msg_01", "msg_02", "msg_03"]
 
 
+class TestSendProcessRoundtrip:
+    """End-to-end roundtrip: MessageSender → storage → MessageProcessor (#9)."""
+
+    @pytest.fixture
+    def vfs(self) -> InMemoryVFS:
+        return InMemoryVFS()
+
+    @pytest.mark.asyncio
+    async def test_send_then_process_roundtrip(self, vfs: InMemoryVFS) -> None:
+        """Full single-zone roundtrip: send writes to inbox, processor reads and handles."""
+        await _provision_agent(vfs, "agent:alice")
+        await _provision_agent(vfs, "agent:bob")
+
+        publisher = InMemoryEventPublisher()
+        sender = MessageSender(vfs, publisher, zone_id=ZONE)
+        env = _make_envelope(sender="agent:alice", recipient="agent:bob", msg_id="msg_roundtrip")
+
+        path = await sender.send(env)
+        assert path.startswith("/agents/agent:bob/inbox/")
+
+        received: list[MessageEnvelope] = []
+
+        async def handler(msg: MessageEnvelope) -> None:
+            received.append(msg)
+
+        processor = MessageProcessor(vfs, "agent:bob", handler, zone_id=ZONE)
+        count = await processor.process_inbox()
+
+        assert count == 1
+        assert len(received) == 1
+        assert received[0].id == "msg_roundtrip"
+        assert received[0].sender == "agent:alice"
+        assert received[0].payload == {"test": True}
+
+        # Inbox empty, processed has the message
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        assert len(inbox_files) == 0
+        processed_files = await vfs.list_dir(processed_path("agent:bob"), ZONE)
+        assert len(processed_files) == 1
+
+
+class TestConcurrentProcessing:
+    """Tests for concurrent process_inbox calls (#10)."""
+
+    @pytest.fixture
+    def vfs(self) -> InMemoryVFS:
+        return InMemoryVFS()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_process_inbox_at_least_once(self, vfs: InMemoryVFS) -> None:
+        """Two concurrent process_inbox calls: at-least-once delivery, no crashes.
+
+        The dedup cache prevents re-processing in *subsequent* sweeps, but
+        concurrent processors may both invoke the handler (at-least-once
+        semantics).  The key guarantees: no unhandled exceptions, handler
+        called at least once, and the dedup cache is populated afterwards
+        so a third sweep would skip the message.
+        """
+        await _provision_agent(vfs, "agent:bob")
+        env = _make_envelope(msg_id="msg_concurrent")
+        msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
+
+        call_count = 0
+
+        async def handler(msg: MessageEnvelope) -> None:
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(0.01)
+
+        from nexus.cache.inmemory import InMemoryCacheStore
+
+        cache_store = InMemoryCacheStore()
+        p1 = MessageProcessor(vfs, "agent:bob", handler, zone_id=ZONE, cache_store=cache_store)
+        p2 = MessageProcessor(vfs, "agent:bob", handler, zone_id=ZONE, cache_store=cache_store)
+
+        results = await asyncio.gather(
+            p1.process_inbox(),
+            p2.process_inbox(),
+            return_exceptions=True,
+        )
+
+        # Neither should raise
+        for r in results:
+            assert not isinstance(r, Exception), f"Unexpected exception: {r}"
+
+        # At-least-once: handler called >= 1 time
+        assert call_count >= 1
+
+        # Dedup cache populated — a third sweep would skip
+        assert await cache_store.exists(f"ipc:dedup:{ZONE}:msg_concurrent")
+
+
 class TestHotColdDelivery:
     """Tests for tiered hot/cold message delivery (#1747, LEGO 17.7)."""
 

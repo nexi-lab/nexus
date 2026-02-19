@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from nexus.sandbox.sandbox_provider import CodeExecutionResult
+from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
 from nexus.validation.models import ValidationPipelineConfig, ValidatorConfig
 from nexus.validation.runner import ValidationRunner
 from nexus.validation.script_builder import (

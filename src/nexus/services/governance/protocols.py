@@ -24,15 +24,6 @@ if TYPE_CHECKING:
         TransactionSummary,
     )
 
-if TYPE_CHECKING:
-    from nexus.services.governance.models import (
-        ConstraintCheckResult,
-        ConstraintType,
-        FraudRing,
-        FraudScore,
-        GovernanceEdge,
-    )
-
 
 @runtime_checkable
 class AnomalyDetectorProtocol(Protocol):

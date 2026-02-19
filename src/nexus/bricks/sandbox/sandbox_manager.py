@@ -16,13 +16,13 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.bricks.sandbox.protocols import SandboxRepositoryProtocol
     from nexus.bricks.sandbox.sandbox_router import SandboxRouter
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.bricks.sandbox.provider_registry import ProviderRegistry
-from nexus.bricks.sandbox.repository import SandboxRepository
 from nexus.bricks.sandbox.sandbox_provider import (
     CodeExecutionResult,
     EscalationNeeded,
@@ -73,7 +73,7 @@ class SandboxManager:
         e2b_template_id: str | None = None,
         config: Any = None,  # NexusConfig | None
         *,
-        repository: SandboxRepository | None = None,
+        repository: SandboxRepositoryProtocol | None = None,
         registry: ProviderRegistry | None = None,
         validation_runner: Any = None,
     ):
@@ -90,7 +90,12 @@ class SandboxManager:
             validation_runner: Optional validation runner instance (injected via DI).
         """
         self._validation_runner = validation_runner
-        self._repository = repository or SandboxRepository(session_factory)
+        if repository is not None:
+            self._repository = repository
+        else:
+            from nexus.storage.repositories.sandbox import SQLAlchemySandboxRepository
+
+            self._repository = SQLAlchemySandboxRepository(session_factory)
         self._registry = registry or self._build_default_registry(
             e2b_api_key, e2b_team_id, e2b_template_id, config
         )

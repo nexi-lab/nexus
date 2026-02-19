@@ -1,9 +1,9 @@
 """PostgreSQL implementation of PersistentViewStore (Issue #1265).
 
 L3 cache layer — persists namespace views for instant agent reconnection.
-Routes through RecordStoreABC (the RecordStore pillar) for engine access.
+Routes through RecordStoreProtocol (the RecordStore pillar) for engine access.
 
-Storage Affinity: **RecordStore** — relational upsert via RecordStoreABC.engine.
+Storage Affinity: **RecordStore** — relational upsert via RecordStoreProtocol.engine.
 
 Upsert semantics: DELETE + INSERT (portable across PostgreSQL and SQLite).
 """
@@ -22,7 +22,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.core.protocols import PersistentView
 
 if TYPE_CHECKING:
-    from nexus.storage.record_store import RecordStoreABC
+    from nexus.bricks.cache.protocols import RecordStoreProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +70,10 @@ class PostgresPersistentViewStore:
     """PostgreSQL-backed persistent namespace view store.
 
     Implements PersistentViewStore protocol via structural subtyping.
-    Routes through RecordStoreABC for engine access (Four Pillars compliance).
+    Routes through RecordStoreProtocol for engine access (Four Pillars compliance).
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: RecordStoreProtocol) -> None:
         self._engine = record_store.engine
 
     def save_view(

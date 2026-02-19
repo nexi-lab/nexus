@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def require_admin(context: Any) -> None:
     """Require admin privileges for admin operations."""
-    from nexus.core.exceptions import NexusPermissionError
+    from nexus.contracts.exceptions import NexusPermissionError
 
     if not context or not getattr(context, "is_admin", False):
         raise NexusPermissionError("Admin privileges required for this operation")
@@ -27,7 +27,7 @@ def require_database_auth(auth_provider: Any) -> None:
     Raises:
         ConfigurationError: If auth_provider is missing or lacks session_factory.
     """
-    from nexus.core.exceptions import ConfigurationError
+    from nexus.contracts.exceptions import ConfigurationError
 
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise ConfigurationError(
@@ -165,7 +165,7 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
     """Handle admin_get_key method."""
     from sqlalchemy import select
 
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.contracts.exceptions import NexusFileNotFoundError
     from nexus.storage.models import APIKeyModel
 
     require_admin(context)
@@ -186,7 +186,7 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
 def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.contracts.exceptions import NexusFileNotFoundError
 
     require_admin(context)
     require_database_auth(auth_provider)
@@ -206,7 +206,7 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
 
     from sqlalchemy import select
 
-    from nexus.core.exceptions import NexusFileNotFoundError, ValidationError
+    from nexus.contracts.exceptions import NexusFileNotFoundError, ValidationError
     from nexus.storage.models import APIKeyModel
 
     require_admin(context)

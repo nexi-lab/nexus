@@ -80,7 +80,7 @@ def crypto(mock_oauth_crypto: MagicMock) -> IdentityCrypto:
 @pytest.fixture
 def key_service(session_factory: Any, crypto: IdentityCrypto) -> KeyService:
     record_store = SimpleNamespace(session_factory=session_factory)
-    return KeyService(record_store=record_store, crypto=crypto, cache_ttl=0)
+    return KeyService(record_store=record_store, crypto=crypto)
 
 
 # ---------------------------------------------------------------------------

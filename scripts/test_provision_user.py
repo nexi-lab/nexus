@@ -60,7 +60,7 @@ def test_provision_user() -> bool:
 
     # Create admin context
     admin_context = OperationContext(
-        user="system",
+        user_id="system",
         groups=[],
         zone_id=test_zone_id,
         is_admin=True,

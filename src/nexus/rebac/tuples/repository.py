@@ -226,10 +226,8 @@ class TupleRepository:
             Current revision number (0 if zone has no writes yet)
         """
         effective_zone = zone_id or "root"
-        should_close = conn is None
-        if conn is None:
-            conn = self.get_connection()
-        try:
+        if conn is not None:
+            # Reuse provided connection
             cursor = self.create_cursor(conn)
             cursor.execute(
                 self.fix_sql_placeholders(

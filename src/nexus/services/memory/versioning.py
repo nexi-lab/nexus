@@ -308,7 +308,7 @@ class MemoryVersioning:
                 source_type="rollback",
                 parent_version_id=parent_version_id,
                 change_reason=f"Rollback to version {version}",
-                created_by=check_context.user if check_context else None,
+                created_by=check_context.user_id if check_context else None,
             )
 
             session.commit()

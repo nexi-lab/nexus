@@ -152,7 +152,6 @@ def importer(mock_filesystem, mock_registry):
 def admin_context():
     """Create an admin operation context."""
     return OperationContext(
-        user="admin",
         user_id="admin",
         agent_id=None,
         subject_type="user",
@@ -170,7 +169,6 @@ def admin_context():
 def user_context():
     """Create a regular user operation context."""
     return OperationContext(
-        user="alice",
         user_id="alice",
         agent_id=None,
         subject_type="user",

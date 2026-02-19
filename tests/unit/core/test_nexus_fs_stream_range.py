@@ -23,7 +23,7 @@ class _StubFS:
         self.metadata = metadata
         self.router = router
         self._enforce_permissions = False
-        self._default_context = OperationContext(user="test", groups=[], zone_id="default")
+        self._default_context = OperationContext(user_id="test", groups=[], zone_id="default")
 
     def _validate_path(self, path):
         if not path.startswith("/"):

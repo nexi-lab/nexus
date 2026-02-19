@@ -164,7 +164,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     from nexus.core.permissions import OperationContext
 
     # Create context with zone_id and admin access for the test user
-    ctx = OperationContext(user="test-user", groups=[], zone_id="test", is_admin=True)
+    ctx = OperationContext(user_id="test-user", groups=[], zone_id="test", is_admin=True)
 
     # Use add_mount API which properly grants permissions
     mount_point = nx.add_mount(

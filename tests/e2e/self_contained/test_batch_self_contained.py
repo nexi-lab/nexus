@@ -48,7 +48,7 @@ def _make_mock_fs() -> AsyncMock:
 
 def _make_mock_context() -> MagicMock:
     ctx = MagicMock()
-    ctx.user = "e2e-test-user"
+    ctx.user_id = "e2e-test-user"
     ctx.zone_id = "root"
     ctx.groups = ["testers"]
     ctx.is_admin = False

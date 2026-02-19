@@ -132,30 +132,6 @@ RETURNING
     request_state, priority_class, executor_state, estimated_service_time
 """
 
-_SQL_DEQUEUE_HRRN_BY_EXECUTOR = """
-UPDATE scheduled_tasks
-SET status = 'running', started_at = now()
-WHERE id = (
-    SELECT id FROM scheduled_tasks
-    WHERE status = 'queued' AND executor_id = $1
-      AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
-    ORDER BY
-        priority_class ASC,
-        hrrn_score(enqueued_at, estimated_service_time) DESC,
-        enqueued_at ASC
-    FOR UPDATE SKIP LOCKED
-    LIMIT 1
-)
-RETURNING
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key,
-    request_state, priority_class, executor_state, estimated_service_time
-"""
-
 _SQL_COMPLETE = """
 UPDATE scheduled_tasks
 SET status = $2, completed_at = now(), error_message = $3

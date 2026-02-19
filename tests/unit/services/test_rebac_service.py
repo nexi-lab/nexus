@@ -399,7 +399,7 @@ class TestReBACCheck:
     async def test_check_with_zone_from_context(self, service, mock_rebac_manager):
         """Test that zone is extracted from OperationContext."""
         ctx = OperationContext(
-            user="alice", groups=[], zone_id="zone-acme", is_system=False, is_admin=False
+            user_id="alice", groups=[], zone_id="zone-acme", is_system=False, is_admin=False
         )
         await service.rebac_check(
             subject=("user", "alice"),
@@ -415,7 +415,7 @@ class TestReBACCheck:
     async def test_check_explicit_zone_overrides_context(self, service, mock_rebac_manager):
         """Test that explicit zone_id takes precedence over context."""
         ctx = OperationContext(
-            user="alice", groups=[], zone_id="zone-context", is_system=False, is_admin=False
+            user_id="alice", groups=[], zone_id="zone-context", is_system=False, is_admin=False
         )
         await service.rebac_check(
             subject=("user", "alice"),
@@ -618,7 +618,7 @@ class TestReBACExplain:
     async def test_explain_uses_zone_from_context(self, service, mock_rebac_manager):
         """Test that zone is extracted from context."""
         ctx = OperationContext(
-            user="alice", groups=[], zone_id="zone-acme", is_system=False, is_admin=False
+            user_id="alice", groups=[], zone_id="zone-acme", is_system=False, is_admin=False
         )
         await service.rebac_explain(
             subject=("user", "alice"),
@@ -791,9 +791,9 @@ class TestGetSubjectFromContext:
         result = service._get_subject_from_context(ctx)
         assert result == ("user", "bob")
 
-    def test_extract_from_dict_with_user_key(self, service):
-        """Test extracting subject from dict with 'user' key."""
-        ctx = {"user": "charlie"}
+    def test_extract_from_dict_with_user_id_key(self, service):
+        """Test extracting subject from dict with 'user_id' key."""
+        ctx = {"user_id": "charlie"}
         result = service._get_subject_from_context(ctx)
         assert result == ("user", "charlie")
 
@@ -828,7 +828,7 @@ class TestCheckSharePermission:
     def test_skips_check_when_permissions_disabled(self, service):
         """Test that disabled enforcement skips the check."""
         ctx = OperationContext(
-            user="user1", groups=[], zone_id="z1", is_system=False, is_admin=False
+            user_id="user1", groups=[], zone_id="z1", is_system=False, is_admin=False
         )
         # Should not raise even though user may not have permission
         service._check_share_permission(
@@ -839,7 +839,7 @@ class TestCheckSharePermission:
     def test_skips_check_for_admin(self, enforced_service):
         """Test that admin context bypasses permission check."""
         admin_ctx = OperationContext(
-            user="admin", groups=["admin"], zone_id="z1", is_system=False, is_admin=True
+            user_id="admin", groups=["admin"], zone_id="z1", is_system=False, is_admin=True
         )
         # Should not raise
         enforced_service._check_share_permission(
@@ -850,7 +850,7 @@ class TestCheckSharePermission:
     def test_skips_check_for_system(self, enforced_service):
         """Test that system context bypasses permission check."""
         system_ctx = OperationContext(
-            user="system", groups=[], zone_id="z1", is_system=True, is_admin=False
+            user_id="system", groups=[], zone_id="z1", is_system=True, is_admin=False
         )
         # Should not raise
         enforced_service._check_share_permission(
@@ -867,7 +867,7 @@ class TestCheckSharePermission:
         mock_rebac_manager.rebac_check.return_value = False
 
         ctx = OperationContext(
-            user="user1", groups=[], zone_id="z1", is_system=False, is_admin=False
+            user_id="user1", groups=[], zone_id="z1", is_system=False, is_admin=False
         )
         with pytest.raises(PermissionError, match="does not have owner permission"):
             enforced_service._check_share_permission(
@@ -883,7 +883,7 @@ class TestCheckSharePermission:
         mock_rebac_manager.rebac_check.return_value = True
 
         ctx = OperationContext(
-            user="owner1", groups=[], zone_id="z1", is_system=False, is_admin=False
+            user_id="owner1", groups=[], zone_id="z1", is_system=False, is_admin=False
         )
         # Should not raise - owner has permission
         enforced_service._check_share_permission(

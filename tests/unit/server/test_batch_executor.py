@@ -66,7 +66,7 @@ def mock_fs() -> AsyncMock:
 def mock_context() -> MagicMock:
     """Create a mock OperationContext."""
     ctx = MagicMock()
-    ctx.user = "test-user"
+    ctx.user_id = "test-user"
     ctx.zone_id = "root"
     ctx.groups = []
     ctx.is_admin = False

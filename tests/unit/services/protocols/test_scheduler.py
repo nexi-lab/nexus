@@ -44,6 +44,7 @@ class TestAgentRequest:
             "deadline",
             "boost_amount",
             "estimated_service_time",
+            "idempotency_key",
         }
 
     def test_defaults(self) -> None:
@@ -186,7 +187,7 @@ class TestInMemorySchedulerFunctional:
 
         status = await scheduler.get_status(task_id)
         assert status is not None
-        assert status["task_id"] == task_id
+        assert status["id"] == task_id
         assert status["status"] == "queued"
 
     async def test_get_status_nonexistent(self) -> None:

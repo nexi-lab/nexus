@@ -222,7 +222,6 @@ class RaftClient:
         request = transport_pb2.ProposeRequest(
             command=command,
             request_id=request_id or "",
-            zone_id=self.zone_id or "",
         )
 
         try:
@@ -265,7 +264,6 @@ class RaftClient:
         request = transport_pb2.QueryRequest(
             query=query,
             read_from_leader=read_from_leader,
-            zone_id=self.zone_id or "",
         )
 
         try:
@@ -441,23 +439,12 @@ class RaftClient:
         """
         zone = zone_id or self.zone_id or ""
 
-        # Convert FileMetadata to proto
-        proto_metadata = metadata_pb2.FileMetadata(
-            path=metadata.path,
-            backend_name=metadata.backend_name,
-            physical_path=metadata.physical_path or "",
-            size=metadata.size,
-            etag=metadata.etag or "",
-            mime_type=metadata.mime_type or "",
-            created_at=metadata.created_at.isoformat() if metadata.created_at else "",
-            modified_at=metadata.modified_at.isoformat() if metadata.modified_at else "",
-            version=metadata.version,
-            zone_id=zone,
-            created_by=metadata.created_by or "",
-            entry_type=str(metadata.entry_type) if metadata.entry_type else "",
-            target_zone_id=metadata.target_zone_id or "",
-            owner_id=metadata.owner_id or "",
-        )
+        # Convert FileMetadata to proto (generated mapper is SSOT)
+        from nexus.storage._metadata_mapper_generated import MetadataMapper
+
+        proto_metadata = MetadataMapper.to_proto(metadata)
+        if zone:
+            proto_metadata.zone_id = zone
 
         # Create PutMetadata command and propose via Raft
         command = commands_pb2.RaftCommand(
@@ -746,10 +733,7 @@ class RaftClient:
 class RaftClientPool:
     """Pool of RaftClient connections to multiple Raft nodes.
 
-    Provides automatic leader discovery and failover.  Write operations
-    are routed to the current leader; if a ``RaftNotLeaderError`` is
-    received the pool updates its leader tracking from the error's
-    ``leader_address`` hint and retries once on the correct node.
+    Provides automatic leader discovery and failover.
     """
 
     addresses: list[str]
@@ -759,64 +743,24 @@ class RaftClientPool:
     _clients: dict[str, RaftClient] = field(default_factory=dict, init=False)
     _leader_address: str | None = field(default=None, init=False)
 
-    def update_leader(self, leader_address: str | None) -> None:
-        """Update the known leader address.
+    async def get_client(self) -> RaftClient:
+        """Get a client, preferring the leader if known."""
+        # For now, just return first available client
+        # In real impl, would track leader and route accordingly
+        address = self._leader_address or self.addresses[0]
 
-        Called automatically when a ``RaftNotLeaderError`` supplies a
-        leader hint, or after ``discover_leader()`` probes the cluster.
-        """
-        if leader_address and leader_address in self.addresses:
-            self._leader_address = leader_address
-
-    async def discover_leader(self) -> str | None:
-        """Probe cluster nodes to discover the current leader.
-
-        Tries ``get_cluster_info()`` on each node until one reports the
-        leader address.  Returns the leader address or ``None``.
-        """
-        for address in self.addresses:
-            try:
-                client = await self._get_or_create_client(address)
-                info = await client.get_cluster_info(self.zone_id)
-                leader_addr: str | None = info.get("leader_address")
-                if leader_addr:
-                    self.update_leader(leader_addr)
-                    return leader_addr
-                if info.get("is_leader"):
-                    self.update_leader(address)
-                    return address
-            except Exception:
-                logger.debug("Leader discovery: node %s unreachable", address)
-                continue
-        return None
-
-    async def _get_or_create_client(self, address: str) -> RaftClient:
-        """Get an existing client or create and connect a new one."""
         if address not in self._clients:
             client = RaftClient(address, self.config, self.zone_id)
             await client.connect()
             self._clients[address] = client
+
         return self._clients[address]
-
-    async def get_client(self) -> RaftClient:
-        """Get a client connected to the leader (if known).
-
-        If no leader is known, probes the cluster once via
-        ``discover_leader()``.  Falls back to the first address if
-        discovery fails.
-        """
-        if self._leader_address is None:
-            await self.discover_leader()
-
-        address = self._leader_address or self.addresses[0]
-        return await self._get_or_create_client(address)
 
     async def close_all(self) -> None:
         """Close all client connections."""
         for client in self._clients.values():
             await client.close()
         self._clients.clear()
-        self._leader_address = None
 
     async def __aenter__(self) -> RaftClientPool:
         return self

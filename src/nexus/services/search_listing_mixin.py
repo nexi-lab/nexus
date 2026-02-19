@@ -417,7 +417,7 @@ class SearchListingMixin:
                     )
             if not has_permission:
                 raise PermissionDeniedError(
-                    f"Access denied: User '{context.user}' does not have "
+                    f"Access denied: User '{context.user_id}' does not have "
                     f"TRAVERSE permission for '{path}'"
                 )
 
@@ -430,7 +430,7 @@ class SearchListingMixin:
             from nexus.core.permissions import OperationContext
 
             list_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path
+                user_id="anonymous", groups=[], backend_path=route.backend_path
             )
 
         # Issue #901: Parallel directory traversal for 5-10x speedup
@@ -525,7 +525,7 @@ class SearchListingMixin:
         _rebac_manager: Any,
     ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
         """Non-recursive list using sparse directory index + Tiger bitmap."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         _preapproved_dirs: set[str] = set()
         _revision_before: int | None = None
@@ -972,7 +972,7 @@ class SearchListingMixin:
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
-        from nexus.core._metadata_generated import PaginatedResult
+        from nexus.core.metadata import PaginatedResult
         from nexus.core.pagination import encode_cursor
 
         context = context or self._default_context
@@ -1066,8 +1066,8 @@ class SearchListingMixin:
             logger.warning("session_factory not provided, cannot list memory paths")
             return []
 
+        from nexus.rebac.entity_registry import EntityRegistry
         from nexus.services.memory.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()

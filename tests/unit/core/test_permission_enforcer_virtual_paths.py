@@ -115,7 +115,7 @@ class TestVirtualPathPermissionChecks:
         router = MockRouter(mount_point="/mnt/gcs")
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         # Try to read file
         enforcer.check("/mnt/gcs/file.csv", Permission.READ, ctx)
@@ -149,7 +149,7 @@ class TestVirtualPathPermissionChecks:
         router = MockRouter(mount_point="/mnt/gcs")
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         # Try to read file in mounted backend
         result = enforcer.check("/mnt/gcs/data.csv", Permission.READ, ctx)
@@ -172,7 +172,7 @@ class TestVirtualPathPermissionChecks:
         router = MockRouter(mount_point="/mnt/gcs")
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         # Try to read deeply nested file
         result = enforcer.check(
@@ -197,7 +197,7 @@ class TestVirtualPathPermissionChecks:
         router_alice = MockRouter(mount_point="/mnt/alice")
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router_alice)
 
-        ctx_alice = OperationContext(user="alice", groups=[])
+        ctx_alice = OperationContext(user_id="alice", groups=[])
 
         # Alice can read from her mount
         assert enforcer.check("/mnt/alice/file.txt", Permission.READ, ctx_alice) is True
@@ -206,7 +206,7 @@ class TestVirtualPathPermissionChecks:
         router_bob = MockRouter(mount_point="/mnt/bob")
         enforcer_bob = PermissionEnforcer(rebac_manager=rebac, router=router_bob)
 
-        ctx_bob = OperationContext(user="bob", groups=[])
+        ctx_bob = OperationContext(user_id="bob", groups=[])
 
         # Bob cannot read from his mount (no permission granted)
         assert enforcer_bob.check("/mnt/bob/file.txt", Permission.READ, ctx_bob) is False
@@ -229,7 +229,7 @@ class TestNonFileBackendObjectId:
         router = DatabaseRouter()
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         enforcer.check("/db/users", Permission.READ, ctx)
 
@@ -251,7 +251,7 @@ class TestNonFileBackendObjectId:
         router = RedisRouter()
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         enforcer.check("/cache/session:abc123", Permission.READ, ctx)
 
@@ -274,7 +274,7 @@ class TestRouterFailureFallback:
         router = FailingRouter()
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         # Should not raise, should fall back gracefully
         enforcer.check("/some/file.txt", Permission.READ, ctx)
@@ -289,7 +289,7 @@ class TestRouterFailureFallback:
         rebac = MockReBACManager()
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=None)
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         enforcer.check("/workspace/file.txt", Permission.READ, ctx)
 
@@ -310,7 +310,7 @@ class TestRegressionPrevention:
         router = MockRouter(mount_point="/")
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
 
-        ctx = OperationContext(user="admin", groups=[])
+        ctx = OperationContext(user_id="admin", groups=[])
 
         # Should inherit from root permission
         assert enforcer.check("/any/deep/nested/file.txt", Permission.READ, ctx) is True
@@ -325,7 +325,7 @@ class TestRegressionPrevention:
         router = MockRouter(mount_point="/mnt/gcs")
         enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
 
-        ctx = OperationContext(user="alice", groups=[])
+        ctx = OperationContext(user_id="alice", groups=[])
 
         # File deep in hierarchy
         result = enforcer.check("/mnt/gcs/team-data/2024/reports/q4.csv", Permission.READ, ctx)

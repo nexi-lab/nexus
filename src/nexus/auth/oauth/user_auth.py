@@ -368,7 +368,7 @@ class OAuthUserAuth:
         zone_id = email.split("@")[0] if email else user_id
 
         admin_context = OperationContext(
-            user="system",
+            user_id="system",
             groups=[],
             zone_id=zone_id,
             is_admin=True,

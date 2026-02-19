@@ -73,7 +73,7 @@ def permission_enforcer(
 def alice_context() -> OperationContext:
     """Operation context for user alice."""
     return OperationContext(
-        user="alice",
+        user_id="alice",
         groups=[],
         subject_type="user",
         subject_id="alice",
@@ -85,7 +85,7 @@ def alice_context() -> OperationContext:
 def bob_context() -> OperationContext:
     """Operation context for user bob."""
     return OperationContext(
-        user="bob",
+        user_id="bob",
         groups=[],
         subject_type="user",
         subject_id="bob",
@@ -97,12 +97,13 @@ def bob_context() -> OperationContext:
 def admin_context() -> OperationContext:
     """Operation context for admin user."""
     return OperationContext(
-        user="admin",
+        user_id="admin",
         groups=[],
         subject_type="user",
         subject_id="admin",
         zone_id="test",
         is_admin=True,
+        admin_capabilities={"admin:read:*", "admin:write:*", "admin:execute:*"},
     )
 
 
@@ -224,6 +225,7 @@ def test_defense_in_depth_namespace_then_rebac(
 
 def test_grant_revocation_makes_path_invisible(
     rebac_manager: EnhancedReBACManager,
+    namespace_manager: NamespaceManager,
     permission_enforcer: PermissionEnforcer,
     alice_context: OperationContext,
 ):
@@ -246,7 +248,11 @@ def test_grant_revocation_makes_path_invisible(
     rebac_manager.rebac_delete(tuple_id=tid)
 
     # Trigger zone revision increment
-    rebac_manager._increment_zone_revision("test")
+    with rebac_manager._connection() as conn:
+        rebac_manager._increment_zone_revision("test", conn)
+
+    # Invalidate namespace caches so the revocation is visible immediately
+    namespace_manager.invalidate(("user", "alice"))
 
     # Alice now gets 404 (path invisible)
     with pytest.raises(NexusFileNotFoundError):
@@ -291,7 +297,7 @@ def test_filter_list_with_namespace(
 
     # filter_list for alice should only return alice paths
     all_paths = [alice_path1, alice_path2, bob_path]
-    filtered = permission_enforcer.filter_list(all_paths, Permission.READ, alice_context)
+    filtered = permission_enforcer.filter_list(all_paths, alice_context)
 
     assert set(filtered) == {alice_path1, alice_path2}
     assert bob_path not in filtered

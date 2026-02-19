@@ -570,7 +570,7 @@ class TestReflectCurateWithDbAuth:
 #
 # Non-admin API keys (is_admin=False) do NOT get the admin bypass.
 # Permission checks go through MemoryPermissionEnforcer which uses
-# identity-based access: owner match (user_id == context.user).
+# identity-based access: owner match (user_id == context.user_id).
 # =============================================================================
 
 

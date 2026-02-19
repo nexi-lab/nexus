@@ -280,7 +280,7 @@ class PermissionEnforcer:
                 "[BATCH-OPT] has_accessible_descendants_batch error for "
                 "zone=%s subject=%s prefix_count=%d: %s, returning all True (fallback)",
                 context.zone_id,
-                getattr(context, "user", "?"),
+                getattr(context, "user_id", "?"),
                 len(prefixes),
                 e,
                 exc_info=True,
@@ -310,12 +310,12 @@ class PermissionEnforcer:
 
         Examples:
             >>> enforcer = PermissionEnforcer(metadata_store, rebac_manager=rebac)
-            >>> ctx = OperationContext(user="alice", groups=["developers"])
+            >>> ctx = OperationContext(user_id="alice", groups=["developers"])
             >>> enforcer.check("/workspace/file.txt", Permission.READ, ctx)
             True
         """
         logger.debug(
-            f"[PermissionEnforcer.check] path={path}, perm={permission.name}, user={context.user}, is_admin={context.is_admin}, is_system={context.is_system}"
+            f"[PermissionEnforcer.check] path={path}, perm={permission.name}, user={context.user_id}, is_admin={context.is_admin}, is_system={context.is_system}"
         )
 
         # Map Permission enum to string
@@ -449,7 +449,7 @@ class PermissionEnforcer:
             True if ReBAC grants permission, False otherwise
         """
         logger.debug(
-            f"[_check_rebac] path={path}, permission={permission}, context.user={context.user}"
+            f"[_check_rebac] path={path}, permission={permission}, context.user_id={context.user_id}"
         )
 
         if not self.rebac_manager:
@@ -769,7 +769,7 @@ class PermissionEnforcer:
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),
             request_id=getattr(context, "request_id", str(uuid.uuid4())),
-            user=context.user,
+            user_id=context.user_id,
             zone_id=context.zone_id,
             path=path,
             permission=permission,
@@ -799,7 +799,7 @@ class PermissionEnforcer:
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),
             request_id=getattr(context, "request_id", str(uuid.uuid4())),
-            user=context.user,
+            user_id=context.user_id,
             zone_id=context.zone_id,
             path=path,
             permission=permission,

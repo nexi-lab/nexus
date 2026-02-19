@@ -1312,7 +1312,7 @@ def create_app(
 
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
-        os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
+        os.environ.get("NEXUS_THREAD_POOL_SIZE", _tuning_pool_size)
     )
     app.state.operation_timeout = operation_timeout or float(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")

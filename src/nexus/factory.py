@@ -92,6 +92,7 @@ class _BootContext:
     enable_write_buffer: bool | None
     resiliency_raw: dict[str, Any] | None
     db_url: str
+    profile_tuning: Any  # ProfileTuning (Issue #2071)
 
 
 # =========================================================================
@@ -510,7 +511,12 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         if use_buffer:
             from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
 
-            write_observer = BufferedRecordStoreSyncer(ctx.session_factory)
+            _st = ctx.profile_tuning.storage
+            write_observer = BufferedRecordStoreSyncer(
+                ctx.session_factory,
+                flush_interval_ms=_st.write_buffer_flush_ms,
+                max_buffer_size=_st.write_buffer_max_size,
+            )
         else:
             from nexus.storage.record_store_syncer import RecordStoreSyncer
 
@@ -1092,6 +1098,7 @@ def create_nexus_services(
         enable_write_buffer=enable_write_buffer,
         resiliency_raw=resiliency_raw,
         db_url=getattr(record_store, "database_url", ""),
+        profile_tuning=_profile_tuning,
     )
 
     # --- Tier 0: KERNEL (fatal on failure) ---
@@ -1196,7 +1203,7 @@ def _create_distributed_infra(
 
         # Initialize event bus
         if dist.event_bus_backend == "nats":
-            from nexus.core.event_bus import create_event_bus
+            from nexus.services.event_bus.factory import create_event_bus
 
             event_bus = create_event_bus(
                 backend="nats",
@@ -1214,7 +1221,7 @@ def _create_distributed_infra(
             event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
-                from nexus.core.event_bus import RedisEventBus
+                from nexus.services.event_bus.redis import RedisEventBus
 
                 event_client = DragonflyClient(url=event_url_resolved)
                 event_bus = RedisEventBus(

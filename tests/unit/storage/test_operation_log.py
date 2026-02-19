@@ -154,10 +154,10 @@ def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyR
     from nexus.core.permissions import OperationContext
 
     # Use context parameter with different agent IDs
-    context1 = OperationContext(user="test", groups=[], agent_id="agent-1")
+    context1 = OperationContext(user_id="test", groups=[], agent_id="agent-1")
     nx.write("/file1.txt", b"Content 1", context=context1)
 
-    context2 = OperationContext(user="test", groups=[], agent_id="agent-2")
+    context2 = OperationContext(user_id="test", groups=[], agent_id="agent-2")
     nx.write("/file2.txt", b"Content 2", context=context2)
 
     # Check operation log filtering

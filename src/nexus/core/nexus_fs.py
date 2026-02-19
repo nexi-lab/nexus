@@ -21,6 +21,7 @@ from nexus.core.mutation_hooks import MutationOp
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
+from nexus.contracts.types import OperationContext, Permission
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     BrickServices,
@@ -42,7 +43,6 @@ from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
-from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -7041,7 +7041,7 @@ class NexusFS(  # type: ignore[misc]
         if not context:
             return
 
-        from nexus.core.permissions import OperationContext, Permission
+        from nexus.contracts.types import OperationContext, Permission
 
         # Extract OperationContext from context parameter
         op_context: OperationContext | None = None

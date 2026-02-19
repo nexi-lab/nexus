@@ -157,7 +157,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     mount_dir.mkdir()
     (mount_dir / "test.txt").write_text("test content")
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     # Create context with zone_id and admin access for the test user
     ctx = OperationContext(user_id="test-user", groups=[], zone_id="test", is_admin=True)

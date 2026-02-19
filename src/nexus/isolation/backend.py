@@ -25,7 +25,7 @@ from nexus.isolation.errors import (
 )
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

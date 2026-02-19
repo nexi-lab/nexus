@@ -7,7 +7,7 @@ Usage:
     # In any test file under bricks/memory/tests/
     from conftest import memory_api_mock, sample_memories
 
-    def test_example(memory_api_mock, sample_memories):
+    def test_example(memory_api_mock, sample_memories) -> None:
         # Use fixtures directly
         pass
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Any, Iterator
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -31,7 +32,7 @@ from sqlalchemy.orm import sessionmaker
 
 
 @pytest.fixture
-def db_engine():
+def db_engine() -> Any:
     """In-memory SQLite engine for testing."""
     engine = create_engine("sqlite:///:memory:", echo=False)
     yield engine
@@ -39,13 +40,13 @@ def db_engine():
 
 
 @pytest.fixture
-def session_factory(db_engine):
+def session_factory(db_engine) -> Any:
     """SQLAlchemy session factory for testing."""
     return sessionmaker(bind=db_engine, expire_on_commit=False)
 
 
 @pytest.fixture
-def session(session_factory):
+def session(session_factory) -> Any:
     """Database session for a single test."""
     sess = session_factory()
     yield sess
@@ -54,7 +55,7 @@ def session(session_factory):
 
 
 @pytest.fixture
-async def async_db_engine():
+async def async_db_engine() -> Any:
     """Async in-memory SQLite engine for async tests."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     yield engine
@@ -62,13 +63,13 @@ async def async_db_engine():
 
 
 @pytest.fixture
-async def async_session_factory(async_db_engine):
+async def async_session_factory(async_db_engine) -> Any:
     """Async SQLAlchemy session factory."""
     return async_sessionmaker(bind=async_db_engine, expire_on_commit=False)
 
 
 @pytest.fixture
-async def async_session(async_session_factory):
+async def async_session(async_session_factory) -> Any:
     """Async database session with auto-rollback."""
     async with async_session_factory() as sess, sess.begin():
         yield sess
@@ -76,7 +77,7 @@ async def async_session(async_session_factory):
 
 
 @pytest.fixture
-def isolated_session(session_factory):
+def isolated_session(session_factory) -> Any:
     """Session with auto-rollback for integration tests.
 
     Prevents test pollution by rolling back all changes after the test.
@@ -94,7 +95,7 @@ def isolated_session(session_factory):
 
 
 @pytest.fixture
-def memory_api_mock():
+def memory_api_mock() -> Any:
     """Standard MemoryAPI mock implementing MemoryProtocol.
 
     Provides mocked versions of all MemoryProtocol methods.
@@ -120,7 +121,7 @@ def memory_api_mock():
 
 
 @pytest.fixture
-def async_memory_api_mock():
+def async_memory_api_mock() -> Any:
     """Async MemoryAPI mock for async tests."""
     mock = AsyncMock()
     mock.store = AsyncMock(return_value="mem_test_123")
@@ -136,7 +137,7 @@ def async_memory_api_mock():
 
 
 @pytest.fixture
-def permission_enforcer_allow_all():
+def permission_enforcer_allow_all() -> Any:
     """Permission enforcer stub that allows all operations."""
     mock = Mock()
     mock.check_memory = Mock(return_value=True)
@@ -146,7 +147,7 @@ def permission_enforcer_allow_all():
 
 
 @pytest.fixture
-def permission_enforcer_deny_all():
+def permission_enforcer_deny_all() -> Any:
     """Permission enforcer stub that denies all operations."""
     mock = Mock()
     mock.check_memory = Mock(return_value=False)
@@ -156,7 +157,7 @@ def permission_enforcer_deny_all():
 
 
 @pytest.fixture
-def memory_router_mock():
+def memory_router_mock() -> Any:
     """Mock MemoryViewRouter for testing."""
     mock = Mock()
     mock.get_memory_by_id = Mock(return_value=None)
@@ -168,7 +169,7 @@ def memory_router_mock():
 
 
 @pytest.fixture
-def backend_mock():
+def backend_mock() -> Any:
     """Mock Backend for CAS operations."""
     mock = Mock()
     mock.write_content = Mock(return_value=Mock(unwrap=lambda: "hash_abc123"))
@@ -177,7 +178,7 @@ def backend_mock():
 
 
 @pytest.fixture
-def graph_store_mock():
+def graph_store_mock() -> Any:
     """Mock GraphStore for entity/relationship operations."""
     mock = AsyncMock()
     mock.add_entity = AsyncMock(return_value="entity_123")
@@ -193,7 +194,7 @@ def graph_store_mock():
 
 
 @pytest.fixture
-def sample_memories():
+def sample_memories() -> Any:
     """Standard test memory dataset (5 memories with different states)."""
     return [
         {
@@ -262,7 +263,7 @@ def sample_memories():
 
 
 @pytest.fixture
-def enrichment_flags():
+def enrichment_flags() -> Any:
     """Standard enrichment flags for testing."""
     from nexus.bricks.memory.enrichment import EnrichmentFlags
 
@@ -280,7 +281,7 @@ def enrichment_flags():
 
 
 @pytest.fixture
-def operation_context():
+def operation_context() -> Any:
     """Standard OperationContext for permission tests."""
     from nexus.core.permissions import OperationContext
 
@@ -293,7 +294,7 @@ def operation_context():
 
 
 @pytest.fixture
-def admin_context():
+def admin_context() -> Any:
     """Admin OperationContext for privileged tests."""
     from nexus.core.permissions import OperationContext
 
@@ -311,7 +312,7 @@ def admin_context():
 
 
 @pytest.fixture(scope="session")
-def event_loop():
+def event_loop() -> Any:
     """Create event loop for async tests."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
@@ -324,7 +325,7 @@ def event_loop():
 
 
 @pytest.fixture(autouse=True)
-def cleanup_test_data():
+def cleanup_test_data() -> Any:
     """Auto-cleanup fixture that runs after each test.
 
     Add cleanup logic here that should run after every test.

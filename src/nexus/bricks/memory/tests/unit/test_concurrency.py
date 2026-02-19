@@ -9,6 +9,7 @@ Related: Issue #2128 (Memory brick extraction)
 
 import asyncio
 
+from typing import Any
 import pytest
 
 
@@ -16,7 +17,7 @@ class TestConcurrentOperations:
     """Test suite for concurrent memory operations."""
 
     @pytest.mark.asyncio
-    async def test_concurrent_store_different_memories(self):
+    async def test_concurrent_store_different_memories(self) -> None:
         """Test storing different memories concurrently succeeds."""
         # This test validates that concurrent store operations don't interfere
         # with each other when storing different memories
@@ -38,7 +39,7 @@ class TestConcurrentOperations:
         assert len(set(results)) == 3  # All unique IDs
 
     @pytest.mark.asyncio
-    async def test_concurrent_approve_same_memory(self):
+    async def test_concurrent_approve_same_memory(self) -> None:
         """Test approving the same memory concurrently (idempotent)."""
         memory_id = "mem_test_123"
 
@@ -55,7 +56,7 @@ class TestConcurrentOperations:
         assert all(r is True for r in results)
 
     @pytest.mark.asyncio
-    async def test_concurrent_invalidate_and_approve(self):
+    async def test_concurrent_invalidate_and_approve(self) -> None:
         """Test race between invalidate and approve operations."""
         # Winner depends on execution order - both should succeed
         # but final state should be deterministic based on timestamps
@@ -80,7 +81,7 @@ class TestConcurrentOperations:
         assert len([r for r in results if isinstance(r, bool)]) == 2
 
     @pytest.mark.asyncio
-    async def test_concurrent_get_same_memory(self):
+    async def test_concurrent_get_same_memory(self) -> None:
         """Test reading the same memory concurrently."""
         memory_id = "mem_test_123"
 
@@ -98,7 +99,7 @@ class TestConcurrentOperations:
         assert all(r["memory_id"] == memory_id for r in results)
 
     @pytest.mark.asyncio
-    async def test_batch_approve_isolation(self):
+    async def test_batch_approve_isolation(self) -> None:
         """Test batch approve operations maintain isolation."""
         batch_1 = ["mem_1", "mem_2", "mem_3"]
         batch_2 = ["mem_4", "mem_5", "mem_6"]
@@ -116,7 +117,7 @@ class TestConcurrentOperations:
         assert results[1]["approved"] == 3
 
     @pytest.mark.asyncio
-    async def test_concurrent_version_operations(self):
+    async def test_concurrent_version_operations(self) -> None:
         """Test version operations don't conflict."""
         memory_id = "mem_test_123"
 
@@ -137,7 +138,7 @@ class TestConcurrentOperations:
         assert len(results) == 3
 
     @pytest.mark.asyncio
-    async def test_zone_isolation(self):
+    async def test_zone_isolation(self) -> None:
         """Test operations in different zones don't interfere."""
         async def store_in_zone(zone_id: str, content: str) -> str:
             await asyncio.sleep(0.01)
@@ -158,7 +159,7 @@ class TestTransactionalIntegrity:
     """Test transactional integrity under concurrent load."""
 
     @pytest.mark.asyncio
-    async def test_rollback_on_partial_failure(self):
+    async def test_rollback_on_partial_failure(self) -> None:
         """Test that partial batch failures trigger rollback."""
         # If 1 of 10 operations fails, all 10 should rollback
         batch_ids = [f"mem_{i}" for i in range(10)]
@@ -175,7 +176,7 @@ class TestTransactionalIntegrity:
         assert result.get("rolled_back") is True
 
     @pytest.mark.asyncio
-    async def test_version_conflict_detection(self):
+    async def test_version_conflict_detection(self) -> None:
         """Test optimistic locking catches version conflicts."""
         memory_id = "mem_test_123"
 
@@ -199,7 +200,7 @@ class TestRateLimiting:
     """Test rate limiting and throttling under load."""
 
     @pytest.mark.asyncio
-    async def test_bulk_operations_throttled(self):
+    async def test_bulk_operations_throttled(self) -> None:
         """Test bulk operations respect rate limits."""
         # Create 1000 memories concurrently - should throttle gracefully
 
@@ -223,7 +224,7 @@ class TestRateLimiting:
 
 
 @pytest.mark.asyncio
-async def test_deadlock_prevention():
+async def test_deadlock_prevention() -> None:
     """Test that concurrent operations don't deadlock."""
     # This test validates that the system can't enter a deadlock state
     # even with circular dependencies between operations

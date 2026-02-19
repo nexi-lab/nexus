@@ -6,13 +6,14 @@ using centralized fixtures from conftest.py.
 Related: Issue #2128 (Memory brick extraction)
 """
 
+from typing import Any
 from unittest.mock import Mock, patch
 
 
 class TestMemoryCRUD:
     """Test suite for MemoryCRUD operations."""
 
-    def test_store_basic(self, memory_router_mock, permission_enforcer_allow_all, backend_mock):
+    def test_store_basic(self, memory_router_mock: Any, permission_enforcer_allow_all: Any, backend_mock: Any) -> None:
         """Test basic memory storage."""
         from nexus.bricks.memory.crud import MemoryCRUD
         from nexus.core.permissions import OperationContext
@@ -40,7 +41,7 @@ class TestMemoryCRUD:
             assert memory_id == "mem_test_123"
             backend_mock.write_content.assert_called_once()
 
-    def test_get_with_permissions(self, memory_router_mock, permission_enforcer_allow_all, backend_mock):
+    def test_get_with_permissions(self, memory_router_mock: Any, permission_enforcer_allow_all: Any, backend_mock: Any) -> None:
         """Test memory retrieval with permission checks."""
         from nexus.bricks.memory.crud import MemoryCRUD
         from nexus.core.permissions import OperationContext
@@ -65,7 +66,7 @@ class TestMemoryCRUD:
         assert result is not None
         permission_enforcer_allow_all.check_memory.assert_called_once()
 
-    def test_get_denied(self, memory_router_mock, permission_enforcer_deny_all, backend_mock):
+    def test_get_denied(self, memory_router_mock: Any, permission_enforcer_deny_all: Any, backend_mock: Any) -> None:
         """Test memory retrieval fails when permissions denied."""
         from nexus.bricks.memory.crud import MemoryCRUD
         from nexus.core.permissions import OperationContext
@@ -87,7 +88,7 @@ class TestMemoryCRUD:
 
         assert result is None
 
-    def test_delete_success(self, memory_router_mock, permission_enforcer_allow_all, backend_mock):
+    def test_delete_success(self, memory_router_mock: Any, permission_enforcer_allow_all: Any, backend_mock: Any) -> None:
         """Test successful memory deletion."""
         from nexus.bricks.memory.crud import MemoryCRUD
         from nexus.core.permissions import OperationContext

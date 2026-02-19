@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 
 logger = logging.getLogger(__name__)
 

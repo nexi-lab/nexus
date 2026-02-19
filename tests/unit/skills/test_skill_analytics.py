@@ -24,9 +24,11 @@ async def test_track_usage() -> None:
     )
 
     assert usage_id is not None
-    assert len(tracker._in_memory_records) == 1
 
-    record = tracker._in_memory_records[0]
+    records = await tracker._all_records()
+    assert len(records) == 1
+
+    record = records[0]
     assert record.skill_name == "test-skill"
     assert record.agent_id == "alice"
     assert record.execution_time == 1.5
@@ -48,7 +50,8 @@ async def test_track_usage_failure() -> None:
 
     assert usage_id is not None
 
-    record = tracker._in_memory_records[0]
+    records = await tracker._all_records()
+    record = records[0]
     assert record.success is False
     assert record.error_message == "Test error"
 

@@ -5,10 +5,10 @@ collusion/fraud analysis, constraint graph management, throttling,
 suspension/appeal workflow.
 
 Combines public APIs from:
-    - ``services/governance/anomaly_service.AnomalyService``
-    - ``services/governance/collusion_service.CollusionService``
-    - ``services/governance/governance_graph_service.GovernanceGraphService``
-    - ``services/governance/response_service.ResponseService``
+    - ``bricks/governance/anomaly_service.AnomalyService``
+    - ``bricks/governance/collusion_service.CollusionService``
+    - ``bricks/governance/governance_graph_service.GovernanceGraphService``
+    - ``bricks/governance/response_service.ResponseService``
 
 Storage Affinity: **RecordStore** (alerts, edges, suspensions, throttles,
                   fraud scores) + **CacheStore** (constraint TTL cache).
@@ -17,12 +17,26 @@ References:
     - docs/architecture/ops-scenario-matrix.md  (S25)
     - docs/architecture/data-storage-matrix.md  (Four Pillars)
     - Issue #1287: Extract NexusFS domain services from god object
+    - Issue #2129: Governance brick extraction — replaced Any with concrete types
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.bricks.governance.models import (
+        AnomalyAlert,
+        AnomalySeverity,
+        ConstraintCheckResult,
+        ConstraintType,
+        FraudRing,
+        FraudScore,
+        GovernanceEdge,
+        SuspensionRecord,
+        ThrottleConfig,
+    )
 
 
 @runtime_checkable
@@ -42,7 +56,7 @@ class GovernanceProtocol(Protocol):
         amount: float,
         to: str,
         timestamp: datetime | None = None,
-    ) -> list[Any]:
+    ) -> list[AnomalyAlert]:
         """Analyze a transaction for anomalies (hot path).
 
         Returns:
@@ -53,9 +67,9 @@ class GovernanceProtocol(Protocol):
     async def get_alerts(
         self,
         zone_id: str,
-        severity: Any | None = None,
+        severity: AnomalySeverity | None = None,
         resolved: bool | None = None,
-    ) -> list[Any]:
+    ) -> list[AnomalyAlert]:
         """Query anomaly alerts with optional filters.
 
         Returns:
@@ -67,7 +81,7 @@ class GovernanceProtocol(Protocol):
         self,
         alert_id: str,
         resolved_by: str,
-    ) -> Any | None:
+    ) -> AnomalyAlert | None:
         """Mark an anomaly alert as resolved.
 
         Returns:
@@ -77,7 +91,7 @@ class GovernanceProtocol(Protocol):
 
     # ── Collusion / Fraud (CollusionService) ──────────────────────────
 
-    async def detect_rings(self, zone_id: str) -> list[Any]:
+    async def detect_rings(self, zone_id: str) -> list[FraudRing]:
         """Detect transaction rings (cycles) in the interaction graph.
 
         Returns:
@@ -93,11 +107,11 @@ class GovernanceProtocol(Protocol):
         """
         ...
 
-    async def compute_fraud_scores(self, zone_id: str) -> dict[str, Any]:
+    async def compute_fraud_scores(self, zone_id: str) -> dict[str, FraudScore]:
         """Compute composite fraud scores for all agents in a zone.
 
         Returns:
-            Mapping of agent_id → FraudScore.
+            Mapping of agent_id -> FraudScore.
         """
         ...
 
@@ -105,7 +119,7 @@ class GovernanceProtocol(Protocol):
         self,
         agent_id: str,
         zone_id: str,
-    ) -> Any | None:
+    ) -> FraudScore | None:
         """Get cached fraud score for an agent.
 
         Returns:
@@ -120,9 +134,9 @@ class GovernanceProtocol(Protocol):
         from_agent: str,
         to_agent: str,
         zone_id: str,
-        constraint_type: Any,
+        constraint_type: ConstraintType,
         reason: str = "",
-    ) -> Any:
+    ) -> GovernanceEdge:
         """Add a governance constraint between two agents.
 
         Returns:
@@ -143,7 +157,7 @@ class GovernanceProtocol(Protocol):
         from_agent: str,
         to_agent: str,
         zone_id: str,
-    ) -> Any:
+    ) -> ConstraintCheckResult:
         """Check if there is a constraint between two agents (hot path).
 
         Returns:
@@ -155,7 +169,7 @@ class GovernanceProtocol(Protocol):
         self,
         zone_id: str,
         agent_id: str | None = None,
-    ) -> list[Any]:
+    ) -> list[GovernanceEdge]:
         """List constraint edges, optionally filtered by agent.
 
         Returns:
@@ -169,8 +183,8 @@ class GovernanceProtocol(Protocol):
         self,
         agent_id: str,
         zone_id: str,
-        fraud_score: Any,
-    ) -> Any | None:
+        fraud_score: FraudScore,
+    ) -> ThrottleConfig | None:
         """Apply automatic throttling based on fraud score.
 
         Returns:
@@ -184,8 +198,8 @@ class GovernanceProtocol(Protocol):
         zone_id: str,
         reason: str,
         duration_hours: float = 24.0,
-        severity: Any = None,
-    ) -> Any:
+        severity: AnomalySeverity = ...,
+    ) -> SuspensionRecord:
         """Suspend an agent for a specified duration.
 
         Returns:
@@ -197,7 +211,7 @@ class GovernanceProtocol(Protocol):
         self,
         suspension_id: str,
         reason: str,
-    ) -> Any:
+    ) -> SuspensionRecord:
         """File an appeal for a suspension.
 
         Returns:
@@ -210,7 +224,7 @@ class GovernanceProtocol(Protocol):
         suspension_id: str,
         approved: bool,
         decided_by: str,
-    ) -> Any:
+    ) -> SuspensionRecord:
         """Decide on a suspension appeal.
 
         Returns:
@@ -222,7 +236,7 @@ class GovernanceProtocol(Protocol):
         self,
         zone_id: str,
         agent_id: str | None = None,
-    ) -> list[Any]:
+    ) -> list[SuspensionRecord]:
         """List suspensions, optionally filtered by agent.
 
         Returns:

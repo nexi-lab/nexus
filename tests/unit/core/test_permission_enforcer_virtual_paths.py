@@ -17,7 +17,7 @@ The fix:
 - Mount point ownership propagates to files
 """
 
-from nexus.core.permissions import OperationContext, Permission
+from nexus.contracts.types import OperationContext, Permission
 from nexus.rebac.enforcer import PermissionEnforcer
 
 

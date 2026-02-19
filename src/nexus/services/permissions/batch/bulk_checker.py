@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from nexus.core.rebac import Entity
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.domain import Entity
 from nexus.rebac.types import ConsistencyLevel
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Engine
 
-    from nexus.core.rebac import NamespaceConfig
+    from nexus.rebac.domain import NamespaceConfig
     from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)

@@ -12,6 +12,7 @@ Each connector configures these mixins via class attributes.
 from __future__ import annotations
 
 import logging
+import posixpath
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -222,8 +223,6 @@ class SkillDocMixin:
     def skill_md_path(self) -> str:
         """Get path to SKILL.md (for error messages)."""
         if self._mount_path:
-            import posixpath
-
             return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
         return "/.skill/SKILL.md"  # Default fallback
 

@@ -25,9 +25,9 @@ class AsyncCircuitBreaker:
 
     def __init__(
         self,
-        failure_threshold: int = 5,
-        recovery_timeout: float = 30.0,
-        half_open_max_calls: int = 1,
+        failure_threshold: int,
+        recovery_timeout: float,
+        half_open_max_calls: int,
     ) -> None:
         self._failure_threshold = failure_threshold
         self._recovery_timeout = recovery_timeout

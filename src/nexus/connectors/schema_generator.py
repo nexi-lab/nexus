@@ -7,6 +7,7 @@ registries) into SKILL.md markdown and writes skill directories.
 from __future__ import annotations
 
 import logging
+import posixpath
 from typing import Any
 
 from pydantic import BaseModel
@@ -96,8 +97,6 @@ class SkillDocGenerator:
 
     def get_skill_path(self, mount_path: str) -> str:
         """Get the full path to the .skill directory."""
-        import posixpath
-
         return posixpath.join(mount_path.rstrip("/"), self._skill_dir)
 
     def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
@@ -116,8 +115,6 @@ class SkillDocGenerator:
         Returns:
             Dict of written paths: {"skill_md": path, "examples": [paths...]}.
         """
-        import posixpath
-
         result: dict[str, Any] = {"skill_md": None, "examples": []}
 
         if not self._skill_name:

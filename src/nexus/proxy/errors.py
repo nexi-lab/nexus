@@ -65,3 +65,21 @@ class RemoteCallError(ProxyError):
         if cause is not None:
             detail += f": {cause}"
         super().__init__(detail)
+
+
+def is_connection_error(exc: RemoteCallError) -> bool:
+    """Return True if the underlying cause is a connectivity failure.
+
+    Consolidated from duplicate definitions in ``brick.py`` and
+    ``replay_engine.py`` (Issue #2073, 13A).
+    """
+    # Lazy import: httpx is only needed when this function is called,
+    # and keeping it lazy avoids pulling httpx into every errors.py consumer.
+    import httpx  # noqa: PLC0415
+
+    cause = exc.cause
+    if cause is None:
+        return False
+    return isinstance(
+        cause, httpx.ConnectError | httpx.TimeoutException | ConnectionError | OSError
+    )

@@ -44,7 +44,7 @@ def transport() -> AsyncMock:
 
 @pytest.fixture()
 def circuit() -> AsyncCircuitBreaker:
-    return AsyncCircuitBreaker(failure_threshold=3, recovery_timeout=1.0)
+    return AsyncCircuitBreaker(failure_threshold=3, recovery_timeout=1.0, half_open_max_calls=1)
 
 
 @pytest.fixture()
@@ -102,7 +102,9 @@ class TestReplayMarksDoneOnSuccess:
         ops = [_make_op(42, "read")]
         queue.dequeue_batch = AsyncMock(side_effect=[ops, []])
 
-        engine = ReplayEngine(queue=queue, transport=transport, circuit=circuit, poll_interval=0.01)
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
 
         task = asyncio.create_task(engine.run())
         await asyncio.sleep(0.05)
@@ -128,7 +130,9 @@ class TestReplayMarksFailedOnConnectionError:
             side_effect=RemoteCallError("read", cause=httpx.ConnectError("fail"))
         )
 
-        engine = ReplayEngine(queue=queue, transport=transport, circuit=circuit, poll_interval=0.01)
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
 
         task = asyncio.create_task(engine.run())
         await asyncio.sleep(0.05)
@@ -157,7 +161,9 @@ class TestReplayDeadLettersInvalidJson:
         )
         queue.dequeue_batch = AsyncMock(side_effect=[[bad_op], []])
 
-        engine = ReplayEngine(queue=queue, transport=transport, circuit=circuit, poll_interval=0.01)
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
 
         task = asyncio.create_task(engine.run())
         await asyncio.sleep(0.05)
@@ -183,7 +189,9 @@ class TestReplayStopsBatchOnConnectionError:
             side_effect=RemoteCallError("read", cause=httpx.ConnectError("fail"))
         )
 
-        engine = ReplayEngine(queue=queue, transport=transport, circuit=circuit, poll_interval=0.01)
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
 
         task = asyncio.create_task(engine.run())
         await asyncio.sleep(0.05)
@@ -202,7 +210,9 @@ class TestReplayStopCancelsCleanly:
     async def test_stop(
         self, queue: AsyncMock, transport: AsyncMock, circuit: AsyncCircuitBreaker
     ) -> None:
-        engine = ReplayEngine(queue=queue, transport=transport, circuit=circuit, poll_interval=0.01)
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
 
         task = asyncio.create_task(engine.run())
         await asyncio.sleep(0.03)
@@ -230,7 +240,9 @@ class TestReplayContinuesAfterNonConnectionError:
             ]
         )
 
-        engine = ReplayEngine(queue=queue, transport=transport, circuit=circuit, poll_interval=0.01)
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
 
         task = asyncio.create_task(engine.run())
         await asyncio.sleep(0.05)

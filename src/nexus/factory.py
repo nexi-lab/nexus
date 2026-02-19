@@ -228,6 +228,8 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "skill_package_service",  # wired later via NexusFS gateway adapters
         "agent_event_log",  # event log, not a lifecycle brick
         "rebac_circuit_breaker",  # Issue #2034: passive resilience wrapper, no lifecycle
+        "memory_router",  # singleton component for Memory brick (Issue #2177)
+        "memory_permission",  # singleton component for Memory brick (Issue #2177)
     }
 )
 

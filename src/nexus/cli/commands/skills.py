@@ -784,7 +784,7 @@ def skills_export(
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
-        exporter = SkillExporter(registry, filesystem=nx)
+        exporter = SkillExporter(registry)
 
         async def export_skill_async() -> None:
             await registry.discover()
@@ -841,7 +841,7 @@ def skills_validate(
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
-        exporter = SkillExporter(registry, filesystem=nx)
+        exporter = SkillExporter(registry)
 
         async def validate_skill_async() -> None:
             await registry.discover()
@@ -903,7 +903,7 @@ def skills_size(
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
-        exporter = SkillExporter(registry, filesystem=nx)
+        exporter = SkillExporter(registry)
 
         async def calculate_size_async() -> None:
             await registry.discover()

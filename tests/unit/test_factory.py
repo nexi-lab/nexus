@@ -260,6 +260,8 @@ class TestBootBrickServices:
             "ipc_storage_driver",
             "ipc_vfs_driver",
             "ipc_provisioner",
+            "skill_service",
+            "skill_package_service",
         }
         assert expected_keys == set(result.keys())
 

@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from nexus.skills.exceptions import SkillValidationError
+from nexus.bricks.skills.exceptions import SkillValidationError
 
 logger = logging.getLogger(__name__)
 

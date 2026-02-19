@@ -56,7 +56,7 @@ class SkillMetadata:
         Raises:
             ValidationError: If validation fails with clear message.
         """
-        from nexus.skills.exceptions import SkillValidationError
+        from nexus.bricks.skills.exceptions import SkillValidationError
 
         # Validate required fields
         if not self.name:
@@ -110,7 +110,7 @@ class Skill:
         Raises:
             ValidationError: If validation fails with clear message.
         """
-        from nexus.skills.exceptions import SkillValidationError
+        from nexus.bricks.skills.exceptions import SkillValidationError
 
         # Validate metadata
         self.metadata.validate()

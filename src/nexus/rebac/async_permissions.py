@@ -21,8 +21,9 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.permissions import OperationContext, Permission, check_stale_session
+from nexus.contracts.types import OperationContext, Permission
 from nexus.lib.zone import normalize_zone_id
+from nexus.rebac.enforcer import check_stale_session
 
 if TYPE_CHECKING:
     from nexus.rebac.async_manager import AsyncReBACManager

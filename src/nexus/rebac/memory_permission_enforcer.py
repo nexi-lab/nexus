@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.permissions import OperationContext, Permission
+from nexus.contracts.types import OperationContext, Permission
 from nexus.lib.zone import normalize_zone_id
 from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.rebac.entity_registry import EntityRegistry

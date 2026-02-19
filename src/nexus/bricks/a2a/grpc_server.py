@@ -21,6 +21,7 @@ from nexus.bricks.a2a.proto_converter import (
     send_request_from_proto,
     task_to_proto,
 )
+from nexus.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
     HTTP+JSON-RPC and gRPC transports share the same task state.
     """
 
-    def __init__(self, task_manager: Any, zone_id: str = "root") -> None:
+    def __init__(self, task_manager: Any, zone_id: str = ROOT_ZONE_ID) -> None:
         self._tm = task_manager
         self._zone_id = zone_id
 
@@ -216,7 +217,7 @@ async def create_grpc_server(
     tls_cert_path: str | None = None,
     tls_key_path: str | None = None,
     tls_ca_path: str | None = None,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
 ) -> grpc.aio.Server:
     """Create and configure a gRPC server for the A2A service.
 

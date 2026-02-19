@@ -662,7 +662,7 @@ class TestDeltaSyncWithPostgres:
 @pytest.fixture()
 def non_admin_context():
     """Create a real OperationContext with is_admin=False."""
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     return OperationContext(
         user_id="regular_user",
@@ -730,8 +730,7 @@ class TestNonAdminSyncPermissions:
 
     def test_admin_bypasses_rebac_check(self, sync_service_with_pg, local_connector_mount):
         """Admin user bypasses ReBAC — rebac_check is never called."""
-        from nexus.contracts.types import SyncContext
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext, SyncContext
 
         service, gateway = sync_service_with_pg
         backend, _ = local_connector_mount

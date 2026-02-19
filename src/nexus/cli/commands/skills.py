@@ -27,7 +27,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 
 
 class SQLAlchemyDatabaseConnection:

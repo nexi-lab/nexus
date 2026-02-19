@@ -19,10 +19,10 @@ import time
 from concurrent.futures import as_completed
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # Constants duplicated from search_service to avoid circular import
 LIST_PARALLEL_MAX_DEPTH = 100

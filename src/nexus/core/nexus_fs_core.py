@@ -20,9 +20,11 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
+from nexus.core.mutation_hooks import MutationOp
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -71,8 +73,7 @@ class NexusFSCoreMixin:
         _workspace_registry: Any  # Workspace registry for overlay config lookup
         _write_observer: WriteObserverProtocol | None  # Issue #55
         _pipe_manager: Any  # PipeManager (set by NexusFS.__init__)
-        _workflow_pipe_ready: bool
-        _workflow_consumer_task: asyncio.Task[None] | None
+        _post_mutation_hooks: list  # list[PostMutationHook] (set by NexusFS.__init__)
 
         @property
         def zone_id(self) -> str | None: ...
@@ -204,7 +205,7 @@ class NexusFSCoreMixin:
             event = FileEvent(
                 type=file_event_type,
                 path=path,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
                 size=size,
                 etag=etag,
                 agent_id=agent_id,
@@ -229,120 +230,56 @@ class NexusFSCoreMixin:
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
 
-    # DT_PIPE workflow event pipe path and capacity (Task #808)
-    _WORKFLOW_PIPE_PATH = "/nexus/pipes/workflow-events"
-    _WORKFLOW_PIPE_CAPACITY = 65_536  # 64KB
+    # =========================================================================
+    # Post-mutation hooks — generic observer list (#625)
+    # =========================================================================
 
-    def _fire_workflow_event(
+    def _fire_post_mutation_hooks(
         self,
-        trigger_type: str,
-        event_context: dict[str, Any],
-        label: str,
+        op: MutationOp,
+        path: str,
+        zone_id: str,
+        revision: int,
+        *,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+        timestamp: str | None = None,
+        etag: str | None = None,
+        size: int | None = None,
+        version: int | None = None,
+        is_new: bool = False,
+        new_path: str | None = None,
     ) -> None:
-        """Fire a workflow event and broadcast to webhook subscriptions.
+        """Fire MutationEvent to all registered post-mutation hooks.
 
-        Consolidates the repeated async-or-thread pattern from write/delete/rename.
-        Does nothing if workflows are not enabled.
-
-        DT_PIPE path (Task #808): writes to PipeManager by VFS path.
-        User-space code never touches the RingBuffer directly.
-
-        Args:
-            trigger_type: String trigger type (e.g. "file_write", "file_delete").
-            event_context: Event payload dict.
-            label: Human-readable label for task/thread naming (e.g. "file_write:/foo.txt").
+        Called after every successful write/delete/rename. Error policy:
+        fire-and-forget — hook failures are logged but never abort the mutation.
         """
-        if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
+        hooks = getattr(self, "_post_mutation_hooks", None)
+        if not hooks:
             return
 
-        # DT_PIPE: write workflow event to kernel pipe via PipeManager (#808)
-        import json
+        from nexus.core.mutation_hooks import MutationEvent
 
-        from nexus.core.pipe import PipeFullError
-
-        pipe_mgr = getattr(self, "_pipe_manager", None)
-        if pipe_mgr is not None and getattr(self, "_workflow_pipe_ready", False):
+        event = MutationEvent(
+            operation=op,
+            path=path,
+            zone_id=zone_id,
+            revision=revision,
+            agent_id=agent_id,
+            user_id=user_id,
+            timestamp=timestamp,
+            etag=etag,
+            size=size,
+            version=version,
+            is_new=is_new,
+            new_path=new_path,
+        )
+        for hook in hooks:
             try:
-                data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
-                pipe_mgr.pipe_write_nowait(self._WORKFLOW_PIPE_PATH, data)
-            except PipeFullError:
-                logger.warning("Workflow pipe full, dropping event: %s", label)
-        else:
-            # Fallback: fire-and-forget (CLI mode or pre-startup, no pipe yet)
-            from nexus.core.sync_bridge import fire_and_forget
-
-            fire_and_forget(
-                self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
-            )
-
-        if self.subscription_manager:  # type: ignore[attr-defined]
-            from nexus.core.sync_bridge import fire_and_forget
-
-            event_type = label.split(":")[0] if ":" in label else label
-            fire_and_forget(
-                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                    event_type,
-                    event_context,
-                    event_context.get("zone_id", "root"),
-                )
-            )
-
-    async def _start_workflow_consumer(self) -> None:
-        """Background consumer for workflow events via DT_PIPE (#808).
-
-        Reads from PipeManager by VFS path (user-space API).
-        Deserializes JSON messages and fires workflow engine events.
-        """
-        import json
-
-        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
-
-        pipe_mgr = self._pipe_manager
-        engine = self.workflow_engine  # type: ignore[attr-defined]
-        while True:
-            try:
-                data = await pipe_mgr.pipe_read(self._WORKFLOW_PIPE_PATH)
-            except (PipeClosedError, PipeNotFoundError):
-                # PipeClosedError: buffer exists but closed (concurrent shutdown)
-                # PipeNotFoundError: buffer removed (close_all during shutdown)
-                logger.debug("Workflow pipe closed, consumer exiting")
-                break
-            try:
-                msg = json.loads(data)
-                await engine.fire_event(msg["type"], msg["ctx"])
-            except Exception as e:
-                logger.error("Workflow event processing failed: %s", e)
-
-    def ensure_workflow_consumer(self) -> None:
-        """Create workflow pipe via PipeManager and start consumer task (#808)."""
-        if getattr(self, "_workflow_pipe_ready", False):
-            return
-
-        pipe_mgr = getattr(self, "_pipe_manager", None)
-        if pipe_mgr is None:
-            return  # CLI mode — no pipe manager
-
-        from nexus.core.pipe import PipeError
-
-        try:
-            pipe_mgr.create(
-                self._WORKFLOW_PIPE_PATH,
-                capacity=self._WORKFLOW_PIPE_CAPACITY,
-                owner_id="kernel",
-            )
-        except PipeError:
-            # Pipe already exists (e.g., restart recovery) — open it
-            pipe_mgr.open(self._WORKFLOW_PIPE_PATH, capacity=self._WORKFLOW_PIPE_CAPACITY)
-
-        self._workflow_pipe_ready = True
-
-        try:
-            loop = asyncio.get_running_loop()
-            self._workflow_consumer_task = loop.create_task(  # type: ignore[attr-defined]
-                self._start_workflow_consumer()
-            )
-        except RuntimeError:
-            pass  # No event loop — consumer starts when server starts
+                hook.on_mutation(event)
+            except Exception as exc:
+                logger.warning("Post-mutation hook %s failed: %s", type(hook).__name__, exc)
 
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
@@ -619,7 +556,7 @@ class NexusFSCoreMixin:
         if cache_observer is None or metadata is None:
             return
 
-        zone_id = getattr(self, "zone_id", None) or "root"
+        zone_id = getattr(self, "zone_id", None) or ROOT_ZONE_ID
         revision = self._get_zone_revision()
         cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
@@ -1801,7 +1738,8 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             created_by=self._get_created_by(context),
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id
+            or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
         self.metadata.put(new_meta)
@@ -2047,7 +1985,8 @@ class NexusFSCoreMixin:
             modified_at=now,
             version=new_version,
             created_by=self._get_created_by(context),  # Track who created/modified this version
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id
+            or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
@@ -2056,10 +1995,20 @@ class NexusFSCoreMixin:
         # Issue #1169: Advance zone revision counter after mutation
         new_revision = self._increment_zone_revision()
 
-        # Issue #1169: Precise cache invalidation via cache observer
-        cache_observer = getattr(self, "_cache_observer", None)
-        if cache_observer is not None:
-            cache_observer.on_write(path, new_revision, zone_id or "root")
+        # Issue #1169 / #625: Post-mutation hooks (cache invalidation, workflow dispatch, etc.)
+        self._fire_post_mutation_hooks(
+            MutationOp.WRITE,
+            path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            user_id=context.user_id if context and hasattr(context, "user_id") else None,
+            timestamp=now.isoformat(),
+            etag=content_hash,
+            size=len(content),
+            version=new_version,
+            is_new=meta is None or meta.etag is None,
+        )
 
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
@@ -2071,7 +2020,7 @@ class NexusFSCoreMixin:
                 if tiger_cache:
                     added_count = tiger_cache.add_file_to_ancestor_grants(
                         file_path=path,
-                        zone_id=zone_id or "root",
+                        zone_id=zone_id or ROOT_ZONE_ID,
                     )
                     if added_count > 0:
                         import logging
@@ -2114,9 +2063,11 @@ class NexusFSCoreMixin:
             # DEFERRED PATH: Queue permission operations for background batch processing
             # Owner can still access file immediately via owner_id fast-path
             try:
-                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "root")
+                deferred_buffer.queue_hierarchy(path, ctx.zone_id or ROOT_ZONE_ID)
                 if meta is None and ctx.user_id and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user_id, path, ctx.zone_id or "root")
+                    deferred_buffer.queue_owner_grant(
+                        ctx.user_id, path, ctx.zone_id or ROOT_ZONE_ID
+                    )
             except Exception as e:
                 logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
         else:
@@ -2127,7 +2078,7 @@ class NexusFSCoreMixin:
                         f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, zone_id=ctx.zone_id or "root"
+                        path, zone_id=ctx.zone_id or ROOT_ZONE_ID
                     )
                     logger.info(f"write: Created {created_count} parent tuples for {path}")
                 except Exception as e:
@@ -2146,7 +2097,7 @@ class NexusFSCoreMixin:
                             subject=("user", ctx.user_id),
                             relation="direct_owner",
                             object=("file", path),
-                            zone_id=ctx.zone_id or "root",
+                            zone_id=ctx.zone_id or ROOT_ZONE_ID,
                         )
                         logger.debug(
                             f"write: Granted direct_owner permission to {ctx.user_id} for {path}"
@@ -2181,24 +2132,6 @@ class NexusFSCoreMixin:
             agent_id=agent_id,
             snapshot_hash=snapshot_hash,
             metadata_snapshot=metadata_snapshot,
-        )
-
-        # v0.7.0: Fire workflow event for automatic trigger execution
-        is_new_file = meta is None or meta.etag is None
-        self._fire_workflow_event(
-            "file_write",
-            {
-                "file_path": path,
-                "size": len(content),
-                "etag": content_hash,
-                "version": new_version,
-                "zone_id": zone_id or "root",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
-                "created": is_new_file,
-                "timestamp": now.isoformat(),
-            },
-            label=f"file_write:{path}",
         )
 
         # Issue #1106 Block 2: Publish event to distributed event bus
@@ -2733,7 +2666,8 @@ class NexusFSCoreMixin:
                 version=new_version,
                 created_by=getattr(self, "agent_id", None)
                 or getattr(self, "user_id", None),  # Track who created/modified this version
-                zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+                zone_id=zone_id
+                or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
             )
             metadata_list.append(metadata)
 
@@ -2770,7 +2704,7 @@ class NexusFSCoreMixin:
 
         logger = logging.getLogger(__name__)
         ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "root"
+        zone_id_for_perms = ctx.zone_id or ROOT_ZONE_ID
 
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = _time.perf_counter()
@@ -3079,24 +3013,17 @@ class NexusFSCoreMixin:
         # Issue #1169: Advance zone revision counter after delete
         new_revision = self._increment_zone_revision()
 
-        # Issue #1169: Precise cache invalidation via cache observer
-        cache_observer = getattr(self, "_cache_observer", None)
-        if cache_observer is not None:
-            cache_observer.on_delete(path, new_revision, zone_id or "root")
-
-        # v0.7.0: Fire workflow event for automatic trigger execution
-        self._fire_workflow_event(
-            "file_delete",
-            {
-                "file_path": path,
-                "size": meta.size,
-                "etag": meta.etag,
-                "zone_id": zone_id or "root",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-            label=f"file_delete:{path}",
+        # Issue #1169 / #625: Post-mutation hooks (cache invalidation, workflow dispatch, etc.)
+        self._fire_post_mutation_hooks(
+            MutationOp.DELETE,
+            path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            user_id=context.user_id if context and hasattr(context, "user_id") else None,
+            timestamp=datetime.now(UTC).isoformat(),
+            etag=meta.etag,
+            size=meta.size,
         )
 
         # Issue #1106 Block 2: Publish event to distributed event bus
@@ -3253,11 +3180,20 @@ class NexusFSCoreMixin:
         # For connector backends: metadata follows the file we just moved
         self.metadata.rename_path(old_path, new_path)
 
-        # Issue #1169: Advance zone revision + invalidate both old and new paths
+        # Issue #1169 / #625: Advance zone revision + fire post-mutation hooks
         new_revision = self._increment_zone_revision()
-        cache_observer = getattr(self, "_cache_observer", None)
-        if cache_observer is not None:
-            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "root")
+        self._fire_post_mutation_hooks(
+            MutationOp.RENAME,
+            old_path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            user_id=context.user_id if context and hasattr(context, "user_id") else None,
+            timestamp=datetime.now(UTC).isoformat(),
+            etag=meta.etag if meta else None,
+            size=meta.size if meta else 0,
+            new_path=new_path,
+        )
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
@@ -3310,7 +3246,7 @@ class NexusFSCoreMixin:
                         old_path=old_path,
                         new_path=new_path,
                         is_directory=bool(is_directory),
-                        zone_id=zone_id or "root",
+                        zone_id=zone_id or ROOT_ZONE_ID,
                     )
             except Exception as e:
                 # Log but don't fail the rename operation
@@ -3326,22 +3262,6 @@ class NexusFSCoreMixin:
             agent_id=agent_id,
             snapshot_hash=snapshot_hash,
             metadata_snapshot=metadata_snapshot,
-        )
-
-        # v0.7.0: Fire workflow event for automatic trigger execution
-        self._fire_workflow_event(
-            "file_rename",
-            {
-                "old_path": old_path,
-                "new_path": new_path,
-                "size": meta.size if meta else 0,
-                "etag": meta.etag if meta else None,
-                "zone_id": zone_id or "root",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-            label=f"file_rename:{old_path}->{new_path}",
         )
 
         # Issue #1106 Block 2: Publish event to distributed event bus

@@ -23,8 +23,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import OperationContext
 from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.core.permissions import OperationContext
 from nexus.services.conflict_resolution import (
     ConflictAbortError,
     ConflictContext,

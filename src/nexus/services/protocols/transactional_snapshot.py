@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 
 # ---------------------------------------------------------------------------

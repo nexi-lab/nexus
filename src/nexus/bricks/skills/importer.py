@@ -17,6 +17,7 @@ from nexus.bricks.skills.exceptions import (
 from nexus.bricks.skills.parser import SkillParseError, SkillParser
 from nexus.bricks.skills.protocols import NexusFilesystem
 from nexus.bricks.skills.registry import SkillRegistry
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.skills.types import SkillOperationContext as OperationContext
@@ -376,7 +377,7 @@ class SkillImporter:
         if not context:
             raise ValueError("Context required for personal/zone tier skills")
 
-        zone_id = context.zone_id or "root"
+        zone_id = context.zone_id or ROOT_ZONE_ID
 
         if tier == "personal":
             # Personal: /zone/{tid}/user/{uid}/skill/{skill_name}/

@@ -21,7 +21,7 @@ from nexus.services.protocols.filesystem import NexusFilesystem
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 
 class MCPService:

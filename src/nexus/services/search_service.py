@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING, Any, cast
 from cachetools import TTLCache
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import Permission
 from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.exceptions import PermissionDeniedError
-from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.search.strategies import (
     GLOB_RUST_THRESHOLD,
@@ -117,8 +117,8 @@ def _filter_ignored_paths(
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
-    from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.rebac.enforcer import PermissionEnforcer
     from nexus.rebac.manager import EnhancedReBACManager
@@ -688,7 +688,7 @@ class SearchService(SemanticSearchMixin):
         if context:
             list_context = replace(context, backend_path=route.backend_path)
         else:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             list_context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path
@@ -705,7 +705,7 @@ class SearchService(SemanticSearchMixin):
 
         # Permission filtering
         if self._enforce_permissions and context:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             filter_ctx = context if isinstance(context, OperationContext) else self._default_context
             assert filter_ctx is not None  # guaranteed by isinstance or _default_context
@@ -982,7 +982,7 @@ class SearchService(SemanticSearchMixin):
 
         import time
 
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         perm_start = time.time()
         ctx_raw = context or self._default_context
@@ -2223,7 +2223,7 @@ class SearchService(SemanticSearchMixin):
         Raises:
             PermissionDeniedError: If permission denied
         """
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         if not self._enforce_permissions or not self._permission_enforcer:
             return

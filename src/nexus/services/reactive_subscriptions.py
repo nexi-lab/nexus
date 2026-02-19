@@ -6,13 +6,12 @@ with O(1) read-set-based overlap detection using ReadSetRegistry (#1166).
 Architecture:
     - Subscription: Frozen dataclass representing a single subscription
     - ReactiveSubscriptionManager: Composes ReadSetRegistry for read-set mode
-    - path_matches_pattern: Shared glob/regex pattern matcher (used by event_bus)
 
 All subscriptions use read-set mode with O(1+d) lookup via ReadSetRegistry
 reverse index.
 
 Example:
-    >>> from nexus.core.reactive_subscriptions import (
+    >>> from nexus.services.reactive_subscriptions import (
     ...     ReactiveSubscriptionManager, Subscription,
     ... )
     >>> from nexus.core.read_set import ReadSet, ReadSetRegistry
@@ -33,10 +32,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
-import fnmatch
-import functools
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -71,75 +67,6 @@ class Subscription:
     query_id: str | None = None
     event_types: frozenset[str] = frozenset()
     created_at: float = field(default_factory=time.time)
-
-
-@functools.lru_cache(maxsize=256)
-def _compile_glob_pattern(pattern: str) -> re.Pattern[str] | None:
-    """Compile a glob pattern with ** into a cached regex.
-
-    Cached via lru_cache to avoid recompilation on repeated calls.
-
-    Args:
-        pattern: The glob pattern containing **
-
-    Returns:
-        Compiled regex pattern, or None if pattern is invalid
-    """
-    regex_pattern = ""
-    i = 0
-    while i < len(pattern):
-        if pattern[i : i + 2] == "**":
-            regex_pattern += ".*"  # ** matches anything including /
-            i += 2
-            # Skip trailing / after **
-            if i < len(pattern) and pattern[i] == "/":
-                regex_pattern += "/?"
-                i += 1
-        elif pattern[i] == "*":
-            regex_pattern += "[^/]*"  # * matches anything except /
-            i += 1
-        elif pattern[i] == "?":
-            regex_pattern += "."  # ? matches single char
-            i += 1
-        elif pattern[i] in r"\.[]{}()+^$|":
-            regex_pattern += "\\" + pattern[i]
-            i += 1
-        else:
-            regex_pattern += pattern[i]
-            i += 1
-
-    try:
-        return re.compile("^" + regex_pattern + "$")
-    except re.error:
-        return None
-
-
-def path_matches_pattern(path: str, pattern: str) -> bool:
-    """Check if a path matches a glob pattern.
-
-    Supports:
-    - * matches any characters except /
-    - ** matches any characters including /
-    - ? matches a single character
-
-    Extracted from WebSocketManager._path_matches_pattern for reuse.
-    Patterns with ** use cached compiled regexes for performance.
-
-    Args:
-        path: The file path to check
-        pattern: The glob pattern
-
-    Returns:
-        True if the path matches the pattern
-    """
-    if "**" in pattern:
-        compiled = _compile_glob_pattern(pattern)
-        if compiled is None:
-            return False
-        return bool(compiled.match(path))
-
-    # Simple patterns without ** use fnmatch
-    return fnmatch.fnmatch(path, pattern)
 
 
 class ReactiveSubscriptionManager:

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from hypothesis import strategies as st
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.core.read_set import AccessType, ReadSetEntry, ResourceType
 from nexus.services.protocols.agent_registry import AgentInfo
 from nexus.services.protocols.hook_engine import HookContext, HookSpec

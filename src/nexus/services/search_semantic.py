@@ -107,7 +107,6 @@ class SemanticSearchMixin:
             cache_url: Redis/Dragonfly URL for embedding cache
             embedding_cache_ttl: Cache TTL in seconds (default: 3 days)
         """
-        import os
 
         from nexus.search.chunking import ChunkStrategy, DocumentChunker
         from nexus.search.indexing import IndexingPipeline
@@ -118,9 +117,10 @@ class SemanticSearchMixin:
         # --- Embedding provider ---
         emb_provider = None
         if embedding_provider:
+            from nexus.lib.env import get_dragonfly_url
             from nexus.search.embeddings import create_cached_embedding_provider
 
-            effective_cache_url = cache_url or os.environ.get("NEXUS_DRAGONFLY_URL")
+            effective_cache_url = cache_url or get_dragonfly_url()
             emb_provider = await create_cached_embedding_provider(
                 provider=embedding_provider,
                 model=embedding_model,
@@ -346,7 +346,6 @@ class SemanticSearchMixin:
         created. QueryService is created for search; bulk indexing uses
         IndexingPipeline directly.
         """
-        import os
 
         from nexus.search.chunking import ChunkStrategy, DocumentChunker
         from nexus.search.indexing import IndexingPipeline
@@ -355,9 +354,10 @@ class SemanticSearchMixin:
 
         emb_provider = None
         if embedding_provider:
+            from nexus.lib.env import get_dragonfly_url
             from nexus.search.embeddings import create_cached_embedding_provider
 
-            effective_cache_url = cache_url or os.environ.get("NEXUS_DRAGONFLY_URL")
+            effective_cache_url = cache_url or get_dragonfly_url()
             emb_provider = await create_cached_embedding_provider(
                 provider=embedding_provider,
                 model=embedding_model,

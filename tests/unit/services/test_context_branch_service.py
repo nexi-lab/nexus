@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BranchExistsError,
     BranchNotFoundError,
     BranchProtectedError,
@@ -184,7 +184,7 @@ class TestCreateBranch:
             service.create_branch("/ws", "new", from_branch="ghost")
 
     def test_from_nonexistent_snapshot_raises(self, service, session_factory):
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             service.create_branch("/ws", "new", from_snapshot_id="nonexistent")

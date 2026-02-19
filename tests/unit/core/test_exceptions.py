@@ -2,7 +2,7 @@
 
 import inspect
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     AccessDeniedError,
     AuditLogError,
     AuthenticationError,
@@ -424,7 +424,7 @@ def test_all_nexus_error_subclasses_have_status_code() -> None:
 
 def test_status_code_class_values() -> None:
     """Verify specific status_code mappings match HTTP semantics."""
-    from nexus.core.exceptions import (
+    from nexus.contracts.exceptions import (
         LockTimeout,
         ServiceUnavailableError,
         StaleSessionError,
@@ -466,7 +466,7 @@ def test_error_handler_uses_class_status_code() -> None:
     """Error handler reads status_code from exception class, not isinstance chain."""
     from unittest.mock import MagicMock
 
-    from nexus.core.exceptions import (
+    from nexus.contracts.exceptions import (
         LockTimeout,
         ServiceUnavailableError,
         StaleSessionError,

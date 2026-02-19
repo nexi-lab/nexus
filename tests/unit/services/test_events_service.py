@@ -423,7 +423,7 @@ class TestLockedContextManager:
 
     def test_locked_raises_on_timeout(self, mock_backend_remote, mock_lock_manager):
         """locked() raises LockTimeout when lock acquisition fails."""
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         mock_lock_manager.acquire = AsyncMock(return_value=None)
         svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)

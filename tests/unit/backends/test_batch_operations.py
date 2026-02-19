@@ -587,7 +587,7 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
 
     def _download_blob(self, blob_path, version_id=None) -> tuple[bytes, str | None]:
         if blob_path not in self.files:
-            from nexus.core.exceptions import NexusFileNotFoundError
+            from nexus.contracts.exceptions import NexusFileNotFoundError
 
             raise NexusFileNotFoundError(blob_path)
         return self.files[blob_path], "v1"

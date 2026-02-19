@@ -20,8 +20,8 @@ import pytest
 
 from nexus.backends.local_connector import LocalConnectorBackend
 from nexus.backends.registry import create_connector
+from nexus.contracts.exceptions import BackendError
 from nexus.contracts.types import OperationContext
-from nexus.core.exceptions import BackendError
 
 # ============================================================================
 # FIXTURES

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from nexus.core.exceptions import MetadataError
+from nexus.contracts.exceptions import MetadataError
 from nexus.storage.query_builder import WorkQueryBuilder
 
 

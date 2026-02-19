@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import create_engine
 
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
-from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.rebac.manager import EnhancedReBACManager
 from nexus.rebac.namespace_manager import NamespaceManager

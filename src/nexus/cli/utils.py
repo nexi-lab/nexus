@@ -13,7 +13,7 @@ from rich.console import Console
 import nexus
 from nexus import NexusFilesystem
 from nexus.config import load_config
-from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
+from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
 
 console = Console()
 
@@ -549,7 +549,7 @@ def handle_error(e: Exception) -> None:
     - 3: Permission denied
     """
     # Import exception types here to avoid circular imports
-    from nexus.core.exceptions import AccessDeniedError, NexusPermissionError
+    from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
 
     if isinstance(e, (PermissionError, AccessDeniedError, NexusPermissionError)):
         console.print(f"[red]Permission Denied:[/red] {e}")

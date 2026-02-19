@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.bricks.sandbox.security_profile import SandboxSecurityProfile
-    from nexus.validation.models import ValidationResult
 
 # Validation patterns for shell-safe inputs
 _MOUNT_PATH_PATTERN = re.compile(r"^/[a-zA-Z0-9/_\-.]+$")
@@ -116,7 +115,7 @@ class CodeExecutionResult:
     stderr: str
     exit_code: int
     execution_time: float  # Seconds
-    validations: list[ValidationResult] | None = None
+    validations: list[Any] | None = None
 
 
 @dataclass

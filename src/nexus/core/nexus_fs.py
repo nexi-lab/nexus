@@ -6105,7 +6105,10 @@ class NexusFS(  # type: ignore[misc]
         return bool(self._sandbox_manager and self._sandbox_manager.providers)
 
     def _ensure_sandbox_manager(self) -> None:
-        """Ensure sandbox manager is initialized (lazy initialization)."""
+        """Ensure sandbox manager is initialized (lazy initialization).
+
+        TODO(#2051): Move to factory.py _boot_brick_services() per NEXUS-LEGO-ARCHITECTURE §5.6.
+        """
         if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
             import os
 
@@ -6123,12 +6126,7 @@ class NexusFS(  # type: ignore[misc]
             )
 
             # Attach smart router if providers are available (Issue #1317)
-            if self._sandbox_manager.providers:
-                from nexus.bricks.sandbox.sandbox_router import SandboxRouter
-
-                self._sandbox_manager._router = SandboxRouter(
-                    available_providers=self._sandbox_manager.providers,
-                )
+            self._sandbox_manager.wire_router()
 
     @staticmethod
     def _run_async(coro: Any) -> Any:

@@ -953,8 +953,8 @@ def serve(
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.server.auth.factory import DiscriminatingAuthProvider
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -997,7 +997,7 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")

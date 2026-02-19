@@ -386,6 +386,9 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
 
     t0 = time.perf_counter()
     try:
+        # Config-time dialect flag (KERNEL-ARCHITECTURE §7)
+        _is_pg = not ctx.db_url.startswith("sqlite")
+
         # --- ReBAC Manager ---
         from nexus.rebac.manager import EnhancedReBACManager
 
@@ -397,6 +400,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             enable_graph_limits=True,
             enable_tiger_cache=ctx.perm.enable_tiger_cache,
             read_engine=ctx.read_engine,
+            is_postgresql=_is_pg,
         )
 
         # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
@@ -430,7 +434,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         # --- Audit Store ---
         from nexus.rebac.permissions_enhanced import AuditStore
 
-        audit_store = AuditStore(engine=ctx.engine)
+        audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
 
         # --- Entity Registry ---
         from nexus.rebac.entity_registry import EntityRegistry

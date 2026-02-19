@@ -2,16 +2,16 @@
 
 Two pluggable backends:
 
-- ``InMemoryTaskStore`` — dict-based, for testing and embedded mode
+- ``CacheBackedTaskStore`` — CacheStoreABC-backed, for dev/test and embedded mode
 - ``VFSTaskStore`` — file-based via IPCStorageDriver, Lego-compliant
 """
 
 from __future__ import annotations
 
-from nexus.bricks.a2a.stores.in_memory import InMemoryTaskStore
+from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
 from nexus.bricks.a2a.stores.vfs import VFSTaskStore
 
 __all__ = [
-    "InMemoryTaskStore",
+    "CacheBackedTaskStore",
     "VFSTaskStore",
 ]

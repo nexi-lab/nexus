@@ -62,6 +62,7 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
+from nexus.remote.negative_cache import NegativeCache
 from nexus.remote.rpc_proxy import RPCProxyBase
 from nexus.server.protocol import RPCRequest, RPCResponse
 
@@ -130,6 +131,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         pool_maxsize: int = 10,
         negative_cache_capacity: int = 100_000,
         negative_cache_fp_rate: float = 0.01,
+        negative_cache: NegativeCache | None = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.api_key = api_key
@@ -165,10 +167,11 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
 
         self._initialized = False
 
-        self._negative_cache_capacity = negative_cache_capacity
-        self._negative_cache_fp_rate = negative_cache_fp_rate
-        self._negative_bloom: Any = None
-        self._init_negative_cache()
+        self._init_negative_cache(
+            negative_cache=negative_cache,
+            capacity=negative_cache_capacity,
+            fp_rate=negative_cache_fp_rate,
+        )
 
     async def __aenter__(self) -> AsyncRemoteNexusFS:
         await self._ensure_initialized()

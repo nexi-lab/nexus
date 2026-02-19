@@ -113,6 +113,48 @@ class MessageEnvelope(BaseModel):
         elapsed = (now - self.timestamp).total_seconds()
         return elapsed > self.ttl_seconds
 
+    def create_reply(
+        self,
+        payload: dict[str, Any],
+        *,
+        ttl_seconds: int | None = None,
+    ) -> MessageEnvelope:
+        """Create a reply envelope for this message.
+
+        Swaps sender/recipient, sets type=RESPONSE, and links via correlation_id.
+
+        Args:
+            payload: Reply payload.
+            ttl_seconds: Optional TTL override. If not provided, uses the original TTL.
+
+        Returns:
+            New MessageEnvelope configured as a reply.
+
+        Example:
+            request = MessageEnvelope.model_validate({
+                "from": "agent_a",
+                "to": "agent_b",
+                "type": "task",
+                "payload": {"action": "process"},
+            })
+
+            reply = request.create_reply(payload={"status": "done", "result": 42})
+            # reply.sender == "agent_b"
+            # reply.recipient == "agent_a"
+            # reply.type == MessageType.RESPONSE
+            # reply.correlation_id == request.id
+        """
+        return MessageEnvelope.model_validate(
+            {
+                "from": self.recipient,
+                "to": self.sender,
+                "type": MessageType.RESPONSE,
+                "payload": payload,
+                "correlation_id": self.id,
+                "ttl_seconds": ttl_seconds if ttl_seconds is not None else self.ttl_seconds,
+            }
+        )
+
     def to_bytes(self) -> bytes:
         """Serialize to JSON bytes for VFS write."""
         return self.model_dump_json(by_alias=True, indent=2).encode("utf-8")

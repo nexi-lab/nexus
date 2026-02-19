@@ -46,7 +46,9 @@ def get_token_manager(db_path: str | None = None) -> TokenManager:
         TokenManager instance
     """
     # Check for database URL in environment (for Postgres/MySQL)
-    db_url = os.getenv("NEXUS_DATABASE_URL")
+    from nexus.lib.env import get_database_url
+
+    db_url = get_database_url()
 
     if db_url:
         # Use database URL (Postgres, MySQL, etc.)

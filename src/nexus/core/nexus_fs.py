@@ -93,27 +93,8 @@ class NexusFS(  # type: ignore[misc]
         provider_registry: Any | None = None,
         vfs_lock_manager: Any | None = None,
     ):
-        """Initialize NexusFS kernel.
-
-        Args:
-            backend: Backend instance for file storage (LocalBackend, GCSBackend, etc.)
-            metadata_store: MetastoreABC instance (RaftMetadataStore or custom)
-            record_store: Optional RecordStoreABC for Services layer (ReBAC, Audit, etc.)
-            cache_store: Optional CacheStoreABC for ephemeral KV+PubSub. Defaults to NullCacheStore.
-            is_admin: Whether this instance has admin privileges (default: False)
-            custom_namespaces: Additional custom namespace configurations
-            cache: Cache configuration (LRU sizes, content cache). Defaults to CacheConfig().
-            permissions: Permission enforcement config. Defaults to PermissionConfig().
-            distributed: Distributed coordination config. Defaults to DistributedConfig().
-            memory: Memory paging config. Defaults to MemoryConfig().
-            parsing: File parsing config. Defaults to ParseConfig().
-            services: Injected service dependencies. Defaults to KernelServices().
-            parse_fn: Pre-built parse callback ``(bytes, str) -> bytes | None``
-                for virtual views. Created by factory.py via ParsersBrick.create_parse_fn().
-            parser_registry: Injected ParserRegistry from ParsersBrick (Issue #1523).
-            provider_registry: Injected ProviderRegistry from ParsersBrick (Issue #1523).
-        """
-        # Apply defaults — config dataclasses are SSOT for default values
+        """Initialize NexusFS kernel."""
+        # Config defaults
         cache = cache or CacheConfig()
         permissions = permissions or PermissionConfig()
         distributed = distributed or DistributedConfig()
@@ -121,18 +102,15 @@ class NexusFS(  # type: ignore[misc]
         parsing = parsing or ParseConfig()
         svc = services or KernelServices()
 
-        # Store config objects for introspection
         self._cache_config = cache
         self._perm_config = permissions
         self._distributed_config = distributed
         self._memory_config_obj = memory
         self._parse_config = parsing
         self._services = svc
-
-        # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
 
-        # Map config fields to internal attributes used throughout codebase
+        # Map config fields to flat attributes
         self._enable_memory_paging = memory.enable_paging
         self._memory_main_capacity = memory.main_capacity
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
@@ -143,19 +121,15 @@ class NexusFS(  # type: ignore[misc]
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
 
-        # Initialize content cache — accept pre-built or create (Issue #657)
+        # Content cache
         if content_cache is not None:
             backend.content_cache = content_cache
         elif cache.enable_content_cache and backend.has_root_path is True:
             backend.content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
 
-        # Store backend
+        # Four pillars: backend, metadata, record store, cache store
         self.backend = backend
-
-        # Initialize metadata store (Task #14: Dependency Injection)
         self.metadata: MetastoreABC = metadata_store
-
-        # Initialize record store (Task #14: Four Pillars)
         self._record_store = record_store
         if record_store is not None:
             self._sql_engine = record_store.engine
@@ -165,13 +139,9 @@ class NexusFS(  # type: ignore[misc]
             self._sql_engine = None
             self._db_session_factory = None
             self.SessionLocal = None
+        self.cache_store: CacheStoreABC = cache_store if cache_store is not None else NullCacheStore()
 
-        # Initialize cache store (Task #22: Fourth Pillar)
-        self.cache_store: CacheStoreABC = (
-            cache_store if cache_store is not None else NullCacheStore()
-        )
-
-        # Initialize path router (Task #23: injectable)
+        # Path router
         if svc.router is not None:
             self.router = svc.router
         else:
@@ -179,50 +149,35 @@ class NexusFS(  # type: ignore[misc]
             if custom_namespaces:
                 for ns_config in custom_namespaces:
                     self.router.register_namespace(ns_config)
-
-        # Mount backend
         self.router.add_mount("/", self.backend, priority=0)
 
-        # Parser registries — injected by factory via ParsersBrick (Issue #1523)
+        # Parser registries (injected by ParsersBrick, fallback for tests)
         if parser_registry is not None:
             self.parser_registry = parser_registry
         else:
-            # Fallback: create default registry for direct construction (tests, etc.)
             from nexus.parsers.markitdown_parser import MarkItDownParser as _MkD
             from nexus.parsers.registry import ParserRegistry as _PR
-
             self.parser_registry = _PR()
             self.parser_registry.register(_MkD())
-
         if provider_registry is not None:
             self.provider_registry = provider_registry
         else:
             from nexus.parsers.providers.registry import ProviderRegistry as _PvR
-
             self.provider_registry = _PvR()
             self.provider_registry.auto_discover()
 
-        # Parse callback for virtual views — injected by factory.py (Issue #668)
         self._virtual_view_parse_fn = parse_fn
-
-        # Track active parser threads for graceful shutdown
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
-        # Create default context
+        # Default context for embedded mode
         self._default_context = OperationContext(
-            user_id="anonymous",
-            groups=[],
-            zone_id=ROOT_ZONE_ID,
-            agent_id=None,
-            is_admin=is_admin,
-            is_system=False,
+            user_id="anonymous", groups=[], zone_id=ROOT_ZONE_ID,
+            agent_id=None, is_admin=is_admin, is_system=False,
             admin_capabilities=set(),
         )
 
-        # =====================================================================
-        # Services layer (Task #23: pure dependency injection via KernelServices)
-        # =====================================================================
+        # Injected services (KernelServices)
         self._rebac_manager = svc.rebac_manager
         self._dir_visibility_cache = svc.dir_visibility_cache
         self._audit_store = svc.audit_store
@@ -236,105 +191,66 @@ class NexusFS(  # type: ignore[misc]
         self._write_observer = svc.write_observer
         self._overlay_resolver = svc.overlay_resolver
         self._wallet_provisioner = svc.wallet_provisioner
-
-        # Issue #1752: Transactional snapshot service (optional)
         self._snapshot_service = getattr(svc, "snapshot_service", None)
-
-        # Kernel protocol services + async wrappers (Issue #1502)
         self._agent_registry = svc.agent_registry
         self._namespace_manager = svc.namespace_manager
         self._async_agent_registry = svc.async_agent_registry
         self._async_namespace_manager = svc.async_namespace_manager
         self._async_vfs_router = svc.async_vfs_router
-
-        # Infrastructure services (previously created inline, now injected)
         self._event_bus = svc.event_bus
         self._lock_manager = svc.lock_manager
         self.enable_workflows = distributed.enable_workflows
         self.workflow_engine = svc.workflow_engine
-
-        # Auth services — injected from server layer (Issue #1519, 3A)
         self._api_key_creator = svc.api_key_creator
 
-        # Initialize OAuth token manager (lazy initialization in mixin)
+        # Lazy-init sentinels
         self._token_manager = None
-
-        # Initialize semantic search - lazy initialization
         self._semantic_search = None
-
-        # Initialize Memory API
         self._memory_api: Memory | None = None
-        self._memory_config: dict[str, str | None] = {
-            "zone_id": None,
-            "user_id": None,
-            "agent_id": None,
-        }
-
-        # Issue #372: Sandbox manager - lazy initialization
-        from nexus.sandbox.sandbox_manager import SandboxManager
-
-        self._sandbox_manager: SandboxManager | None = None
-
-        # v0.8.0: Subscription manager for webhook notifications (set by server)
+        self._memory_config: dict[str, str | None] = {"zone_id": None, "user_id": None, "agent_id": None}
+        self._sandbox_manager: Any = None
         self.subscription_manager: Any = None
-
-        # Distributed coordination clients (may be set by factory)
         self._coordination_client: Any = None
         self._event_client: Any = None
 
-        # VFS lock manager — accept pre-built or create (Issue #657)
+        # VFS lock manager
         if vfs_lock_manager is not None:
             self._vfs_lock_manager = vfs_lock_manager
         else:
             from nexus.core.lock_fast import create_vfs_lock_manager
-
             self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
-        # VFS Hook Pipeline (Issue #2033, Phase 4/5)
+        # VFS Hook Pipeline
         from nexus.core.vfs_hooks import VFSHookPipeline
-
         self._hook_pipeline: VFSHookPipeline = svc.hook_pipeline or VFSHookPipeline()
 
-        # Wire self-dependent services (require self reference)
+        # Wire self-dependent services, then register hooks
         self._wire_services()
-
-        # Issue #2033 Phase 5: Register concrete hook implementations on the pipeline.
-        # Hooks are wired AFTER _wire_services() so all dependencies are available.
         self._register_vfs_hooks()
 
-        # Issue #1169: Read Set-Aware Cache for precise invalidation
-        # Wraps the metadata cache with read-set-aware invalidation.
-        # Falls back to path-based invalidation for entries without read sets.
+        # Read-set-aware cache (Issue #1169)
         self._read_set_cache = None
-        metadata_cache = None
-        if hasattr(self.metadata, "_cache"):
-            metadata_cache = self.metadata._cache
-
+        metadata_cache = getattr(self.metadata, "_cache", None)
         if metadata_cache is not None and self._cache_config.enable_metadata_cache:
             from nexus.core.read_set import ReadSetRegistry
             from nexus.storage.read_set_cache import ReadSetAwareCache
-
             self._read_set_registry = ReadSetRegistry()
             self._read_set_cache = ReadSetAwareCache(
-                base_cache=metadata_cache,
-                registry=self._read_set_registry,
+                base_cache=metadata_cache, registry=self._read_set_registry,
             )
             self._read_tracking_enabled = True
 
-        # Issue #1519: Cache observer — decouples kernel from ReadSetAwareCache
+        # Cache observer
         self._cache_observer = svc.cache_observer
         if self._cache_observer is None and self._read_set_cache is not None:
             from nexus.core.cache_invalidation import ReadSetCacheObserver
-
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
-        # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
+        # Tiger Cache
         from nexus.services.tiger_cache_manager import TigerCacheManager
-
         self._tiger_cache_manager = TigerCacheManager(
-            rebac_manager=self._rebac_manager,
-            metadata_store=self.metadata,
+            rebac_manager=self._rebac_manager, metadata_store=self.metadata,
             default_zone_id=self._default_context.zone_id or "root",
             process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
             warm_cache_fn=getattr(self, "warm_tiger_cache", None),
@@ -408,18 +324,7 @@ class NexusFS(  # type: ignore[misc]
 
     @property
     def memory(self) -> Any:
-        """Get Memory API instance for agent memory management.
-
-        Lazy initialization on first access.
-
-        Returns:
-            Memory API instance.
-
-        Example:
-            >>> nx = nexus.connect()
-            >>> memory_id = nx.memory.store("User prefers Python", scope="user")
-            >>> results = nx.memory.query(memory_type="preference")
-        """
+        """Get Memory API instance (lazy init on first access)."""
         if self._memory_api is None:
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
             self._ensure_entity_registry()
@@ -471,43 +376,16 @@ class NexusFS(  # type: ignore[misc]
     def _get_routing_params(
         self, context: OperationContext | dict | None = None
     ) -> tuple[str | None, str | None, bool]:
-        """Extract zone_id, agent_id, and is_admin from context for router.route().
-
-        This is the critical fix for multi-tenancy: extract values from per-request context
-        instead of using instance fields (which are shared across all requests in server mode).
-
-        Args:
-            context: Operation context with per-request values
-
-        Returns:
-            Tuple of (zone_id, agent_id, is_admin)
-        """
+        """Extract (zone_id, agent_id, is_admin) from context for router.route()."""
         if context is None:
-            # Use default context values for embedded mode
-            return (
-                self._default_context.zone_id,
-                self._default_context.agent_id,
-                self._default_context.is_admin,
-            )
-
-        # Extract from OperationContext object
-        if not isinstance(context, dict):
-            return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
-
-        # Extract from dict (legacy)
+            return self._default_context.zone_id, self._default_context.agent_id, self._default_context.is_admin
         if isinstance(context, dict):
             return (
                 context.get("zone_id", self._default_context.zone_id),
                 context.get("agent_id", self._default_context.agent_id),
                 context.get("is_admin", self.is_admin),
             )
-
-        # Fallback to default context
-        return (
-            self._default_context.zone_id,
-            self._default_context.agent_id,
-            self._default_context.is_admin,
-        )
+        return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
 
     @property
     def zone_id(self) -> str | None:
@@ -525,23 +403,10 @@ class NexusFS(  # type: ignore[misc]
         return getattr(self._default_context, "user_id", None)
 
     def _get_memory_api(self, context: dict | None = None) -> Memory:
-        """Get Memory API instance with context-specific configuration.
-
-        Args:
-            context: Optional context dict with zone_id, user_id, agent_id
-
-        Returns:
-            Memory API instance
-        """
+        """Get Memory API instance with context-specific configuration."""
         from nexus.services.memory.memory_api import Memory
-
-        # Get or create entity registry
         self._ensure_entity_registry()
-
-        # Create a session
         session = self.SessionLocal()
-
-        # Parse context properly
         ctx = self._parse_context(context)
 
         return Memory(
@@ -570,30 +435,7 @@ class NexusFS(  # type: ignore[misc]
         return self._entity_registry
 
     def _validate_path(self, path: str, allow_root: bool = False) -> str:
-        """
-        Validate and normalize virtual path.
-
-        SECURITY FIX (v0.7.0): Enhanced validation to prevent cache collisions,
-        database issues, and undefined behavior from whitespace and malformed paths.
-
-        Args:
-            path: Virtual path to validate
-            allow_root: If True, allow "/" as a valid path (for directory operations)
-
-        Returns:
-            Normalized path (stripped, deduplicated slashes, validated)
-
-        Raises:
-            InvalidPathError: If path is invalid or malformed
-
-        Examples:
-            >>> fs._validate_path("  /foo/bar  ")  # Stripped
-            '/foo/bar'
-            >>> fs._validate_path("foo///bar")  # Normalized slashes
-            '/foo/bar'
-            >>> fs._validate_path(" ")  # Raises InvalidPathError
-            InvalidPathError: Path cannot be empty or whitespace-only
-        """
+        """Validate and normalize virtual path. Raises InvalidPathError."""
         # SECURITY FIX: Strip leading/trailing whitespace to prevent cache collisions
         # Before: " " → "/ " (space in path, causes cache issues)
         # After:  " " → raises InvalidPathError
@@ -654,23 +496,7 @@ class NexusFS(  # type: ignore[misc]
         return path
 
     def _get_parent_path(self, path: str) -> str | None:
-        """
-        Get parent directory path from a file path.
-
-        Args:
-            path: Virtual file path
-
-        Returns:
-            Parent directory path, or None if path is root
-
-        Examples:
-            >>> fs._get_parent_path("/workspace/file.txt")
-            '/workspace'
-            >>> fs._get_parent_path("/file.txt")
-            '/'
-            >>> fs._get_parent_path("/")
-            None
-        """
+        """Get parent directory path, or None if root."""
         if path == "/":
             return None
 
@@ -737,23 +563,7 @@ class NexusFS(  # type: ignore[misc]
         exist_ok: bool = False,
         context: OperationContext | None = None,
     ) -> None:
-        """
-        Create a directory.
-
-        Args:
-            path: Virtual path to directory
-            parents: Create parent directories if needed (like mkdir -p)
-            exist_ok: Don't raise error if directory exists
-            context: Operation context with user, permissions, zone info (uses default if None)
-
-        Raises:
-            FileExistsError: If directory exists and exist_ok=False
-            FileNotFoundError: If parent doesn't exist and parents=False
-            InvalidPathError: If path is invalid
-            BackendError: If operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If path is read-only or user doesn't have write permission on parent
-        """
+        """Create a directory (parents=True for mkdir -p)."""
         path = self._validate_path(path)
 
         # Use provided context or default
@@ -907,26 +717,7 @@ class NexusFS(  # type: ignore[misc]
         agent_id: str | None = None,
         is_admin: bool | None = None,
     ) -> None:
-        """
-        Remove a directory.
-
-        Args:
-            path: Virtual path to directory
-            recursive: Remove non-empty directory (like rm -rf)
-            subject: Subject performing the operation as (type, id) tuple
-            context: Operation context (DEPRECATED, use subject instead)
-            zone_id: Legacy zone ID (DEPRECATED)
-            agent_id: Legacy agent ID (DEPRECATED)
-            is_admin: Admin override flag
-
-        Raises:
-            OSError: If directory not empty and recursive=False
-            NexusFileNotFoundError: If directory doesn't exist
-            InvalidPathError: If path is invalid
-            BackendError: If operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If path is read-only
-        """
+        """Remove a directory (recursive=True for rm -rf)."""
         import errno
 
         path = self._validate_path(path)
@@ -1051,26 +842,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         context: OperationContext | None = None,
     ) -> bool:
-        """
-        Check if path is a directory (explicit or implicit).
-
-        Args:
-            path: Virtual path to check
-            context: Operation context with user, permissions, zone info (uses default if None)
-
-        Returns:
-            True if path is a directory, False otherwise
-
-        Note:
-            This method requires READ permission on the path OR any descendant when
-            enforce_permissions=True. Returns True if user has access to the directory
-            or any child/descendant (enables hierarchical navigation).
-            Returns False if path doesn't exist or user lacks permission to path and all descendants.
-
-        Performance:
-            For implicit directories, uses TRAVERSE permission check (O(1)) instead of
-            descendant access check (O(n)). This optimizes FUSE path resolution.
-        """
+        """Check if path is a directory (explicit or implicit)."""
         try:
             path = self._validate_path(path)
 
@@ -1111,22 +883,7 @@ class NexusFS(  # type: ignore[misc]
 
     @rpc_expose(description="Get available namespaces")
     def get_available_namespaces(self) -> builtins.list[str]:
-        """
-        Get list of available namespace directories.
-
-        Returns the built-in namespaces that should appear at root level.
-        Filters based on admin context only - zone filtering happens
-        when accessing files within namespaces, not for listing directories.
-
-        Returns:
-            List of namespace names (e.g., ["workspace", "shared", "external"])
-
-        Examples:
-            # Get namespaces for current user context
-            namespaces = fs.get_available_namespaces()
-            # Returns: ["archives", "external", "shared", "workspace"]
-            # (excludes "system" if not admin)
-        """
+        """Get list of available namespace directories."""
         import time
 
         start = time.time()
@@ -1156,24 +913,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         context: OperationContext | None = None,
     ) -> dict[str, Any] | None:
-        """
-        Get file metadata (permissions, ownership, size, etc.) for FUSE operations.
-
-        This method retrieves metadata without reading the file content,
-        used primarily by FUSE getattr() operations.
-
-        Args:
-            path: Virtual file path
-            context: Operation context with user, permissions, zone info
-
-        Returns:
-            Metadata dict with keys: path, size, mime_type, created_at, modified_at,
-            is_directory, owner, mode. Returns None if file doesn't exist.
-
-        Examples:
-            >>> metadata = fs.get_metadata("/workspace/file.txt")
-            >>> print(f"Size: {metadata['size']} bytes")
-        """
+        """Get file metadata without reading content (FUSE getattr)."""
         ctx = context or self._default_context
         normalized = self._validate_path(path, allow_root=True)
 
@@ -1217,27 +957,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         context: OperationContext | None = None,
     ) -> str | None:
-        """Get the ETag (content hash) for a file without reading content.
-
-        This method is optimized for HTTP caching - it retrieves only the
-        content hash from metadata, not the actual content. Use this for
-        efficient If-None-Match / 304 Not Modified checks.
-
-        For local backend: Returns content_hash from file_paths table.
-        For connectors: Returns content_hash from content_cache table (if cached).
-
-        Args:
-            path: Virtual file path
-            context: Operation context
-
-        Returns:
-            Content hash (ETag) if available, None otherwise
-
-        Examples:
-            >>> etag = fs.get_etag("/workspace/file.txt")
-            >>> if etag == request.headers.get("If-None-Match"):
-            ...     return Response(status_code=304)
-        """
+        """Get content hash for HTTP If-None-Match checks."""
         _ = context  # Reserved for future permission checks
         normalized = self._validate_path(path, allow_root=False)
 
@@ -1252,20 +972,7 @@ class NexusFS(  # type: ignore[misc]
     def _get_backend_directory_entries(
         self, path: str, context: OperationContext | None = None
     ) -> set[str]:
-        """
-        Get directory entries from backend for empty directory detection.
-
-        This helper method queries the backend's list_dir() to find directories
-        that don't contain any files (empty directories). It handles routing
-        and error cases gracefully.
-
-        Args:
-            path: Virtual path to list (e.g., "/", "/workspace")
-            context: Optional operation context for routing (uses default if not provided)
-
-        Returns:
-            Set of directory paths that exist in the backend
-        """
+        """Get directory entries from backend for empty directory detection."""
         directories = set()
 
         try:
@@ -1315,12 +1022,7 @@ class NexusFS(  # type: ignore[misc]
 
         return directories
 
-    # =========================================================================
-    # Service Forwarding (Issue #2033: Facade Removal)
-    # =========================================================================
-    # Methods below were removed from NexusFS and forwarded to services.
-    # Callers continue using nx.method_name() — __getattr__ routes to
-    # the correct service transparently.
+    # Service forwarding: __getattr__ routes method calls to services (Issue #2033)
 
     _SERVICE_METHODS: dict[str, str] = {
         # WorkspaceRPCService
@@ -1424,11 +1126,7 @@ class NexusFS(  # type: ignore[misc]
 
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
-    # =========================================================================
-    # Thin forwarders for abstract base class methods (kernel operations)
-    # =========================================================================
-    # list/glob/grep are @abstractmethod on NexusFilesystem so they need
-    # real method definitions. __getattr__ alone doesn't satisfy ABCMeta.
+    # Abstract method forwarders (ABCMeta requires real definitions)
 
     def list(
         self,
@@ -1467,36 +1165,7 @@ class NexusFS(  # type: ignore[misc]
 
     @rpc_expose(description="Batch get content IDs for multiple paths")
     def batch_get_content_ids(self, paths: builtins.list[str]) -> dict[str, str | None]:
-        """
-        Get content IDs (hashes) for multiple paths in a single query.
-
-        This is a convenience method that delegates to the metadata store's
-        batch_get_content_ids(). Useful for CAS deduplication scenarios where
-        you need to find duplicate files efficiently.
-
-        Performance: Uses a single SQL query instead of N queries (avoids N+1 problem).
-
-        Args:
-            paths: List of virtual file paths
-
-        Returns:
-            Dictionary mapping path to content_hash (or None if file not found)
-
-        Examples:
-            # Find duplicate files
-            paths = fs.list()
-            hashes = fs.batch_get_content_ids(paths)
-
-            # Group by hash to find duplicates
-            from collections import defaultdict
-            by_hash = defaultdict(list)
-            for path, hash in hashes.items():
-                if hash:
-                    by_hash[hash].append(path)
-
-            # Find duplicate groups
-            duplicates = {h: paths for h, paths in by_hash.items() if len(paths) > 1}
-        """
+        """Get content hashes for multiple paths in a single query."""
         return self.metadata.batch_get_content_ids(paths)
 
     async def parse(
@@ -1504,36 +1173,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         store_result: bool = True,
     ) -> ParseResult:
-        """
-        Parse a file's content using the appropriate parser.
-
-        This method reads the file, selects a parser based on the file extension,
-        and extracts structured data (text, metadata, chunks, etc.).
-
-        Args:
-            path: Virtual path to the file to parse
-            store_result: If True, store parsed text as file metadata (default: True)
-
-        Returns:
-            ParseResult containing extracted text, metadata, structure, and chunks
-
-        Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            ParserError: If parsing fails or no suitable parser found
-
-        Examples:
-            # Parse a PDF file
-            result = await fs.parse("/documents/report.pdf")
-            print(result.text)  # Extracted text
-            print(result.structure)  # Document structure
-
-            # Parse without storing metadata
-            result = await fs.parse("/data/file.xlsx", store_result=False)
-
-            # Access parsed chunks
-            for chunk in result.chunks:
-                print(chunk.text)
-        """
+        """Parse a file using the appropriate parser."""
         # Validate path
         path = self._validate_path(path)
 
@@ -1643,22 +1283,10 @@ class NexusFS(  # type: ignore[misc]
         """Compare two versions of a file. Delegates to VersionService."""
         return cast(dict[str, Any] | str, NexusFS._run_async(self.adiff_versions(path, v1, v2, mode, context)))
 
-    # Async ReBAC methods (arebac_*) removed — served via register_service(rebac_service).
-
-    # -------------------------------------------------------------------------
-    # Context Extraction (shared with nexus_fs_core.py)
-    # -------------------------------------------------------------------------
-
     def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
         """Extract subject from operation context."""
         from nexus.core.context_utils import get_subject_from_context
         return get_subject_from_context(context)
-
-    # MCP/Skill/LLM/OAuth facades removed —
-    # served via register_service(mcp_service, skill_service, llm_service, oauth_service).
-
-    # MountService async delegation removed —
-    # served via register_service(mount_service).
 
     def sync_mount(
         self, mount_point: str | None = None, path: str | None = None,

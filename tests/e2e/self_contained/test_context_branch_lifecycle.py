@@ -370,7 +370,7 @@ class TestFinishExploreValidation:
             service.finish_explore("/ws", "branch", outcome="rebase")
 
     def test_finish_nonexistent_branch_raises(self, service):
-        from nexus.core.exceptions import BranchNotFoundError
+        from nexus.contracts.exceptions import BranchNotFoundError
 
         with pytest.raises(BranchNotFoundError):
             service.finish_explore("/ws", "ghost", outcome="merge")

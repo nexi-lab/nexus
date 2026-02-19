@@ -727,10 +727,11 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
 
+            _bg_t = getattr(getattr(_app.state, "profile_tuning", None), "background_task", None)
             _app.state.agent_registry = AgentRegistry(
                 session_factory=_app.state.nexus_fs.SessionLocal,
                 entity_registry=getattr(_app.state.nexus_fs, "_entity_registry", None),
-                flush_interval=60,
+                flush_interval=_bg_t.heartbeat_flush_interval if _bg_t else 60,
             )
             # Inject into NexusFS for RPC methods
             _app.state.nexus_fs._agent_registry = _app.state.agent_registry
@@ -861,11 +862,18 @@ async def lifespan(_app: FastAPI) -> Any:
             stale_agent_detection_task,
         )
 
+        _bg_t2 = getattr(getattr(_app.state, "profile_tuning", None), "background_task", None)
         _heartbeat_task = asyncio.create_task(
-            heartbeat_flush_task(_app.state.agent_registry, interval_seconds=60)
+            heartbeat_flush_task(
+                _app.state.agent_registry,
+                interval_seconds=_bg_t2.heartbeat_flush_interval if _bg_t2 else 60,
+            )
         )
         _stale_detection_task = asyncio.create_task(
-            stale_agent_detection_task(_app.state.agent_registry, interval_seconds=300)
+            stale_agent_detection_task(
+                _app.state.agent_registry,
+                interval_seconds=_bg_t2.stale_agent_check_interval if _bg_t2 else 300,
+            )
         )
         logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
@@ -944,7 +952,12 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Convert SQLAlchemy URL to asyncpg DSN
             pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-            _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+            _pool_tuning = _app.state.profile_tuning.pool
+            _scheduler_pool = await asyncpg.create_pool(
+                pg_dsn,
+                min_size=_pool_tuning.asyncpg_min_size,
+                max_size=_pool_tuning.asyncpg_max_size,
+            )
 
             # Create scheduled_tasks table if it doesn't exist
             async with _scheduler_pool.acquire() as conn:
@@ -1358,7 +1371,10 @@ def create_app(
                 set_subscription_manager,
             )
 
-            app.state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
+            app.state.subscription_manager = SubscriptionManager(
+                nexus_fs.SessionLocal,
+                webhook_timeout=app.state.profile_tuning.network.webhook_timeout,
+            )
             nexus_fs.subscription_manager = app.state.subscription_manager
             set_subscription_manager(app.state.subscription_manager)
             # Issue #625: Forward subscription_manager to workflow dispatch service

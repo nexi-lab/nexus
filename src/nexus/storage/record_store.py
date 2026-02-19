@@ -145,6 +145,8 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         read_replica_url: str | None = None,
         read_replica_creator: Any | None = None,
         async_read_replica_creator: Any | None = None,
+        pool_size: int | None = None,
+        max_overflow: int | None = None,
     ):
         """Initialize SQLAlchemy record store.
 
@@ -166,6 +168,10 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                                 creation (e.g. Cloud SQL read instance).
             async_read_replica_creator: Optional callable for custom async read replica
                                       connection creation.
+            pool_size: Override default pool size from ProfileTuning.storage.db_pool_size.
+                      When None, uses _build_pool_kwargs defaults (20 primary, 10 with replica).
+            max_overflow: Override default max overflow from ProfileTuning.storage.db_max_overflow.
+                         When None, uses _build_pool_kwargs defaults (30 primary, 10 with replica).
         """
         from sqlalchemy import create_engine, event
         from sqlalchemy.orm import sessionmaker
@@ -189,12 +195,18 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         if not self._is_postgresql:
             engine_kwargs["connect_args"] = {"check_same_thread": False}
         else:
+            _default_pool = (
+                pool_size if pool_size is not None else (10 if self._has_read_replica else 20)
+            )
+            _default_overflow = (
+                max_overflow if max_overflow is not None else (10 if self._has_read_replica else 30)
+            )
             engine_kwargs.update(
                 self._build_pool_kwargs(
                     prefix="NEXUS_DB",
                     is_async=False,
-                    default_pool_size=10 if self._has_read_replica else 20,
-                    default_max_overflow=10 if self._has_read_replica else 30,
+                    default_pool_size=_default_pool,
+                    default_max_overflow=_default_overflow,
                 )
             )
 

@@ -260,7 +260,7 @@ class MountPersistService:
                     if is_connector:
                         try:
                             logger.info(f"Auto-syncing connector mount: {mount_point}")
-                            from nexus.services.sync_service import SyncContext
+                            from nexus.contracts.types import SyncContext
 
                             # Build context from mount owner if available
                             sync_context = self._build_sync_context(mount)

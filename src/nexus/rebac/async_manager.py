@@ -205,7 +205,7 @@ class AsyncReBACManager:
         """
 
         def _delete_by_components() -> bool:
-            from nexus.rebac.utils.zone import normalize_zone_id
+            from nexus.lib.zone import normalize_zone_id
 
             nz = normalize_zone_id(zone_id)
             with self._sync._connection() as conn:

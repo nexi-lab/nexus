@@ -18,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 
 from nexus.bricks.sandbox.auth_service import SandboxAuthService
 from nexus.bricks.sandbox.events import AgentEventLog
-from nexus.services.agents.agent_record import AgentState
+from nexus.contracts.agent_types import AgentState
 from nexus.services.agents.agent_registry import AgentRegistry, InvalidTransitionError
 from nexus.storage.models import Base
 

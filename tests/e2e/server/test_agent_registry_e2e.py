@@ -21,9 +21,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from nexus.contracts.agent_types import AgentState
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.rebac.manager import EnhancedReBACManager
-from nexus.services.agents.agent_record import AgentState
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService

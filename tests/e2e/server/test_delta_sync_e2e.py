@@ -420,7 +420,7 @@ class TestDeltaSyncWithPostgres:
         self, sync_service_with_pg, local_connector_mount, pg_session_factory, mock_context
     ):
         """First sync creates files and populates the change log in PostgreSQL."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
 
         service, gateway = sync_service_with_pg
         backend, mount_dir = local_connector_mount
@@ -455,7 +455,7 @@ class TestDeltaSyncWithPostgres:
         self, sync_service_with_pg, local_connector_mount, mock_context
     ):
         """Second sync skips unchanged files via delta sync (PostgreSQL change log)."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
 
         service, gateway = sync_service_with_pg
         backend, _ = local_connector_mount
@@ -488,7 +488,7 @@ class TestDeltaSyncWithPostgres:
         self, sync_service_with_pg, local_connector_mount, pg_session_factory, mock_context
     ):
         """Modified file is detected and re-synced, others skipped."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
 
         service, gateway = sync_service_with_pg
         backend, mount_dir = local_connector_mount
@@ -540,7 +540,7 @@ class TestDeltaSyncWithPostgres:
         self, sync_service_with_pg, local_connector_mount, pg_session_factory, mock_context
     ):
         """Deleted file has its change log entry removed from PostgreSQL."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
         from nexus.storage.models import BackendChangeLogModel
 
         service, gateway = sync_service_with_pg
@@ -608,7 +608,7 @@ class TestDeltaSyncWithPostgres:
         self, sync_service_with_pg, local_connector_mount, pg_session_factory, mock_context
     ):
         """Re-created file is synced, not falsely skipped by stale change log."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
         from nexus.storage.models import BackendChangeLogModel
 
         service, gateway = sync_service_with_pg
@@ -681,7 +681,7 @@ class TestNonAdminSyncPermissions:
         self, sync_service_with_pg, local_connector_mount, non_admin_context
     ):
         """Non-admin user without ReBAC read permission gets PermissionError."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
 
         service, gateway = sync_service_with_pg
         backend, _ = local_connector_mount
@@ -706,7 +706,7 @@ class TestNonAdminSyncPermissions:
         non_admin_context,
     ):
         """Non-admin user with ReBAC read permission can sync successfully."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
 
         service, gateway = sync_service_with_pg
         backend, _ = local_connector_mount
@@ -730,8 +730,8 @@ class TestNonAdminSyncPermissions:
 
     def test_admin_bypasses_rebac_check(self, sync_service_with_pg, local_connector_mount):
         """Admin user bypasses ReBAC — rebac_check is never called."""
+        from nexus.contracts.types import SyncContext
         from nexus.core.permissions import OperationContext
-        from nexus.services.sync_service import SyncContext
 
         service, gateway = sync_service_with_pg
         backend, _ = local_connector_mount

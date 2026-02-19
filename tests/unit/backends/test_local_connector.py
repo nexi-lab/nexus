@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.backends.local_connector import LocalConnectorBackend
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 
 
 class TestLocalConnectorInit:

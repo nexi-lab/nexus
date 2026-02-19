@@ -51,11 +51,24 @@ async def _startup_async_rebac(app: FastAPI) -> None:
         return
 
     try:
-        from nexus.rebac.async_manager import AsyncReBACManager, create_async_engine_from_url
+        from nexus.rebac.async_manager import AsyncReBACManager
 
-        engine = create_async_engine_from_url(app.state.database_url)
-        app.state.async_rebac_manager = AsyncReBACManager(engine)
-        logger.info("Async ReBAC manager initialized")
+        # Reuse the sync ReBACManager from NexusFS (avoids creating standalone engine)
+        sync_rebac = (
+            getattr(app.state.nexus_fs, "_rebac_manager", None) if app.state.nexus_fs else None
+        )
+        if sync_rebac:
+            app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
+            logger.info("Async ReBAC manager initialized (wrapping sync manager)")
+        else:
+            # Fallback: create fresh sync manager using RecordStore engine
+            from nexus.rebac.manager import ReBACManager
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            _store = SQLAlchemyRecordStore(db_url=app.state.database_url)
+            _sync_mgr = ReBACManager(engine=_store.engine)
+            app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
+            logger.info("Async ReBAC manager initialized (fresh sync manager via RecordStore)")
 
         # Issue #940: Initialize AsyncNexusFS with permission enforcement
         try:

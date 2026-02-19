@@ -1,4 +1,8 @@
-"""Test NexusFS service composition (Phase 2)."""
+"""Test NexusFS service composition (Phase 2).
+
+Issue #643: Services are now created by factory._boot_wired_services(),
+not by NexusFS.__init__. Tests use create_nexus_fs() factory entry point.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +11,8 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.config import KernelServices, PermissionConfig
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.services.version_service import VersionService
 
 try:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -23,24 +26,23 @@ pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not 
 
 
 def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
-    """Create NexusFS with VersionService injected (mimics factory)."""
+    """Create NexusFS via factory (includes two-phase wired services)."""
+    from nexus.factory import create_nexus_fs
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
     backend_path = tmp_path / "storage"
     backend_path.mkdir(exist_ok=True)
     db_path = tmp_path / "metadata"
 
     backend = LocalBackend(str(backend_path))
     metadata_store = RaftMetadataStore.embedded(str(db_path))
-    # VersionService is created by factory; for unit tests we inject it manually
-    version_service = VersionService(
-        metadata_store=metadata_store,
-        cas_store=backend,
-        enforce_permissions=False,
-    )
-    return NexusFS(
+    record_store = SQLAlchemyRecordStore(db_path=str(tmp_path / "nexus.db"))
+
+    return create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
+        record_store=record_store,
         permissions=PermissionConfig(enforce=enforce_permissions),
-        kernel_services=KernelServices(version_service=version_service),
     )
 
 
@@ -90,8 +92,8 @@ class TestNexusFSServiceComposition:
         assert fs.mount_service.router == fs.router
         assert fs.mount_service.mount_manager == fs.mount_manager
 
-        # Services that take nexus_fs should have it
-        assert fs.mcp_service.nexus_fs == fs
+        # Services that take filesystem should have it
+        assert fs.mcp_service._filesystem == fs
         assert fs.llm_service.nexus_fs == fs
         # SkillService is directly instantiated
         assert fs.skill_service is not None

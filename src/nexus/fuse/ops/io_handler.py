@@ -8,7 +8,7 @@ from typing import cast
 
 from fuse import FuseOSError
 
-from nexus.core.filters import is_os_metadata_file
+from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
     check_namespace_visible,
@@ -100,7 +100,7 @@ class IOHandler:
 
         return fd
 
-    def read(self, path: str, size: int, offset: int, fh: int) -> bytes:  # noqa: ARG002
+    def read(self, _path: str, size: int, offset: int, fh: int) -> bytes:
         """Read file content."""
         ctx = self._ctx
 
@@ -205,7 +205,7 @@ class IOHandler:
 
         return len(data)
 
-    def release(self, path: str, fh: int) -> None:  # noqa: ARG002
+    def release(self, _path: str, fh: int) -> None:
         """Release (close) a file."""
         ctx = self._ctx
 

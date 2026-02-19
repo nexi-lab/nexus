@@ -31,10 +31,11 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.services.mount_core_service import MountCoreService
     from nexus.services.mount_manager import MountManager
     from nexus.services.sync_service import SyncService
@@ -260,7 +261,7 @@ class MountPersistService:
                     if is_connector:
                         try:
                             logger.info(f"Auto-syncing connector mount: {mount_point}")
-                            from nexus.services.sync_service import SyncContext
+                            from nexus.contracts.types import SyncContext
 
                             # Build context from mount owner if available
                             sync_context = self._build_sync_context(mount)
@@ -355,7 +356,7 @@ class MountPersistService:
             return None
 
         try:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             owner_parts = mount["owner_user_id"].split(":", 1)
             if len(owner_parts) == 2:
@@ -366,7 +367,7 @@ class MountPersistService:
             return OperationContext(
                 user_id=subject_id,
                 groups=[],
-                zone_id=mount.get("zone_id", "root"),
+                zone_id=mount.get("zone_id", ROOT_ZONE_ID),
                 subject_type=subject_type,
                 subject_id=subject_id,
             )

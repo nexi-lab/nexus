@@ -30,7 +30,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from nexus.contracts.validators import EmailAddress, EmailList, EmailListRequired
+from nexus.lib.validators import EmailAddress, EmailList, EmailListRequired
 
 
 class Recipient(BaseModel):

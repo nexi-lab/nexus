@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.services.mount_service import MountService
 
 # =============================================================================
@@ -51,11 +51,9 @@ def mock_nexus_fs():
     fs.write = MagicMock()
     fs.metadata = MagicMock()
     fs.metadata.delete = MagicMock()
-    fs.rebac_service = MagicMock()
-    fs.rebac_service.rebac_create_sync = MagicMock()
-    fs.rebac_service.rebac_check_sync = MagicMock(return_value=True)
-    fs.rebac_service.rebac_list_tuples_sync = MagicMock(return_value=[])
-    fs.rebac_service.rebac_delete_sync = MagicMock(return_value=True)
+    fs.rebac_add_tuple = MagicMock()
+    fs.rebac_check = MagicMock(return_value=True)
+    fs.rebac_delete_object_tuples = MagicMock(return_value=0)
     fs.hierarchy_manager = MagicMock()
     fs.hierarchy_manager.remove_parent_tuples = MagicMock(return_value=0)
     fs.SessionLocal = None
@@ -168,7 +166,7 @@ class TestListMounts:
         def check_permission(subject, permission, object, zone_id=None):
             return object[1] == "/mnt/allowed"
 
-        mock_nexus_fs.rebac_service.rebac_check_sync.side_effect = check_permission
+        mock_nexus_fs.rebac_check.side_effect = check_permission
 
         result = asyncio.run(mount_service.list_mounts(context=operation_context))
 
@@ -185,7 +183,7 @@ class TestListMounts:
         type(mount_info.backend).__name__ = "TestBackend"
 
         mock_router.list_mounts.return_value = [mount_info]
-        mock_nexus_fs.rebac_service.rebac_check_sync.return_value = False
+        mock_nexus_fs.rebac_check.return_value = False
 
         admin_ctx = OperationContext(
             user_id="admin_user",
@@ -400,14 +398,14 @@ class TestGrantMountOwnerPermission:
         """Owner permission is granted when context has a user."""
         mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
 
-        mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
-        call_kwargs = mock_nexus_fs.rebac_service.rebac_create_sync.call_args
+        mock_nexus_fs.rebac_add_tuple.assert_called_once()
+        call_kwargs = mock_nexus_fs.rebac_add_tuple.call_args
         assert call_kwargs.kwargs["relation"] == "direct_owner"
 
     def test_skips_permission_without_context(self, mount_service, mock_nexus_fs):
         """No permission grant when context is None."""
         mount_service._grant_mount_owner_permission("/mnt/test", None)
-        mock_nexus_fs.rebac_service.rebac_create_sync.assert_not_called()
+        mock_nexus_fs.rebac_add_tuple.assert_not_called()
 
     def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
         """Mount point directory is created."""
@@ -422,7 +420,7 @@ class TestGrantMountOwnerPermission:
         mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
 
         # Permission grant should still be attempted
-        mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
+        mock_nexus_fs.rebac_add_tuple.assert_called_once()
 
 
 # =============================================================================

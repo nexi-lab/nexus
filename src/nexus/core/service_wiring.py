@@ -140,7 +140,7 @@ def wire_services(fs: Any) -> None:
     )
 
     # MCPService: Model Context Protocol operations
-    fs.mcp_service = MCPService(nexus_fs=fs)
+    fs.mcp_service = MCPService(filesystem=fs)
 
     # LLMService: LLM integration operations
     fs.llm_service = LLMService(nexus_fs=fs)
@@ -152,7 +152,7 @@ def wire_services(fs: Any) -> None:
     fs.oauth_service = OAuthService(
         oauth_factory=None,
         token_manager=None,
-        nexus_fs=fs,
+        filesystem=fs,
     )
 
     # Shared gateway for all extracted services (Issue #1287)

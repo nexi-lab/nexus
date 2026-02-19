@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
 
 

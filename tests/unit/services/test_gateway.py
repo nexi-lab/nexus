@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.services.gateway import NexusFSGateway
 
 # =============================================================================
@@ -363,7 +363,7 @@ class TestSearchOperations:
 
     def test_has_descendant_access(self, gateway, mock_fs, context):
         """has_descendant_access delegates to NexusFS."""
-        from nexus.core.permissions import Permission
+        from nexus.contracts.types import Permission
 
         result = gateway.has_descendant_access("/test", Permission.READ, context)
         assert result is True

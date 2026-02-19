@@ -19,7 +19,8 @@ import logging
 import os
 from typing import Any
 
-from nexus.core.permissions import OperationContext
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def get_zone_id(context: Any) -> str:
     """
     if context and hasattr(context, "zone_id") and context.zone_id:
         return str(context.zone_id)
-    return "root"
+    return ROOT_ZONE_ID
 
 
 def get_user_identity(context: Any) -> tuple[str, str | None]:

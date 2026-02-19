@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 # =============================================================================
 # Lightweight imports (always loaded) - these are fast
 # =============================================================================
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     AccessDeniedError,
     BackendError,
     InvalidPathError,
@@ -83,11 +83,11 @@ def setup_uvloop() -> bool:
 # LAZY IMPORTS for performance optimization
 # =============================================================================
 if TYPE_CHECKING:
-    from nexus.contracts.registry import BaseRegistry, BrickInfo, BrickRegistry
     from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
     from nexus.core.filesystem import NexusFilesystem
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.scoped_filesystem import ScopedFilesystem
+    from nexus.lib.registry import BaseRegistry, BrickInfo, BrickRegistry
 
 # Module-level cache for lazy imports
 _lazy_imports_cache: dict[str, Any] = {}
@@ -95,9 +95,9 @@ _lazy_imports_cache: dict[str, Any] = {}
 # Mapping of attribute names to their import paths
 _LAZY_IMPORTS = {
     "AsyncScopedFilesystem": ("nexus.core.async_scoped_filesystem", "AsyncScopedFilesystem"),
-    "BaseRegistry": ("nexus.core.registry", "BaseRegistry"),
-    "BrickInfo": ("nexus.core.registry", "BrickInfo"),
-    "BrickRegistry": ("nexus.core.registry", "BrickRegistry"),
+    "BaseRegistry": ("nexus.lib.registry", "BaseRegistry"),
+    "BrickInfo": ("nexus.lib.registry", "BrickInfo"),
+    "BrickRegistry": ("nexus.lib.registry", "BrickRegistry"),
     "NexusFilesystem": ("nexus.core.filesystem", "NexusFilesystem"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
     "ScopedFilesystem": ("nexus.core.scoped_filesystem", "ScopedFilesystem"),

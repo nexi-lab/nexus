@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.skills.exceptions import SkillValidationError
+
+if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,34 @@ class AuditLogEntry:
             raise SkillValidationError(f"action must be AuditAction, got {type(self.action)}")
 
 
+# ---------------------------------------------------------------------------
+# Serialization helpers
+# ---------------------------------------------------------------------------
+
+_KEY_PREFIX = "skills:audit"
+
+
+def _audit_key(audit_id: str) -> str:
+    return f"{_KEY_PREFIX}:{audit_id}"
+
+
+def _json_default(obj: object) -> str:
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Not JSON serializable: {type(obj)}")
+
+
+def _serialize_entry(entry: AuditLogEntry) -> bytes:
+    return json.dumps(dataclasses.asdict(entry), default=_json_default).encode()
+
+
+def _deserialize_entry(raw: bytes) -> AuditLogEntry:
+    data: dict[str, Any] = json.loads(raw)
+    data["action"] = AuditAction(data["action"])
+    data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+    return AuditLogEntry(**data)
+
+
 class SkillAuditLogger:
     """Audit logger for skill operations.
 
@@ -87,9 +120,35 @@ class SkillAuditLogger:
         ...     print(f"{log.action.value} by {log.agent_id} at {log.timestamp}")
     """
 
-    def __init__(self) -> None:
-        """Initialize audit logger."""
-        self._in_memory_logs: list[AuditLogEntry] = []
+    def __init__(self, cache_store: CacheStoreABC | None = None) -> None:
+        """Initialize audit logger.
+
+        Args:
+            cache_store: Optional CacheStoreABC for ephemeral log storage.
+                         Defaults to InMemoryCacheStore when *None*.
+        """
+        if cache_store is not None:
+            self._cache: CacheStoreABC = cache_store
+        else:
+            from nexus.cache.inmemory import InMemoryCacheStore
+
+            self._cache = InMemoryCacheStore()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _all_entries(self) -> list[AuditLogEntry]:
+        """Load all audit entries from the cache."""
+        keys = await self._cache.keys_by_pattern(f"{_KEY_PREFIX}:*")
+        if not keys:
+            return []
+        values = await self._cache.get_many(keys)
+        return [_deserialize_entry(v) for v in values.values() if v is not None]
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     async def log(
         self,
@@ -139,7 +198,7 @@ class SkillAuditLogger:
 
         entry.validate()
 
-        self._in_memory_logs.append(entry)
+        await self._cache.set(_audit_key(audit_id), _serialize_entry(entry))
 
         logger.debug(f"Logged {action.value} for skill '{skill_name}' (ID: {audit_id})")
         return audit_id
@@ -183,25 +242,25 @@ class SkillAuditLogger:
             >>> yesterday = datetime.now(timezone.utc) - timedelta(days=1)
             >>> logs = await audit.query_logs(start_time=yesterday)
         """
-        logs = self._in_memory_logs
+        logs = await self._all_entries()
 
         if skill_name:
-            logs = [log for log in logs if log.skill_name == skill_name]
+            logs = [entry for entry in logs if entry.skill_name == skill_name]
 
         if action:
-            logs = [log for log in logs if log.action == action]
+            logs = [entry for entry in logs if entry.action == action]
 
         if agent_id:
-            logs = [log for log in logs if log.agent_id == agent_id]
+            logs = [entry for entry in logs if entry.agent_id == agent_id]
 
         if zone_id:
-            logs = [log for log in logs if log.zone_id == zone_id]
+            logs = [entry for entry in logs if entry.zone_id == zone_id]
 
         if start_time:
-            logs = [log for log in logs if log.timestamp >= start_time]
+            logs = [entry for entry in logs if entry.timestamp >= start_time]
 
         if end_time:
-            logs = [log for log in logs if log.timestamp <= end_time]
+            logs = [entry for entry in logs if entry.timestamp <= end_time]
 
         # Sort by timestamp descending
         logs = sorted(logs, key=lambda x: x.timestamp, reverse=True)
@@ -229,14 +288,14 @@ class SkillAuditLogger:
         """
         logs = await self.query_logs(skill_name=skill_name, limit=None)
 
-        total_executions = sum(1 for log in logs if log.action == AuditAction.EXECUTED)
-        unique_users = len({log.agent_id for log in logs if log.agent_id})
-        last_activity = max(log.timestamp for log in logs) if logs else None
+        total_executions = sum(1 for entry in logs if entry.action == AuditAction.EXECUTED)
+        unique_users = len({entry.agent_id for entry in logs if entry.agent_id})
+        last_activity = max(entry.timestamp for entry in logs) if logs else None
 
         # Count actions by type
         action_counts: dict[str, int] = {}
-        for log in logs:
-            action_counts[log.action.value] = action_counts.get(log.action.value, 0) + 1
+        for entry in logs:
+            action_counts[entry.action.value] = action_counts.get(entry.action.value, 0) + 1
 
         return {
             "skill_name": skill_name,
@@ -276,18 +335,18 @@ class SkillAuditLogger:
         )
 
         # Aggregate metrics
-        skills_used = {log.skill_name for log in logs}
-        active_agents = {log.agent_id for log in logs if log.agent_id}
+        skills_used = {entry.skill_name for entry in logs}
+        active_agents = {entry.agent_id for entry in logs if entry.agent_id}
 
         # Count by action
         action_counts: dict[str, int] = {}
-        for log in logs:
-            action_counts[log.action.value] = action_counts.get(log.action.value, 0) + 1
+        for entry in logs:
+            action_counts[entry.action.value] = action_counts.get(entry.action.value, 0) + 1
 
         # Count by skill
         skill_counts: dict[str, int] = {}
-        for log in logs:
-            skill_counts[log.skill_name] = skill_counts.get(log.skill_name, 0) + 1
+        for entry in logs:
+            skill_counts[entry.skill_name] = skill_counts.get(entry.skill_name, 0) + 1
 
         # Top skills
         top_skills = sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -296,12 +355,12 @@ class SkillAuditLogger:
         recent_logs = sorted(logs, key=lambda x: x.timestamp, reverse=True)[:20]
         recent_activity = [
             {
-                "skill_name": log.skill_name,
-                "action": log.action.value,
-                "agent_id": log.agent_id,
-                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "skill_name": entry.skill_name,
+                "action": entry.action.value,
+                "agent_id": entry.agent_id,
+                "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
             }
-            for log in recent_logs
+            for entry in recent_logs
         ]
 
         return {

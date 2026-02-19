@@ -16,14 +16,14 @@ Part of: #1628 (Split CacheConnectorMixin into focused units)
 
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.cache_service import CacheService
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import Base, FilePathModel
 
@@ -74,15 +74,15 @@ def l1_only_connector():
 
 
 @pytest.fixture
-def cache_service(connector):
-    """Create CacheService with mock connector, no L1."""
-    return CacheService(connector=connector, l1_cache=None)
-
-
-@pytest.fixture
 def file_cache(tmp_path: Path):
     """Create a fresh disk cache."""
     return FileContentCache(tmp_path / "cache")
+
+
+@pytest.fixture
+def cache_service(connector, file_cache):
+    """Create CacheService with mock connector, no L1, injected file_cache."""
+    return CacheService(connector=connector, l1_cache=None, file_cache=file_cache)
 
 
 # =========================================================================
@@ -121,9 +121,7 @@ class TestInvalidateCache:
         mock_l1 = MagicMock()
         cache_service._l1_cache = mock_l1
 
-        with patch("nexus.backends.cache_service.get_file_cache") as mock_fc:
-            mock_fc.return_value = MagicMock()
-            cache_service.invalidate_cache(path="/test/file.txt")
+        cache_service.invalidate_cache(path="/test/file.txt")
 
         # Key MUST be bare path (the bug used f"cache_entry:{path}")
         mock_l1.remove.assert_called_once_with("/test/file.txt")
@@ -146,9 +144,7 @@ class TestInvalidateCache:
         session.commit()
         session.close()
 
-        with patch("nexus.backends.cache_service.get_file_cache") as mock_fc:
-            mock_fc.return_value = MagicMock()
-            count = cache_service.invalidate_cache(mount_prefix="/mnt/gcs")
+        count = cache_service.invalidate_cache(mount_prefix="/mnt/gcs")
 
         mock_l1.clear.assert_called_once()
         assert count == 1
@@ -164,8 +160,7 @@ class TestInvalidateCache:
 
 class TestReadFromCache:
     def test_l1_miss_l2_miss_returns_none(self, cache_service, file_cache):
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            result = cache_service.read_from_cache("/test/file.txt")
+        result = cache_service.read_from_cache("/test/file.txt")
         assert result is None
 
     def test_l2_hit_returns_entry(self, cache_service, file_cache):
@@ -183,8 +178,7 @@ class TestReadFromCache:
         }
         file_cache.write_meta("root", "/test/file.txt", meta)
 
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            entry = cache_service.read_from_cache("/test/file.txt")
+        entry = cache_service.read_from_cache("/test/file.txt")
 
         assert entry is not None
         assert entry.content_hash == "h1"
@@ -193,7 +187,7 @@ class TestReadFromCache:
     def test_l2_ttl_expired_returns_none(self, connector, file_cache):
         connector.cache_ttl = 1  # 1 second TTL
 
-        svc = CacheService(connector=connector)
+        svc = CacheService(connector=connector, file_cache=file_cache)
 
         # Write metadata with old timestamp
         old_time = "2020-01-01T00:00:00+00:00"
@@ -208,8 +202,7 @@ class TestReadFromCache:
         }
         file_cache.write_meta("root", "/test/old.txt", meta)
 
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            entry = svc.read_from_cache("/test/old.txt")
+        entry = svc.read_from_cache("/test/old.txt")
 
         assert entry is None  # TTL expired
 
@@ -241,12 +234,11 @@ class TestWriteToCache:
         session.commit()
         session.close()
 
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            entry = cache_service.write_to_cache(
-                path="/test/file.txt",
-                content=b"test content",
-                backend_version="v1",
-            )
+        entry = cache_service.write_to_cache(
+            path="/test/file.txt",
+            content=b"test content",
+            backend_version="v1",
+        )
 
         assert entry.content_hash is not None
         assert entry.original_size == 12
@@ -266,11 +258,10 @@ class TestWriteToCache:
         mock_l1.put.assert_called_once()
 
     def test_binary_content_stored_as_reference(self, cache_service, file_cache):
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            entry = cache_service.write_to_cache(
-                path="/test/binary.bin",
-                content=b"\x00\x01\x02\xff",  # Not UTF-8
-            )
+        entry = cache_service.write_to_cache(
+            path="/test/binary.bin",
+            content=b"\x00\x01\x02\xff",  # Not UTF-8
+        )
         assert entry.content_type == "reference"
         assert entry.content_text is None
 
@@ -309,8 +300,7 @@ class TestBulkWriteToCache:
             {"path": "/test/b.txt", "content": b"bbb", "zone_id": "root"},
         ]
 
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            results = cache_service.bulk_write_to_cache(entries)
+        results = cache_service.bulk_write_to_cache(entries)
 
         assert len(results) == 2
         assert results[0].content_text == "aaa"
@@ -327,8 +317,7 @@ class TestBulkWriteToCache:
 
 class TestReadBulkFromCache:
     def test_all_misses(self, cache_service, file_cache):
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            results = cache_service.read_bulk_from_cache(["/a.txt", "/b.txt"])
+        results = cache_service.read_bulk_from_cache(["/a.txt", "/b.txt"])
         assert len(results) == 0
 
     def test_l2_hits(self, cache_service, file_cache):
@@ -349,10 +338,7 @@ class TestReadBulkFromCache:
                 },
             )
 
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            results = cache_service.read_bulk_from_cache(
-                ["/test/a.txt", "/test/b.txt", "/test/c.txt"]
-            )
+        results = cache_service.read_bulk_from_cache(["/test/a.txt", "/test/b.txt", "/test/c.txt"])
 
         assert len(results) == 2
         assert "/test/a.txt" in results
@@ -372,8 +358,7 @@ class TestReadContentWithCache:
     def test_cache_miss_fetches_from_backend(self, cache_service, file_cache):
         ctx = OperationContext(user_id="test", groups=[], backend_path="/file.txt", is_system=True)
 
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            result = cache_service.read_content_with_cache("hash1", ctx)
+        result = cache_service.read_content_with_cache("hash1", ctx)
 
         assert result.content == b"fetched content"
         assert result.from_cache is False
@@ -405,8 +390,7 @@ class TestReadContentWithCache:
         )
         ctx.virtual_path = "/test/cached.txt"
 
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            result = cache_service.read_content_with_cache("hash1", ctx)
+        result = cache_service.read_content_with_cache("hash1", ctx)
 
         assert result.from_cache is True
         assert result.content == b"cached data"
@@ -426,7 +410,7 @@ class TestCheckVersion:
         assert cache_service.check_version("/test.txt", "v1") is True
 
     def test_version_mismatch_raises_conflict(self, connector, cache_service):
-        from nexus.core.exceptions import ConflictError
+        from nexus.contracts.exceptions import ConflictError
 
         connector.get_version = lambda path, ctx=None: "v2"
         with pytest.raises(ConflictError):
@@ -447,8 +431,7 @@ class TestGetContentHash:
 
 class TestGetSizeFromCache:
     def test_returns_none_on_miss(self, cache_service, file_cache):
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            assert cache_service.get_size_from_cache("/nonexistent.txt") is None
+        assert cache_service.get_size_from_cache("/nonexistent.txt") is None
 
     def test_returns_size_on_hit(self, cache_service, file_cache):
         path = "/test/sized.txt"
@@ -466,8 +449,7 @@ class TestGetSizeFromCache:
             },
         )
 
-        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
-            assert cache_service.get_size_from_cache(path) == 5
+        assert cache_service.get_size_from_cache(path) == 5
 
 
 # =========================================================================

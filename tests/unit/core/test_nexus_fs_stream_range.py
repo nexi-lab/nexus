@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.permissions import OperationContext
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.types import OperationContext
 
 
 class _StubFS:
@@ -27,7 +27,7 @@ class _StubFS:
 
     def _validate_path(self, path):
         if not path.startswith("/"):
-            from nexus.core.exceptions import InvalidPathError
+            from nexus.contracts.exceptions import InvalidPathError
 
             raise InvalidPathError(path)
         return path

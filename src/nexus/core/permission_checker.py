@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.permissions import OperationContext, Permission
+from nexus.contracts.types import OperationContext, Permission
 
 if TYPE_CHECKING:
     from nexus.core.metadata import FileMetadata

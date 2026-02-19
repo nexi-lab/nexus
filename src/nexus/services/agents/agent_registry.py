@@ -39,7 +39,7 @@ import sqlalchemy as sa
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from nexus.services.agents.agent_record import (
+from nexus.contracts.agent_types import (
     AgentRecord,
     AgentState,
     is_new_session,

@@ -569,7 +569,7 @@ answer = await nx.llm_read(
 ## Error Handling
 
 ```python
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
     ValidationError

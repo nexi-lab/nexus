@@ -5,13 +5,6 @@ This module has **zero** runtime imports from ``nexus.*`` --- only stdlib --- so
 bricks, services, and backends can depend on it without pulling in kernel
 internals.
 
-Backward compatibility:
-    ``from nexus.core.types import OperationContext, Permission`` still works
-    via re-exports in ``core/types.py``.
-
-    ``from nexus.core.permissions import OperationContext, Permission`` still
-    works via re-exports in ``core/permissions.py``.
-
 Types:
     - ``Permission``: IntFlag for file operation permissions (read/write/execute/traverse).
     - ``OperationContext``: Dataclass carrying auth context through filesystem operations.
@@ -23,7 +16,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from enum import IntFlag, StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -293,3 +287,61 @@ class TransactionProtocol(StrEnum):
     ACP = "acp"
     AP2 = "ap2"
     INTERNAL = "internal"
+
+
+# ---------------------------------------------------------------------------
+# Sync types (moved from nexus.services.sync_service, Issue #194)
+# ---------------------------------------------------------------------------
+
+ProgressCallback = Callable[[int, str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class SyncContext:
+    """Immutable value object describing a sync request."""
+
+    mount_point: str | None
+    path: str | None = None
+    recursive: bool = True
+    dry_run: bool = False
+    sync_content: bool = True
+    include_patterns: list[str] | None = None
+    exclude_patterns: list[str] | None = None
+    generate_embeddings: bool = False
+    context: OperationContext | None = None
+    progress_callback: ProgressCallback | None = None
+    full_sync: bool = False
+
+
+@dataclass
+class SyncResult:
+    """Value object describing the outcome of a sync."""
+
+    files_scanned: int = 0
+    files_created: int = 0
+    files_updated: int = 0
+    files_deleted: int = 0
+    files_skipped: int = 0
+    cache_synced: int = 0
+    cache_bytes: int = 0
+    cache_skipped: int = 0
+    embeddings_generated: int = 0
+    errors: list[str] = field(default_factory=list)
+    mounts_synced: int = 0
+    mounts_skipped: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return asdict(self)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot types (moved from nexus.services.protocols.transactional_snapshot, Issue #194)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotId:
+    """Opaque identifier for a transactional snapshot."""
+
+    id: str

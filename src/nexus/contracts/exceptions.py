@@ -4,10 +4,6 @@ Canonical home for all shared exception classes.  This module has **zero**
 runtime imports from ``nexus.*`` — only stdlib — so bricks, services, and
 backends can depend on it without pulling in kernel internals.
 
-Backward compatibility:
-    ``from nexus.core.exceptions import NexusError`` still works via
-    re-exports in ``core/exceptions.py``.
-
 Exception Classification:
     All Nexus exceptions have an ``is_expected`` attribute that distinguishes
     user errors (expected) from system errors (unexpected):

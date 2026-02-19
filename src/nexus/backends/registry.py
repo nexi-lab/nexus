@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.registry import BaseRegistry
+from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend

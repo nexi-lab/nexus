@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.protocols import PersistentView
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ class PostgresPersistentViewStore:
         revision_bucket: int,
     ) -> None:
         """Persist a namespace view (upsert via DELETE + INSERT)."""
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         now = datetime.now(UTC)
         view_id = str(uuid.uuid4())
 
@@ -117,7 +118,7 @@ class PostgresPersistentViewStore:
         zone_id: str | None,
     ) -> PersistentView | None:
         """Load a persisted namespace view."""
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
 
         with self._engine.connect() as conn:
             result = conn.execute(
@@ -147,7 +148,7 @@ class PostgresPersistentViewStore:
         return PersistentView(
             subject_type=row.subject_type,
             subject_id=row.subject_id,
-            zone_id=row.zone_id if row.zone_id != "root" else None,
+            zone_id=row.zone_id if row.zone_id != ROOT_ZONE_ID else None,
             mount_paths=mount_paths,
             grants_hash=row.grants_hash,
             revision_bucket=int(row.revision_bucket),

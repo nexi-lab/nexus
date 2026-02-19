@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext, Permission
+    from nexus.contracts.types import OperationContext, Permission
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class DescendantAccessChecker:
             >>> checker.has_access("/other", READ, joe_ctx)
             False  # No access to /other or any descendants
         """
-        from nexus.core.permissions import OperationContext, Permission
+        from nexus.contracts.types import OperationContext, Permission
 
         # Admin/system bypass
         if context.is_admin or context.is_system:
@@ -344,7 +344,7 @@ class DescendantAccessChecker:
             - After: 1 bulk query for all directories + all descendants
             - 10x improvement for 10 backend directories
         """
-        from nexus.core.permissions import Permission
+        from nexus.contracts.types import Permission
 
         # Admin/system bypass
         if context.is_admin or context.is_system:

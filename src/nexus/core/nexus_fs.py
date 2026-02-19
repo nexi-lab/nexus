@@ -11,9 +11,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.backends.backend import Backend
-from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.contracts.types import OperationContext, Permission
 from nexus.core.hash_fast import hash_content
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
@@ -31,7 +32,6 @@ from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
-from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
 

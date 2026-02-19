@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.contracts.exceptions import BootError, NexusError
 from nexus.core.deployment_profile import DeploymentProfile
-from nexus.core.exceptions import BootError, NexusError
 
 # ---------------------------------------------------------------------------
 # TestBootError
@@ -246,6 +246,7 @@ class TestBootBrickServices:
         result = _boot_brick_services(ctx, kernel)
 
         expected_keys = {
+            "agent_event_log",
             "wallet_provisioner",
             "manifest_resolver",
             "manifest_metrics",

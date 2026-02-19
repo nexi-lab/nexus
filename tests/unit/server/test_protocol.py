@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 
-from nexus.contracts.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
+from nexus.lib.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import (
     METHOD_PARAMS,
     RPCErrorCode,

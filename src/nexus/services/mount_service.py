@@ -46,8 +46,8 @@ def _needs_token_manager_db(backend_type: str, config: dict[str, Any]) -> bool:
 ProgressCallback = Callable[[int, str], None]
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFilesystem
-    from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.services.mount_manager import MountManager
 

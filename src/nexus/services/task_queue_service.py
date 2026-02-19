@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.rpc import rpc_expose
+from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from _nexus_tasks import TaskEngine
@@ -199,7 +199,7 @@ class TaskQueueService:
             }
 
     @rpc_expose(description="List tasks with optional filters")
-    def list_tasks(
+    def list_queue_tasks(
         self,
         task_type: str | None = None,
         status: int | None = None,

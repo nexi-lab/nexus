@@ -31,7 +31,7 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
 )
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 pytestmark = [pytest.mark.e2e]
 

@@ -23,19 +23,19 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from cachetools import TTLCache as _TTLCache
 from fuse import FuseOSError
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
     RemoteConnectionError,
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.core.virtual_views import parse_virtual_path
 from nexus.fuse.cache import FUSECacheManager
+from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.filesystem import NexusFilesystem
-    from nexus.core.permissions import OperationContext
     from nexus.fuse.mount import MountMode
     from nexus.fuse.ops._events import FUSEEventDispatcher
     from nexus.rebac.namespace_manager import NamespaceManager
@@ -323,7 +323,7 @@ def get_file_content(
 
     # In text mode, try to parse
     if ctx.mode.value == "text" or (ctx.mode.value == "smart" and view_type):
-        from nexus.core.virtual_views import get_parsed_content
+        from nexus.lib.virtual_views import get_parsed_content
         from nexus.parsers import create_default_parse_fn
 
         if not hasattr(ctx, "_parse_fn"):

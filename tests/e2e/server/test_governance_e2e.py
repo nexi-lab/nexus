@@ -33,7 +33,7 @@ from nexus.bricks.governance.collusion_service import CollusionService
 from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
 from nexus.bricks.governance.models import AgentBaseline
 from nexus.bricks.governance.response_service import ResponseService
-from nexus.contracts.db_base import Base
+from nexus.lib.db_base import Base
 from nexus.server.api.v2.routers.governance import router
 from nexus.server.dependencies import require_admin
 

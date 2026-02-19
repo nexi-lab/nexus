@@ -5,7 +5,7 @@ Tests the standardized response wrapper for backend operations.
 
 import pytest
 
-from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, ResponseType, timed_response
 
 

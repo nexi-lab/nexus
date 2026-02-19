@@ -193,7 +193,7 @@ with nexus.connect(config={"data_dir": "./data"}) as nx:
 ### Error Handling
 
 ```python
-from nexus.core.exceptions import FileNotFoundError, PermissionDeniedError
+from nexus.contracts.exceptions import FileNotFoundError, PermissionDeniedError
 
 try:
     content = nx.read("/nonexistent.txt")

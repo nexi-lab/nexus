@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 from starlette.responses import Response
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     import httpx
 
@@ -581,7 +583,7 @@ class X402Client:
         # 2. Extract payment details
         metadata = webhook_payload.get("metadata", {})
         agent_id = metadata.get("agent_id")
-        zone_id = metadata.get("zone_id", "root")
+        zone_id = metadata.get("zone_id", ROOT_ZONE_ID)
 
         if not agent_id:
             raise X402Error("Missing agent_id in webhook metadata")

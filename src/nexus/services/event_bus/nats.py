@@ -38,7 +38,7 @@ from nats.js.api import (
 )
 from nats.js.errors import NotFoundError
 
-from nexus.constants import DEFAULT_NATS_URL
+from nexus.constants import DEFAULT_NATS_URL, ROOT_ZONE_ID
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.services.event_bus.base import EventBusBase
 from nexus.services.event_bus.protocol import AckableEvent
@@ -195,7 +195,7 @@ class NatsEventBus(EventBusBase):
         if not self._started or self._js is None:
             raise RuntimeError("NatsEventBus not started. Call start() first.")
 
-        zone_id = event.zone_id or "root"
+        zone_id = event.zone_id or ROOT_ZONE_ID
         event_type = event.type.value if isinstance(event.type, FileEventType) else event.type
         subject = self._subject(zone_id, event_type)
 

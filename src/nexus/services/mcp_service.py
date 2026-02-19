@@ -16,11 +16,12 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 
 class MCPService:
@@ -41,7 +42,7 @@ class MCPService:
 
     Example:
         ```python
-        mcp_service = MCPService(nexus_fs=nx)
+        mcp_service = MCPService(filesystem=nx)
 
         # List all MCP mounts
         mounts = mcp_service.mcp_list_mounts(context=context)
@@ -70,14 +71,14 @@ class MCPService:
 
     def __init__(
         self,
-        nexus_fs: Any | None = None,
+        filesystem: NexusFilesystem | None = None,
     ):
         """Initialize MCP service.
 
         Args:
-            nexus_fs: NexusFS instance for filesystem operations and manager creation
+            filesystem: Filesystem Protocol for list/read operations and manager creation
         """
-        self.nexus_fs = nexus_fs
+        self._filesystem = filesystem
 
         logger.info("[MCPService] Initialized")
 
@@ -191,7 +192,7 @@ class MCPService:
         import asyncio
         import json
 
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         # Get MCP mount manager
         manager = self._get_mcp_mount_manager()
@@ -207,11 +208,11 @@ class MCPService:
         if mount.tools_path:
             try:
                 # List files in tools directory (run in thread)
-                if self.nexus_fs is None:
-                    raise RuntimeError("NexusFS not configured for MCPService")
+                if self._filesystem is None:
+                    raise RuntimeError("Filesystem not configured for MCPService")
 
                 items = await asyncio.to_thread(
-                    self.nexus_fs.list, mount.tools_path, recursive=False
+                    self._filesystem.list, mount.tools_path, recursive=False
                 )
 
                 for item in items:
@@ -221,10 +222,14 @@ class MCPService:
                             continue
                         try:
                             # Read tool definition file (run in thread)
-                            content = await asyncio.to_thread(self.nexus_fs.read, item)
-                            if isinstance(content, bytes):
-                                content = content.decode("utf-8")
-                            tool_def = json.loads(content)
+                            raw = await asyncio.to_thread(self._filesystem.read, item)
+                            if isinstance(raw, bytes):
+                                text = raw.decode("utf-8")
+                            elif isinstance(raw, str):
+                                text = raw
+                            else:
+                                continue  # dict metadata — skip
+                            tool_def = json.loads(text)
                             tools.append(
                                 {
                                     "name": tool_def.get("name", ""),
@@ -318,7 +323,7 @@ class MCPService:
             - Transport is auto-detected: stdio for command, sse for url
             - Tools are automatically synced after mounting
         """
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
         from nexus.mcp.models import MCPMount
 
         # Validate: need either command or url
@@ -405,7 +410,7 @@ class MCPService:
             for m in mounts:
                 service.mcp_unmount(m['name'], context=context)
         """
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         manager = self._get_mcp_mount_manager()
 
@@ -458,7 +463,7 @@ class MCPService:
         """
         import asyncio
 
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         manager = self._get_mcp_mount_manager()
 
@@ -488,15 +493,12 @@ class MCPService:
             Requires nexus_fs to be set. MCPMountManager needs NexusFS
             for filesystem operations when reading/writing tool definitions.
         """
-        from typing import cast
-
         from nexus.mcp.mount import MCPMountManager
-        from nexus.services.protocols.filesystem import NexusFilesystem
 
-        if self.nexus_fs is None:
-            raise RuntimeError("NexusFS not configured for MCPService")
+        if self._filesystem is None:
+            raise RuntimeError("Filesystem not configured for MCPService")
 
-        return MCPMountManager(cast(NexusFilesystem, self.nexus_fs))
+        return MCPMountManager(self._filesystem)
 
 
 # =============================================================================

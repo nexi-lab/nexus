@@ -2112,11 +2112,11 @@ class NexusFSCoreMixin:
             self._auto_parse_file(path)
 
         # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
-        _snapshot_svc = getattr(self, "_snapshot_service", None)
-        if _snapshot_svc is not None:
-            _txn_id = _snapshot_svc.is_tracked(path)
+        # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
+        if self._snapshot_service is not None:
+            _txn_id = self._snapshot_service.is_tracked(path)
             if _txn_id is not None:
-                _snapshot_svc.track_write(
+                self._snapshot_service.track_write(
                     _txn_id, path, snapshot_hash, metadata_snapshot, content_hash
                 )
 
@@ -2986,11 +2986,11 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.WRITE, context)
 
         # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
-        _snapshot_svc = getattr(self, "_snapshot_service", None)
-        if _snapshot_svc is not None:
-            _txn_id = _snapshot_svc.is_tracked(path)
+        # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
+        if self._snapshot_service is not None:
+            _txn_id = self._snapshot_service.is_tracked(path)
             if _txn_id is not None:
-                _snapshot_svc.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
+                self._snapshot_service.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
         if self._write_observer:

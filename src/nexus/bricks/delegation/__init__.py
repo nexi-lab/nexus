@@ -1,7 +1,30 @@
-"""Agent Delegation API — backward-compatibility re-exports (Issue #2131).
+"""Delegation Brick — Agent Identity Delegation (Issue #1271, #1618, #2131).
 
-The delegation brick has been moved to ``nexus.bricks.delegation``.
-This module re-exports the public API for backward compatibility.
+Self-contained brick for coordinator agents to provision worker agent
+identities with narrower permissions. Follows the NEXUS-LEGO-ARCHITECTURE
+brick pattern: domain models, pure derivation logic, service, and errors.
+
+Public API:
+    DelegationService     - Orchestrates delegation lifecycle
+    DelegationRecord      - Immutable snapshot of a delegation
+    DelegationResult      - Return type from delegate()
+    DelegationMode        - Enum: COPY, CLEAN, SHARED
+    DelegationStatus      - Enum: ACTIVE, REVOKED, EXPIRED, COMPLETED
+    DelegationScope       - Fine-grained scope constraints
+    DelegationOutcome     - Enum: COMPLETED, FAILED, TIMEOUT (#1619)
+    derive_grants         - Pure function: parent grants -> child grants
+    GrantSpec             - Single grant to materialize
+
+Errors:
+    DelegationError       - Base
+    EscalationError       - Anti-escalation violation
+    TooManyGrantsError    - > MAX_DELEGATABLE_GRANTS
+    InvalidDelegationModeError - Unknown mode
+    DelegationNotFoundError - ID not found
+    DelegationChainError  - Delegated agent tries to delegate
+    DepthExceededError    - Sub-delegation depth exceeded
+    InvalidPrefixError    - Malformed scope_prefix
+    InsufficientTrustError - Trust score below threshold (#1619)
 """
 
 from nexus.bricks.delegation.derivation import GrantSpec as GrantSpec

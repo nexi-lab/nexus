@@ -16,8 +16,8 @@ from sqlalchemy.exc import OperationalError
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
-    from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
     from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
 

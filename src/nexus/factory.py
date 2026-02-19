@@ -301,6 +301,8 @@ def create_record_store(
     db_url: str | None = None,
     db_path: str | None = None,
     create_tables: bool = True,
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
 ) -> RecordStoreABC:
     """Create a RecordStore with Cloud SQL and read replica support auto-detected from env.
 
@@ -361,6 +363,8 @@ def create_record_store(
             read_replica_url=read_replica_url,
             read_replica_creator=read_replica_creator,
             async_read_replica_creator=async_read_replica_creator,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
         )
 
     return SQLAlchemyRecordStore(
@@ -368,6 +372,8 @@ def create_record_store(
         db_path=db_path,
         create_tables=create_tables,
         read_replica_url=read_replica_url,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
     )
 
 
@@ -406,12 +412,13 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
         from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
 
+        _res = ctx.profile_tuning.resiliency
         rebac_circuit_breaker = AsyncCircuitBreaker(
             name="rebac_db",
             config=CircuitBreakerConfig(
-                failure_threshold=5,
+                failure_threshold=_res.circuit_breaker_failure_threshold,
                 success_threshold=3,
-                reset_timeout=30.0,
+                reset_timeout=_res.circuit_breaker_timeout,
                 failure_window=60.0,
             ),
         )
@@ -591,7 +598,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
             agent_registry = AgentRegistry(
                 session_factory=ctx.session_factory,
                 entity_registry=kernel["entity_registry"],
-                flush_interval=60,
+                flush_interval=ctx.profile_tuning.background_task.heartbeat_flush_interval,
             )
             async_agent_registry = AsyncAgentRegistry(agent_registry)
             logger.debug("[BOOT:SYSTEM] AgentRegistry + AsyncAgentRegistry created")

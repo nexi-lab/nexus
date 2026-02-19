@@ -22,7 +22,7 @@ from nexus.rebac.consistency.revision import get_zone_revision_for_grant
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
 

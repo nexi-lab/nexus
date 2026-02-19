@@ -21,8 +21,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.contracts.types import Permission
-from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
 from nexus.core.mutation_hooks import MutationOp
@@ -593,7 +593,7 @@ class NexusFSCoreMixin:
                 "Ensure NexusFS is initialized with enable_distributed_locks=True."
             )
 
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         # Run async lock in sync context
         # Check if we're in an async context - if so, user should use locked() instead
@@ -2317,7 +2317,7 @@ class NexusFSCoreMixin:
             if if_match is not None and not force:
                 current_etag = result.get("etag")
                 if current_etag != if_match:
-                    from nexus.core.exceptions import ConflictError
+                    from nexus.contracts.exceptions import ConflictError
 
                     raise ConflictError(
                         path=path,
@@ -2327,7 +2327,7 @@ class NexusFSCoreMixin:
         except Exception as e:
             # If file doesn't exist, treat as empty (will create new file)
             # Permission errors on non-existent files are OK - write() will check parent permissions
-            from nexus.core.exceptions import NexusFileNotFoundError
+            from nexus.contracts.exceptions import NexusFileNotFoundError
 
             if not isinstance(e, (NexusFileNotFoundError, PermissionError)):
                 # Re-raise unexpected errors

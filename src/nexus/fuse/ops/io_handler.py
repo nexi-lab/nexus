@@ -8,7 +8,7 @@ from typing import cast
 
 from fuse import FuseOSError
 
-from nexus.core.filters import is_os_metadata_file
+from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
     check_namespace_visible,

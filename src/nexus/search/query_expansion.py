@@ -34,7 +34,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from redis.asyncio import Redis
+    from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -529,13 +529,13 @@ class CachedQueryExpander(QueryExpander):
     """Query expander with caching layer.
 
     Wraps any QueryExpander with content-hash based caching to reduce
-    LLM API calls. Uses Redis/Dragonfly for cache backend.
+    LLM API calls. Uses CacheStoreABC for cache backend.
     """
 
     def __init__(
         self,
         expander: QueryExpander,
-        cache: Redis,
+        cache: CacheStoreABC,
         ttl: int = 3600,
         key_prefix: str = "qexp",
     ) -> None:
@@ -543,7 +543,7 @@ class CachedQueryExpander(QueryExpander):
 
         Args:
             expander: Underlying query expander
-            cache: Redis/Dragonfly client
+            cache: CacheStoreABC instance (Dragonfly/InMemory)
             ttl: Cache TTL in seconds
             key_prefix: Prefix for cache keys
         """
@@ -607,9 +607,9 @@ class CachedQueryExpander(QueryExpander):
         # Try cache first
         try:
             cached = await self.cache.get(cache_key)
-            if cached:
+            if cached is not None:
                 logger.debug(f"Query expansion cache hit for key={cache_key}")
-                return self._deserialize(cached)
+                return self._deserialize(cached.decode())
         except Exception as e:
             logger.warning(f"Cache read error: {e}")
 
@@ -619,7 +619,7 @@ class CachedQueryExpander(QueryExpander):
         # Store in cache (best effort)
         if expansions:
             try:
-                await self.cache.setex(cache_key, self.ttl, self._serialize(expansions))
+                await self.cache.set(cache_key, self._serialize(expansions).encode(), ttl=self.ttl)
                 logger.debug(f"Cached query expansion for key={cache_key}")
             except Exception as e:
                 logger.warning(f"Cache write error: {e}")
@@ -777,7 +777,7 @@ async def create_cached_query_expander(
     provider: str = "openrouter",
     model: str | None = None,
     api_key: str | None = None,
-    cache_url: str | None = None,
+    cache_store: CacheStoreABC | None = None,
     cache_ttl: int = 3600,
     config: QueryExpansionConfig | None = None,
 ) -> QueryExpander:
@@ -787,12 +787,12 @@ async def create_cached_query_expander(
         provider: LLM provider
         model: Model to use
         api_key: API key
-        cache_url: Redis/Dragonfly URL (e.g., "redis://localhost:6379")
+        cache_store: CacheStoreABC instance (Dragonfly/InMemory)
         cache_ttl: Cache TTL in seconds
         config: Expansion configuration
 
     Returns:
-        QueryExpander instance (cached if cache_url provided)
+        QueryExpander instance (cached if cache_store provided)
     """
     base_expander = create_query_expander(
         provider=provider,
@@ -801,20 +801,12 @@ async def create_cached_query_expander(
         config=config,
     )
 
-    if cache_url:
-        try:
-            from redis.asyncio import Redis
-
-            cache = Redis.from_url(cache_url)
-            return CachedQueryExpander(
-                expander=base_expander,
-                cache=cache,
-                ttl=cache_ttl,
-            )
-        except ImportError:
-            logger.warning("redis package not installed, caching disabled")
-        except Exception as e:
-            logger.warning(f"Failed to connect to cache: {e}, caching disabled")
+    if cache_store is not None:
+        return CachedQueryExpander(
+            expander=base_expander,
+            cache=cache_store,
+            ttl=cache_ttl,
+        )
 
     return base_expander
 

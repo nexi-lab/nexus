@@ -1075,11 +1075,7 @@ class TestGetDynamicViewerConfig:
 
     def test_returns_column_config_from_conditions(self):
         """Returns column_config from tuple conditions."""
-        import json
-
         mock_manager = MagicMock()
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
 
         # Mock the conditions with column_config
         column_config = {
@@ -1087,19 +1083,13 @@ class TestGetDynamicViewerConfig:
             "aggregations": {"age": "mean"},
             "visible_columns": ["name", "email"],
         }
-        conditions = json.dumps(
-            {
+
+        mock_manager.get_tuple_conditions = Mock(
+            return_value={
                 "type": "dynamic_viewer",
                 "column_config": column_config,
             }
         )
-
-        mock_row = {"conditions": conditions}
-        mock_cursor.fetchone = Mock(return_value=mock_row)
-        mock_manager._create_cursor = Mock(return_value=mock_cursor)
-        mock_manager._get_connection = Mock(return_value=mock_conn)
-        mock_manager._close_connection = Mock()
-        mock_manager._fix_sql_placeholders = Mock(side_effect=lambda x: x)
 
         fs = MockNexusFS(rebac_manager=mock_manager)
         fs.rebac_list_tuples = Mock(return_value=[{"tuple_id": "uuid-1"}])

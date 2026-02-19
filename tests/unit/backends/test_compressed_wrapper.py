@@ -1,4 +1,4 @@
-"""Unit tests for CompressedStorage wrapper (#1705).
+"""Unit tests for CompressedStorage wrapper (#1705, #2077).
 
 TDD: Tests written BEFORE implementation to drive the interface design.
 
@@ -13,75 +13,23 @@ Tests verify:
 8. Delegation of non-content ops
 9. Config validation
 10. batch_read_content per-item decompression
+11. Compression failure fallback (#2077, Issue 10)
 
 Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping (Mechanism 2)
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
+    - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
 from __future__ import annotations
 
-import hashlib
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import patch
 
 import pytest
 
-from nexus.backends.backend import Backend
 from nexus.core.protocols.describable import Describable
 from nexus.core.response import HandlerResponse
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_leaf(name: str = "local") -> MagicMock:
-    """Create a mock leaf backend."""
-    mock = MagicMock(spec=Backend)
-    mock.name = name
-    mock.describe.return_value = name
-    type(mock).user_scoped = PropertyMock(return_value=False)
-    type(mock).is_connected = PropertyMock(return_value=True)
-    type(mock).thread_safe = PropertyMock(return_value=True)
-    type(mock).supports_rename = PropertyMock(return_value=False)
-    type(mock).has_virtual_filesystem = PropertyMock(return_value=False)
-    type(mock).has_root_path = PropertyMock(return_value=True)
-    type(mock).has_token_manager = PropertyMock(return_value=False)
-    type(mock).has_data_dir = PropertyMock(return_value=False)
-    type(mock).is_passthrough = PropertyMock(return_value=False)
-    type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
-    return mock
-
-
-def _make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
-    """Create a mock leaf that actually stores/retrieves content."""
-    storage: dict[str, bytes] = {}
-    mock = _make_leaf("storage-mock")
-
-    def write_content(content: bytes, context: object = None) -> HandlerResponse:
-        h = hashlib.sha256(content).hexdigest()
-        storage[h] = content
-        return HandlerResponse.ok(data=h)
-
-    def read_content(content_hash: str, context: object = None) -> HandlerResponse:
-        if content_hash in storage:
-            return HandlerResponse.ok(data=storage[content_hash])
-        return HandlerResponse.error(message="not found")
-
-    def batch_read_content(
-        content_hashes: list[str],
-        context: object = None,
-        *,
-        contexts: dict | None = None,
-    ) -> dict[str, bytes | None]:
-        return {h: storage.get(h) for h in content_hashes}
-
-    mock.write_content = MagicMock(side_effect=write_content)
-    mock.read_content = MagicMock(side_effect=read_content)
-    mock.batch_read_content = MagicMock(side_effect=batch_read_content)
-    mock.delete_content = MagicMock(return_value=HandlerResponse.ok(data=None))
-    return mock, storage
-
+from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
 
 # ---------------------------------------------------------------------------
 # describe() Tests
@@ -94,7 +42,7 @@ class TestCompressedDescribe:
     def test_single_wrapper(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=leaf, config=config)
         assert wrapper.describe() == "compress(zstd) → local"
@@ -102,7 +50,7 @@ class TestCompressedDescribe:
     def test_chain_with_logging(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        leaf = _make_leaf("s3")
+        leaf = make_leaf("s3")
         leaf.describe.return_value = "logging → s3"
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=leaf, config=config)
@@ -111,7 +59,7 @@ class TestCompressedDescribe:
     def test_is_describable(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=leaf, config=config)
         assert isinstance(wrapper, Describable)
@@ -128,7 +76,7 @@ class TestCompressedRoundtrip:
     def test_basic_roundtrip(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -143,7 +91,7 @@ class TestCompressedRoundtrip:
     def test_binary_roundtrip(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -158,7 +106,7 @@ class TestCompressedRoundtrip:
     def test_large_content_roundtrip(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -182,7 +130,7 @@ class TestCompressedCASDedup:
     def test_deterministic_compression(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -203,7 +151,7 @@ class TestCompressedThreshold:
     def test_below_threshold_passthrough(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=1024, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -219,7 +167,7 @@ class TestCompressedThreshold:
     def test_above_threshold_compressed(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=64, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -251,7 +199,7 @@ class TestCompressedNegativeRatio:
 
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -277,7 +225,7 @@ class TestCompressedEmptyContent:
     def test_empty_roundtrip(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -300,7 +248,7 @@ class TestCompressedDelegation:
     def test_mkdir_delegates(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         leaf.mkdir.return_value = HandlerResponse.ok(data=None)
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=leaf, config=config)
@@ -312,7 +260,7 @@ class TestCompressedDelegation:
     def test_delete_delegates(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         leaf.delete_content.return_value = HandlerResponse.ok(data=None)
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=leaf, config=config)
@@ -365,7 +313,7 @@ class TestCompressedBatch:
     def test_batch_read_decompresses_all(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -387,7 +335,7 @@ class TestCompressedBatch:
     def test_batch_read_handles_missing(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
@@ -395,3 +343,41 @@ class TestCompressedBatch:
         results = wrapper.batch_read_content([h1, "nonexistent"])
         assert results[h1] == b"exists " * 100
         assert results["nonexistent"] is None
+
+
+# ---------------------------------------------------------------------------
+# Compression Failure Fallback Tests (#2077, Issue 10)
+# ---------------------------------------------------------------------------
+
+
+class TestCompressedFailureFallback:
+    """Compression failure should fall back to uncompressed storage."""
+
+    def test_compress_failure_stores_uncompressed(self) -> None:
+        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+
+        mock, storage = make_storage_mock()
+        config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
+        wrapper = CompressedStorage(inner=mock, config=config)
+
+        content = b"this should be stored uncompressed " * 100
+
+        # Mock the compressor to raise
+        with (
+            patch.object(wrapper, "_cached_compressor", None),
+            patch(
+                "nexus.backends.compressed_wrapper._zstd_compress",
+                side_effect=RuntimeError("compressor broken"),
+            ),
+        ):
+            write_resp = wrapper.write_content(content)
+
+        # Write should succeed with uncompressed content
+        assert write_resp.success
+        stored = storage[write_resp.data]
+        assert stored == content  # Stored raw, no NEXZ header
+
+        # Read should return original
+        read_resp = wrapper.read_content(write_resp.data)
+        assert read_resp.success
+        assert read_resp.data == content

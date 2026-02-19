@@ -1,4 +1,4 @@
-"""Unit tests for EncryptedStorage wrapper (#1705).
+"""Unit tests for EncryptedStorage wrapper (#1705, #2077).
 
 TDD: Tests written BEFORE implementation to drive the interface design.
 
@@ -16,39 +16,20 @@ Tests verify:
 Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping (Mechanism 2)
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
+    - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, PropertyMock
-
 import pytest
 
-from nexus.backends.backend import Backend
 from nexus.core.protocols.describable import Describable
 from nexus.core.response import HandlerResponse
+from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_leaf(name: str = "local") -> MagicMock:
-    """Create a mock leaf backend that stores content in-memory."""
-    mock = MagicMock(spec=Backend)
-    mock.name = name
-    mock.describe.return_value = name
-    type(mock).user_scoped = PropertyMock(return_value=False)
-    type(mock).is_connected = PropertyMock(return_value=True)
-    type(mock).thread_safe = PropertyMock(return_value=True)
-    type(mock).supports_rename = PropertyMock(return_value=False)
-    type(mock).has_virtual_filesystem = PropertyMock(return_value=False)
-    type(mock).has_root_path = PropertyMock(return_value=True)
-    type(mock).has_token_manager = PropertyMock(return_value=False)
-    type(mock).has_data_dir = PropertyMock(return_value=False)
-    type(mock).is_passthrough = PropertyMock(return_value=False)
-    type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
-    return mock
 
 
 def _generate_key() -> bytes:
@@ -56,41 +37,6 @@ def _generate_key() -> bytes:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
     return AESGCMSIV.generate_key(bit_length=256)
-
-
-def _make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
-    """Create a mock leaf that actually stores/retrieves encrypted content.
-
-    Returns (mock, storage_dict) where storage_dict maps hash→bytes.
-    """
-    storage: dict[str, bytes] = {}
-    mock = _make_leaf("storage-mock")
-
-    def write_content(content: bytes, context: object = None) -> HandlerResponse:
-        import hashlib
-
-        h = hashlib.sha256(content).hexdigest()
-        storage[h] = content
-        return HandlerResponse.ok(data=h)
-
-    def read_content(content_hash: str, context: object = None) -> HandlerResponse:
-        if content_hash in storage:
-            return HandlerResponse.ok(data=storage[content_hash])
-        return HandlerResponse.error(message="not found")
-
-    def batch_read_content(
-        content_hashes: list[str],
-        context: object = None,
-        *,
-        contexts: dict | None = None,
-    ) -> dict[str, bytes | None]:
-        return {h: storage.get(h) for h in content_hashes}
-
-    mock.write_content = MagicMock(side_effect=write_content)
-    mock.read_content = MagicMock(side_effect=read_content)
-    mock.batch_read_content = MagicMock(side_effect=batch_read_content)
-    mock.delete_content = MagicMock(return_value=HandlerResponse.ok(data=None))
-    return mock, storage
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +50,7 @@ class TestEncryptedDescribe:
     def test_single_wrapper(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
         assert wrapper.describe() == "encrypt(AES-256-GCM-SIV) → local"
@@ -112,7 +58,7 @@ class TestEncryptedDescribe:
     def test_chain_with_logging(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        leaf = _make_leaf("s3")
+        leaf = make_leaf("s3")
         leaf.describe.return_value = "logging → s3"
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
@@ -121,7 +67,7 @@ class TestEncryptedDescribe:
     def test_is_describable(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
         assert isinstance(wrapper, Describable)
@@ -138,7 +84,7 @@ class TestEncryptedRoundtrip:
     def test_basic_roundtrip(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
@@ -154,7 +100,7 @@ class TestEncryptedRoundtrip:
     def test_binary_roundtrip(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
@@ -169,7 +115,7 @@ class TestEncryptedRoundtrip:
     def test_large_content_roundtrip(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
@@ -193,7 +139,7 @@ class TestEncryptedCASDedup:
     def test_deterministic_encryption(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         key = _generate_key()
         config = EncryptedStorageConfig(key=key, metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
@@ -206,7 +152,7 @@ class TestEncryptedCASDedup:
     def test_different_plaintext_different_hash(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
@@ -226,7 +172,7 @@ class TestEncryptedErrors:
     def test_corrupted_ciphertext(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
@@ -244,13 +190,14 @@ class TestEncryptedErrors:
         assert read_resp.error_message is not None
         assert (
             "decrypt" in read_resp.error_message.lower()
+            or "transform" in read_resp.error_message.lower()
             or "error" in read_resp.error_message.lower()
         )
 
     def test_wrong_key_fails(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         key1 = _generate_key()
         key2 = _generate_key()
 
@@ -273,7 +220,7 @@ class TestEncryptedErrors:
     def test_inner_read_error_propagated(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         leaf.read_content.return_value = HandlerResponse.error(message="disk I/O error")
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
@@ -295,7 +242,7 @@ class TestEncryptedPassthrough:
     def test_passthrough_reads_unencrypted_content(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(
             key=_generate_key(), passthrough_unencrypted=True, metrics_enabled=False
         )
@@ -316,7 +263,7 @@ class TestEncryptedPassthrough:
     def test_no_passthrough_rejects_unencrypted_content(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(
             key=_generate_key(), passthrough_unencrypted=False, metrics_enabled=False
         )
@@ -345,7 +292,7 @@ class TestEncryptedEmptyContent:
     def test_empty_roundtrip(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
@@ -368,7 +315,7 @@ class TestEncryptedDelegation:
     def test_mkdir_delegates(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         leaf.mkdir.return_value = HandlerResponse.ok(data=None)
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
@@ -380,7 +327,7 @@ class TestEncryptedDelegation:
     def test_rmdir_delegates(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        leaf = _make_leaf("local")
+        leaf = make_leaf("local")
         leaf.rmdir.return_value = HandlerResponse.ok(data=None)
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
@@ -422,7 +369,7 @@ class TestEncryptedBatch:
     def test_batch_read_decrypts_all(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
@@ -440,7 +387,7 @@ class TestEncryptedBatch:
     def test_batch_read_handles_missing(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
-        mock, storage = _make_storage_mock()
+        mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 

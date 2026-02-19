@@ -7,15 +7,17 @@ Backend methods added without updating wrappers.
 Subclasses only need to:
 1. Call ``super().__init__(inner)`` in their ``__init__``.
 2. Override ``describe()`` to prepend their layer name.
-3. Override the specific operations they intercept (e.g. ``read_content``).
+3. Override ``_transform_on_write`` / ``_transform_on_read`` for data transforms.
 
 Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16 — Recursive Wrapping Rules 1-5
     - Issue #1449: Recursive Protocol wrapping + describe() for composition chains
+    - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
@@ -25,12 +27,18 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.response import HandlerResponse
 
+logger = logging.getLogger(__name__)
+
 
 class DelegatingBackend(Backend):
     """Base class for wrappers that implement the same Backend Protocol.
 
     Delegates every Backend property and method to ``_inner`` by default.
     Concrete wrappers override only the operations they intercept.
+
+    Data-transforming wrappers (compression, encryption) override
+    ``_transform_on_write`` and ``_transform_on_read`` instead of
+    ``write_content`` / ``read_content`` / ``batch_read_content``.
 
     Recursive Wrapping Rules (PART 16):
         1. Wrapper MUST implement the same Protocol as ``inner``.
@@ -96,17 +104,103 @@ class DelegatingBackend(Backend):
     def supports_parallel_mmap_read(self) -> bool:
         return self._inner.supports_parallel_mmap_read
 
-    # === Content Operations (delegate to inner) ===
+    # === Transform Hooks (override in data-transforming wrappers) ===
+
+    def _transform_on_write(self, content: bytes) -> bytes:
+        """Transform content before writing to inner backend.
+
+        Default: identity (pass-through). Override in subclasses that
+        transform data on write (compression, encryption, etc.).
+
+        Convention:
+            - Return transformed bytes on success.
+            - Raise an exception to signal a hard failure (write aborted).
+            - For soft fallback (e.g., compression skipped), return
+              the original content without raising.
+        """
+        return content
+
+    def _transform_on_read(self, data: bytes) -> bytes:
+        """Transform data after reading from inner backend.
+
+        Default: identity (pass-through). Override in subclasses that
+        transform data on read (decompression, decryption, etc.).
+
+        Convention:
+            - Return transformed bytes on success.
+            - Raise an exception to signal failure.
+        """
+        return data
+
+    # === Content Operations (with hook support) ===
 
     def write_content(
         self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
-        return self._inner.write_content(content, context=context)
+        """Transform content via ``_transform_on_write``, then write to inner.
+
+        If ``_transform_on_write`` raises, returns an error response.
+        """
+        from nexus.core.response import HandlerResponse
+
+        try:
+            transformed = self._transform_on_write(content)
+        except Exception as e:
+            logger.error("%s write transform failed: %s", self.__class__.__name__, e)
+            return HandlerResponse.error(
+                message=f"{self.__class__.__name__} write transform failed: {e}"
+            )
+        return self._inner.write_content(transformed, context=context)
 
     def read_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
-        return self._inner.read_content(content_hash, context=context)
+        """Read from inner, then transform via ``_transform_on_read``."""
+        from nexus.core.response import HandlerResponse
+
+        response = self._inner.read_content(content_hash, context=context)
+        if not response.success or response.data is None:
+            return response
+
+        try:
+            transformed = self._transform_on_read(response.data)
+        except Exception as e:
+            logger.warning("%s read transform failed: %s", self.__class__.__name__, e)
+            return HandlerResponse.error(
+                message=f"{self.__class__.__name__} read transform failed: {e}"
+            )
+        return HandlerResponse.ok(data=transformed, backend_name=self.name)
+
+    def batch_read_content(
+        self,
+        content_hashes: list[str],
+        context: OperationContext | None = None,
+        *,
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, bytes | None]:
+        """Read batch from inner, then transform each item via ``_transform_on_read``."""
+        raw_results = self._inner.batch_read_content(
+            content_hashes, context=context, contexts=contexts
+        )
+
+        transformed: dict[str, bytes | None] = {}
+        for content_hash, data in raw_results.items():
+            if data is None:
+                transformed[content_hash] = None
+                continue
+
+            try:
+                transformed[content_hash] = self._transform_on_read(data)
+            except Exception as e:
+                logger.warning(
+                    "%s batch read transform failed for hash=%s: %s",
+                    self.__class__.__name__,
+                    content_hash[:12],
+                    e,
+                )
+                transformed[content_hash] = None
+
+        return transformed
 
     def delete_content(
         self, content_hash: str, context: OperationContext | None = None
@@ -171,8 +265,8 @@ class DelegatingBackend(Backend):
     def __getattr__(self, name: str) -> Any:
         """Delegate any non-overridden attribute to inner backend.
 
-        Covers: list_dir, stream_content, write_stream, stream_range,
-        batch_read_content, get_file_info, get_object_type, get_object_id,
+        Covers: stream_content, write_stream, stream_range,
+        get_file_info, get_object_type, get_object_id,
         and any future Backend methods.
         """
         return getattr(self._inner, name)

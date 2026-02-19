@@ -50,6 +50,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
@@ -737,7 +739,7 @@ def enable_read_tracking(ctx: OperationContext, zone_id: str | None = None) -> N
 
     Args:
         ctx: The OperationContext to enable tracking on.
-        zone_id: Zone ID for the read set (defaults to ctx.zone_id or "root").
+        zone_id: Zone ID for the read set (defaults to ctx.zone_id or ROOT_ZONE_ID).
 
     Example:
         >>> from nexus.core.read_set import enable_read_tracking
@@ -747,4 +749,4 @@ def enable_read_tracking(ctx: OperationContext, zone_id: str | None = None) -> N
         True
     """
     ctx.track_reads = True
-    ctx.read_set = ReadSet.create(zone_id=zone_id or ctx.zone_id or "root")
+    ctx.read_set = ReadSet.create(zone_id=zone_id or ctx.zone_id or ROOT_ZONE_ID)

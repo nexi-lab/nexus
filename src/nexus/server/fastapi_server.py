@@ -1324,6 +1324,7 @@ def create_app(
             getattr(nexus_fs, "_workspace_rpc_service", None),
             getattr(nexus_fs, "_agent_rpc_service", None),
             getattr(nexus_fs, "_user_provisioning_service", None),
+            getattr(nexus_fs, "_sandbox_rpc_service", None),
             getattr(nexus_fs, "mount_service", None),
             getattr(nexus_fs, "search_service", None),
             getattr(nexus_fs, "share_link_service", None),

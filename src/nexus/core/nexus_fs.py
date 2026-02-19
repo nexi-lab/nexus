@@ -403,6 +403,15 @@ class NexusFS(  # type: ignore[misc]
             exists_cache=getattr(self, "_exists_cache", None),
         )
 
+        # SandboxRPCService: Replaces NexusFS sandbox management facades
+        from nexus.sandbox.sandbox_rpc_service import SandboxRPCService
+
+        self._sandbox_rpc_service = SandboxRPCService(
+            session_factory=self.SessionLocal,
+            default_context=self._default_context,
+            config=getattr(self, "_config", None),
+        )
+
         # ReBACService: Permission and access control operations
         if svc.rebac_service is not None:
             self.rebac_service = svc.rebac_service
@@ -3303,483 +3312,77 @@ class NexusFS(  # type: ignore[misc]
             session.close()
 
     # ========================================================================
-    # Sandbox Management (Issue #372)
+    # Sandbox Management (Issue #372) — delegates to SandboxRPCService
     # ========================================================================
 
     @property
     def sandbox_available(self) -> bool:
         """Whether sandbox execution is available."""
-        try:
-            self._ensure_sandbox_manager()
-        except Exception:
-            return False
-        return bool(self._sandbox_manager and self._sandbox_manager.providers)
-
-    def _ensure_sandbox_manager(self) -> None:
-        """Ensure sandbox manager is initialized (lazy initialization)."""
-        if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
-            import os
-
-            from nexus.sandbox.sandbox_manager import SandboxManager
-
-            # Initialize sandbox manager with E2B credentials and config for Docker provider
-            # Pass config if available (needed for Docker provider initialization)
-            config = getattr(self, "_config", None)
-            self._sandbox_manager = SandboxManager(
-                session_factory=self.SessionLocal,
-                e2b_api_key=os.getenv("E2B_API_KEY"),
-                e2b_team_id=os.getenv("E2B_TEAM_ID"),
-                e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
-                config=config,  # Pass config for Docker provider
-            )
-
-            # Attach smart router if providers are available (Issue #1317)
-            if self._sandbox_manager.providers:
-                from nexus.sandbox.sandbox_router import SandboxRouter
-
-                self._sandbox_manager._router = SandboxRouter(
-                    available_providers=self._sandbox_manager.providers,
-                )
+        return self._sandbox_rpc_service.sandbox_available
 
     @staticmethod
     def _run_async(coro: Any) -> Any:
-        """Run async coroutine safely, handling both running and non-running event loops.
-
-        Uses the unified sync_bridge to avoid the ThreadPoolExecutor + asyncio.run()
-        anti-pattern (Issue #1300).
-
-        Args:
-            coro: Coroutine to run
-
-        Returns:
-            Result of the coroutine
-        """
+        """Run async coroutine safely (Issue #1300)."""
         from nexus.core.sync_bridge import run_sync
 
         return run_sync(coro)
 
-    @rpc_expose(description="Create a new sandbox")
-    async def sandbox_create(  # type: ignore[override]
-        self,
-        name: str,
-        ttl_minutes: int = 10,
-        provider: str | None = None,
-        template_id: str | None = None,
-        context: dict | None = None,
-    ) -> dict:
-        """Create a new code execution sandbox.
+    async def sandbox_create(self, name: str, ttl_minutes: int = 10, provider: str | None = None,
+                             template_id: str | None = None, context: dict | None = None) -> dict:
+        """Create a new sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_create(name, ttl_minutes, provider, template_id, context)
 
-        Args:
-            name: User-friendly sandbox name (unique per user)
-            ttl_minutes: Idle timeout in minutes (default: 10)
-            provider: Sandbox provider ("docker", "e2b", etc.). If None, auto-selects based on environment.
-            template_id: Provider template ID (optional)
-            context: Operation context with user/agent/zone info
+    async def sandbox_run(self, sandbox_id: str, language: str, code: str, timeout: int = 300,
+                          nexus_url: str | None = None, nexus_api_key: str | None = None,
+                          context: dict | None = None, as_script: bool = False) -> dict:
+        """Run code in sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_run(sandbox_id, language, code, timeout, nexus_url, nexus_api_key, context, as_script)
 
-        Returns:
-            Sandbox metadata dict with sandbox_id, name, status, etc.
-        """
-        ctx = self._parse_context(context)
+    async def sandbox_validate(self, sandbox_id: str, workspace_path: str = "/workspace",
+                               context: dict | None = None) -> dict:
+        """Validate code in sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_validate(sandbox_id, workspace_path, context)
 
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
+    async def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:
+        """Pause sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_pause(sandbox_id, context)
 
-        # Create sandbox (provider auto-selection happens in sandbox_manager)
-        result: dict[Any, Any] = await self._sandbox_manager.create_sandbox(
-            name=name,
-            user_id=ctx.user_id or "system",
-            zone_id=ctx.zone_id or self._default_context.zone_id or "root",
-            agent_id=ctx.agent_id,
-            ttl_minutes=ttl_minutes,
-            provider=provider,
-            template_id=template_id,
-        )
-        return result
+    async def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:
+        """Resume sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_resume(sandbox_id, context)
 
-    @rpc_expose(description="Run code in sandbox")
-    async def sandbox_run(  # type: ignore[override]
-        self,
-        sandbox_id: str,
-        language: str,
-        code: str,
-        timeout: int = 300,
-        nexus_url: str | None = None,
-        nexus_api_key: str | None = None,
-        context: dict | None = None,
-        as_script: bool = False,
-    ) -> dict:
-        """Run code in a sandbox.
+    async def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:
+        """Stop sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_stop(sandbox_id, context)
 
-        Args:
-            sandbox_id: Sandbox ID
-            language: Programming language ("python", "javascript", "bash")
-            code: Code to execute
-            timeout: Execution timeout in seconds (default: 300)
-            nexus_url: Nexus server URL (auto-injected as env var if provided)
-            nexus_api_key: Nexus API key (auto-injected as env var if provided)
-            context: Operation context (used to get api_key if nexus_api_key not provided)
-            as_script: If True, run as standalone script (stateless).
-                      If False (default), use Jupyter kernel for Python (stateful).
+    async def sandbox_list(self, context: dict | None = None, verify_status: bool = False,
+                           user_id: str | None = None, zone_id: str | None = None,
+                           agent_id: str | None = None, status: str | None = None) -> dict:
+        """List sandboxes (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_list(context, verify_status, user_id, zone_id, agent_id, status)
 
-        Returns:
-            Dict with stdout, stderr, exit_code, execution_time
-        """
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
+    async def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:
+        """Get sandbox status (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_status(sandbox_id, context)
 
-        # Get Nexus credentials from context if not provided
-        if not nexus_api_key and context:
-            ctx = self._parse_context(context)
-            nexus_api_key = getattr(ctx, "api_key", None)
+    async def sandbox_get_or_create(self, name: str, ttl_minutes: int = 10,
+                                    provider: str | None = None, template_id: str | None = None,
+                                    verify_status: bool = True, context: dict | None = None) -> dict:
+        """Get or create sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_get_or_create(name, ttl_minutes, provider, template_id, verify_status, context)
 
-        # Auto-detect nexus_url if not provided
-        if not nexus_url:
-            import os
+    async def sandbox_connect(self, sandbox_id: str, provider: str = "e2b",
+                              sandbox_api_key: str | None = None, mount_path: str = "/mnt/nexus",
+                              nexus_url: str | None = None, nexus_api_key: str | None = None,
+                              agent_id: str | None = None, context: dict | None = None) -> dict:
+        """Connect to sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_connect(sandbox_id, provider, sandbox_api_key, mount_path, nexus_url, nexus_api_key, agent_id, context)
 
-            nexus_url = os.getenv("NEXUS_SERVER_URL") or os.getenv("NEXUS_URL")
-
-        # Inject Nexus credentials as environment variables in the code
-        if nexus_url or nexus_api_key:
-            env_prefix = ""
-            if language == "bash":
-                if nexus_url:
-                    env_prefix += f'export NEXUS_URL="{nexus_url}"\n'
-                if nexus_api_key:
-                    env_prefix += f'export NEXUS_API_KEY="{nexus_api_key}"\n'
-                code = env_prefix + code
-            elif language == "python":
-                env_lines = ["import os"]
-                if nexus_url:
-                    env_lines.append(f'os.environ["NEXUS_URL"] = "{nexus_url}"')
-                if nexus_api_key:
-                    env_lines.append(f'os.environ["NEXUS_API_KEY"] = "{nexus_api_key}"')
-                env_prefix = "\n".join(env_lines) + "\n"
-                code = env_prefix + code
-            elif language in ("javascript", "js"):
-                env_lines = []
-                if nexus_url:
-                    env_lines.append(f'process.env.NEXUS_URL = "{nexus_url}";')
-                if nexus_api_key:
-                    env_lines.append(f'process.env.NEXUS_API_KEY = "{nexus_api_key}";')
-                env_prefix = "\n".join(env_lines) + "\n"
-                code = env_prefix + code
-
-        import dataclasses
-
-        execution_result = await self._sandbox_manager.run_code(
-            sandbox_id, language, code, timeout, as_script=as_script
-        )
-        result = dataclasses.asdict(execution_result)
-        # Convert ValidationResult Pydantic models to dicts for serialization
-        if result.get("validations"):
-            result["validations"] = [
-                v.model_dump() if hasattr(v, "model_dump") else v for v in result["validations"]
-            ]
-        return result
-
-    @rpc_expose(description="Validate code in sandbox")
-    async def sandbox_validate(  # type: ignore[override]
-        self,
-        sandbox_id: str,
-        workspace_path: str = "/workspace",
-        context: dict | None = None,  # noqa: ARG002
-    ) -> dict:
-        """Run validation pipeline in sandbox.
-
-        Detects project type and runs applicable linters (ruff, mypy, eslint, etc.),
-        returning structured validation results.
-
-        Args:
-            sandbox_id: Sandbox ID
-            workspace_path: Workspace root path in sandbox
-            context: Operation context
-
-        Returns:
-            Dict with validations list
-        """
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        results = await self._sandbox_manager.validate(sandbox_id, workspace_path)
-        return {"validations": results}
-
-    @rpc_expose(description="Pause sandbox")
-    async def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
-        """Pause sandbox to save costs.
-
-        Args:
-            sandbox_id: Sandbox ID
-            context: Operation context
-
-        Returns:
-            Updated sandbox metadata
-        """
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        result: dict[Any, Any] = await self._sandbox_manager.pause_sandbox(sandbox_id)
-        return result
-
-    @rpc_expose(description="Resume paused sandbox")
-    async def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
-        """Resume a paused sandbox.
-
-        Args:
-            sandbox_id: Sandbox ID
-            context: Operation context
-
-        Returns:
-            Updated sandbox metadata
-        """
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        result: dict[Any, Any] = await self._sandbox_manager.resume_sandbox(sandbox_id)
-        return result
-
-    @rpc_expose(description="Stop and destroy sandbox")
-    async def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
-        """Stop and destroy sandbox.
-
-        Args:
-            sandbox_id: Sandbox ID
-            context: Operation context
-
-        Returns:
-            Updated sandbox metadata
-        """
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        result: dict[Any, Any] = await self._sandbox_manager.stop_sandbox(sandbox_id)
-        return result
-
-    @rpc_expose(description="List sandboxes")
-    async def sandbox_list(  # type: ignore[override]
-        self,
-        context: dict | None = None,
-        verify_status: bool = False,
-        user_id: str | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        status: str | None = None,
-    ) -> dict:
-        """List user's sandboxes.
-
-        Args:
-            context: Operation context
-            verify_status: If True, verify status with provider (slower but accurate)
-            user_id: Filter by user_id (admin only)
-            zone_id: Filter by zone_id (admin only)
-            agent_id: Filter by agent_id
-            status: Filter by status (e.g., 'active', 'stopped', 'paused')
-
-        Returns:
-            Dict with list of sandboxes
-        """
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        ctx = self._parse_context(context)
-
-        # Determine filter values
-        # If explicit filter parameters are provided and user is admin, use them
-        # Otherwise filter by authenticated user
-        filter_user_id = user_id if (user_id is not None and ctx.is_admin) else ctx.user_id
-        filter_zone_id = zone_id if (zone_id is not None and ctx.is_admin) else ctx.zone_id
-        filter_agent_id = agent_id if agent_id is not None else ctx.agent_id
-
-        sandboxes = await self._sandbox_manager.list_sandboxes(
-            user_id=filter_user_id,
-            zone_id=filter_zone_id,
-            agent_id=filter_agent_id,
-            status=status,
-            verify_status=verify_status,
-        )
-        return {"sandboxes": sandboxes}
-
-    @rpc_expose(description="Get sandbox status")
-    async def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
-        """Get sandbox status and metadata.
-
-        Args:
-            sandbox_id: Sandbox ID
-            context: Operation context
-
-        Returns:
-            Sandbox metadata dict
-        """
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        result: dict[Any, Any] = await self._sandbox_manager.get_sandbox_status(sandbox_id)
-        return result
-
-    @rpc_expose(description="Get or create sandbox")
-    async def sandbox_get_or_create(  # type: ignore[override]
-        self,
-        name: str,
-        ttl_minutes: int = 10,
-        provider: str | None = None,
-        template_id: str | None = None,
-        verify_status: bool = True,
-        context: dict | None = None,
-    ) -> dict:
-        """Get existing active sandbox or create a new one.
-
-        This handles the common pattern where you want to reuse an existing
-        sandbox if it exists and is still running, or create a new one if not.
-        Perfect for agent workflows where each user+agent pair should have
-        one persistent sandbox.
-
-        Args:
-            name: Sandbox name (e.g., "user_id,agent_id")
-            ttl_minutes: Idle timeout in minutes (default: 10)
-            provider: Sandbox provider ("docker", "e2b", etc.)
-            template_id: Provider template ID (optional)
-            verify_status: If True, verify with provider that sandbox is running (default: True)
-            context: Operation context with user/agent/zone info
-
-        Returns:
-            Sandbox metadata dict (either existing or newly created)
-
-        Example:
-            # Agent workflow: always get valid sandbox for user+agent
-            sandbox = nx.sandbox_get_or_create(
-                name=f"{user_id},{agent_id}",
-                context={"user_id": user_id, "agent_id": agent_id}
-            )
-            sandbox_id = sandbox["sandbox_id"]  # Always valid!
-        """
-        ctx = self._parse_context(context)
-
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        result: dict[Any, Any] = await self._sandbox_manager.get_or_create_sandbox(
-            name=name,
-            user_id=ctx.user_id or "system",
-            zone_id=ctx.zone_id or self._default_context.zone_id or "root",
-            agent_id=ctx.agent_id,
-            ttl_minutes=ttl_minutes,
-            provider=provider,
-            template_id=template_id,
-            verify_status=verify_status,
-        )
-        return result
-
-    @rpc_expose(description="Connect to user-managed sandbox")
-    async def sandbox_connect(  # type: ignore[override]
-        self,
-        sandbox_id: str,
-        provider: str = "e2b",
-        sandbox_api_key: str | None = None,
-        mount_path: str = "/mnt/nexus",
-        nexus_url: str | None = None,
-        nexus_api_key: str | None = None,
-        agent_id: str | None = None,
-        context: dict | None = None,
-    ) -> dict:
-        """Connect and mount Nexus to a sandbox (Nexus-managed or user-managed).
-
-        Works for both:
-        - Nexus-managed sandboxes (created via sandbox_create) - no sandbox_api_key needed
-        - User-managed sandboxes (external) - requires sandbox_api_key
-
-        Args:
-            sandbox_id: Sandbox ID (Nexus-managed or external)
-            provider: Sandbox provider ("e2b", etc.). Default: "e2b"
-            sandbox_api_key: Provider API key (optional, only for user-managed sandboxes)
-            mount_path: Path where Nexus will be mounted in sandbox (default: /mnt/nexus)
-            nexus_url: Nexus server URL (auto-detected if not provided)
-            nexus_api_key: Nexus API key (from context if not provided)
-            agent_id: Agent ID for version attribution (issue #418).
-                When set, file modifications will be attributed to this agent.
-            context: Operation context
-
-        Returns:
-            Dict with connection details (sandbox_id, provider, mount_path, mounted_at, mount_status)
-
-        Raises:
-            ValueError: If provider not supported or required credentials missing
-            RuntimeError: If connection/mount fails
-        """
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        # Get Nexus URL - should be provided by client
-        # Falls back to localhost only for direct server-side calls
-        if not nexus_url:
-            import os
-
-            # Check NEXUS_SERVER_URL first (for Docker deployments), then NEXUS_URL
-            nexus_url = os.getenv("NEXUS_SERVER_URL") or os.getenv(
-                "NEXUS_URL", "http://localhost:2026"
-            )
-
-        # Get Nexus API key from context if not provided
-        if not nexus_api_key:
-            ctx = self._parse_context(context)
-            nexus_api_key = getattr(ctx, "api_key", None)
-
-        if not nexus_api_key:
-            raise ValueError(
-                "Nexus API key required for mounting. Pass nexus_api_key or provide in context."
-            )
-
-        result: dict[Any, Any] = await self._sandbox_manager.connect_sandbox(
-            sandbox_id=sandbox_id,
-            provider=provider,
-            sandbox_api_key=sandbox_api_key,
-            mount_path=mount_path,
-            nexus_url=nexus_url,
-            nexus_api_key=nexus_api_key,
-            agent_id=agent_id,
-        )
-        return result
-
-    @rpc_expose(description="Disconnect from user-managed sandbox")
-    async def sandbox_disconnect(  # type: ignore[override]
-        self,
-        sandbox_id: str,
-        provider: str = "e2b",
-        sandbox_api_key: str | None = None,
-        context: dict | None = None,  # noqa: ARG002
-    ) -> dict:
-        """Disconnect and unmount Nexus from a user-managed sandbox.
-
-        Args:
-            sandbox_id: External sandbox ID
-            provider: Sandbox provider ("e2b", etc.). Default: "e2b"
-            sandbox_api_key: Provider API key for authentication
-            context: Operation context
-
-        Returns:
-            Dict with disconnection details (sandbox_id, provider, unmounted_at)
-
-        Raises:
-            ValueError: If provider not supported or API key missing
-            RuntimeError: If disconnection/unmount fails
-        """
-        # Ensure sandbox manager is initialized
-        self._ensure_sandbox_manager()
-        assert self._sandbox_manager is not None
-
-        result: dict[Any, Any] = await self._sandbox_manager.disconnect_sandbox(
-            sandbox_id=sandbox_id,
-            provider=provider,
-            sandbox_api_key=sandbox_api_key,
-        )
-        return result
+    async def sandbox_disconnect(self, sandbox_id: str, provider: str = "e2b",
+                                 sandbox_api_key: str | None = None,
+                                 context: dict | None = None) -> dict:
+        """Disconnect from sandbox (delegates to SandboxRPCService)."""
+        return await self._sandbox_rpc_service.sandbox_disconnect(sandbox_id, provider, sandbox_api_key, context)
 
     # =========================================================================
     # Issue #919: Directory Visibility Cache Metrics

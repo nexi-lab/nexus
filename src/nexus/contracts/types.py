@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from enum import IntFlag
+from enum import IntFlag, StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -223,3 +223,21 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
         ),
         is_admin=getattr(context, "is_admin", False),
     )
+
+
+# ---------------------------------------------------------------------------
+# Transaction Protocol (moved from nexus.bricks.pay.audit_types, Issue #2129)
+# ---------------------------------------------------------------------------
+
+
+class TransactionProtocol(StrEnum):
+    """Payment protocol used for the transaction.
+
+    Issue #1360 Phase 1: Transaction Audit Log types.
+    Stored as String columns (not PG ENUM) for forward-compatible schema evolution.
+    """
+
+    X402 = "x402"
+    ACP = "acp"
+    AP2 = "ap2"
+    INTERNAL = "internal"

@@ -28,14 +28,14 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker as AsyncSessionMaker
 
+from nexus.bricks.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
+from nexus.bricks.governance.collusion_service import CollusionService
+from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
+from nexus.bricks.governance.models import AgentBaseline
+from nexus.bricks.governance.response_service import ResponseService
+from nexus.contracts.db_base import Base
 from nexus.server.api.v2.routers.governance import router
 from nexus.server.dependencies import require_admin
-from nexus.services.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
-from nexus.services.governance.collusion_service import CollusionService
-from nexus.services.governance.governance_graph_service import GovernanceGraphService
-from nexus.services.governance.models import AgentBaseline
-from nexus.services.governance.response_service import ResponseService
-from nexus.storage.models._base import Base
 
 # =============================================================================
 # Fixtures — real async SQLite + real governance services

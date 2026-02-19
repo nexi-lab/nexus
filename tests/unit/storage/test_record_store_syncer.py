@@ -1,4 +1,4 @@
-"""Unit tests for RecordStoreSyncer — the bridge between Metastore and RecordStore.
+"""Unit tests for RecordStoreWriteObserver — the bridge between Metastore and RecordStore.
 
 Tests happy paths, SQL failure injection, partial failures, and session exhaustion.
 Phase 1.1 of #1246/#1330 consolidation plan.
@@ -18,7 +18,7 @@ from sqlalchemy.exc import OperationalError
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.record_store_syncer import RecordStoreSyncer
+from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
 
 @pytest.fixture
@@ -35,8 +35,8 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreSyncer:
-    return RecordStoreSyncer(record_store.session_factory)
+def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreWriteObserver:
+    return RecordStoreWriteObserver(record_store.session_factory)
 
 
 def _make_metadata(
@@ -74,7 +74,7 @@ class TestOnWriteHappyPath:
     """Test on_write() creates OperationLog + FilePathModel + VersionHistory."""
 
     def test_new_file_creates_all_records(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         metadata = _make_metadata("/new.txt", etag="hash1")
         syncer.on_write(metadata, is_new=True, path="/new.txt", zone_id="root")
@@ -97,7 +97,7 @@ class TestOnWriteHappyPath:
             assert vhs[0].content_hash == "hash1"
 
     def test_update_file_increments_version(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         # Create initial file
         m1 = _make_metadata("/file.txt", etag="v1hash")
@@ -138,7 +138,7 @@ class TestOnDeleteHappyPath:
     """Test on_delete() soft-deletes FilePathModel."""
 
     def test_delete_soft_deletes(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         # Create file first
         m = _make_metadata("/del.txt", etag="delhash")
@@ -169,7 +169,7 @@ class TestOnDeleteHappyPath:
             assert len(ops) == 1
 
     def test_delete_nonexistent_is_noop(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Deleting a file that doesn't exist in RecordStore should not raise."""
         syncer.on_delete(path="/nonexistent.txt", zone_id="root")
@@ -189,7 +189,7 @@ class TestOnRenameHappyPath:
     """Test on_rename() logs the rename operation."""
 
     def test_rename_logged(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         syncer.on_rename(
             old_path="/old.txt",
@@ -210,7 +210,7 @@ class TestOnWriteBatchHappyPath:
     """Test on_write_batch() handles multiple items in one transaction."""
 
     def test_batch_creates_all_records(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         items = [
             (_make_metadata("/a.txt", etag="ha"), True),
@@ -246,11 +246,11 @@ class TestSQLFailure:
         def failing_session_factory():
             return mock_session
 
-        # RecordStoreSyncer uses context manager protocol
+        # RecordStoreWriteObserver uses context manager protocol
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
 
-        syncer = RecordStoreSyncer(failing_session_factory)
+        syncer = RecordStoreWriteObserver(failing_session_factory)
         metadata = _make_metadata()
 
         with pytest.raises(OperationalError):
@@ -262,7 +262,7 @@ class TestSQLFailure:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
 
-        syncer = RecordStoreSyncer(lambda: mock_session)
+        syncer = RecordStoreWriteObserver(lambda: mock_session)
 
         with pytest.raises(OperationalError):
             syncer.on_delete(path="/test.txt")
@@ -275,7 +275,7 @@ class TestPartialFailure:
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         """If VersionRecorder raises, the entire transaction should fail."""
-        syncer = RecordStoreSyncer(record_store.session_factory)
+        syncer = RecordStoreWriteObserver(record_store.session_factory)
         metadata = _make_metadata()
 
         with (
@@ -299,7 +299,7 @@ class TestPartialFailure:
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         """If OperationLogger raises, nothing should be committed."""
-        syncer = RecordStoreSyncer(record_store.session_factory)
+        syncer = RecordStoreWriteObserver(record_store.session_factory)
         metadata = _make_metadata()
 
         with (
@@ -328,7 +328,7 @@ class TestSessionFactoryFailure:
         def failing_factory():
             raise ConnectionError("database unavailable")
 
-        syncer = RecordStoreSyncer(failing_factory)
+        syncer = RecordStoreWriteObserver(failing_factory)
         metadata = _make_metadata()
 
         with pytest.raises(ConnectionError, match="database unavailable"):
@@ -340,7 +340,7 @@ class TestBatchPartialFailure:
 
     def test_batch_failure_rolls_back_all(self, record_store: SQLAlchemyRecordStore) -> None:
         """If batch write fails partway through, no items should be committed."""
-        syncer = RecordStoreSyncer(record_store.session_factory)
+        syncer = RecordStoreWriteObserver(record_store.session_factory)
 
         items = [
             (_make_metadata("/a.txt", etag="ha"), True),
@@ -382,7 +382,7 @@ class TestDeliveredColumn:
     """Verify that all syncer operations create records with delivered=FALSE."""
 
     def test_on_write_sets_delivered_false(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """on_write() should create operation_log with delivered=FALSE."""
         metadata = _make_metadata("/outbox.txt", etag="ohash")
@@ -394,7 +394,7 @@ class TestDeliveredColumn:
             assert ops[0].delivered is False
 
     def test_on_delete_sets_delivered_false(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """on_delete() should create operation_log with delivered=FALSE."""
         syncer.on_delete(path="/del-outbox.txt", zone_id="root")
@@ -409,7 +409,7 @@ class TestDeliveredColumn:
             assert ops[0].delivered is False
 
     def test_on_rename_sets_delivered_false(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """on_rename() should create operation_log with delivered=FALSE."""
         syncer.on_rename(old_path="/old.txt", new_path="/new.txt", zone_id="root")
@@ -420,7 +420,7 @@ class TestDeliveredColumn:
             assert ops[0].delivered is False
 
     def test_on_write_batch_sets_delivered_false(
-        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """on_write_batch() should create all records with delivered=FALSE."""
         items = [

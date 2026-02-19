@@ -1,7 +1,7 @@
 """Integration test for Transactional Event Log (Issue #1241).
 
 End-to-end flow:
-1. Write file via RecordStoreSyncer → verify operation_log has delivered=FALSE
+1. Write file via RecordStoreWriteObserver → verify operation_log has delivered=FALSE
 2. Run EventDeliveryWorker → verify event dispatched to mock EventBus
 3. Verify delivered=TRUE after dispatch
 4. Verify retry on dispatch failure
@@ -22,7 +22,7 @@ from nexus.core.event_bus import FileEventType
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.record_store_syncer import RecordStoreSyncer
+from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
 
 @pytest.fixture
@@ -39,8 +39,8 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreSyncer:
-    return RecordStoreSyncer(record_store.session_factory)
+def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreWriteObserver:
+    return RecordStoreWriteObserver(record_store.session_factory)
 
 
 def _make_metadata(
@@ -71,7 +71,7 @@ class TestTransactionalOutboxIntegration:
 
     def test_write_creates_undelivered_then_worker_delivers(
         self,
-        syncer: RecordStoreSyncer,
+        syncer: RecordStoreWriteObserver,
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Write via syncer → start worker → verify delivery."""
@@ -126,7 +126,7 @@ class TestTransactionalOutboxIntegration:
 
     def test_multiple_operations_delivered_in_order(
         self,
-        syncer: RecordStoreSyncer,
+        syncer: RecordStoreWriteObserver,
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Multiple writes + delete → all delivered in created_at order."""
@@ -187,7 +187,7 @@ class TestTransactionalOutboxIntegration:
 
     def test_crash_recovery_retries_undelivered(
         self,
-        syncer: RecordStoreSyncer,
+        syncer: RecordStoreWriteObserver,
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Simulate crash: dispatch fails → restart → events retried."""
@@ -225,7 +225,7 @@ class TestTransactionalOutboxIntegration:
 
     def test_worker_background_delivery(
         self,
-        syncer: RecordStoreSyncer,
+        syncer: RecordStoreWriteObserver,
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Worker running in background picks up events automatically."""

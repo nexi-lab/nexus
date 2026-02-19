@@ -45,6 +45,11 @@ def _register_extracted_services(server: Any, nx: NexusFilesystem) -> None:
         ("search_service", getattr(nx, "search_service", None)),
         ("share_link_service", getattr(nx, "share_link_service", None)),
         ("task_queue_service", getattr(nx, "task_queue_service", None)),
+        ("rebac_service", getattr(nx, "rebac_service", None)),
+        ("mcp_service", getattr(nx, "mcp_service", None)),
+        ("skill_service", getattr(nx, "skill_service", None)),
+        ("llm_service", getattr(nx, "llm_service", None)),
+        ("oauth_service", getattr(nx, "oauth_service", None)),
     ]
     for name, svc in services:
         if svc is not None:

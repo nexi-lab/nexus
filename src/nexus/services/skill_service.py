@@ -101,6 +101,7 @@ class SkillService:
     # Distribution APIs
     # =========================================================================
 
+    @rpc_expose(description="Share a skill with users, groups, or make public")
     def share(
         self,
         skill_path: str,
@@ -156,6 +157,7 @@ class SkillService:
             raise RuntimeError("rebac_create returned None")
         return cast(str, result["tuple_id"])
 
+    @rpc_expose(description="Revoke sharing permission on a skill")
     def unshare(
         self,
         skill_path: str,
@@ -213,6 +215,7 @@ class SkillService:
     # Subscription APIs
     # =========================================================================
 
+    @rpc_expose(description="Discover skills the user has permission to see")
     def discover(
         self,
         context: OperationContext | None,
@@ -352,6 +355,7 @@ class SkillService:
 
         return results
 
+    @rpc_expose(description="Subscribe to a skill (add to user's library)")
     def subscribe(
         self,
         skill_path: str,
@@ -385,6 +389,7 @@ class SkillService:
         logger.info(f"User '{context.user_id}' subscribed to skill '{skill_path}'")
         return True
 
+    @rpc_expose(description="Unsubscribe from a skill (remove from user's library)")
     def unsubscribe(
         self,
         skill_path: str,
@@ -416,6 +421,7 @@ class SkillService:
     # Runner APIs
     # =========================================================================
 
+    @rpc_expose(description="Get skill metadata for system prompt injection")
     def get_prompt_context(
         self,
         context: OperationContext | None,
@@ -475,6 +481,7 @@ class SkillService:
             token_estimate=token_estimate,
         )
 
+    @rpc_expose(description="Load full skill content on-demand")
     def load(
         self,
         skill_path: str,

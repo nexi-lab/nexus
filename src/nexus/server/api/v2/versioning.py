@@ -254,7 +254,7 @@ def build_v2_registry(
         registry.add(
             RouterEntry(router=bricks_health_router, name="bricks_health", endpoint_count=1)
         )
-        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=3))
+        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=5))
     except ImportError as e:
         logger.warning("Failed to import Bricks routes: %s", e)
 

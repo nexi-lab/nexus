@@ -16,6 +16,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/ipc", tags=["ipc"])
@@ -135,7 +137,7 @@ def _get_ipc_provisioner(request: Request) -> Any:
 
 def _get_zone_id(request: Request) -> str:
     """Get zone_id from app state."""
-    return getattr(request.app.state, "zone_id", None) or "root"
+    return getattr(request.app.state, "zone_id", None) or ROOT_ZONE_ID
 
 
 # ---------------------------------------------------------------------------

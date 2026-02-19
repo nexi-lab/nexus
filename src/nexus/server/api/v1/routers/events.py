@@ -30,6 +30,7 @@ from fastapi import (
 )
 from fastapi import status as http_status
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.server.api.v1.dependencies import get_nexus_fs
 from nexus.server.dependencies import get_auth_result, get_operation_context, resolve_auth
@@ -75,7 +76,7 @@ async def websocket_events(
         )
         return
 
-    zone_id = (auth_result or {}).get("zone_id") or "root"
+    zone_id = (auth_result or {}).get("zone_id") or ROOT_ZONE_ID
     user_id = (auth_result or {}).get("subject_id")
 
     # Resolve subscription filters

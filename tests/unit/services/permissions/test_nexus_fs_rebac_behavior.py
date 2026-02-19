@@ -22,6 +22,14 @@ class MockNexusFS:
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._permission_enforcer = MagicMock()
+        # rebac_create/rebac_check delegate to rebac_service
+        from nexus.services.rebac_service import ReBACService
+
+        self.rebac_service = ReBACService(
+            rebac_manager=rebac_manager,
+            enforce_permissions=enforce_permissions,
+            permission_enforcer=self._permission_enforcer,
+        )
 
     def _validate_path(self, path):
         """Mock path validation that returns path unchanged."""
@@ -307,7 +315,7 @@ class TestRebacCreate:
         """Raises ValueError when dynamic_viewer is used on non-CSV file."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="dynamic_viewer relation only supports CSV files"):
             fs.rebac_create(
@@ -321,7 +329,7 @@ class TestRebacCreate:
         """Raises ValueError when dynamic_viewer is used without column_config."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="column_config is required"):
             fs.rebac_create(
@@ -335,7 +343,7 @@ class TestRebacCreate:
         """Raises ValueError when column_config is provided for non-dynamic_viewer relation."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(
             ValueError, match="can only be provided when relation is 'dynamic_viewer'"
@@ -351,7 +359,7 @@ class TestRebacCreate:
         """Raises ValueError when column appears in multiple categories."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="appears in multiple categories"):
             fs.rebac_create(
@@ -368,7 +376,7 @@ class TestRebacCreate:
         """Raises ValueError when aggregation operation is invalid."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="Invalid aggregation operation"):
             fs.rebac_create(
@@ -387,7 +395,7 @@ class TestRebacCreate:
             return_value=Mock(tuple_id="abc", revision="1", consistency_token="token")
         )
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         fs.rebac_create(
             subject=("user", "alice"),
@@ -410,7 +418,7 @@ class TestRebacCreate:
             )
         )
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         result = fs.rebac_create(
             subject=("user", "alice"),

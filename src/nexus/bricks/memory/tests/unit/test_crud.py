@@ -8,8 +8,6 @@ Related: Issue #2128 (Memory brick extraction)
 
 from unittest.mock import Mock, patch
 
-import pytest
-
 
 class TestMemoryCRUD:
     """Test suite for MemoryCRUD operations."""

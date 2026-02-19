@@ -173,10 +173,10 @@ class MemoryCRUD:
         memory.last_accessed_at = datetime.now(UTC)
 
         try:
-            self._memory_router._session.commit()
+            self._memory_router.session.commit()
         except Exception:
             logger.warning("Failed to track memory access", exc_info=True)
-            self._memory_router._session.rollback()
+            self._memory_router.session.rollback()
 
     def store(
         self,
@@ -361,7 +361,7 @@ class MemoryCRUD:
                 if enrichment.embedding_json:
                     embedding_vec_for_evolution = json.loads(enrichment.embedding_json)
 
-                session = self._memory_router._session
+                session = self._memory_router.session
                 evolution_result = detector.detect(
                     session=session,
                     zone_id=zone_id,
@@ -428,7 +428,7 @@ class MemoryCRUD:
         if not db_url:
             # Try to get from the session's engine bind
             try:
-                session = self._memory_router._session
+                session = self._memory_router.session
                 bind = session.get_bind()
                 url = getattr(bind, "url", None)
                 if url:
@@ -541,7 +541,7 @@ class MemoryCRUD:
             from nexus.services.memory.versioning import MemoryVersioning
 
             versioning = MemoryVersioning(
-                session_factory=lambda: self._memory_router._session,
+                session_factory=lambda: self._memory_router.session,
                 memory_router=self._memory_router,
                 permission_enforcer=self._permission_enforcer,
                 backend=self._backend,
@@ -616,7 +616,7 @@ class MemoryCRUD:
         stmt = select(MemoryModel).where(
             MemoryModel.namespace == namespace, MemoryModel.path_key == path_key
         )
-        memory = self._memory_router._session.execute(stmt).scalar_one_or_none()
+        memory = self._memory_router.session.execute(stmt).scalar_one_or_none()
 
         if not memory:
             return None

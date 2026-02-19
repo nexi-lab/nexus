@@ -6,8 +6,9 @@ Validates that Memory brick fails gracefully and provides useful error messages.
 Related: Issue #2128 (Memory brick extraction)
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 
 class TestPermissionErrors:
@@ -116,7 +117,7 @@ class TestStorageErrors:
             context=context,
         )
 
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             crud.get(memory_id="mem_test")
 
 
@@ -176,8 +177,8 @@ class TestInputValidation:
 
     def test_invalid_scope_value(self):
         """Test invalid scope value raises clear error."""
-        invalid_scopes = ["", "INVALID", "user;admin", None]
         # Should validate against allowed scopes: user, agent, zone, session
+        # Examples: "", "INVALID", "user;admin", None
         assert True  # Pattern demonstrated
 
     def test_negative_importance(self):
@@ -199,8 +200,8 @@ class TestTemporalErrors:
 
     def test_invalid_date_format(self):
         """Test invalid date format raises clear error."""
-        invalid_dates = ["not-a-date", "2025-13-01", "2025-01-32"]
         # Should parse and validate date formats
+        # Examples: "not-a-date", "2025-13-01", "2025-01-32"
         assert True  # Pattern demonstrated
 
     def test_before_after_order_validation(self):
@@ -210,8 +211,8 @@ class TestTemporalErrors:
 
     def test_invalid_during_format(self):
         """Test invalid 'during' parameter format."""
-        invalid_during = ["2025", "202501", "January 2025"]
         # Should validate YYYY-MM format
+        # Examples: "2025", "202501", "January 2025"
         assert True  # Pattern demonstrated
 
 
@@ -243,7 +244,7 @@ class TestEnrichmentErrors:
     {},
     123,
 ])
-def test_store_invalid_content_types(invalid_input):
+def test_store_invalid_content_types(_invalid_input):
     """Test store handles invalid content types gracefully."""
     # Should either convert to string or raise clear error
     assert True  # Pattern for parametrized tests demonstrated

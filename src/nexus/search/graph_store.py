@@ -748,9 +748,8 @@ class GraphStore:
             if rel.source_entity_id in result_map:
                 result_map[rel.source_entity_id].append(rel)
             # Add to target entity if bidirectional and different from source
-            if direction == "both" and rel.target_entity_id in result_map:
-                if rel.target_entity_id != rel.source_entity_id:
-                    result_map[rel.target_entity_id].append(rel)
+            if direction == "both" and rel.target_entity_id in result_map and rel.target_entity_id != rel.source_entity_id:
+                result_map[rel.target_entity_id].append(rel)
 
         return result_map
 

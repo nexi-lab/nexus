@@ -8,7 +8,6 @@ Related: Issue #2128 (Memory brick extraction)
 """
 
 import asyncio
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -43,7 +42,7 @@ class TestConcurrentOperations:
         """Test approving the same memory concurrently (idempotent)."""
         memory_id = "mem_test_123"
 
-        async def approve(mid: str) -> bool:
+        async def approve(_mid: str) -> bool:
             await asyncio.sleep(0.01)
             return True
 
@@ -63,11 +62,11 @@ class TestConcurrentOperations:
 
         memory_id = "mem_test_123"
 
-        async def invalidate(mid: str) -> bool:
+        async def invalidate(_mid: str) -> bool:
             await asyncio.sleep(0.01)
             return True
 
-        async def approve(mid: str) -> bool:
+        async def approve(_mid: str) -> bool:
             await asyncio.sleep(0.01)
             return True
 
@@ -121,7 +120,7 @@ class TestConcurrentOperations:
         """Test version operations don't conflict."""
         memory_id = "mem_test_123"
 
-        async def get_history(mid: str) -> list:
+        async def get_history(_mid: str) -> list:
             await asyncio.sleep(0.01)
             return [{"version": 1}, {"version": 2}]
 
@@ -164,7 +163,7 @@ class TestTransactionalIntegrity:
         # If 1 of 10 operations fails, all 10 should rollback
         batch_ids = [f"mem_{i}" for i in range(10)]
 
-        async def approve_with_failure(ids: list[str]) -> dict:
+        async def approve_with_failure(_ids: list[str]) -> dict:
             # Simulate failure on the 5th item
             await asyncio.sleep(0.01)
             return {"approved": 0, "failed": 10, "rolled_back": True}
@@ -180,7 +179,7 @@ class TestTransactionalIntegrity:
         """Test optimistic locking catches version conflicts."""
         memory_id = "mem_test_123"
 
-        async def update_with_version(mid: str, expected_version: int) -> bool:
+        async def update_with_version(_mid: str, _expected_version: int) -> bool:
             await asyncio.sleep(0.01)
             # In real implementation, this would check version and fail if mismatch
             return True
@@ -252,5 +251,5 @@ async def test_deadlock_prevention():
         )
         # If we get here, no deadlock
         assert len(results) == 2
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.fail("Deadlock detected - operations timed out")

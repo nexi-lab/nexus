@@ -16,13 +16,16 @@ Related: NEXUS-LEGO-ARCHITECTURE.md (minimal kernel, maximal bricks)
 
 from __future__ import annotations
 
+from nexus.search.primitives.glob_fast import glob_match  # noqa: F401
+
 # Re-export primitives for public API
 from nexus.search.primitives.grep_fast import grep_bulk  # noqa: F401
-from nexus.search.primitives.glob_fast import glob_match  # noqa: F401
 from nexus.search.primitives.trigram_fast import (  # noqa: F401
     build_trigram_index,
-    is_available as trigram_available,
     search_trigram,
+)
+from nexus.search.primitives.trigram_fast import (
+    is_available as trigram_available,
 )
 
 __all__ = [

@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from nexus.services.protocols.memory import MemoryProtocol
-
 
 @dataclass
 class RetentionPolicy:

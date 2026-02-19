@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 # ============================================================================
 # Database Fixtures
@@ -71,10 +70,9 @@ async def async_session_factory(async_db_engine):
 @pytest.fixture
 async def async_session(async_session_factory):
     """Async database session with auto-rollback."""
-    async with async_session_factory() as sess:
-        async with sess.begin():
-            yield sess
-            await sess.rollback()
+    async with async_session_factory() as sess, sess.begin():
+        yield sess
+        await sess.rollback()
 
 
 @pytest.fixture
@@ -143,7 +141,7 @@ def permission_enforcer_allow_all():
     mock = Mock()
     mock.check_memory = Mock(return_value=True)
     mock.check = Mock(return_value=True)
-    mock.filter_list = Mock(side_effect=lambda items, *args, **kwargs: items)
+    mock.filter_list = Mock(side_effect=lambda items, *_args, **_kwargs: items)
     return mock
 
 

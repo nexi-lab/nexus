@@ -999,8 +999,8 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         # Create factory function that NexusFS.memory will call per-request
         def create_memory_brick(session: Any, entity_registry: Any) -> MemoryBrick:
             """Create MemoryBrick instance for a request session."""
-            from nexus.services.memory.memory_router import MemoryViewRouter
             from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+            from nexus.services.memory.memory_router import MemoryViewRouter
 
             memory_router = MemoryViewRouter(session, entity_registry)
             permission_enforcer = MemoryPermissionEnforcer(

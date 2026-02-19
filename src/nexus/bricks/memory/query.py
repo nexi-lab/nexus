@@ -254,7 +254,7 @@ class MemoryQuery:
                 system_at_point.replace(tzinfo=None) if system_at_point.tzinfo else system_at_point
             )
 
-            session = self._memory_router._session
+            session = self._memory_router.session
             for memory in accessible_memories:
                 updated_at_naive = (
                     memory.updated_at.replace(tzinfo=None)
@@ -392,7 +392,7 @@ class MemoryQuery:
 
         from nexus.storage.models import MemoryModel
 
-        session = self._memory_router._session
+        session = self._memory_router.session
         stmt = select(MemoryModel).where(MemoryModel.embedding.isnot(None))
 
         if scope:

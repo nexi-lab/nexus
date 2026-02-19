@@ -535,7 +535,7 @@ class MemoryVersioning:
         if not self._retention_policy or not self._retention_policy.enabled:
             return 0
 
-        cutoff_date = datetime.now(UTC) - timedelta(days=self._retention_policy.keep_versions_days)
+        _cutoff_date = datetime.now(UTC) - timedelta(days=self._retention_policy.keep_versions_days)
 
         # TODO: Implement SQL query to delete old versions beyond retention
         # This requires:

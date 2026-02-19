@@ -559,7 +559,7 @@ class Memory:
             _store = SQLAlchemyRecordStore(db_url=db_url)
             try:
                 async with _store.async_session_factory() as session:
-                    graph_store = GraphStore(session, zone_id=effective_zone_id)
+                    graph_store = GraphStore(_store, session, zone_id=effective_zone_id)
 
                     # Store entities
                     entity_id_map: dict[str, str] = {}  # name -> entity_id
@@ -1591,7 +1591,7 @@ class Memory:
 
     def start_trajectory(self, task_description: str, task_type: str | None = None) -> str:
         """Start tracking a new execution trajectory. Delegates to ACE TrajectoryManager."""
-        return self._ace.trajectory.start_trajectory(task_description, task_type)
+        return self._ace.trajectory.start_trajectory(task_description, task_type)  # type: ignore[no-any-return]
 
     def log_trajectory_step(
         self, trajectory_id: str, step_type: str, description: str, result: Any = None
@@ -1614,7 +1614,7 @@ class Memory:
         metrics: dict[str, Any] | None = None,
     ) -> str:
         """Complete a trajectory with outcome. Delegates to ACE TrajectoryManager."""
-        return self._ace.trajectory.complete_trajectory(
+        return self._ace.trajectory.complete_trajectory(  # type: ignore[no-any-return]
             trajectory_id, status, success_score, error_message, metrics
         )
 
@@ -1628,13 +1628,13 @@ class Memory:
         metrics: dict[str, Any] | None = None,
     ) -> str:
         """Add feedback to a completed trajectory. Delegates to ACE FeedbackManager."""
-        return self._ace.feedback.add_feedback(
+        return self._ace.feedback.add_feedback(  # type: ignore[no-any-return]
             trajectory_id, feedback_type, score, source, message, metrics
         )
 
     def get_trajectory_feedback(self, trajectory_id: str) -> builtins.list[dict[str, Any]]:
         """Get all feedback for a trajectory. Delegates to ACE FeedbackManager."""
-        return self._ace.feedback.get_trajectory_feedback(trajectory_id)
+        return self._ace.feedback.get_trajectory_feedback(trajectory_id)  # type: ignore[no-any-return]
 
     def get_effective_score(
         self,
@@ -1642,7 +1642,7 @@ class Memory:
         strategy: Literal["latest", "average", "weighted"] = "latest",
     ) -> float:
         """Get effective score for trajectory. Delegates to ACE FeedbackManager."""
-        return self._ace.feedback.get_effective_score(trajectory_id, strategy)
+        return self._ace.feedback.get_effective_score(trajectory_id, strategy)  # type: ignore[no-any-return]
 
     def mark_for_relearning(self, trajectory_id: str, reason: str, priority: int = 5) -> None:
         """Flag trajectory for re-reflection. Delegates to ACE FeedbackManager."""
@@ -1652,11 +1652,11 @@ class Memory:
         self, feedback_items: builtins.list[dict[str, Any]]
     ) -> builtins.list[str]:
         """Add feedback to multiple trajectories. Delegates to ACE FeedbackManager."""
-        return self._ace.feedback.batch_add_feedback(feedback_items)
+        return self._ace.feedback.batch_add_feedback(feedback_items)  # type: ignore[no-any-return]
 
     async def reflect_async(self, trajectory_id: str, context: str | None = None) -> dict[str, Any]:
         """Reflect on a single trajectory (async). Delegates to ACE Reflector."""
-        return await self._ace.reflector.reflect_async(trajectory_id, context)
+        return await self._ace.reflector.reflect_async(trajectory_id, context)  # type: ignore[no-any-return]
 
     def reflect(self, trajectory_id: str, context: str | None = None) -> dict[str, Any]:
         """Reflect on a single trajectory (sync). Delegates to ACE Reflector."""
@@ -1833,7 +1833,7 @@ class Memory:
         )
         if not playbooks:
             return None
-        return self._ace.playbook.get_playbook(playbooks[0]["playbook_id"])
+        return self._ace.playbook.get_playbook(playbooks[0]["playbook_id"])  # type: ignore[no-any-return]
 
     def update_playbook(
         self, strategies: builtins.list[dict[str, Any]], playbook_name: str = "default"
@@ -1875,7 +1875,7 @@ class Memory:
             )
         else:
             playbook_id = playbook["playbook_id"]
-        return self._ace.curator.curate_playbook(playbook_id, reflections)
+        return self._ace.curator.curate_playbook(playbook_id, reflections)  # type: ignore[no-any-return]
 
     async def consolidate_async(
         self,
@@ -1986,7 +1986,7 @@ class Memory:
     ) -> builtins.list[dict[str, Any]]:
         """Query execution trajectories. Delegates to ACE TrajectoryManager."""
         target_agent_id = agent_id or self.agent_id
-        return self._ace.trajectory.query_trajectories(
+        return self._ace.trajectory.query_trajectories(  # type: ignore[no-any-return]
             agent_id=target_agent_id, status=status, limit=limit
         )
 
@@ -1995,13 +1995,13 @@ class Memory:
     ) -> builtins.list[dict[str, Any]]:
         """Query playbooks. Delegates to ACE PlaybookManager."""
         target_agent_id = agent_id or self.agent_id
-        return self._ace.playbook.query_playbooks(
+        return self._ace.playbook.query_playbooks(  # type: ignore[no-any-return]
             agent_id=target_agent_id, scope=scope, limit=limit
         )
 
     def process_relearning(self, limit: int = 10) -> builtins.list[dict[str, Any]]:
         """Process trajectories flagged for re-learning. Delegates to ACE LearningLoop."""
-        return self._ace.learning_loop.process_relearning_queue(limit)
+        return self._ace.learning_loop.process_relearning_queue(limit)  # type: ignore[no-any-return]
 
     async def index_memories_async(
         self,

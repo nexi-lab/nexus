@@ -75,6 +75,8 @@ class NexusFS(  # type: ignore[misc]
     - Efficient storage
     """
 
+    _memory_api: Any
+
     def __init__(
         self,
         backend: Backend,

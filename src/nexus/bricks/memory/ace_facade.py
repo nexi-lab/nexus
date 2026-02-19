@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 
-def _import_ace(module_name: str, class_name: str) -> type:
+def _import_ace(module_name: str, class_name: str) -> Any:
     """Import an ACE service class via importlib (avoids direct nexus.services import)."""
     mod = importlib.import_module(f"nexus.services.ace.{module_name}")
     return getattr(mod, class_name)

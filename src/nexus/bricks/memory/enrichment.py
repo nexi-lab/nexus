@@ -175,7 +175,7 @@ class EnrichmentPipeline:
 
             _mod = importlib.import_module("nexus.core.temporal_resolver")
             resolve_temp = _mod.resolve_temporal
-            return resolve_temp(
+            return resolve_temp(  # type: ignore[no-any-return]
                 text=text,
                 reference_time=reference_time,
                 llm_provider=self._llm_provider,

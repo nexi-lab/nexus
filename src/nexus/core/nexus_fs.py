@@ -6019,307 +6019,126 @@ class NexusFS(  # type: ignore[misc]
 
 
     # -------------------------------------------------------------------------
-    # MountService Sync Delegation (replaces NexusFSMountsMixin, Issue #1387)
-    # These @rpc_expose methods are discovered by the FastAPI server.
+    # Mount/Sync thin delegators (RPC via register_service(mount_service))
     # -------------------------------------------------------------------------
 
-    @rpc_expose(description="Add dynamic backend mount")
     def add_mount(
-        self,
-        mount_point: str,
-        backend_type: str,
-        backend_config: dict[str, Any],
-        priority: int = 0,
-        readonly: bool = False,
-        io_profile: str = "balanced",
+        self, mount_point: str, backend_type: str, backend_config: dict[str, Any],
+        priority: int = 0, readonly: bool = False, io_profile: str = "balanced",
         context: OperationContext | None = None,
     ) -> str:
-        """Add a dynamic backend mount to the filesystem."""
+        """Add a dynamic backend mount."""
         return self._mount_core_service.add_mount(
-            mount_point=mount_point,
-            backend_type=backend_type,
-            backend_config=backend_config,
-            priority=priority,
-            readonly=readonly,
-            io_profile=io_profile,
-            context=context,
+            mount_point=mount_point, backend_type=backend_type,
+            backend_config=backend_config, priority=priority,
+            readonly=readonly, io_profile=io_profile, context=context,
         )
 
-    @rpc_expose(description="Remove backend mount")
-    def remove_mount(
-        self,
-        mount_point: str,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Remove a backend mount from the filesystem."""
-        return self._mount_core_service.remove_mount(
-            mount_point=mount_point,
-            context=context,
-        )
+    def remove_mount(self, mount_point: str, context: OperationContext | None = None) -> dict[str, Any]:
+        """Remove a backend mount."""
+        return self._mount_core_service.remove_mount(mount_point=mount_point, context=context)
 
-    @rpc_expose(description="Delete connector completely (bundled operation)")
-    def delete_connector(
-        self,
-        mount_point: str,
-        revoke_oauth: bool = False,
-        provider: str | None = None,
-        user_email: str | None = None,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Delete a connector completely with bundled operations.
-
-        Combines: deactivate, delete config, optional OAuth revocation, directory cleanup.
-        """
-        result: dict[str, Any] = {
-            "removed": False,
-            "directory_deleted": False,
-            "config_deleted": False,
-            "oauth_revoked": False,
-            "errors": [],
-            "warnings": [],
-        }
-
-        # Step 1: Try to deactivate connector if active (non-fatal)
-        try:
-            remove_result = self._mount_core_service.remove_mount(mount_point, context)
-            result["removed"] = remove_result.get("removed", False)
-            result["directory_deleted"] = remove_result.get("removed", False)
-            if remove_result.get("errors"):
-                result["warnings"].extend(remove_result["errors"])
-        except PermissionError:
-            raise
-        except Exception as e:
-            result["warnings"].append(f"Failed to deactivate connector (continuing): {e}")
-
-        # Step 2: Delete saved configuration (FATAL - must succeed)
-        try:
-            config_deleted = self._mount_persist_service.delete_saved_mount(mount_point)
-            result["config_deleted"] = config_deleted
-        except Exception as e:
-            error_msg = f"Failed to delete connector configuration: {e}"
-            result["errors"].append(error_msg)
-            raise RuntimeError(error_msg) from e
-
-        # Step 3: Optionally revoke OAuth credentials
-        if revoke_oauth:
-            if not provider or not user_email:
-                result["warnings"].append(
-                    "OAuth revocation requested but provider or user_email not provided"
-                )
-            else:
-                try:
-                    from nexus.core.context_utils import get_zone_id
-                    from nexus.core.sync_bridge import run_sync
-
-                    zone_id = get_zone_id(context)
-                    token_manager = self._get_token_manager()  # type: ignore[attr-defined]
-                    revoked = run_sync(
-                        token_manager.revoke_credential(
-                            provider=provider,
-                            user_email=user_email,
-                            zone_id=zone_id,
-                        )
-                    )
-                    result["oauth_revoked"] = revoked
-                except Exception as e:
-                    result["warnings"].append(
-                        f"Failed to revoke OAuth credentials (non-fatal): {e}"
-                    )
-
-        # Step 4: Delete mount point directory
-        try:
-            self.rmdir(mount_point, recursive=True, context=context)  # type: ignore[attr-defined]
-            result["directory_deleted"] = True
-            logger.info(f"Deleted mount point directory: {mount_point}")
-        except Exception as e:
-            result["warnings"].append(f"Failed to delete mount point directory (non-fatal): {e}")
-            logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
-
-        return result
-
-    @rpc_expose(description="List available connector types")
     def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
-        """List all available connector types."""
+        """List available connector types."""
         return self._mount_core_service.list_connectors(category)
 
-    @rpc_expose(description="List all active mounts")
     def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
         """List all active backend mounts."""
         return self._mount_core_service.list_mounts(context)
 
-    @rpc_expose(description="Get mount details")
-    def get_mount(
-        self,
-        mount_point: str,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any] | None:
-        """Get details about a specific mount."""
+    def get_mount(self, mount_point: str, context: OperationContext | None = None) -> dict[str, Any] | None:
+        """Get mount details."""
         return self._mount_core_service.get_mount(mount_point, context)
 
-    @rpc_expose(description="Check if mount exists")
     def has_mount(self, mount_point: str) -> bool:
         """Check if a mount exists."""
         return self._mount_core_service.has_mount(mount_point)
 
-    @rpc_expose(description="Sync metadata from connector backend")
     def sync_mount(
-        self,
-        mount_point: str | None = None,
-        path: str | None = None,
-        recursive: bool = True,
-        dry_run: bool = False,
-        sync_content: bool = True,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        generate_embeddings: bool = False,
-        context: OperationContext | None = None,
-        progress_callback: Any = None,
-        full_sync: bool = False,
+        self, mount_point: str | None = None, path: str | None = None,
+        recursive: bool = True, dry_run: bool = False, sync_content: bool = True,
+        include_patterns: list[str] | None = None, exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False, context: OperationContext | None = None,
+        progress_callback: Any = None, full_sync: bool = False,
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s)."""
         from nexus.services.sync_service import SyncContext
 
         ctx = SyncContext(
-            mount_point=mount_point,
-            path=path,
-            recursive=recursive,
-            dry_run=dry_run,
-            sync_content=sync_content,
-            include_patterns=include_patterns,
-            exclude_patterns=exclude_patterns,
-            generate_embeddings=generate_embeddings,
-            context=context,
-            progress_callback=progress_callback,
-            full_sync=full_sync,
+            mount_point=mount_point, path=path, recursive=recursive,
+            dry_run=dry_run, sync_content=sync_content,
+            include_patterns=include_patterns, exclude_patterns=exclude_patterns,
+            generate_embeddings=generate_embeddings, context=context,
+            progress_callback=progress_callback, full_sync=full_sync,
         )
+        return self._sync_service.sync_mount(ctx).to_dict()
 
-        result = self._sync_service.sync_mount(ctx)
-        return result.to_dict()
-
-    @rpc_expose(description="Start async sync job for a mount")
     def sync_mount_async(
-        self,
-        mount_point: str,
-        path: str | None = None,
-        recursive: bool = True,
-        dry_run: bool = False,
-        sync_content: bool = True,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        generate_embeddings: bool = False,
-        context: OperationContext | None = None,
+        self, mount_point: str, path: str | None = None,
+        recursive: bool = True, dry_run: bool = False, sync_content: bool = True,
+        include_patterns: list[str] | None = None, exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False, context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Start an async sync job for a mount."""
         if mount_point is None:
             raise ValueError("mount_point is required for async sync")
-
-        user_id = None
-        if context:
-            user_id = getattr(context, "subject_id", None)
-
+        user_id = getattr(context, "subject_id", None) if context else None
         params = {
-            "path": path,
-            "recursive": recursive,
-            "dry_run": dry_run,
-            "sync_content": sync_content,
-            "include_patterns": include_patterns,
-            "exclude_patterns": exclude_patterns,
-            "generate_embeddings": generate_embeddings,
+            "path": path, "recursive": recursive, "dry_run": dry_run,
+            "sync_content": sync_content, "include_patterns": include_patterns,
+            "exclude_patterns": exclude_patterns, "generate_embeddings": generate_embeddings,
         }
-
         job_id = self._sync_job_service.create_job(mount_point, params, user_id)
         self._sync_job_service.start_job(job_id)
+        return {"job_id": job_id, "status": "pending", "mount_point": mount_point}
 
-        return {
-            "job_id": job_id,
-            "status": "pending",
-            "mount_point": mount_point,
-        }
-
-    @rpc_expose(description="Get sync job status and progress")
     def get_sync_job(self, job_id: str) -> dict[str, Any] | None:
         """Get sync job status."""
         return self._sync_job_service.get_job(job_id)
 
-    @rpc_expose(description="Cancel a running sync job")
     def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a running sync job."""
         success = self._sync_job_service.cancel_job(job_id)
-
         if success:
             return {"success": True, "job_id": job_id, "message": "Cancellation requested"}
-
         job = self._sync_job_service.get_job(job_id)
         if not job:
             return {"success": False, "job_id": job_id, "message": "Job not found"}
-        return {
-            "success": False,
-            "job_id": job_id,
-            "message": f"Cannot cancel job with status: {job['status']}",
-        }
+        return {"success": False, "job_id": job_id, "message": f"Cannot cancel job with status: {job['status']}"}
 
-    @rpc_expose(description="List sync jobs")
     def list_sync_jobs(
-        self,
-        mount_point: str | None = None,
-        status: str | None = None,
-        limit: int = 50,
+        self, mount_point: str | None = None, status: str | None = None, limit: int = 50,
     ) -> list[dict[str, Any]]:
         """List sync jobs with optional filters."""
-        return self._sync_job_service.list_jobs(
-            mount_point=mount_point,
-            status=status,
-            limit=limit,
-        )
+        return self._sync_job_service.list_jobs(mount_point=mount_point, status=status, limit=limit)
 
-    @rpc_expose(description="Save mount configuration to database")
     def save_mount(
-        self,
-        mount_point: str,
-        backend_type: str,
-        backend_config: dict[str, Any],
-        priority: int = 0,
-        readonly: bool = False,
-        io_profile: str = "balanced",
-        owner_user_id: str | None = None,
-        zone_id: str | None = None,
-        description: str | None = None,
-        context: OperationContext | None = None,
+        self, mount_point: str, backend_type: str, backend_config: dict[str, Any],
+        priority: int = 0, readonly: bool = False, io_profile: str = "balanced",
+        owner_user_id: str | None = None, zone_id: str | None = None,
+        description: str | None = None, context: OperationContext | None = None,
     ) -> str:
         """Save mount configuration to database."""
         return self._mount_persist_service.save_mount(
-            mount_point=mount_point,
-            backend_type=backend_type,
-            backend_config=backend_config,
-            priority=priority,
-            readonly=readonly,
-            io_profile=io_profile,
-            owner_user_id=owner_user_id,
-            zone_id=zone_id,
-            description=description,
-            context=context,
+            mount_point=mount_point, backend_type=backend_type,
+            backend_config=backend_config, priority=priority, readonly=readonly,
+            io_profile=io_profile, owner_user_id=owner_user_id,
+            zone_id=zone_id, description=description, context=context,
         )
 
-    @rpc_expose(description="List saved mount configurations")
     def list_saved_mounts(
-        self,
-        owner_user_id: str | None = None,
-        zone_id: str | None = None,
+        self, owner_user_id: str | None = None, zone_id: str | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List saved mount configurations."""
         return self._mount_persist_service.list_saved_mounts(
-            owner_user_id=owner_user_id,
-            zone_id=zone_id,
-            context=context,
+            owner_user_id=owner_user_id, zone_id=zone_id, context=context,
         )
 
-    @rpc_expose(description="Load and activate saved mount")
     def load_mount(self, mount_point: str) -> str:
         """Load saved mount configuration and activate it."""
         return self._mount_persist_service.load_mount(mount_point)
 
-    @rpc_expose(description="Delete saved mount configuration")
     def delete_saved_mount(self, mount_point: str) -> bool:
         """Delete saved mount configuration."""
         return self._mount_persist_service.delete_saved_mount(mount_point)
@@ -6329,87 +6148,54 @@ class NexusFS(  # type: ignore[misc]
         return self._mount_persist_service.load_all_mounts(auto_sync)
 
     def _matches_patterns(
-        self,
-        file_path: str,
-        include_patterns: list[str] | None,
+        self, file_path: str, include_patterns: list[str] | None,
         exclude_patterns: list[str] | None,
     ) -> bool:
-        """Check if file path matches include/exclude patterns (backward compat)."""
+        """Check if file path matches include/exclude patterns."""
         from nexus.services.sync_service import SyncContext
 
-        ctx = SyncContext(
-            mount_point=None,
-            include_patterns=include_patterns,
-            exclude_patterns=exclude_patterns,
-        )
+        ctx = SyncContext(mount_point=None, include_patterns=include_patterns, exclude_patterns=exclude_patterns)
         return self._sync_service._matches_patterns(file_path, ctx)
 
-    def _grant_mount_owner_permission(
-        self,
-        mount_point: str,
-        context: OperationContext | None,
-    ) -> None:
-        """Grant direct_owner permission to mount creator (backward compat)."""
+    def _grant_mount_owner_permission(self, mount_point: str, context: OperationContext | None) -> None:
+        """Grant direct_owner permission to mount creator."""
         self._mount_core_service._grant_owner_permission(mount_point, context)
 
-    # =========================================================================
-    # SearchService Delegation Methods (list / glob / grep)
-    # =========================================================================
+    # -------------------------------------------------------------------------
+    # Search thin delegators (RPC via register_service(search_service))
+    # -------------------------------------------------------------------------
 
-    @rpc_expose(description="List files in directory")
     def list(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-        details: bool = False,
-        show_parsed: bool = True,
-        context: Any = None,
-        limit: int | None = None,
-        cursor: str | None = None,
+        self, path: str = "/", recursive: bool = True, details: bool = False,
+        show_parsed: bool = True, context: Any = None,
+        limit: int | None = None, cursor: str | None = None,
     ) -> list[str] | list[dict[str, Any]] | Any:
-        """List files in a directory - delegates to SearchService."""
+        """List files in a directory."""
         return self.search_service.list(
-            path=path,
-            recursive=recursive,
-            details=details,
-            show_parsed=show_parsed,
-            context=context,
-            limit=limit,
-            cursor=cursor,
+            path=path, recursive=recursive, details=details,
+            show_parsed=show_parsed, context=context, limit=limit, cursor=cursor,
         )
 
-    @rpc_expose(description="Find files by glob pattern")
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        """Find files matching a glob pattern - delegates to SearchService."""
+        """Find files matching a glob pattern."""
         return self.search_service.glob(pattern=pattern, path=path, context=context)
 
-    @rpc_expose(description="Execute multiple glob patterns in single call")
     def glob_batch(
-        self, patterns: builtins.list[str], path: str = "/", context: Any = None
+        self, patterns: builtins.list[str], path: str = "/", context: Any = None,
     ) -> dict[str, builtins.list[str]]:
-        """Execute multiple glob patterns in a single call - delegates to SearchService."""
+        """Execute multiple glob patterns in a single call."""
         return self.search_service.glob_batch(patterns=patterns, path=path, context=context)
 
-    @rpc_expose(description="Search file contents")
     def grep(
-        self,
-        pattern: str,
-        path: str = "/",
-        file_pattern: str | None = None,
-        ignore_case: bool = False,
-        max_results: int = 100,
-        search_mode: str = "auto",
-        context: Any = None,
+        self, pattern: str, path: str = "/", file_pattern: str | None = None,
+        ignore_case: bool = False, max_results: int = 100,
+        search_mode: str = "auto", context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
-        """Search file contents using regex patterns - delegates to SearchService."""
+        """Search file contents using regex patterns."""
         return self.search_service.grep(
-            pattern=pattern,
-            path=path,
-            file_pattern=file_pattern,
-            ignore_case=ignore_case,
-            max_results=max_results,
-            search_mode=search_mode,
-            context=context,
+            pattern=pattern, path=path, file_pattern=file_pattern,
+            ignore_case=ignore_case, max_results=max_results,
+            search_mode=search_mode, context=context,
         )
 
     # =========================================================================
@@ -6484,7 +6270,18 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "llm_service") and self._semantic_search is not None:
             self.llm_service._semantic_search_engine = self._semantic_search
 
+    # -------------------------------------------------------------------------
+    # TaskQueue thin delegators (RPC via register_service(task_queue_service))
+    # Only get_task and cancel_task kept — called by a2a module.
+    # -------------------------------------------------------------------------
 
+    def get_task(self, task_id: int, context: OperationContext | None = None) -> dict[str, Any] | None:  # noqa: ARG002
+        """Get task status, progress, and result."""
+        return self.task_queue_service.get_task(task_id)
+
+    def cancel_task(self, task_id: int, context: OperationContext | None = None) -> dict[str, Any]:  # noqa: ARG002
+        """Cancel a pending or running task."""
+        return self.task_queue_service.cancel_task(task_id)
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

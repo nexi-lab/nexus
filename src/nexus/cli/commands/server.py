@@ -12,6 +12,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -25,6 +26,25 @@ from nexus.cli.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _register_extracted_services(server: Any, nx: NexusFilesystem) -> None:
+    """Register extracted services for RPC discovery (Issue #2033).
+
+    Services that own @rpc_expose are registered directly — their methods
+    appear as RPC endpoints alongside NexusFS methods.
+    """
+    services: list[tuple[str, Any]] = [
+        ("workspace_rpc_service", getattr(nx, "_workspace_rpc_service", None)),
+        ("mount_service", getattr(nx, "mount_service", None)),
+        ("search_service", getattr(nx, "search_service", None)),
+        ("share_link_service", getattr(nx, "share_link_service", None)),
+        ("task_queue_service", getattr(nx, "task_queue_service", None)),
+    ]
+    for name, svc in services:
+        if svc is not None:
+            server.register_service(svc)
+            logger.debug("Registered service for RPC: %s", name)
 
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:
@@ -1483,6 +1503,9 @@ def serve(
                 api_key=api_key,
                 auth_provider=auth_provider,
             )
+
+            # Register extracted services for RPC discovery (Issue #2033)
+            _register_extracted_services(server, nx)
 
             # Start background sync for connector mounts (non-blocking)
             start_background_mount_sync(nx)

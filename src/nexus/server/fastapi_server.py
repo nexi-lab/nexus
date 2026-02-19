@@ -1318,8 +1318,17 @@ def create_app(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
     )
 
-    # Discover exposed methods
-    app.state.exposed_methods = _discover_exposed_methods(nexus_fs)
+    # Discover exposed methods (include extracted services for RPC, Issue #2033)
+    _extra_services = [
+        svc for svc in [
+            getattr(nexus_fs, "_workspace_rpc_service", None),
+            getattr(nexus_fs, "mount_service", None),
+            getattr(nexus_fs, "search_service", None),
+            getattr(nexus_fs, "share_link_service", None),
+            getattr(nexus_fs, "task_queue_service", None),
+        ] if svc is not None
+    ]
+    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, _extra_services)
 
     # Initialize defaults for optional services (set during lifespan)
     app.state.async_nexus_fs = None

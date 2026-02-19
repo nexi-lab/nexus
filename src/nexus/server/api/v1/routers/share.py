@@ -65,7 +65,9 @@ async def get_share_link_info(
     if auth_result and auth_result.get("authenticated"):
         context = get_operation_context(auth_result)
 
-    result = await to_thread_with_timeout(nexus_fs.get_share_link, link_id, context=context)
+    result = await to_thread_with_timeout(
+        nexus_fs.share_link_service.get_share_link, link_id, context=context
+    )
     if not result.success:
         error_msg = (result.error_message or "").lower()
         status_code = 404 if "not found" in error_msg else 400
@@ -97,7 +99,7 @@ async def access_share_link(
         context = get_operation_context(auth_result)
 
     result = await to_thread_with_timeout(
-        nexus_fs.access_share_link,
+        nexus_fs.share_link_service.access_share_link,
         link_id,
         password=password,
         ip_address=ip_address,
@@ -130,7 +132,7 @@ async def download_via_share_link(
 
     # First validate share link
     access_result = await to_thread_with_timeout(
-        nexus_fs.access_share_link,
+        nexus_fs.share_link_service.access_share_link,
         link_id,
         password=password,
         ip_address=ip_address,

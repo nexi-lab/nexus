@@ -13,7 +13,6 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from nexus.constants import ROOT_ZONE_ID
 from nexus.bricks.scheduler.constants import (
     DEFAULT_EST_SERVICE_TIME_SECS,
     TASK_STATUS_QUEUED,
@@ -21,6 +20,7 @@ from nexus.bricks.scheduler.constants import (
     PriorityTier,
     RequestState,
 )
+from nexus.constants import ROOT_ZONE_ID
 
 
 @dataclass(frozen=True)

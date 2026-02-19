@@ -526,7 +526,7 @@ class NexusFS(  # type: ignore[misc]
 
         # WorkflowDispatchService: accept DI, graceful degrade to None (#625 partial)
         # Workflow dispatch is optional userspace — kernel does not self-build.
-        self._workflow_dispatch = svc.workflow_dispatch
+        self._workflow_dispatch = brk_svc.workflow_dispatch
 
     @property
     def read_set_cache(self) -> Any | None:

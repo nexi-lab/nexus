@@ -107,7 +107,7 @@ class FilePathModel(Base):
 
     def validate(self) -> None:
         """Validate file path model before database operations."""
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         if not self.virtual_path:
             raise ValidationError("virtual_path is required")

@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.exc import OperationalError
 
+from nexus.contracts.exceptions import AuditLogError
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -253,7 +254,7 @@ class TestSQLFailure:
         syncer = RecordStoreWriteObserver(failing_session_factory)
         metadata = _make_metadata()
 
-        with pytest.raises(OperationalError):
+        with pytest.raises(AuditLogError):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
 
     def test_delete_with_session_failure_raises(self, record_store: SQLAlchemyRecordStore) -> None:
@@ -264,7 +265,7 @@ class TestSQLFailure:
 
         syncer = RecordStoreWriteObserver(lambda: mock_session)
 
-        with pytest.raises(OperationalError):
+        with pytest.raises(AuditLogError):
             syncer.on_delete(path="/test.txt")
 
 
@@ -283,7 +284,7 @@ class TestPartialFailure:
                 "nexus.storage.version_recorder.VersionRecorder.record_write",
                 side_effect=ValueError("simulated version recorder failure"),
             ),
-            pytest.raises(ValueError, match="simulated version recorder failure"),
+            pytest.raises(AuditLogError),
         ):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
 
@@ -307,7 +308,7 @@ class TestPartialFailure:
                 "nexus.storage.operation_logger.OperationLogger.log_operation",
                 side_effect=ValueError("simulated logger failure"),
             ),
-            pytest.raises(ValueError, match="simulated logger failure"),
+            pytest.raises(AuditLogError),
         ):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
 
@@ -331,7 +332,7 @@ class TestSessionFactoryFailure:
         syncer = RecordStoreWriteObserver(failing_factory)
         metadata = _make_metadata()
 
-        with pytest.raises(ConnectionError, match="database unavailable"):
+        with pytest.raises(AuditLogError):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
 
 
@@ -363,7 +364,7 @@ class TestBatchPartialFailure:
 
         with (
             patch.object(VersionRecorder, "record_write", failing_on_second_call),
-            pytest.raises(ValueError, match="simulated failure on second item"),
+            pytest.raises(AuditLogError),
         ):
             syncer.on_write_batch(items, zone_id="root")
 

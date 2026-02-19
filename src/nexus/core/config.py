@@ -24,13 +24,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from nexus.contracts.write_observer import WriteObserverProtocol
-
 from nexus.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
+    from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.cache_invalidation import CacheInvalidationObserver
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 

@@ -28,6 +28,7 @@ from nexus.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
+    from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.cache_invalidation import CacheInvalidationObserver
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
@@ -150,7 +151,7 @@ class KernelServices:
     workspace_manager: Any = None
 
     # Sync / versioning
-    write_observer: Any = None
+    write_observer: WriteObserverProtocol | None = None
     version_service: Any = None
     overlay_resolver: Any = None
 

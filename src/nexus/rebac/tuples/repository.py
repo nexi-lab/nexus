@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity
+from nexus.rebac.domain import WILDCARD_SUBJECT, Entity
 
 if TYPE_CHECKING:
     from collections.abc import Generator

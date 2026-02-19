@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.rebac import Entity
+from nexus.rebac.domain import Entity
 from nexus.rebac.tuples.repository import TupleRepository
 from nexus.storage.models import Base
 

@@ -28,10 +28,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from nexus.core.rebac import (
-    Entity,
-    NamespaceConfig,
-)
 from nexus.rebac.batch.bulk_checker import BulkPermissionChecker
 from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.cache.tiger.facade import TigerFacade
@@ -42,6 +38,10 @@ from nexus.rebac.consistency.revision import (
 from nexus.rebac.consistency.zone_manager import ZoneManager
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.directory.expander import DirectoryExpander
+from nexus.rebac.domain import (
+    Entity,
+    NamespaceConfig,
+)
 from nexus.rebac.graph.bulk_evaluator import (
     check_direct_relation as _check_direct_relation_in_graph,
 )
@@ -558,7 +558,7 @@ class ReBACManager:
         subject_type, subject_id = subject
         object_type, object_id = object
 
-        from nexus.core.rebac import WILDCARD_SUBJECT
+        from nexus.rebac.domain import WILDCARD_SUBJECT
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -1194,7 +1194,7 @@ class ReBACManager:
         Returns:
             List of wildcard tuples from other zones
         """
-        from nexus.core.rebac import WILDCARD_SUBJECT
+        from nexus.rebac.domain import WILDCARD_SUBJECT
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -3686,7 +3686,7 @@ class ReBACManager:
         import json
         from datetime import datetime
 
-        from nexus.core.rebac import NamespaceConfig
+        from nexus.rebac.domain import NamespaceConfig
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -3940,7 +3940,7 @@ class ReBACManager:
         import uuid
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4226,7 +4226,7 @@ class ReBACManager:
         """
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
@@ -4361,7 +4361,7 @@ class ReBACManager:
         import logging
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4801,7 +4801,7 @@ class ReBACManager:
         """
         import logging
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4965,7 +4965,7 @@ class ReBACManager:
             ... ])
             >>> # Returns: [True, False, True]
         """
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         if not checks:
             return []
@@ -5037,7 +5037,7 @@ class ReBACManager:
         """
         import logging
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -5123,7 +5123,7 @@ class ReBACManager:
         """Compute uncached checks using Python (original implementation)."""
         import time as time_module
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         for i, (subject, permission, obj) in uncached_checks:
             subject_entity = Entity(subject[0], subject[1])
@@ -5292,7 +5292,7 @@ class ReBACManager:
         import uuid
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         # Generate request ID and timestamp
         request_id = f"req_{uuid.uuid4().hex[:12]}"
@@ -5600,7 +5600,7 @@ class ReBACManager:
         """
         import logging
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -6123,7 +6123,7 @@ class ReBACManager:
         """
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)

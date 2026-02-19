@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from nexus.backends.backend import Backend
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.mutation_hooks import MutationOp
 

@@ -253,7 +253,7 @@ class TestTTLSubscriptionCache:
         fs.seed_skill(SKILL_PATH, name="test")
         subs = {"subscribed_skills": [SKILL_PATH]}
         fs.write(
-            f"/zone/acme/user/alice/skill/.subscribed.yaml",
+            "/zone/acme/user/alice/skill/.subscribed.yaml",
             yaml.dump(subs).encode(),
         )
 
@@ -262,7 +262,7 @@ class TestTTLSubscriptionCache:
 
         # Modify file — cache should still return old data
         fs.write(
-            f"/zone/acme/user/alice/skill/.subscribed.yaml",
+            "/zone/acme/user/alice/skill/.subscribed.yaml",
             yaml.dump({"subscribed_skills": []}).encode(),
         )
         result2 = svc._load_subscriptions(ctx)

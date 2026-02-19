@@ -19,6 +19,8 @@ import dataclasses
 import logging
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -168,7 +170,7 @@ async def fire_rpc_event(
         return
 
     try:
-        zone_id = getattr(context, "zone_id", None) or "root"
+        zone_id = getattr(context, "zone_id", None) or ROOT_ZONE_ID
         data: dict[str, Any] = {"file_path": path}
         if old_path:
             data["old_path"] = old_path

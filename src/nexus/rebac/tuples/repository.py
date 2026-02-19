@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.rebac.domain import WILDCARD_SUBJECT, Entity
 
 if TYPE_CHECKING:
@@ -228,7 +229,7 @@ class TupleRepository:
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         if conn is not None:
             # Reuse provided connection
             cursor = self.create_cursor(conn)
@@ -266,7 +267,7 @@ class TupleRepository:
         Returns:
             New revision number after increment
         """
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         cursor = self.create_cursor(conn)
 
         if self._is_postgresql:

@@ -17,6 +17,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 # Try to import Rust extension
@@ -73,7 +75,7 @@ def get_index_path(zone_id: str, base_dir: str = "") -> str:
     # Sanitize zone_id to prevent path traversal.
     safe_zone_id = os.path.basename(zone_id)
     if not safe_zone_id:
-        safe_zone_id = "root"
+        safe_zone_id = ROOT_ZONE_ID
     return os.path.join(base_dir, f"{safe_zone_id}.trgm")
 
 

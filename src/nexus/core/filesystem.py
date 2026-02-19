@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import builtins
 from abc import ABC, abstractmethod
-
-# Import List to avoid name conflict with list() method
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +24,6 @@ class NexusFilesystem(ABC):
 
     This interface provides:
     - Core file operations (read, write, delete, exists)
-    - File discovery operations (list, glob, grep)
     - Directory operations (mkdir, rmdir, is_directory)
     - Lifecycle management (close, context manager)
 
@@ -304,126 +301,6 @@ class NexusFilesystem(ABC):
 
         Returns:
             True if file exists, False otherwise
-        """
-        ...
-
-    # ============================================================
-    # File Discovery Operations
-    # ============================================================
-
-    @abstractmethod
-    def list(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-        details: bool = False,
-        show_parsed: bool = True,
-        context: Any = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
-        """
-        List files in a directory.
-
-        Args:
-            path: Directory path to list (default: "/")
-            recursive: If True, list all files recursively; if False, list only direct children
-            details: If True, return detailed metadata; if False, return paths only
-            show_parsed: If True, include virtual _parsed.{ext}.md views; if False, exclude them (default: True)
-
-        Returns:
-            List of file paths (if details=False) or list of file metadata dicts (if details=True)
-
-        Examples:
-            # List all files recursively (default)
-            fs.list()
-
-            # List files in root directory only (non-recursive)
-            fs.list("/", recursive=False)
-
-            # List files with metadata
-            fs.list(details=True)
-
-            # List files without virtual parsed views
-            fs.list(show_parsed=False)
-        """
-        ...
-
-    @abstractmethod
-    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        """
-        Find files matching a glob pattern.
-
-        Supports standard glob patterns:
-        - `*` matches any sequence of characters (except `/`)
-        - `**` matches any sequence of characters including `/` (recursive)
-        - `?` matches any single character
-        - `[...]` matches any character in the brackets
-
-        Args:
-            pattern: Glob pattern to match (e.g., "**/*.py", "data/*.csv", "test_*.py")
-            path: Base path to search from (default: "/")
-            context: Optional operation context for permission filtering (default: None)
-
-        Returns:
-            List of matching file paths, sorted by name
-
-        Examples:
-            # Find all Python files recursively
-            fs.glob("**/*.py")
-
-            # Find all CSV files in data directory
-            fs.glob("*.csv", "/data")
-
-            # Find all test files
-            fs.glob("test_*.py")
-        """
-        ...
-
-    @abstractmethod
-    def grep(
-        self,
-        pattern: str,
-        path: str = "/",
-        file_pattern: str | None = None,
-        ignore_case: bool = False,
-        max_results: int = 1000,
-        search_mode: str = "auto",
-        context: Any = None,
-    ) -> builtins.list[dict[str, Any]]:
-        """
-        Search file contents using regex patterns.
-
-        Args:
-            pattern: Regex pattern to search for in file contents
-            path: Base path to search from (default: "/")
-            file_pattern: Optional glob pattern to filter files (e.g., "*.py")
-            ignore_case: If True, perform case-insensitive search (default: False)
-            max_results: Maximum number of results to return (default: 1000)
-            search_mode: Content search mode (default: "auto")
-                - "auto": Try parsed text first, fallback to raw
-            context: Optional operation context for permission filtering (default: None)
-                - "parsed": Only search parsed text
-                - "raw": Only search raw file content
-
-        Returns:
-            List of match dicts, each containing:
-            - file: File path
-            - line: Line number (1-indexed)
-            - content: Matched line content
-            - match: The matched text
-            - source: Source type - "parsed" or "raw"
-
-        Examples:
-            # Search for "TODO" in all files
-            fs.grep("TODO")
-
-            # Search for function definitions in Python files
-            fs.grep(r"def \\w+", file_pattern="**/*.py")
-
-            # Search only parsed PDFs
-            fs.grep("revenue", file_pattern="**/*.pdf", search_mode="parsed")
-
-            # Case-insensitive search
-            fs.grep("error", ignore_case=True)
         """
         ...
 

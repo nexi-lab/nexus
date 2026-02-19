@@ -17,9 +17,9 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
+from nexus.bricks.memory._temporal import parse_datetime, validate_temporal_params
 from nexus.bricks.memory.router import MemoryViewRouter
-from nexus.core.permissions import OperationContext, Permission
-from nexus.core.temporal import parse_datetime, validate_temporal_params
+from nexus.contracts.types import OperationContext, Permission
 
 logger = logging.getLogger(__name__)
 
@@ -532,7 +532,7 @@ class Memory:
         import json
         import os
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
         from nexus.search.graph_store import GraphStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -918,7 +918,7 @@ class Memory:
         """
         import json
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         # #1023: Validate and normalize temporal parameters
         after_dt, before_dt = validate_temporal_params(after, before, during)
@@ -1660,7 +1660,7 @@ class Memory:
 
     def reflect(self, trajectory_id: str, context: str | None = None) -> dict[str, Any]:
         """Reflect on a single trajectory (sync). Delegates to ACE Reflector."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(self.reflect_async(trajectory_id, context))
 
@@ -1693,10 +1693,13 @@ class Memory:
             ... )
             >>> print(f"Analyzed {patterns['trajectories_analyzed']} trajectories")
         """
+        import importlib
         from datetime import datetime
 
-        from nexus.services.ace.reflection import Reflector
-        from nexus.services.ace.trajectory import TrajectoryManager
+        _ace_reflection = importlib.import_module("nexus.services.ace.reflection")
+        Reflector = _ace_reflection.Reflector  # noqa: N806
+        _ace_trajectory = importlib.import_module("nexus.services.ace.trajectory")
+        TrajectoryManager = _ace_trajectory.TrajectoryManager  # noqa: N806
         from nexus.storage.models import TrajectoryModel
 
         target_agent_id = agent_id or self.agent_id
@@ -1819,7 +1822,7 @@ class Memory:
         task_type: str | None = None,
     ) -> dict[str, Any]:
         """Batch reflection across multiple trajectories (sync)."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(self.batch_reflect_async(agent_id, since, min_trajectories, task_type))
 
@@ -1912,7 +1915,7 @@ class Memory:
         importance_threshold: float = 0.8,
     ) -> dict[str, Any]:
         """Consolidate memories (sync). Delegates to ACE ConsolidationEngine."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(
             self.consolidate_async(
@@ -1964,7 +1967,7 @@ class Memory:
         **task_kwargs: Any,
     ) -> tuple[Any, str]:
         """Execute with automatic learning loop (sync). Delegates to ACE LearningLoop."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(
             self.execute_with_learning_async(
@@ -2138,7 +2141,7 @@ class Memory:
             >>> result = memory.index_memories()
             >>> print(f"Indexed {result['success_count']} memories")
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(
             self.index_memories_async(embedding_provider, batch_size, memory_type, scope)

@@ -274,7 +274,7 @@ Output:"""
         Returns:
             RelationshipExtractionResult with extracted relationships.
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(self.extract_async(text, entities, relationship_types))
 

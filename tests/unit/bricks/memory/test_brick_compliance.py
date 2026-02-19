@@ -15,14 +15,12 @@ import pytest
 
 BRICK_ROOT = pathlib.Path(__file__).resolve().parents[4] / "src" / "nexus" / "bricks" / "memory"
 
-# Tolerated imports — stable leaf modules with zero internal dependencies
-TOLERATED_CORE_IMPORTS = frozenset(
+# Allowed nexus.core.* imports (only protocols and storage pillars per CI check)
+ALLOWED_CORE_PREFIXES = frozenset(
     {
-        "nexus.core.permissions",  # OperationContext, Permission (stable enums)
-        "nexus.core.temporal",  # parse_datetime, validate_temporal_params (stable leaf)
-        "nexus.core.temporal_resolver",  # resolve_temporal, extract_temporal_metadata (stable leaf)
-        "nexus.core.sync_bridge",  # run_sync (stable leaf)
-        "nexus.core.hash_fast",  # hash_content (stable leaf)
+        "nexus.core.protocols",
+        "nexus.core.cache_store",
+        "nexus.core.object_store",
     }
 )
 
@@ -52,52 +50,23 @@ class TestZeroCoreImports:
         assert BRICK_ROOT.exists(), f"Brick root not found: {BRICK_ROOT}"
         assert BRICK_ROOT.is_dir()
 
+    def _is_allowed_core_import(self, module: str) -> bool:
+        """Check if a nexus.core import is allowed per CI brick check."""
+        return any(module.startswith(prefix) for prefix in ALLOWED_CORE_PREFIXES)
+
     def test_no_banned_core_imports(self) -> None:
-        """No nexus.core.* imports except tolerated leaf modules."""
+        """No nexus.core.* imports (except protocols and storage pillars)."""
         violations: list[str] = []
         for py_file in self._get_brick_py_files():
             rel = py_file.relative_to(BRICK_ROOT)
             for imp in _collect_imports(py_file):
-                if imp.startswith("nexus.core.") and imp not in TOLERATED_CORE_IMPORTS:
-                    # Check if it's inside TYPE_CHECKING block
-                    # For simplicity, flag all — manual review if needed
+                if imp.startswith("nexus.core.") and not self._is_allowed_core_import(imp):
                     violations.append(f"{rel}: {imp}")
-        # Allow TYPE_CHECKING imports — filter those out
-        # Re-parse with TYPE_CHECKING awareness
-        real_violations = []
-        for py_file in self._get_brick_py_files():
-            rel = py_file.relative_to(BRICK_ROOT)
-            source = py_file.read_text()
-            tree = ast.parse(source)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.If):
-                    # Check if this is `if TYPE_CHECKING:`
-                    test = node.test
-                    is_type_checking = (
-                        isinstance(test, ast.Name) and test.id == "TYPE_CHECKING"
-                    ) or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
-                    if is_type_checking:
-                        continue  # Skip TYPE_CHECKING blocks
-                # Only check top-level and non-TYPE_CHECKING imports
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if (
-                            alias.name.startswith("nexus.core.")
-                            and alias.name not in TOLERATED_CORE_IMPORTS
-                        ):
-                            real_violations.append(f"{rel}: {alias.name}")
-                elif (
-                    isinstance(node, ast.ImportFrom)
-                    and node.module
-                    and node.module.startswith("nexus.core.")
-                    and node.module not in TOLERATED_CORE_IMPORTS
-                ):
-                    real_violations.append(f"{rel}: {node.module}")
 
-        if real_violations:
+        if violations:
             pytest.fail(
-                f"Memory brick has {len(real_violations)} banned nexus.core.* imports:\n"
-                + "\n".join(f"  - {v}" for v in real_violations)
+                f"Memory brick has {len(violations)} banned nexus.core.* imports:\n"
+                + "\n".join(f"  - {v}" for v in violations)
             )
 
     def test_no_rebac_imports(self) -> None:
@@ -126,6 +95,23 @@ class TestZeroCoreImports:
             print(f"Note: {len(violations)} nexus.rebac imports found (may be lazy/acceptable):")
             for v in violations:
                 print(f"  - {v}")
+
+    def test_no_direct_services_imports(self) -> None:
+        """No direct nexus.services.* imports (only nexus.services.protocols.* allowed)."""
+        violations: list[str] = []
+        for py_file in self._get_brick_py_files():
+            rel = py_file.relative_to(BRICK_ROOT)
+            for imp in _collect_imports(py_file):
+                if imp.startswith("nexus.services.") and not imp.startswith(
+                    "nexus.services.protocols."
+                ):
+                    violations.append(f"{rel}: {imp}")
+
+        if violations:
+            pytest.fail(
+                f"Memory brick has {len(violations)} banned nexus.services.* imports:\n"
+                + "\n".join(f"  - {v}" for v in violations)
+            )
 
 
 class TestProtocolCompliance:

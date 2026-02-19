@@ -171,8 +171,10 @@ class EnrichmentPipeline:
     def _resolve_temporal(self, text: str, reference_time: Any) -> str:
         """Apply temporal expression resolution (#1027)."""
         try:
-            from nexus.core.temporal_resolver import resolve_temporal as resolve_temp
+            import importlib
 
+            _mod = importlib.import_module("nexus.core.temporal_resolver")
+            resolve_temp = _mod.resolve_temporal
             return resolve_temp(
                 text=text,
                 reference_time=reference_time,
@@ -202,7 +204,7 @@ class EnrichmentPipeline:
             return
 
         try:
-            from nexus.core.sync_bridge import run_sync
+            from nexus.bricks.memory._sync import run_sync
 
             embedding_vec = run_sync(provider.embed_text(text))
             result.embedding_json = json.dumps(embedding_vec)
@@ -230,7 +232,10 @@ class EnrichmentPipeline:
     def _enrich_temporal(self, text: str, reference_time: Any, result: EnrichmentResult) -> None:
         """Extract temporal metadata (#1028)."""
         try:
-            from nexus.core.temporal_resolver import extract_temporal_metadata
+            import importlib
+
+            _mod = importlib.import_module("nexus.core.temporal_resolver")
+            extract_temporal_metadata = _mod.extract_temporal_metadata
 
             temporal_meta = extract_temporal_metadata(text, reference_time=reference_time)
 

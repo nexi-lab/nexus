@@ -166,9 +166,16 @@ class ArchivalStore:
 
         import numpy as np
 
-        from nexus.services.ace.affinity import compute_cosine_similarity
-
         query_vec = np.array(query_embedding)
+
+        def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+            """Cosine similarity between two vectors."""
+            norm_a = np.linalg.norm(a)
+            norm_b = np.linalg.norm(b)
+            if norm_a == 0 or norm_b == 0:
+                return 0.0
+            return float(np.dot(a, b) / (norm_a * norm_b))
+
         scored: list[tuple[MemoryModel, float]] = []
 
         for memory in memories:
@@ -181,7 +188,7 @@ class ArchivalStore:
                     continue
 
                 mem_vec = np.array(embedding)
-                score = compute_cosine_similarity(query_vec, mem_vec)
+                score = _cosine_similarity(query_vec, mem_vec)
                 # Normalize to [0, 1]
                 score = (score + 1) / 2
 

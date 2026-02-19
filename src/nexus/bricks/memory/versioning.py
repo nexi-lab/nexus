@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from nexus.bricks.memory.router import MemoryViewRouter
-from nexus.core.permissions import OperationContext, Permission
+from nexus.contracts.types import OperationContext, Permission
 from nexus.services.protocols.memory_deps import MemoryPermissionProtocol
 
 logger = logging.getLogger(__name__)

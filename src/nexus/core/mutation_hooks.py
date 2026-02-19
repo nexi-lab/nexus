@@ -32,6 +32,8 @@ class MutationOp(Enum):
     WRITE = "write"
     DELETE = "delete"
     RENAME = "rename"
+    MKDIR = "mkdir"
+    RMDIR = "rmdir"
 
 
 @dataclass(frozen=True, slots=True)

@@ -108,6 +108,15 @@ class InMemoryCacheStore(CacheStoreABC):
                 del self._store[k]
             return len(to_delete)
 
+    async def keys_by_pattern(self, pattern: str) -> list[str]:
+        now = time.monotonic()
+        with self._lock:
+            return [
+                k
+                for k, (_, expire_at) in self._store.items()
+                if fnmatch(k, pattern) and (expire_at is None or now <= expire_at)
+            ]
+
     # --- PubSub operations ---
 
     async def publish(self, channel: str, message: bytes) -> int:

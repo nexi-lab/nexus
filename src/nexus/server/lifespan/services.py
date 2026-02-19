@@ -54,7 +54,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
     # Issue #625: Stop workflow dispatch consumer
-    wds = getattr(app.state.nexus_fs, "_workflow_dispatch", None) if app.state.nexus_fs else None
+    wds = getattr(app.state, "workflow_dispatch", None)
     if wds is not None:
         try:
             await wds.stop()
@@ -567,7 +567,7 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
     app.state.workflow_engine = engine
 
     # Issue #625: Start workflow dispatch consumer (DT_PIPE → workflow engine)
-    wds = getattr(app.state.nexus_fs, "_workflow_dispatch", None)
+    wds = getattr(app.state, "workflow_dispatch", None)
     if wds is not None:
         try:
             await wds.start()

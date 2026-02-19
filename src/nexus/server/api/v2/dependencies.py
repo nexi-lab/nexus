@@ -90,95 +90,6 @@ async def get_llm_provider(
 
 
 # =============================================================================
-# Domain service dependencies (Strangler Fig — Issue #2033)
-# =============================================================================
-
-
-async def get_rebac_service(request: Request) -> Any:
-    """Get ReBACService instance from app state.
-
-    Wired by factory.py → fastapi_server.py, bypassing NexusFS entirely.
-    This is the Strangler Fig entry point for ReBAC domain extraction.
-    """
-    service = getattr(request.app.state, "rebac_service", None)
-    if service is None:
-        raise HTTPException(status_code=503, detail="ReBACService not initialized")
-    return service
-
-
-async def get_permission_enforcer(request: Request) -> Any:
-    """Get PermissionEnforcer instance from app state (Issue #2033)."""
-    enforcer = getattr(request.app.state, "permission_enforcer", None)
-    if enforcer is None:
-        raise HTTPException(status_code=503, detail="PermissionEnforcer not initialized")
-    return enforcer
-
-
-async def get_version_service(request: Request) -> Any:
-    """Get VersionService instance from app state (Issue #2033)."""
-    service = getattr(request.app.state, "version_service", None)
-    if service is None:
-        raise HTTPException(status_code=503, detail="VersionService not initialized")
-    return service
-
-
-async def get_mount_service(request: Request) -> Any:
-    """Get MountService instance from app state (Issue #2033)."""
-    service = getattr(request.app.state, "mount_service", None)
-    if service is None:
-        raise HTTPException(status_code=503, detail="MountService not initialized")
-    return service
-
-
-async def get_workspace_manager(request: Request) -> Any:
-    """Get WorkspaceManager instance from app state (Issue #2033)."""
-    service = getattr(request.app.state, "workspace_manager", None)
-    if service is None:
-        raise HTTPException(status_code=503, detail="WorkspaceManager not initialized")
-    return service
-
-
-async def get_hierarchy_manager_service(request: Request) -> Any:
-    """Get HierarchyManager instance from app state (Issue #2033)."""
-    service = getattr(request.app.state, "hierarchy_manager", None)
-    if service is None:
-        raise HTTPException(status_code=503, detail="HierarchyManager not initialized")
-    return service
-
-
-async def get_audit_store(request: Request) -> Any:
-    """Get AuditStore instance from app state (Issue #2033)."""
-    store = getattr(request.app.state, "audit_store", None)
-    if store is None:
-        raise HTTPException(status_code=503, detail="AuditStore not initialized")
-    return store
-
-
-async def get_record_store(request: Request) -> Any:
-    """Get RecordStore instance from app state (Issue #2033)."""
-    store = getattr(request.app.state, "record_store", None)
-    if store is None:
-        raise HTTPException(status_code=503, detail="RecordStore not initialized")
-    return store
-
-
-async def get_snapshot_service(request: Request) -> Any:
-    """Get SnapshotService instance from app state (Issue #2033)."""
-    service = getattr(request.app.state, "snapshot_service", None)
-    if service is None:
-        raise HTTPException(status_code=503, detail="SnapshotService not initialized")
-    return service
-
-
-async def get_task_queue_service(request: Request) -> Any:
-    """Get TaskQueueService instance from app state (Issue #2033)."""
-    service = getattr(request.app.state, "task_queue_service", None)
-    if service is None:
-        raise HTTPException(status_code=503, detail="TaskQueueService not initialized")
-    return service
-
-
-# =============================================================================
 # ACE manager dependencies
 # =============================================================================
 
@@ -442,6 +353,8 @@ async def get_reputation_context(
     # Per-request instantiation (singleton DI via app.state planned in #1619)
     reputation_service = ReputationService(
         session_factory=session_factory,
+        cache_maxsize=10_000,
+        cache_ttl=60,
     )
     dispute_service = DisputeService(session_factory=session_factory)
 

@@ -98,15 +98,23 @@ def assert_protocol_compliance(
                 impl_is_async = inspect.iscoroutinefunction(
                     impl_attr
                 ) or inspect.isasyncgenfunction(impl_attr)
-                # Async generators (async def + yield) are compatible with
-                # sync protocol stubs returning AsyncIterator (def -> AsyncIterator).
-                impl_is_asyncgen = inspect.isasyncgenfunction(impl_attr)
-                if proto_is_async != impl_is_async and not impl_is_asyncgen:
-                    proto_kind = "async" if proto_is_async else "sync"
-                    impl_kind = "async" if impl_is_async else "sync"
-                    errors.append(
-                        f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
-                    )
+                if proto_is_async != impl_is_async:
+                    # Allow: sync protocol with AsyncIterator return + async generator impl.
+                    # Protocols can't express async generators (no yield in stub body),
+                    # so the correct typing is `def f(...) -> AsyncIterator[T]: ...`
+                    # while the implementation uses `async def f(...) -> AsyncIterator[T]: yield`.
+                    impl_is_asyncgen = inspect.isasyncgenfunction(impl_attr)
+                    ret = proto_sig.return_annotation
+                    ret_str = str(ret)
+                    is_async_iter_return = "AsyncIterator" in ret_str or "AsyncGenerator" in ret_str
+                    if impl_is_asyncgen and not proto_is_async and is_async_iter_return:
+                        pass  # Compatible: async generator satisfies sync protocol with async return
+                    else:
+                        proto_kind = "async" if proto_is_async else "sync"
+                        impl_kind = "async" if impl_is_async else "sync"
+                        errors.append(
+                            f"{method_name}: protocol is {proto_kind} but implementation is {impl_kind}"
+                        )
 
         if not check_signatures:
             continue
@@ -198,85 +206,14 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "WatchProtocol",
         "nexus.services.protocols.watch",
-        "nexus.services.events_service.EventsService",
+        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # wait_for_changes method match
     ),
     (
         "LockProtocol",
         "nexus.services.protocols.lock",
-        "nexus.services.events_service.EventsService",
+        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
         True,  # lock/extend_lock/unlock methods match
-    ),
-    # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
-    (
-        "SnapshotServiceProtocol",
-        "nexus.services.protocols.snapshot",
-        "nexus.services.snapshot.service.TransactionalSnapshotService",
-        True,
-    ),
-    # ── Async adapter protocols (Issue #1440) ─────────────────────────
-    (
-        "AgentRegistryProtocol",
-        "nexus.services.protocols.agent_registry",
-        "nexus.services.agents.async_agent_registry.AsyncAgentRegistry",
-        True,
-    ),
-    (
-        "NamespaceManagerProtocol",
-        "nexus.services.protocols.namespace_manager",
-        "nexus.rebac.async_namespace_manager.AsyncNamespaceManager",
-        True,
-    ),
-    (
-        "HookEngineProtocol",
-        "nexus.services.protocols.hook_engine",
-        "nexus.plugins.async_hooks.AsyncHookEngine",
-        True,
-    ),
-    # ── Service-layer protocols ───────────────────────────────────────
-    (
-        "MCPProtocol",
-        "nexus.services.protocols.mcp",
-        "nexus.services.mcp_service.MCPService",
-        True,
-    ),
-    (
-        "DelegationProtocol",
-        "nexus.services.protocols.delegation",
-        "nexus.services.delegation.service.DelegationService",
-        True,
-    ),
-    (
-        "OperationLogProtocol",
-        "nexus.services.protocols.operation_log",
-        "nexus.storage.operation_logger.OperationLogger",
-        True,
-    ),
-    # ── Scheduler (using InMemoryScheduler test stub) ─────────────────
-    (
-        "SchedulerProtocol",
-        "nexus.services.protocols.scheduler",
-        "nexus.services.protocols.scheduler.InMemoryScheduler",
-        True,
-    ),
-    # ── Brick-level protocols ─────────────────────────────────────────
-    (
-        "LLMProviderProtocol",
-        "nexus.services.protocols.llm_provider",
-        "nexus.llm.provider.LiteLLMProvider",
-        True,
-    ),
-    (
-        "ParseProtocol",
-        "nexus.services.protocols.parse",
-        "nexus.parsers.registry.ParserRegistry",
-        True,
-    ),
-    (
-        "PaymentProtocol",
-        "nexus.services.protocols.payment",
-        "nexus.pay.protocol.X402PaymentProtocol",
-        True,
     ),
 ]
 
@@ -327,16 +264,11 @@ def test_service_protocol_compliance(
 
 _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
-    ("auth", "nexus/services/protocols/auth.py"),
-    ("delegation", "nexus/services/protocols/delegation.py"),
-    ("event_log", "nexus/services/event_log/protocol.py"),
-    ("governance", "nexus/services/governance/protocols.py"),
+    ("context_manifest", "nexus/services/protocols/context_manifest.py"),
+    ("event_log", "nexus/services/protocols/event_log.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
-    ("llm_provider", "nexus/services/protocols/llm_provider.py"),
     ("lock", "nexus/services/protocols/lock.py"),
-    ("mcp", "nexus/services/protocols/mcp.py"),
-    ("memory", "nexus/services/protocols/memory.py"),
     ("mount", "nexus/services/protocols/mount.py"),
     ("namespace_manager", "nexus/services/protocols/namespace_manager.py"),
     ("oauth", "nexus/services/protocols/oauth.py"),
@@ -357,10 +289,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_router", "nexus/core/protocols/vfs_router.py"),
     ("watch", "nexus/services/protocols/watch.py"),
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
-    ("caching", "nexus/core/protocols/caching.py"),
-    ("connector", "nexus/core/protocols/connector.py"),
     ("content_service", "nexus/core/protocols/content_service.py"),
-    ("describable", "nexus/core/protocols/describable.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
 ]
 

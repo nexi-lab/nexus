@@ -4,7 +4,7 @@ Validates:
 - Default values for each frozen dataclass
 - frozen=True prevents mutation (raises FrozenInstanceError)
 - dataclasses.replace() creates modified copies
-- KernelServices is frozen (immutable after construction)
+- KernelServices is frozen — use dataclasses.replace() for modified copies
 """
 
 from __future__ import annotations
@@ -206,12 +206,12 @@ class TestKernelServices:
         assert ks.workflow_engine is None
         assert ks.version_service is None
         assert ks.write_observer is None
+        # Server-layer extras are now explicit fields (not an opaque dict)
         assert ks.observability_subsystem is None
         assert ks.chunked_upload_service is None
-        assert ks.namespace_manager is None
 
     def test_frozen(self) -> None:
-        """KernelServices is frozen — attributes cannot be set after init."""
+        """KernelServices is frozen — use dataclasses.replace() for copies."""
         ks = KernelServices()
         with pytest.raises(dataclasses.FrozenInstanceError):
             ks.router = "some_router"  # type: ignore[misc]
@@ -284,8 +284,6 @@ class TestKernelServices:
             "rebac_service",
             "search_service",
             "events_service",
-            "snapshot_service",
-            "context_branch_service",
         }
         assert expected_fields.issubset(field_names), f"Missing: {expected_fields - field_names}"
 

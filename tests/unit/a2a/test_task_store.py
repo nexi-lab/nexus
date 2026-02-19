@@ -551,3 +551,23 @@ class TestVFSEnvelopeFormat:
         assert loaded.status.state == original.status.state
         assert len(loaded.artifacts) == 1
         assert loaded.artifacts[0].artifactId == "art-1"
+
+
+# ======================================================================
+# DatabaseTaskStore deprecation warning
+# ======================================================================
+
+
+class TestDatabaseTaskStoreDeprecation:
+    def test_emits_deprecation_warning(self) -> None:
+        """DatabaseTaskStore emits DeprecationWarning on instantiation."""
+        from unittest.mock import MagicMock
+
+        from nexus.a2a.stores.database import DatabaseTaskStore
+
+        fake_record_store = MagicMock()
+        fake_record_store.session_factory = MagicMock()
+
+        with pytest.warns(DeprecationWarning):
+            store = DatabaseTaskStore(fake_record_store)
+        assert store._session_factory is fake_record_store.session_factory

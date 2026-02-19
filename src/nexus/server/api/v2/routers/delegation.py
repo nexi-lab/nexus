@@ -34,12 +34,7 @@ def _get_require_auth() -> Any:
 
 
 def _get_delegation_service(request: Request) -> Any:
-    """Lazily construct DelegationService from app state.
-
-    All dependencies come from ``app.state`` which is populated during
-    server startup (``fastapi_server.py`` + lifespan helpers).  No
-    NexusFS private attribute access (Issue #701).
-    """
+    """Lazily construct DelegationService from app state."""
     state = request.app.state
     cached = getattr(state, "_delegation_service", None)
     if cached is not None:

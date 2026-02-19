@@ -39,7 +39,10 @@ from nexus.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
-from nexus.rebac.consistency.zone_manager import ZoneManager
+from nexus.rebac.consistency.zone_manager import (
+    ZoneIsolationError,  # noqa: F401 — re-exported for backward compat
+    ZoneManager,
+)
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.directory.expander import DirectoryExpander
 from nexus.rebac.graph.bulk_evaluator import (
@@ -68,6 +71,7 @@ from nexus.rebac.tuples.repository import TupleRepository
 from nexus.rebac.types import (
     CheckResult,
     ConsistencyLevel,
+    ConsistencyMode,  # noqa: F401 — re-exported for rebac_service + tests
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,

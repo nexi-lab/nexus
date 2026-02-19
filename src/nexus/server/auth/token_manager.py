@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from sqlalchemy import select
 
 if TYPE_CHECKING:

@@ -117,12 +117,6 @@ class SearchConfig:
     # Ranking (Issue #1092)
     enable_attribute_boosting: bool = True
 
-    # Indexing pipeline (Issue #1094)
-    index_max_concurrency: int = 10  # Max concurrent document indexing
-    index_batch_size: int = 100  # Embedding batch size
-    index_cross_doc_batching: bool = True  # Enable cross-document batching
-    index_max_embedding_concurrency: int = 5  # Max concurrent embedding API calls
-
 
 def search_config_from_env() -> SearchConfig:
     """Build SearchConfig from environment variables.
@@ -163,9 +157,4 @@ def search_config_from_env() -> SearchConfig:
         search_mode=os.environ.get("NEXUS_SEARCH_MODE", "hybrid"),
         contextual_chunking=get_env_bool("NEXUS_CONTEXTUAL_CHUNKING", False),
         enable_attribute_boosting=get_env_bool("NEXUS_ATTRIBUTE_BOOSTING", True),
-        # Indexing pipeline (Issue #1094)
-        index_max_concurrency=get_env_int("NEXUS_INDEX_MAX_CONCURRENCY", 10),
-        index_batch_size=get_env_int("NEXUS_INDEX_BATCH_SIZE", 100),
-        index_cross_doc_batching=get_env_bool("NEXUS_INDEX_CROSS_DOC_BATCHING", True),
-        index_max_embedding_concurrency=get_env_int("NEXUS_INDEX_MAX_EMBEDDING_CONCURRENCY", 5),
     )

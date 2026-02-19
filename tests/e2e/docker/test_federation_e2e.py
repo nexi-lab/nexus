@@ -27,10 +27,6 @@ import uuid
 import httpx
 import pytest
 
-from nexus.core.metadata import FileMetadata
-from nexus.raft.client import RaftClient
-from nexus.raft.zone_manager import ROOT_ZONE_ID
-
 # All tests share one Docker cluster — run sequentially in a single xdist worker.
 pytestmark = [pytest.mark.xdist_group("federation-e2e")]
 
@@ -608,6 +604,12 @@ class TestgRPCDirectOperations:
     async def test_grpc_cluster_info(self, cluster):
         """Get cluster info via gRPC — verify leader_id, term, is_leader."""
         try:
+            from nexus.raft.client import RaftClient
+            from nexus.raft.zone_manager import ROOT_ZONE_ID
+        except ImportError:
+            pytest.skip("RaftClient not available (requires Rust extension)")
+
+        try:
             async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
                 info = await client.get_cluster_info()
                 assert info is not None
@@ -631,6 +633,13 @@ class TestgRPCDirectOperations:
     @pytest.mark.asyncio
     async def test_grpc_metadata_roundtrip(self, cluster):
         """Write FileMetadata via gRPC, read it back."""
+        try:
+            from nexus.core._metadata_generated import FileMetadata
+            from nexus.raft.client import RaftClient
+            from nexus.raft.zone_manager import ROOT_ZONE_ID
+        except ImportError:
+            pytest.skip("RaftClient not available (requires Rust extension)")
+
         uid = _uid()
         try:
             async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
@@ -654,6 +663,12 @@ class TestgRPCDirectOperations:
     @pytest.mark.asyncio
     async def test_grpc_list_metadata(self, cluster):
         """List metadata entries via gRPC."""
+        try:
+            from nexus.raft.client import RaftClient
+            from nexus.raft.zone_manager import ROOT_ZONE_ID
+        except ImportError:
+            pytest.skip("RaftClient not available (requires Rust extension)")
+
         try:
             async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
                 entries = await client.list_metadata(prefix="/")

@@ -132,21 +132,13 @@ class KernelServices:
     workspace_registry: Any = None
     mount_manager: Any = None
     workspace_manager: Any = None
-    context_branch_service: Any = None  # Issue #1315: workspace branching
-
-    # Sync/versioning
     write_observer: Any = None
     version_service: Any = None
     overlay_resolver: Any = None
     wallet_provisioner: Any = None
-    snapshot_service: Any = None  # Issue #1752: Transactional snapshots
 
     # Cache invalidation (Issue #1169 / #1519)
     cache_observer: CacheInvalidationObserver | None = None
-
-    # --- Tier 1.5: SYSTEM SERVICE — Hook Engine + Brick Lifecycle (Issue #1257, #1704) ---
-    scoped_hook_engine: Any = None
-    brick_lifecycle_manager: Any = None
 
     # --- Tier 2: BRICK — infrastructure ---
     event_bus: Any = None
@@ -173,23 +165,12 @@ class KernelServices:
     async_namespace_manager: Any = None
     async_vfs_router: Any = None
 
-    # VFS Hook Pipeline (Issue #2033, Phase 4)
-    hook_pipeline: Any = None
-
     # Pre-built domain services (Issue #1519, 4B)
     # When set, _wire_services() uses these instead of building internally.
     # Enables factory pre-wiring and test-time mock injection.
     rebac_service: Any = None
     search_service: Any = None
     events_service: Any = None
-
-    # Mount/sync/task-queue services (Issue #655)
-    # When set, NexusFS uses these instead of creating via @cached_property.
-    mount_core_service: Any = None
-    sync_service: Any = None
-    sync_job_service: Any = None
-    mount_persist_service: Any = None
-    task_queue_service: Any = None
 
 
 # ---------------------------------------------------------------------------

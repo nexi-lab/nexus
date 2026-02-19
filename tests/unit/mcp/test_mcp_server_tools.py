@@ -168,6 +168,8 @@ def mock_nx_no_sandbox():
     nx = Mock()
     nx.read = Mock(return_value=b"test")
     nx.write = Mock()
+
+    # No sandbox support
     nx.sandbox_available = False
 
     return nx
@@ -980,6 +982,7 @@ class TestSandboxAvailability:
 
     def test_sandbox_detection_handles_missing_attribute(self, mock_nx_basic):
         """Test sandbox detection gracefully handles missing sandbox_available."""
+        # getattr with default=False should handle missing attribute
         mock_nx_basic.sandbox_available = False
 
         # Should not raise, sandbox tools should just not be registered

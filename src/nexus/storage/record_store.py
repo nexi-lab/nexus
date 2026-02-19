@@ -396,21 +396,16 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     if self._async_creator is not None:
                         engine_kwargs["async_creator"] = self._async_creator
 
-                    self._async_engine = create_async_engine(async_url, **engine_kwargs)
-
-                    # Set plan_cache_mode on async engine for PostgreSQL
-                    if self._is_postgresql:
-                        self._attach_plan_cache_mode_listener(self._async_engine.sync_engine)
-
-                    self._async_session_factory_instance = async_sessionmaker(
-                        self._async_engine, class_=AsyncSession, expire_on_commit=False
-                    )
-                    pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
-                    logger.info(
-                        "Async session factory initialized: %s (pool=%s)",
-                        async_url.split("@")[-1],
-                        pool_info or "default",
-                    )
+            self._async_engine = create_async_engine(async_url, **engine_kwargs)
+            self._async_session_factory_instance = async_sessionmaker(
+                self._async_engine, class_=AsyncSession, expire_on_commit=False
+            )
+            pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+            logger.info(
+                "Async session factory initialized: %s (pool=%s)",
+                async_url.split("@")[-1],
+                pool_info or "default",
+            )
 
         return self._async_session_factory_instance
 

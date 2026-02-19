@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -28,64 +27,6 @@ from nexus.cli.utils import (
     handle_error,
 )
 from nexus.raft.zone_manager import ROOT_ZONE_ID
-
-
-class SQLAlchemyDatabaseConnection:
-    """Wrapper for SQLAlchemy session to match DatabaseConnection protocol."""
-
-    def __init__(self, session: Any) -> None:
-        self._session = session
-
-    def execute(self, query: str, params: dict | None = None) -> Any:
-        """Execute a query."""
-        from sqlalchemy import text
-
-        return self._session.execute(text(query), params or {})
-
-    def fetchall(self, query: str, params: dict | None = None) -> list[dict]:
-        """Fetch all results from a query."""
-        from sqlalchemy import text
-
-        result = self._session.execute(text(query), params or {})
-        return [dict(row._mapping) for row in result]
-
-    def fetchone(self, query: str, params: dict | None = None) -> dict | None:
-        """Fetch one result from a query."""
-        from sqlalchemy import text
-
-        result = self._session.execute(text(query), params or {})
-        row = result.fetchone()
-        return dict(row._mapping) if row else None
-
-    def commit(self) -> None:
-        """Commit the transaction."""
-        self._session.commit()
-
-
-def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
-    """Get database connection for skill governance.
-
-    Returns wrapped SQLAlchemy session using NEXUS_DATABASE_URL environment variable.
-    Returns None if not configured (falls back to in-memory storage).
-
-    Delegates to SQLAlchemyRecordStore for engine/session creation (Issue #622).
-    """
-    import os
-
-    db_url = os.getenv("NEXUS_DATABASE_URL")
-    if not db_url:
-        return None
-
-    from nexus.storage.record_store import SQLAlchemyRecordStore
-
-    try:
-        record_store = SQLAlchemyRecordStore(db_url=db_url)
-        session = record_store.session_factory()
-        return SQLAlchemyDatabaseConnection(session)
-    except Exception as e:
-        console.print(f"[yellow]Warning:[/yellow] Could not connect to database: {e}")
-        console.print("[dim]Falling back to in-memory governance storage[/dim]")
-        return None
 
 
 def register_commands(cli: click.Group) -> None:

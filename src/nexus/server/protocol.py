@@ -30,6 +30,11 @@ from nexus.server._rpc_params_generated import *  # noqa: F401, F403, E402
 from nexus.server._rpc_params_generated import METHOD_PARAMS as _GEN_METHOD_PARAMS  # noqa: E402
 from nexus.server.rpc_results import RebacCheckResult, RebacCreateResult  # noqa: F401, E402
 
+# Issue #1519, 1A: RPC types extracted to core/rpc_types.py so core/ modules
+# (rpc_transport, rpc_codec) can use them without importing from server/.
+# Re-exported here for backward compatibility.
+from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse  # noqa: F401
+
 # ============================================================
 # Merged METHOD_PARAMS (overrides take precedence over generated)
 # ============================================================

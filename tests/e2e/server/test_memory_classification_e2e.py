@@ -21,11 +21,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
 from nexus.core.config import PermissionConfig
-from nexus.core.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import MetastoreABC
+from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+from nexus.server.auth.factory import DiscriminatingAuthProvider
 from nexus.storage.models import Base
 
 # ==============================================================================
@@ -33,7 +32,7 @@ from nexus.storage.models import Base
 # ==============================================================================
 
 
-class InMemoryMetadataStore(MetastoreABC):
+class InMemoryMetadataStore(FileMetadataProtocol):
     """Minimal in-memory metadata store for tests that don't need file ops."""
 
     def __init__(self) -> None:

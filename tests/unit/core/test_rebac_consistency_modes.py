@@ -17,6 +17,7 @@ from nexus.rebac.manager import (
     ConsistencyLevel,
     WriteResult,
 )
+from nexus.rebac.rebac_cache import ReBACPermissionCache
 from nexus.rebac.types import (
     ConsistencyMode,
     ConsistencyRequirement,

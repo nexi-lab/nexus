@@ -74,7 +74,7 @@ class TestSearchDaemonLifecycle:
         daemon = SearchDaemon()
         mock_engine = AsyncMock()
         daemon._async_engine = mock_engine
-        daemon._owns_engine = True
+        daemon._owns_engine = True  # Only disposes when daemon owns the engine
 
         await daemon.shutdown()
 

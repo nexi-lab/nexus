@@ -151,7 +151,6 @@ class SearchDaemon:
         self._async_session: Any | None = None  # async_sessionmaker (Issue #1597)
         self._async_search: AsyncSemanticSearch | None = None
         self._embedding_provider: Any = None
-        self._record_store: Any | None = None  # SQLAlchemyRecordStore fallback
         self._owns_engine = False  # True only when we created the engine ourselves
 
         # Accept injected session factory from RecordStoreABC
@@ -271,13 +270,9 @@ class SearchDaemon:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
 
-        # Close database connections (only if we created them)
-        if self._owns_engine:
-            if self._record_store is not None:
-                self._record_store.close()
-                self._record_store = None
-            elif self._async_engine:
-                await self._async_engine.dispose()
+        # Close database connections (only if we created the engine)
+        if self._async_engine and self._owns_engine:
+            await self._async_engine.dispose()
         self._async_engine = None
         self._async_session = None
 
@@ -339,13 +334,28 @@ class SearchDaemon:
         try:
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            # Delegate engine creation to RecordStoreABC (Issue #615).
-            # Pool settings are controlled via NEXUS_DB_POOL_SIZE / NEXUS_DB_MAX_OVERFLOW
-            # environment variables inside SQLAlchemyRecordStore.
-            self._record_store = SQLAlchemyRecordStore(db_url=self.config.database_url)
-            self._async_session = self._record_store.async_session_factory
-            self._async_engine = self._record_store._async_engine
+            # Convert sync URL to async
+            db_url = self.config.database_url
+            if db_url.startswith("postgresql://"):
+                db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            elif db_url.startswith("sqlite:///"):
+                db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+
+            self._async_engine = create_async_engine(
+                db_url,
+                pool_pre_ping=True,
+                pool_size=self.config.db_pool_min_size,
+                max_overflow=self.config.db_pool_max_size - self.config.db_pool_min_size,
+                pool_recycle=self.config.db_pool_recycle,
+            )
             self._owns_engine = True
+
+            # Create session factory once (Issue #1597: avoid per-method creation).
+            # expire_on_commit=False matches RecordStoreABC convention and avoids
+            # lazy-load exceptions after commit in async context (SA2 best practice).
+            self._async_session = async_sessionmaker(
+                self._async_engine, class_=AsyncSession, expire_on_commit=False
+            )
 
             # Warm the pool by executing a simple query
             async with self._async_engine.connect() as conn:

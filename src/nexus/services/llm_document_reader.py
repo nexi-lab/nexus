@@ -10,7 +10,10 @@ Key refactoring (Issue #1521):
 - Moved to services/ as an orchestration concern (Issue 1)
 """
 
-from __future__ import annotations
+from nexus.services.llm_document_reader import (
+    LLMDocumentReader,
+    ReadChunk,
+)
 
 import logging
 from collections.abc import AsyncIterator

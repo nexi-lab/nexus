@@ -28,6 +28,16 @@ from nexus.core.distributed_lock import (
 
 logger = logging.getLogger(__name__)
 
+# Monotonically increasing fence token counter (per-process)
+_fence_token_counter: int = 0
+
+
+def _next_fence_token() -> int:
+    """Generate the next monotonically increasing fence token."""
+    global _fence_token_counter  # noqa: PLW0603
+    _fence_token_counter += 1
+    return _fence_token_counter
+
 
 class RaftLockManager(LockManagerBase):
     """Raft-based distributed locking with strong consistency.
@@ -42,12 +52,7 @@ class RaftLockManager(LockManagerBase):
     - Ownership verification on release/extend
     - TTL-based auto-expiry (default: 30s)
     - Supports mutex (max_holders=1) and semaphore (max_holders>1)
-
-    Note:
-        Fence tokens are set to 0 (not yet provided by the store layer).
-        When the Rust engine exposes per-lock monotonic counters (e.g. from
-        the Raft log index), ``_store_info_to_lock_info`` should read
-        ``store_info["fence_token"]`` instead.
+    - Advisory fencing tokens for stale-lock protection
 
     Example:
         >>> from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -103,7 +108,7 @@ class RaftLockManager(LockManagerBase):
             mode="mutex" if max_holders == 1 else "semaphore",
             max_holders=max_holders,
             holders=holders,
-            fence_token=store_info.get("fence_token", 0),
+            fence_token=_next_fence_token(),
         )
 
     async def acquire(

@@ -540,7 +540,7 @@ class BaseBlobStorageConnector(Backend):
     def stream_content(
         self,
         content_hash: str,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> Iterator[bytes]:
         """
@@ -600,7 +600,7 @@ class BaseBlobStorageConnector(Backend):
     def _stream_blob(
         self,
         blob_path: str,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         version_id: str | None = None,
     ) -> Iterator[bytes]:
         """

@@ -899,10 +899,6 @@ class NexusFilesystem(ABC):
         """
         ...
 
-    # NOTE: sandbox_validate() removed from kernel ABC — it's a service-level
-    # linting/validation pipeline, not a kernel primitive. The implementation
-    # remains on NexusFS via @rpc_expose for RPC dispatch.
-
     @abstractmethod
     def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Pause a running sandbox.

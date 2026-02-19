@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
@@ -539,7 +540,7 @@ class SearchService(SemanticSearchMixin):
 
         zone_id always returns a non-None value (defaults to "root").
         """
-        list_zone_id: str = "root"
+        list_zone_id: str = ROOT_ZONE_ID
         subject_type: str | None = None
         subject_id: str | None = None
         if self._enforce_permissions and context:
@@ -1028,7 +1029,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         backend_dirs: set[str],
         context: Any,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> set[str]:
         """Infer directory entries from file paths and backend."""
         import time as _time
@@ -1078,7 +1079,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         directories: set[str],
         context: Any,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         """Check backend directories for access using bulk TRAVERSE check."""
         import time as _time

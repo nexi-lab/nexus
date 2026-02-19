@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.ace.affinity import (
     AffinityConfig,
     MemoryVector,
@@ -96,7 +97,7 @@ class HierarchicalMemoryManager:
         self,
         consolidation_engine: ConsolidationEngine,
         session: Session,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ):
         """Initialize the hierarchical memory manager.
 
@@ -578,7 +579,7 @@ def build_hierarchy(
     session: Session,
     memories: list[MemoryModel] | None = None,
     memory_ids: list[str] | None = None,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     **kwargs: Any,
 ) -> HierarchyResult:
     """Synchronous wrapper for build_hierarchy_async.

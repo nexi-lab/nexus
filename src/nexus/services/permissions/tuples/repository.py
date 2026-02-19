@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.storage.models.permissions import (
     ReBACTupleModel as RT,
@@ -236,7 +237,7 @@ class TupleRepository:
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         stmt = select(RVS.current_version).where(RVS.zone_id == effective_zone)
         with self.read_engine.connect() as sa_conn:
             row = sa_conn.execute(stmt).first()
@@ -255,7 +256,7 @@ class TupleRepository:
         Returns:
             New revision number after increment
         """
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         cursor = self.create_cursor(conn)
 
         if self._is_postgresql:

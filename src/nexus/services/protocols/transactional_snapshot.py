@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -208,7 +210,7 @@ class TransactionalSnapshotProtocol(Protocol):
         agent_id: str,
         paths: list[str],
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         context: OperationContext | None = None,
     ) -> SnapshotId:
         """Create a COW snapshot of specified paths.
@@ -297,7 +299,7 @@ class TransactionalSnapshotProtocol(Protocol):
         self,
         agent_id: str,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> list[TransactionInfo]:
         """List all ACTIVE transactions for an agent.
 

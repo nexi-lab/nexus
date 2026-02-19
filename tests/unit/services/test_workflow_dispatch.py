@@ -67,11 +67,12 @@ def _make_service(
 
 
 class TestFire:
-    def test_writes_to_pipe(self) -> None:
+    @pytest.mark.asyncio
+    async def test_writes_to_pipe(self) -> None:
         """Event should be serialized and written to PipeManager."""
         svc, pm = _make_service()
         # Must start to create pipe
-        asyncio.get_event_loop().run_until_complete(svc.start())
+        await svc.start()
 
         svc.fire("file_write", {"path": "/foo.txt"}, "file_write:/foo.txt")
 
@@ -81,7 +82,7 @@ class TestFire:
         assert msg["type"] == "file_write"
         assert msg["ctx"]["path"] == "/foo.txt"
 
-        asyncio.get_event_loop().run_until_complete(svc.stop())
+        await svc.stop()
 
     def test_drops_on_full(self) -> None:
         """Overflow should log warning, not raise."""
@@ -117,16 +118,17 @@ class TestFire:
             svc.fire("file_write", {"path": "/y"}, "file_write:/y")
             mock_ff.assert_called_once()
 
-    def test_noop_when_workflows_disabled(self) -> None:
+    @pytest.mark.asyncio
+    async def test_noop_when_workflows_disabled(self) -> None:
         """Should do nothing when workflows are disabled."""
         svc, pm = _make_service(enable_workflows=False)
-        asyncio.get_event_loop().run_until_complete(svc.start())
+        await svc.start()
 
         svc.fire("file_write", {"path": "/z"}, "file_write:/z")
         # Pipe should be empty
         assert pm.pipe_peek("/nexus/pipes/workflow-events") is None
 
-        asyncio.get_event_loop().run_until_complete(svc.stop())
+        await svc.stop()
 
 
 # ======================================================================
@@ -135,10 +137,11 @@ class TestFire:
 
 
 class TestOnMutation:
-    def test_write_event(self) -> None:
+    @pytest.mark.asyncio
+    async def test_write_event(self) -> None:
         """on_mutation(WRITE) should call fire() with correct trigger type."""
         svc, pm = _make_service()
-        asyncio.get_event_loop().run_until_complete(svc.start())
+        await svc.start()
 
         event = MutationEvent(
             operation=MutationOp.WRITE,
@@ -162,12 +165,13 @@ class TestOnMutation:
         assert msg["ctx"]["file_path"] == "/test/file.txt"
         assert msg["ctx"]["created"] is True
 
-        asyncio.get_event_loop().run_until_complete(svc.stop())
+        await svc.stop()
 
-    def test_delete_event(self) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_event(self) -> None:
         """on_mutation(DELETE) should produce file_delete trigger."""
         svc, pm = _make_service()
-        asyncio.get_event_loop().run_until_complete(svc.start())
+        await svc.start()
 
         event = MutationEvent(
             operation=MutationOp.DELETE,
@@ -182,12 +186,13 @@ class TestOnMutation:
         assert msg["type"] == "file_delete"
         assert msg["ctx"]["file_path"] == "/test/gone.txt"
 
-        asyncio.get_event_loop().run_until_complete(svc.stop())
+        await svc.stop()
 
-    def test_rename_event(self) -> None:
+    @pytest.mark.asyncio
+    async def test_rename_event(self) -> None:
         """on_mutation(RENAME) should produce file_rename trigger with old/new paths."""
         svc, pm = _make_service()
-        asyncio.get_event_loop().run_until_complete(svc.start())
+        await svc.start()
 
         event = MutationEvent(
             operation=MutationOp.RENAME,
@@ -204,7 +209,7 @@ class TestOnMutation:
         assert msg["ctx"]["old_path"] == "/old/path.txt"
         assert msg["ctx"]["new_path"] == "/new/path.txt"
 
-        asyncio.get_event_loop().run_until_complete(svc.stop())
+        await svc.stop()
 
 
 # ======================================================================

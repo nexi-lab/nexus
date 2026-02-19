@@ -54,6 +54,20 @@ from nexus.contracts.exceptions import (
     UploadOffsetMismatchError,
     ValidationError,
 )
+from nexus.contracts.rebac_types import (
+    CROSS_ZONE_ALLOWED_RELATIONS,
+    WILDCARD_SUBJECT,
+    CheckResult,
+    ConsistencyLevel,
+    ConsistencyMode,
+    ConsistencyRequirement,
+    Entity,
+    GraphLimitExceeded,
+    GraphLimits,
+    TraversalStats,
+    WriteResult,
+)
+from nexus.contracts.search_types import GlobStrategy, SearchStrategy
 from nexus.contracts.types import (
     ContextIdentity,
     OperationContext,
@@ -126,4 +140,19 @@ __all__ = [
     "ValidationError",
     # Protocols
     "WriteObserverProtocol",
+    # ReBAC types (Issue #2190)
+    "CheckResult",
+    "ConsistencyLevel",
+    "ConsistencyMode",
+    "ConsistencyRequirement",
+    "CROSS_ZONE_ALLOWED_RELATIONS",
+    "Entity",
+    "GraphLimitExceeded",
+    "GraphLimits",
+    "TraversalStats",
+    "WILDCARD_SUBJECT",
+    "WriteResult",
+    # Search types (Issue #2190)
+    "GlobStrategy",
+    "SearchStrategy",
 ]

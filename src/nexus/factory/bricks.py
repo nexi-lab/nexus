@@ -243,6 +243,12 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except Exception as _tq_exc:
         logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
+    # --- Skills Brick (Issue #2035) ---
+    # Wired later in NexusFS._wire_services() via gateway adapters.
+    # Flagged here for availability tracking.
+    skill_service: Any = None
+    skill_package_service: Any = None
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -255,6 +261,8 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
         "task_queue_service": task_queue_service,
+        "skill_service": skill_service,
+        "skill_package_service": skill_package_service,
     }
 
     elapsed = time.perf_counter() - t0

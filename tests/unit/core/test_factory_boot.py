@@ -24,7 +24,7 @@ from nexus.core.config import (
     SystemServices,
 )
 from nexus.core.deployment_profile import DeploymentProfile
-from nexus.core.exceptions import BootError
+from nexus.contracts.exceptions import BootError
 from nexus.core.performance_tuning import resolve_profile_tuning
 from nexus.factory import (
     _boot_brick_services,

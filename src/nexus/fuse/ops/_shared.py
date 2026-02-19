@@ -568,7 +568,10 @@ def resolve_io_profile(ctx: FUSESharedContext, path: str) -> str:
     if not ctx._io_profile_loaded:  # type: ignore[attr-defined]
         ctx._io_profile_loaded = True  # type: ignore[attr-defined]
         try:
-            mounts = ctx.nexus_fs.list_mounts()
+            mount_svc = cast(Any, ctx.nexus_fs).mount_service
+            from nexus.core.sync_bridge import run_sync as _run_sync
+
+            mounts = _run_sync(mount_svc.list_mounts())
             ctx._io_profile_mounts = sorted(  # type: ignore[attr-defined]
                 [(m["mount_point"], m.get("io_profile", "balanced")) for m in mounts],
                 key=lambda x: len(x[0]),

@@ -398,32 +398,6 @@ class TestWorkspaceOperations:
         assert result["workspace_path"] == "/workspace"
 
 
-class TestMountOperations:
-    """Test mount operation path scoping."""
-
-    def test_add_mount(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test add_mount with path scoping."""
-        mock_fs.add_mount.return_value = "mount-123"
-        result = scoped_fs.add_mount("/external/gcs", "gcs", {"bucket": "my-bucket"})
-        mock_fs.add_mount.assert_called_once_with(
-            mount_point="/zones/team_12/users/user_1/external/gcs",
-            backend_type="gcs",
-            backend_config={"bucket": "my-bucket"},
-            priority=0,
-            readonly=False,
-            io_profile="balanced",
-        )
-        assert result == "mount-123"
-
-    def test_list_mounts(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test list_mounts unscopes paths."""
-        mock_fs.list_mounts.return_value = [
-            {"mount_point": "/zones/team_12/users/user_1/external/gcs"}
-        ]
-        result = scoped_fs.list_mounts()
-        assert result[0]["mount_point"] == "/external/gcs"
-
-
 class TestSandboxOperations:
     """Test that sandbox operations are passed through without path scoping."""
 

@@ -1,18 +1,10 @@
-"""Mount Service - Extracted from NexusFSMountsMixin.
+"""Mount Service — owns all mount management operations.
 
-This service handles all mount management operations:
+Operations:
 - Dynamic backend mounting/unmounting
 - Mount configuration persistence
 - Connector discovery and listing
-- Metadata synchronization (requires NexusFS integration)
-
-Phase 2: Core Refactoring (Issue #988, Task 2.7)
-Extracted from: nexus_fs_mounts.py (2,065 lines)
-
-Note: The sync_mount() methods and related helpers require extensive NexusFS
-integration (metadata store, hierarchy manager, etc.) and are implemented
-as passthrough methods that delegate to the parent NexusFS instance.
-Full extraction of sync logic will be completed in Phase 3.
+- Metadata synchronization (via SyncService / SyncJobService DI)
 """
 
 from __future__ import annotations
@@ -59,37 +51,14 @@ class MountService:
     - Add/remove dynamic backend mounts
     - List available connectors and active mounts
     - Save/load/delete mount configurations
-    - Sync metadata from connector backends (delegates to NexusFS)
+    - Sync metadata from connector backends
 
     Architecture:
         - Delegates to PathRouter for mount routing
         - Uses MountManager for persistence
-        - Requires parent NexusFS reference for sync operations
+        - Uses sub-services (SyncService, SyncJobService, etc.) for sync ops
+        - Requires NexusFS reference only for kernel ops (mkdir, rmdir, rebac)
         - Uses OperationContext for permissions
-
-    Example:
-        ```python
-        mount_service = MountService(
-            router=router,
-            mount_manager=mount_manager,
-            nexus_fs=nexus_fs  # Required for sync operations
-        )
-
-        # Add a new mount
-        mount_id = await mount_service.add_mount(
-            mount_point="/mnt/gdrive",
-            backend_type="gdrive_connector",
-            backend_config={"credentials": {...}},
-            context=context
-        )
-
-        # Sync metadata (delegates to NexusFS)
-        result = await mount_service.sync_mount(
-            mount_point="/mnt/gdrive",
-            recursive=True,
-            context=context
-        )
-        ```
     """
 
     def __init__(
@@ -97,17 +66,33 @@ class MountService:
         router: PathRouter,
         mount_manager: MountManager | None = None,
         nexus_fs: NexusFilesystem | None = None,
+        *,
+        sync_service: Any = None,
+        sync_job_service: Any = None,
+        mount_core_service: Any = None,
+        mount_persist_service: Any = None,
+        oauth_service: Any = None,
     ):
         """Initialize mount service.
 
         Args:
             router: Path router for backend resolution
             mount_manager: Optional mount manager for persistence
-            nexus_fs: Optional parent NexusFS instance (required for sync operations)
+            nexus_fs: Optional NexusFS instance (for kernel ops: mkdir, rmdir, rebac)
+            sync_service: SyncService for metadata sync operations
+            sync_job_service: SyncJobService for async sync job management
+            mount_core_service: MountCoreService for internal mount operations
+            mount_persist_service: MountPersistService for config persistence
+            oauth_service: OAuthService for credential revocation
         """
         self.router = router
         self.mount_manager = mount_manager
         self.nexus_fs = nexus_fs
+        self._sync_service = sync_service
+        self._sync_job_service = sync_job_service
+        self._mount_core_service = mount_core_service
+        self._mount_persist_service = mount_persist_service
+        self._oauth_service = oauth_service
 
         logger.info("[MountService] Initialized")
 
@@ -350,22 +335,91 @@ class MountService:
             oauth_revoked, errors, and warnings lists.
 
         Raises:
-            RuntimeError: If nexus_fs not configured
+            RuntimeError: If mount_core_service or mount_persist_service not configured
         """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "delete_connector"):
-            raise RuntimeError(
-                "delete_connector requires NexusFS integration. "
-                "Set nexus_fs in MountService.__init__"
-            )
 
-        return await asyncio.to_thread(
-            self.nexus_fs.delete_connector,
-            mount_point=mount_point,
-            revoke_oauth=revoke_oauth,
-            provider=provider,
-            user_email=user_email,
-            context=context,
-        )
+        def _delete_connector_sync() -> dict[str, Any]:
+            result: dict[str, Any] = {
+                "removed": False,
+                "directory_deleted": False,
+                "config_deleted": False,
+                "oauth_revoked": False,
+                "errors": [],
+                "warnings": [],
+            }
+
+            # Step 1: Try to deactivate connector if active (non-fatal)
+            if self._mount_core_service is not None:
+                try:
+                    remove_result = self._mount_core_service.remove_mount(mount_point, context)
+                    result["removed"] = remove_result.get("removed", False)
+                    result["directory_deleted"] = remove_result.get("removed", False)
+                    if remove_result.get("errors"):
+                        result["warnings"].extend(remove_result["errors"])
+                except PermissionError:
+                    raise
+                except Exception as e:
+                    result["warnings"].append(f"Failed to deactivate connector (continuing): {e}")
+            else:
+                result["warnings"].append("mount_core_service not available, skipping deactivation")
+
+            # Step 2: Delete saved configuration (FATAL - must succeed)
+            if self._mount_persist_service is not None:
+                try:
+                    config_deleted = self._mount_persist_service.delete_saved_mount(mount_point)
+                    result["config_deleted"] = config_deleted
+                except Exception as e:
+                    error_msg = f"Failed to delete connector configuration: {e}"
+                    result["errors"].append(error_msg)
+                    raise RuntimeError(error_msg) from e
+            else:
+                error_msg = "mount_persist_service not available, cannot delete configuration"
+                result["errors"].append(error_msg)
+                raise RuntimeError(error_msg)
+
+            # Step 3: Optionally revoke OAuth credentials (handled async below)
+
+            # Step 4: Delete mount point directory
+            if self.nexus_fs and hasattr(self.nexus_fs, "rmdir"):
+                try:
+                    _nx: Any = self.nexus_fs
+                    _nx.rmdir(mount_point, recursive=True, context=context)
+                    result["directory_deleted"] = True
+                    logger.info(f"Deleted mount point directory: {mount_point}")
+                except Exception as e:
+                    result["warnings"].append(
+                        f"Failed to delete mount point directory (non-fatal): {e}"
+                    )
+                    logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
+
+            return result
+
+        result = await asyncio.to_thread(_delete_connector_sync)
+
+        # Step 3: Optionally revoke OAuth credentials (async)
+        if revoke_oauth:
+            if not provider or not user_email:
+                result["warnings"].append(
+                    "OAuth revocation requested but provider or user_email not provided"
+                )
+            elif self._oauth_service is not None:
+                try:
+                    revoke_result = await self._oauth_service.oauth_revoke_credential(
+                        provider=provider,
+                        user_email=user_email,
+                        context=context,
+                    )
+                    result["oauth_revoked"] = revoke_result.get("success", False)
+                except Exception as e:
+                    result["warnings"].append(
+                        f"Failed to revoke OAuth credentials (non-fatal): {e}"
+                    )
+            else:
+                result["warnings"].append(
+                    "OAuth revocation requested but oauth_service not available"
+                )
+
+        return result
 
     @rpc_expose(description="List available connector types")
     async def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
@@ -831,9 +885,6 @@ class MountService:
         and updates Nexus's metadata database with any files that were added externally
         or existed before Nexus was configured.
 
-        Note: This method requires extensive NexusFS integration (metadata store,
-        hierarchy manager, etc.) and delegates to the parent NexusFS instance.
-
         Args:
             mount_point: Virtual path of mount to sync (None = sync all mounts)
             path: Specific path within mount to sync (None = entire mount)
@@ -845,22 +896,23 @@ class MountService:
             generate_embeddings: If True, generate embeddings for semantic search
             context: Operation context
             progress_callback: Optional callback for progress updates
+            full_sync: If True, perform a full resync
 
         Returns:
             Dictionary with sync results
 
         Raises:
-            RuntimeError: If nexus_fs not configured
+            RuntimeError: If sync_service not configured
         """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "sync_mount"):
+        if self._sync_service is None:
             raise RuntimeError(
-                "sync_mount requires NexusFS integration. Set nexus_fs in MountService.__init__"
+                "sync_mount requires sync_service. Pass sync_service to MountService.__init__"
             )
 
-        # Delegate to NexusFS implementation
-        return cast(
-            dict[str, Any],
-            self.nexus_fs.sync_mount(
+        def _sync_mount_sync() -> dict[str, Any]:
+            from nexus.contracts.types import SyncContext
+
+            ctx = SyncContext(
                 mount_point=mount_point,
                 path=path,
                 recursive=recursive,
@@ -872,8 +924,12 @@ class MountService:
                 context=context,
                 progress_callback=progress_callback,
                 full_sync=full_sync,
-            ),
-        )
+            )
+
+            result = self._sync_service.sync_mount(ctx)
+            return cast(dict[str, Any], result.to_dict())
+
+        return await asyncio.to_thread(_sync_mount_sync)
 
     @rpc_expose(description="Start async sync job for a mount")
     async def sync_mount_async(
@@ -890,7 +946,7 @@ class MountService:
     ) -> dict[str, Any]:
         """Start an async sync job for a mount point.
 
-        Delegates to NexusFS for implementation.
+        Creates a background sync job and starts it immediately.
 
         Args:
             mount_point: Virtual path of mount to sync
@@ -907,35 +963,46 @@ class MountService:
             Dictionary with job info (job_id, status, mount_point)
 
         Raises:
-            RuntimeError: If nexus_fs not configured
+            RuntimeError: If sync_job_service not configured
+            ValueError: If mount_point is None
         """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "sync_mount_async"):
+        if self._sync_job_service is None:
             raise RuntimeError(
-                "sync_mount_async requires NexusFS integration. "
-                "Set nexus_fs in MountService.__init__"
+                "sync_mount_async requires sync_job_service. "
+                "Pass sync_job_service to MountService.__init__"
             )
 
-        # Delegate to NexusFS implementation
-        return cast(
-            dict[str, Any],
-            self.nexus_fs.sync_mount_async(
-                mount_point=mount_point,
-                path=path,
-                recursive=recursive,
-                dry_run=dry_run,
-                sync_content=sync_content,
-                include_patterns=include_patterns,
-                exclude_patterns=exclude_patterns,
-                generate_embeddings=generate_embeddings,
-                context=context,
-            ),
-        )
+        if mount_point is None:
+            raise ValueError("mount_point is required for async sync")
+
+        user_id = None
+        if context:
+            user_id = getattr(context, "subject_id", None)
+
+        params = {
+            "path": path,
+            "recursive": recursive,
+            "dry_run": dry_run,
+            "sync_content": sync_content,
+            "include_patterns": include_patterns,
+            "exclude_patterns": exclude_patterns,
+            "generate_embeddings": generate_embeddings,
+        }
+
+        def _start_async_sync() -> dict[str, Any]:
+            job_id = self._sync_job_service.create_job(mount_point, params, user_id)
+            self._sync_job_service.start_job(job_id)
+            return {
+                "job_id": job_id,
+                "status": "pending",
+                "mount_point": mount_point,
+            }
+
+        return await asyncio.to_thread(_start_async_sync)
 
     @rpc_expose(description="Get sync job status and progress")
     async def get_sync_job(self, job_id: str) -> dict[str, Any] | None:
         """Get the status and progress of a sync job.
-
-        Delegates to NexusFS for implementation.
 
         Args:
             job_id: UUID of the sync job
@@ -944,20 +1011,19 @@ class MountService:
             Job details dict or None if not found
 
         Raises:
-            RuntimeError: If nexus_fs not configured
+            RuntimeError: If sync_job_service not configured
         """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "get_sync_job"):
+        if self._sync_job_service is None:
             raise RuntimeError(
-                "get_sync_job requires NexusFS integration. Set nexus_fs in MountService.__init__"
+                "get_sync_job requires sync_job_service. "
+                "Pass sync_job_service to MountService.__init__"
             )
 
-        return cast(dict[str, Any] | None, self.nexus_fs.get_sync_job(job_id))
+        return await asyncio.to_thread(self._sync_job_service.get_job, job_id)
 
     @rpc_expose(description="Cancel a running sync job")
     async def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a running sync job.
-
-        Delegates to NexusFS for implementation.
 
         Args:
             job_id: UUID of the sync job to cancel
@@ -966,15 +1032,30 @@ class MountService:
             Dictionary with result (success, job_id, message)
 
         Raises:
-            RuntimeError: If nexus_fs not configured
+            RuntimeError: If sync_job_service not configured
         """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "cancel_sync_job"):
+        if self._sync_job_service is None:
             raise RuntimeError(
-                "cancel_sync_job requires NexusFS integration. "
-                "Set nexus_fs in MountService.__init__"
+                "cancel_sync_job requires sync_job_service. "
+                "Pass sync_job_service to MountService.__init__"
             )
 
-        return cast(dict[str, Any], self.nexus_fs.cancel_sync_job(job_id))
+        def _cancel_sync_job_sync() -> dict[str, Any]:
+            success = self._sync_job_service.cancel_job(job_id)
+
+            if success:
+                return {"success": True, "job_id": job_id, "message": "Cancellation requested"}
+
+            job = self._sync_job_service.get_job(job_id)
+            if not job:
+                return {"success": False, "job_id": job_id, "message": "Job not found"}
+            return {
+                "success": False,
+                "job_id": job_id,
+                "message": f"Cannot cancel job with status: {job['status']}",
+            }
+
+        return await asyncio.to_thread(_cancel_sync_job_sync)
 
     @rpc_expose(description="List sync jobs")
     async def list_sync_jobs(
@@ -985,8 +1066,6 @@ class MountService:
     ) -> list[dict[str, Any]]:
         """List sync jobs with optional filters.
 
-        Delegates to NexusFS for implementation.
-
         Args:
             mount_point: Filter by mount point
             status: Filter by status
@@ -996,16 +1075,19 @@ class MountService:
             List of job info dictionaries
 
         Raises:
-            RuntimeError: If nexus_fs not configured
+            RuntimeError: If sync_job_service not configured
         """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "list_sync_jobs"):
+        if self._sync_job_service is None:
             raise RuntimeError(
-                "list_sync_jobs requires NexusFS integration. Set nexus_fs in MountService.__init__"
+                "list_sync_jobs requires sync_job_service. "
+                "Pass sync_job_service to MountService.__init__"
             )
 
-        return cast(
-            list[dict[str, Any]],
-            self.nexus_fs.list_sync_jobs(mount_point=mount_point, status=status, limit=limit),
+        return await asyncio.to_thread(
+            self._sync_job_service.list_jobs,
+            mount_point=mount_point,
+            status=status,
+            limit=limit,
         )
 
     # =========================================================================
@@ -1111,38 +1193,3 @@ Use sync_mount() to refresh metadata from the backend.
         except Exception as e:
             logger.warning(f"Failed to generate SKILL.md for {mount_point}: {e}")
             return False
-
-
-# =============================================================================
-# Phase 2 Extraction Progress
-# =============================================================================
-#
-# Status: Core mount management implemented ✅
-#
-# Implemented methods:
-# 1. [x] add_mount() - Dynamic backend instantiation and mounting
-# 2. [x] remove_mount() - Mount removal with cleanup
-# 3. [x] list_connectors() - Connector registry lookup
-# 4. [x] list_mounts() - Active mounts with permission filtering
-# 5. [x] get_mount() - Mount details lookup
-# 6. [x] has_mount() - Mount existence check
-# 7. [x] save_mount() - Persist mount config to database
-# 8. [x] list_saved_mounts() - List persisted configs
-# 9. [x] load_mount() - Load and activate saved config
-# 10. [x] delete_saved_mount() - Delete persisted config
-# 11. [x] sync_mount() - Delegates to NexusFS
-# 12. [x] sync_mount_async() - Delegates to NexusFS
-# 13. [x] get_sync_job() - Delegates to NexusFS
-# 14. [x] cancel_sync_job() - Delegates to NexusFS
-# 15. [x] list_sync_jobs() - Delegates to NexusFS
-# 16. [x] _grant_mount_owner_permission() - Permission helper
-# 17. [x] _generate_connector_skill() - Skill generation helper
-#
-# Note: Sync methods (11-15) delegate to NexusFS because they require
-# extensive integration with metadata store, hierarchy manager, content cache,
-# and embedding generation. Full extraction will be completed in Phase 3
-# when those components are also extracted into services.
-#
-# Lines extracted: ~800 / 2,065 (39% - core mount management)
-# Sync logic remains in NexusFS: ~1,200 lines (requires metadata/hierarchy services)
-#

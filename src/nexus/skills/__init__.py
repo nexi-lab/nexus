@@ -68,7 +68,7 @@ class _SkillsSubmoduleFinder:
 
 # Install the finder BEFORE eager imports (import chain may need it)
 if not any(isinstance(f, _SkillsSubmoduleFinder) for f in sys.meta_path):
-    sys.meta_path.append(_SkillsSubmoduleFinder())
+    sys.meta_path.append(_SkillsSubmoduleFinder())  # type: ignore[arg-type]
 
 
 # -------------------------------------------------------------------------

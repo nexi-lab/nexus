@@ -39,7 +39,7 @@ def generate_skill_md(
     """
     from nexus.skills.skill_generator import generate_skill_md as _generate
 
-    return _generate(
+    return _generate(  # type: ignore[no-any-return]
         service_name=service_name,
         mount_path=mount_path,
         mcp_tools=mcp_tools,

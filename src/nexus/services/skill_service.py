@@ -72,7 +72,7 @@ class SkillService(_SkillServiceImpl):
         include_dependencies: bool = False,
         context: Any | None = None,
     ) -> dict[str, Any]:
-        return self._get_pkg_svc().export(
+        return self._get_pkg_svc().export(  # type: ignore[no-any-return]
             skill_path=skill_path,
             skill_name=skill_name,
             output_path=output_path,
@@ -91,7 +91,7 @@ class SkillService(_SkillServiceImpl):
         context: Any | None = None,
         tier: str | None = None,
     ) -> dict[str, Any]:
-        return self._get_pkg_svc().import_skill(
+        return self._get_pkg_svc().import_skill(  # type: ignore[no-any-return]
             source_path=source_path,
             zip_bytes=zip_bytes,
             zip_data=zip_data,
@@ -108,7 +108,7 @@ class SkillService(_SkillServiceImpl):
         zip_data: str | None = None,
         context: Any | None = None,
     ) -> dict[str, Any]:
-        return self._get_pkg_svc().validate_zip(
+        return self._get_pkg_svc().validate_zip(  # type: ignore[no-any-return]
             source_path=source_path,
             zip_bytes=zip_bytes,
             zip_data=zip_data,
@@ -159,7 +159,7 @@ class _GatewayPermAdapter:
     def rebac_create(
         self,
         *,
-        subject: tuple[str, ...],
+        subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
         zone_id: str | None = None,
@@ -167,7 +167,7 @@ class _GatewayPermAdapter:
     ) -> dict[str, Any] | None:
         return self._gw.rebac_create(
             subject=subject, relation=relation, object=object, zone_id=zone_id, context=context
-        )  # type: ignore[arg-type]
+        )
 
     def rebac_list_tuples(
         self,

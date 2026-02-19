@@ -103,11 +103,12 @@ class TestVersionServiceDelegation:
         )
 
     def test_adiff_versions_default_mode(self, mock_fs):
-        """adiff_versions defaults mode to 'metadata'."""
+        """adiff_versions forwards to version_service.diff_versions directly."""
         mock_fs.version_service.diff_versions = AsyncMock(return_value={})
         asyncio.run(mock_fs.adiff_versions("/file.txt", 1, 2))
+        # __getattr__ alias passes args through; defaults are on the service method
         mock_fs.version_service.diff_versions.assert_called_once_with(
-            "/file.txt", 1, 2, "metadata", None
+            "/file.txt", 1, 2
         )
 
 

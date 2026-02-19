@@ -259,3 +259,16 @@ def wire_services(fs: Any) -> None:
         default_context=fs._default_context,
         enforce_permissions=fs._enforce_permissions,
     )
+
+    # MemoryProvider: extracted from NexusFS.memory property (Issue #2033)
+    from nexus.services.memory_provider import MemoryProvider
+
+    fs._memory_provider = MemoryProvider(
+        session_factory=fs.SessionLocal,
+        backend=fs.backend,
+        entity_registry=fs._entity_registry,
+        enable_paging=fs._enable_memory_paging,
+        main_capacity=fs._memory_main_capacity,
+        recall_max_age_hours=fs._memory_recall_max_age_hours,
+        memory_config=fs._memory_config,
+    )

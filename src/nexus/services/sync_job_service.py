@@ -172,6 +172,80 @@ class SyncJobService:
         result: bool = manager.cancel_job(job_id)
         return result
 
+    def sync_mount_async(
+        self,
+        mount_point: str,
+        path: str | None = None,
+        recursive: bool = True,
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Convenience method to create and start an async sync job.
+
+        Accepts flat parameters matching the NexusFS.sync_mount_async signature,
+        avoiding parameter transformation at the call site.
+
+        Args:
+            mount_point: Mount point to sync (required)
+            path: Optional sub-path within mount
+            recursive: Whether to sync recursively
+            dry_run: If True, scan without making changes
+            sync_content: Whether to sync content cache
+            include_patterns: Glob patterns for files to include
+            exclude_patterns: Glob patterns for files to exclude
+            generate_embeddings: Whether to generate embeddings
+            context: Operation context for user identification
+
+        Returns:
+            Dictionary with job_id, status, and mount_point
+
+        Raises:
+            ValueError: If mount_point is None
+        """
+        if mount_point is None:
+            raise ValueError("mount_point is required for async sync")
+        user_id = getattr(context, "subject_id", None) if context else None
+        params: dict[str, Any] = {
+            "path": path,
+            "recursive": recursive,
+            "dry_run": dry_run,
+            "sync_content": sync_content,
+            "include_patterns": include_patterns,
+            "exclude_patterns": exclude_patterns,
+            "generate_embeddings": generate_embeddings,
+        }
+        job_id = self.create_job(mount_point, params, user_id)
+        self.start_job(job_id)
+        return {"job_id": job_id, "status": "pending", "mount_point": mount_point}
+
+    def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
+        """Convenience method to cancel a sync job with a descriptive result.
+
+        Wraps cancel_job with structured return values indicating success
+        or failure reason.
+
+        Args:
+            job_id: Job ID to cancel
+
+        Returns:
+            Dictionary with success flag, job_id, and message
+        """
+        success = self.cancel_job(job_id)
+        if success:
+            return {"success": True, "job_id": job_id, "message": "Cancellation requested"}
+        job = self.get_job(job_id)
+        if not job:
+            return {"success": False, "job_id": job_id, "message": "Job not found"}
+        return {
+            "success": False,
+            "job_id": job_id,
+            "message": f"Cannot cancel job with status: {job['status']}",
+        }
+
     def list_jobs(
         self,
         mount_point: str | None = None,

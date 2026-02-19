@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import builtins
 import contextlib
-import json
 import logging
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,11 +27,6 @@ from nexus.core.config import (
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
-)
-from nexus.core.export_import import (
-    ExportFilter,
-    ImportOptions,
-    ImportResult,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
@@ -325,48 +319,7 @@ class NexusFS(  # type: ignore[misc]
     @property
     def memory(self) -> Any:
         """Get Memory API instance (lazy init on first access)."""
-        if self._memory_api is None:
-            # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
-            self._ensure_entity_registry()
-
-            # Create a session from SessionLocal
-            session = self.SessionLocal()
-
-            # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
-            if self._enable_memory_paging:
-                from nexus.services.memory.memory_with_paging import MemoryWithPaging
-
-                # Try to get engine for VectorDatabase integration
-                engine = None
-                if self.SessionLocal is not None:
-                    engine = self.SessionLocal.kw.get("bind")
-
-                self._memory_api = MemoryWithPaging(
-                    session=session,
-                    backend=self.backend,
-                    zone_id=self._memory_config.get("zone_id"),
-                    user_id=self._memory_config.get("user_id"),
-                    agent_id=self._memory_config.get("agent_id"),
-                    entity_registry=self._entity_registry,
-                    enable_paging=True,
-                    main_capacity=self._memory_main_capacity,
-                    recall_max_age_hours=self._memory_recall_max_age_hours,
-                    engine=engine,
-                    session_factory=self.SessionLocal,
-                )
-            else:
-                from nexus.services.memory.memory_api import Memory
-
-                self._memory_api = Memory(
-                    session=session,
-                    backend=self.backend,
-                    zone_id=self._memory_config.get("zone_id"),
-                    user_id=self._memory_config.get("user_id"),
-                    agent_id=self._memory_config.get("agent_id"),
-                    entity_registry=self._entity_registry,
-                )
-
-        return self._memory_api
+        return self._memory_provider.get_or_create()
 
     def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking."""
@@ -404,19 +357,7 @@ class NexusFS(  # type: ignore[misc]
 
     def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration."""
-        from nexus.services.memory.memory_api import Memory
-        self._ensure_entity_registry()
-        session = self.SessionLocal()
-        ctx = self._parse_context(context)
-
-        return Memory(
-            session=session,
-            backend=self.backend,
-            zone_id=ctx.zone_id or self._default_context.zone_id,
-            user_id=ctx.user_id or self._default_context.user_id,
-            agent_id=ctx.agent_id or self._default_context.agent_id,
-            entity_registry=self._entity_registry,
-        )
+        return self._memory_provider.get_for_context(context)
 
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
         """Parse context dict or OperationContext into OperationContext."""
@@ -424,15 +365,8 @@ class NexusFS(  # type: ignore[misc]
         return parse_context(context)
 
     def _ensure_entity_registry(self) -> EntityRegistry:
-        """Lazily create and cache an EntityRegistry instance.
-
-        Consolidates 7 deferred import sites (Issue #1291).
-        """
-        if self._entity_registry is None:
-            from nexus.rebac.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
-        return self._entity_registry
+        """Lazily create and cache an EntityRegistry instance."""
+        return self._memory_provider.ensure_entity_registry()
 
     def _validate_path(self, path: str, allow_root: bool = False) -> str:
         """Validate and normalize virtual path. Raises InvalidPathError."""
@@ -1101,6 +1035,15 @@ class NexusFS(  # type: ignore[misc]
         'asemantic_search': ('search_service', 'semantic_search'),
         'asemantic_search_index': ('search_service', 'semantic_search_index'),
         'asemantic_search_stats': ('search_service', 'semantic_search_stats'),
+        # SyncService / SyncJobService (Issue #2033)
+        'sync_mount': ('_sync_service', 'sync_mount_flat'),
+        'sync_mount_async': ('_sync_job_service', 'sync_mount_async'),
+        'cancel_sync_job': ('_sync_job_service', 'cancel_sync_job'),
+        # VersionService async methods (Issue #2033)
+        'aget_version': ('version_service', 'get_version'),
+        'alist_versions': ('version_service', 'list_versions'),
+        'arollback': ('version_service', 'rollback'),
+        'adiff_versions': ('version_service', 'diff_versions'),
     }
 
     def __getattr__(self, name: str) -> Any:
@@ -1247,93 +1190,32 @@ class NexusFS(  # type: ignore[misc]
         created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
 
-    async def aget_version(self, path: str, version: int, context: OperationContext | None = None) -> bytes:
-        """Delegate to VersionService."""
-        return await self.version_service.get_version(path, version, context)
-
     @rpc_expose(description="Get specific file version")
     def get_version(self, path: str, version: int, context: OperationContext | None = None) -> bytes:
-        """Get a specific version of a file. Delegates to VersionService."""
-        return cast(bytes, NexusFS._run_async(self.aget_version(path, version, context)))
-
-    async def alist_versions(self, path: str, context: OperationContext | None = None) -> list[dict[str, Any]]:
-        """Delegate to VersionService."""
-        return await self.version_service.list_versions(path, context)
+        """Get a specific version of a file."""
+        return cast(bytes, NexusFS._run_async(self.version_service.get_version(path, version, context)))
 
     @rpc_expose(description="List file versions")
     def list_versions(self, path: str, context: OperationContext | None = None) -> list[dict[str, Any]]:
-        """List all versions of a file. Delegates to VersionService."""
-        return cast(list[dict[str, Any]], NexusFS._run_async(self.alist_versions(path, context)))
-
-    async def arollback(self, path: str, version: int, context: OperationContext | None = None) -> None:
-        """Delegate to VersionService."""
-        return await self.version_service.rollback(path, version, context)
+        """List all versions of a file."""
+        return cast(list[dict[str, Any]], NexusFS._run_async(self.version_service.list_versions(path, context)))
 
     @rpc_expose(description="Rollback file to previous version")
     def rollback(self, path: str, version: int, context: OperationContext | None = None) -> None:
-        """Rollback file to a previous version. Delegates to VersionService."""
-        cast(None, NexusFS._run_async(self.arollback(path, version, context)))
-
-    async def adiff_versions(self, path: str, v1: int, v2: int, mode: str = "metadata", context: OperationContext | None = None) -> dict[str, Any] | str:
-        """Delegate to VersionService."""
-        return await self.version_service.diff_versions(path, v1, v2, mode, context)
+        """Rollback file to a previous version."""
+        cast(None, NexusFS._run_async(self.version_service.rollback(path, version, context)))
 
     @rpc_expose(description="Compare file versions")
     def diff_versions(self, path: str, v1: int, v2: int, mode: str = "metadata", context: OperationContext | None = None) -> dict[str, Any] | str:
-        """Compare two versions of a file. Delegates to VersionService."""
-        return cast(dict[str, Any] | str, NexusFS._run_async(self.adiff_versions(path, v1, v2, mode, context)))
+        """Compare two versions of a file."""
+        return cast(dict[str, Any] | str, NexusFS._run_async(self.version_service.diff_versions(path, v1, v2, mode, context)))
 
     def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
         """Extract subject from operation context."""
         from nexus.core.context_utils import get_subject_from_context
         return get_subject_from_context(context)
 
-    def sync_mount(
-        self, mount_point: str | None = None, path: str | None = None,
-        recursive: bool = True, dry_run: bool = False, sync_content: bool = True,
-        include_patterns: list[str] | None = None, exclude_patterns: list[str] | None = None,
-        generate_embeddings: bool = False, context: OperationContext | None = None,
-        progress_callback: Any = None, full_sync: bool = False,
-    ) -> dict[str, Any]:
-        """Sync metadata and content from connector backend(s)."""
-        from nexus.services.sync_service import SyncContext
-
-        ctx = SyncContext(
-            mount_point=mount_point, path=path, recursive=recursive,
-            dry_run=dry_run, sync_content=sync_content,
-            include_patterns=include_patterns, exclude_patterns=exclude_patterns,
-            generate_embeddings=generate_embeddings, context=context,
-            progress_callback=progress_callback, full_sync=full_sync,
-        )
-        return self._sync_service.sync_mount(ctx).to_dict()
-
-    def sync_mount_async(
-        self, mount_point: str, path: str | None = None,
-        recursive: bool = True, dry_run: bool = False, sync_content: bool = True,
-        include_patterns: list[str] | None = None, exclude_patterns: list[str] | None = None,
-        generate_embeddings: bool = False, context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Start an async sync job for a mount."""
-        if mount_point is None:
-            raise ValueError("mount_point is required for async sync")
-        user_id = getattr(context, "subject_id", None) if context else None
-        params = {
-            "path": path, "recursive": recursive, "dry_run": dry_run,
-            "sync_content": sync_content, "include_patterns": include_patterns,
-            "exclude_patterns": exclude_patterns, "generate_embeddings": generate_embeddings,
-        }
-        job_id = self._sync_job_service.create_job(mount_point, params, user_id)
-        self._sync_job_service.start_job(job_id)
-        return {"job_id": job_id, "status": "pending", "mount_point": mount_point}
-    def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
-        """Cancel a running sync job."""
-        success = self._sync_job_service.cancel_job(job_id)
-        if success:
-            return {"success": True, "job_id": job_id, "message": "Cancellation requested"}
-        job = self._sync_job_service.get_job(job_id)
-        if not job:
-            return {"success": False, "job_id": job_id, "message": "Job not found"}
-        return {"success": False, "job_id": job_id, "message": f"Cannot cancel job with status: {job['status']}"}
+    # sync_mount, sync_mount_async, cancel_sync_job → _SERVICE_ALIASES (Issue #2033)
     async def ainitialize_semantic_search(
         self,
         embedding_provider: str | None = None,

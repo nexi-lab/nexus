@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.context_utils import get_zone_id
 from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
 from nexus.services.permission_utils import check_permission
@@ -389,7 +390,7 @@ class SyncService:
         if not ctx.full_sync and hasattr(backend, "get_file_info"):
             cached_entries = self._change_log.get_change_logs_batch(
                 backend_name=backend.name,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
                 path_prefix=ctx.mount_point or "",
             )
             if cached_entries:
@@ -583,7 +584,7 @@ class SyncService:
                         cached = cached_entries.get(virtual_path)
                     else:
                         cached = self._change_log.get_change_log(
-                            virtual_path, backend.name, zone_id or "root"
+                            virtual_path, backend.name, zone_id or ROOT_ZONE_ID
                         )
                     if cached and self._file_unchanged(file_info, cached):
                         result.files_skipped += 1
@@ -650,7 +651,7 @@ class SyncService:
                         pending_upserts,
                         virtual_path,
                         backend.name,
-                        zone_id or "root",
+                        zone_id or ROOT_ZONE_ID,
                         file_info,
                     )
 
@@ -664,7 +665,7 @@ class SyncService:
                     pending_upserts,
                     virtual_path,
                     backend.name,
-                    zone_id or "root",
+                    zone_id or ROOT_ZONE_ID,
                     file_info,
                 )
 
@@ -900,7 +901,7 @@ class SyncService:
             # Issue #1127: Batch-delete stale change log entries (single DB session)
             if paths_to_delete:
                 self._change_log.delete_change_logs_batch(
-                    paths_to_delete, backend.name, zone_id or "root"
+                    paths_to_delete, backend.name, zone_id or ROOT_ZONE_ID
                 )
 
         except Exception as e:

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from nexus.constants import ROOT_ZONE_ID
+
 
 @runtime_checkable
 class SecretsAuditLogProtocol(Protocol):
@@ -35,7 +37,7 @@ class SecretsAuditLogProtocol(Protocol):
         provider: str | None = None,
         credential_id: str | None = None,
         token_family_id: str | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         ip_address: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> str:

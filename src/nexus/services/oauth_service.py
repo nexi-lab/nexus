@@ -16,10 +16,12 @@ from __future__ import annotations
 import builtins
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -135,8 +137,11 @@ class OAuthService:
         self,
         oauth_factory: Any | None = None,
         token_manager: Any | None = None,
-        nexus_fs: Any | None = None,
         *,
+        filesystem: NexusFilesystem | None = None,
+        database_url: str | None = None,
+        oauth_config: Any | None = None,
+        mount_lister: Callable[[], list[tuple[str, str]]] | None = None,
         pkce_store: PKCEStateStore | None = None,
     ):
         """Initialize OAuth service.
@@ -144,12 +149,19 @@ class OAuthService:
         Args:
             oauth_factory: OAuthProviderFactory for creating provider instances
             token_manager: TokenManager for credential storage
-            nexus_fs: NexusFS instance for filesystem operations (used by mcp_connect)
+            filesystem: NexusFilesystem Protocol for mkdir/write operations
+            database_url: Database URL for lazy TokenManager creation
+            oauth_config: OAuth provider config for lazy factory creation
+            mount_lister: Callable returning (mount_point, backend_type_name) pairs
+                          for connector mount discovery
             pkce_store: Optional PKCE state store (defaults to in-memory with 10min TTL)
         """
         self._oauth_factory = oauth_factory
         self._token_manager = token_manager
-        self.nexus_fs = nexus_fs
+        self._filesystem = filesystem
+        self._database_url = database_url
+        self._oauth_config = oauth_config
+        self._mount_lister = mount_lister
         self._pkce_store = pkce_store or PKCEStateStore()
 
         logger.info("[OAuthService] Initialized")
@@ -990,38 +1002,29 @@ class OAuthService:
             logger.info(
                 f"Looking for connector mount: service={service_name}, connector={service_info.connector if service_info else None}"
             )
-            if (
-                service_info
-                and service_info.connector
-                and self.nexus_fs
-                and hasattr(self.nexus_fs, "router")
-            ):
-                # Look for existing mount with this connector
-                router_mounts = getattr(self.nexus_fs.router, "_mounts", [])
-                logger.info(f"Found {len(router_mounts)} mounts in router")
+            if service_info and service_info.connector and self._mount_lister is not None:
+                # Look for existing mount with this connector via injected mount_lister
+                mount_entries = self._mount_lister()
+                logger.info(f"Found {len(mount_entries)} mounts via mount_lister")
                 # Normalize connector name for comparison
                 connector_variants = [
                     service_info.connector.lower().replace("_", ""),  # gdriveconnector
                     service_info.connector.lower().replace("_connector", ""),  # gdrive
                     "googledrive",  # common variant
                 ]
-                for mount in router_mounts:
-                    mount_backend = getattr(mount, "backend", None)
-                    mount_point = getattr(mount, "mount_point", None)
-                    if mount_backend:
-                        backend_type = type(mount_backend).__name__.lower()
-                        logger.info(f"  Mount: {mount_point} -> {backend_type}")
-                        # Check if any variant matches
-                        for variant in connector_variants:
-                            if variant in backend_type:
-                                if mount_point is not None:
-                                    data_mount_path = str(mount_point)
-                                    logger.info(
-                                        f"Found connector mount at {data_mount_path} (matched {variant})"
-                                    )
-                                break
-                        if data_mount_path != skill_path:
+                for mount_point_str, backend_type in mount_entries:
+                    backend_type_lower = backend_type.lower()
+                    logger.info(f"  Mount: {mount_point_str} -> {backend_type_lower}")
+                    # Check if any variant matches
+                    for variant in connector_variants:
+                        if variant in backend_type_lower:
+                            data_mount_path = mount_point_str
+                            logger.info(
+                                f"Found connector mount at {data_mount_path} (matched {variant})"
+                            )
                             break
+                    if data_mount_path != skill_path:
+                        break
             logger.info(f"Using mount path for SKILL.md: {data_mount_path}")
 
             skill_md = generate_skill_md(
@@ -1032,12 +1035,11 @@ class OAuthService:
 
             # Write skill files
             try:
-                if self.nexus_fs and hasattr(self.nexus_fs, "mkdir"):
-                    self.nexus_fs.mkdir(skill_path, parents=True, exist_ok=True, context=context)
+                if self._filesystem is not None:
+                    self._filesystem.mkdir(skill_path, parents=True, exist_ok=True)
 
-                if self.nexus_fs and hasattr(self.nexus_fs, "write"):
                     # Write SKILL.md
-                    self.nexus_fs.write(skill_file, skill_md.encode("utf-8"), context=context)
+                    self._filesystem.write(skill_file, skill_md.encode("utf-8"), context=context)
                     logger.info(f"Generated MCP skill: {skill_file}")
 
                     # Write mount.json
@@ -1063,7 +1065,7 @@ class OAuthService:
                         tier="user",
                     )
                     mount_json = json_module.dumps(mount_config.to_dict(), indent=2)
-                    self.nexus_fs.write(mount_file, mount_json.encode("utf-8"), context=context)
+                    self._filesystem.write(mount_file, mount_json.encode("utf-8"), context=context)
                     logger.info(f"Generated mount config: {mount_file}")
 
                     # Write {tool}.json for each tool
@@ -1092,7 +1094,9 @@ class OAuthService:
 
                         tool_file = f"{skill_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
-                        self.nexus_fs.write(tool_file, tool_json.encode("utf-8"), context=context)
+                        self._filesystem.write(
+                            tool_file, tool_json.encode("utf-8"), context=context
+                        )
 
                     logger.info(f"Generated {len(tools)} tool definitions in {skill_path}")
 
@@ -1167,14 +1171,7 @@ class OAuthService:
         if self._oauth_factory is None:
             from nexus.auth.oauth.factory import OAuthProviderFactory
 
-            # Get config if available
-            oauth_config = None
-            if self.nexus_fs and hasattr(self.nexus_fs, "config"):
-                config = getattr(self.nexus_fs, "config", None)
-                if config and hasattr(config, "oauth") and config.oauth:
-                    oauth_config = config.oauth
-
-            self._oauth_factory = OAuthProviderFactory(config=oauth_config)
+            self._oauth_factory = OAuthProviderFactory(config=self._oauth_config)
 
         return self._oauth_factory
 
@@ -1185,11 +1182,9 @@ class OAuthService:
             TokenManager instance
         """
         if self._token_manager is None:
-            from nexus.core.context_utils import get_database_url
             from nexus.server.auth.token_manager import TokenManager
 
-            # Use centralized database URL resolution
-            db_path = get_database_url(self.nexus_fs) if self.nexus_fs else None
+            db_path = self._database_url
 
             if not db_path:
                 raise RuntimeError("Database path not configured for TokenManager")

@@ -1484,6 +1484,17 @@ def serve(
                 auth_provider=auth_provider,
             )
 
+            # Issue #2033: Register service objects for RPC method discovery.
+            # Services with @rpc_expose methods are discovered alongside NexusFS.
+            for attr_name in (
+                "_rebac_service", "_version_service", "_mount_service",
+                "_skill_service", "_mcp_service", "_llm_service",
+                "_oauth_service", "_share_link_service", "task_queue_service",
+            ):
+                svc = getattr(nx, attr_name, None)
+                if svc is not None:
+                    server.register_service(svc)
+
             # Start background sync for connector mounts (non-blocking)
             start_background_mount_sync(nx)
 

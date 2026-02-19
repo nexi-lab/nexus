@@ -1707,6 +1707,9 @@ class NexusRPCServer:
         self.api_key = api_key
         self.auth_provider = auth_provider
         self._event_loop = asyncio.new_event_loop()
+        # Issue #2033: Service objects whose @rpc_expose methods are
+        # discoverable alongside NexusFS methods (Strangler Fig).
+        self._service_objects: list[Any] = []
 
         # Auto-discover all @rpc_expose decorated methods
         self._exposed_methods = self._discover_exposed_methods()
@@ -1722,8 +1725,22 @@ class NexusRPCServer:
         RPCRequestHandler.exposed_methods = self._exposed_methods
         RPCRequestHandler.event_loop = self._event_loop
 
+    def register_service(self, service: Any) -> None:
+        """Register a service object for RPC method discovery.
+
+        Issue #2033: Enables Strangler Fig extraction — services can expose
+        @rpc_expose methods directly without going through NexusFS.
+        Methods are re-discovered after registration.
+        """
+        self._service_objects.append(service)
+        self._exposed_methods = self._discover_exposed_methods()
+        RPCRequestHandler.exposed_methods = self._exposed_methods
+
     def _discover_exposed_methods(self) -> dict[str, Any]:
         """Discover all methods marked with @rpc_expose decorator.
+
+        Scans NexusFS and all registered service objects. Service methods
+        take precedence over NexusFS methods with the same name (Strangler Fig).
 
         Also pre-caches which methods accept a context parameter, so that
         _auto_dispatch() avoids calling inspect.signature() on every request.
@@ -1736,43 +1753,43 @@ class NexusRPCServer:
         exposed = {}
         context_params: dict[str, str | None] = {}
 
-        logger.debug(f"Starting method discovery on {type(self.nexus_fs).__name__}")
+        # Phase 1: Discover from NexusFS (base layer)
+        self._discover_from_object(self.nexus_fs, exposed, context_params)
 
-        # Iterate through all attributes of the NexusFS instance
-        dir_names = dir(self.nexus_fs)
+        # Phase 2: Discover from service objects (override NexusFS methods)
+        for svc in self._service_objects:
+            self._discover_from_object(svc, exposed, context_params)
 
-        for name in dir_names:
-            # Skip private methods
+        # Store context param cache on the handler CLASS for _auto_dispatch
+        RPCRequestHandler._method_context_params = context_params
+
+        logger.debug(f"Auto-discovered {len(exposed)} RPC methods")
+        return exposed
+
+    @staticmethod
+    def _discover_from_object(
+        obj: Any,
+        exposed: dict[str, Any],
+        context_params: dict[str, str | None],
+    ) -> None:
+        """Scan an object for @rpc_expose methods and add them to exposed dict."""
+        import inspect
+
+        for name in dir(obj):
             if name.startswith("_"):
                 continue
-
             try:
-                attr = getattr(self.nexus_fs, name)
-
-                # Check if it's callable and has the _rpc_exposed marker
+                attr = getattr(obj, name)
                 if callable(attr) and hasattr(attr, "_rpc_exposed"):
                     method_name = getattr(attr, "_rpc_name", name)
                     exposed[method_name] = attr
-
-                    # Cache context parameter name for this method
                     sig = inspect.signature(attr)
                     if "context" in sig.parameters:
                         context_params[method_name] = "context"
                     elif "_context" in sig.parameters:
                         context_params[method_name] = "_context"
-
-                    logger.debug(f"Discovered RPC method: {method_name}")
-
-            except Exception as e:
-                logger.debug(f"Skipping attribute {name}: {e}")
+            except Exception:
                 continue
-
-        # Store context param cache on the handler CLASS for _auto_dispatch
-        # (this method runs on NexusRPCServer, but the cache is read by RPCRequestHandler)
-        RPCRequestHandler._method_context_params = context_params
-
-        logger.debug(f"Auto-discovered {len(exposed)} RPC methods")
-        return exposed
 
     def serve_forever(self) -> None:
         """Start server and handle requests."""

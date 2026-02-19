@@ -397,6 +397,7 @@ class TestBrickServices:
             "api_key_creator",
             "snapshot_service",
             "task_queue_service",
+            "cache_brick",
             "ipc_storage_driver",
             "ipc_vfs_driver",
             "ipc_provisioner",

@@ -1463,10 +1463,10 @@ def create_nexus_fs(
     if brick_services is None:
         brick_services = _BrickServices()
 
+    from dataclasses import replace as _dc_replace
+
     # Inject workflow_engine override if provided directly (frozen — use replace)
     if workflow_engine is not None:
-        from dataclasses import replace as _dc_replace
-
         brick_services = _dc_replace(brick_services, workflow_engine=workflow_engine)
 
     # Create ParsersBrick — owns both registries (Issue #1523)
@@ -1476,12 +1476,13 @@ def create_nexus_fs(
     _parse_fn = parsers_brick.create_parse_fn()
 
     # Create CacheBrick — owns all cache domain services (Issue #1524)
-    from nexus.cache.brick import CacheBrick
+    from nexus.bricks.cache.brick import CacheBrick
 
     _cache_brick = CacheBrick(
         cache_store=cache_store,
         record_store=record_store,
     )
+    brick_services = _dc_replace(brick_services, cache_brick=_cache_brick)
 
     # Create content cache (Issue #657)
     _content_cache = None
@@ -1516,8 +1517,5 @@ def create_nexus_fs(
         provider_registry=parsers_brick.provider_registry,
         vfs_lock_manager=_vfs_lock_manager,
     )
-
-    # Attach CacheBrick to NexusFS for server layer access (Issue #1524)
-    nx._cache_brick = _cache_brick  # type: ignore[attr-defined]
 
     return nx

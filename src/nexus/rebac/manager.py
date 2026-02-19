@@ -3725,6 +3725,98 @@ class ReBACManager:
                 updated_at=updated_at,
             )
 
+    def list_namespaces(self) -> list[dict[str, Any]]:
+        """List all namespace configurations.
+
+        Returns:
+            List of namespace dicts with keys: namespace_id, object_type,
+            config (parsed JSON), created_at, updated_at.
+        """
+        import json
+
+        with self._connection(readonly=True) as conn:
+            cursor = self._create_cursor(conn)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    "SELECT namespace_id, object_type, config, created_at, updated_at "
+                    "FROM rebac_namespaces ORDER BY object_type"
+                )
+            )
+            return [
+                {
+                    "namespace_id": row["namespace_id"],
+                    "object_type": row["object_type"],
+                    "config": json.loads(row["config"])
+                    if isinstance(row["config"], str)
+                    else row["config"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def delete_namespace(self, object_type: str) -> bool:
+        """Delete a namespace configuration.
+
+        Args:
+            object_type: Type of objects to remove namespace for.
+
+        Returns:
+            True if namespace was deleted, False if not found.
+        """
+        conn = self._get_connection()
+        try:
+            cursor = self._create_cursor(conn)
+
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
+                ),
+                (object_type,),
+            )
+            if cursor.fetchone() is None:
+                return False
+
+            cursor.execute(
+                self._fix_sql_placeholders("DELETE FROM rebac_namespaces WHERE object_type = ?"),
+                (object_type,),
+            )
+            conn.commit()
+
+            # Invalidate cache if available
+            cache = getattr(self, "_cache", None)
+            if cache is not None:
+                cache.clear()
+
+            return True
+        finally:
+            self._close_connection(conn)
+
+    def get_tuple_conditions(self, tuple_id: str) -> dict[str, Any] | None:
+        """Get the conditions JSON for a specific tuple.
+
+        Args:
+            tuple_id: The tuple UUID.
+
+        Returns:
+            Parsed conditions dict, or None if not found / no conditions.
+        """
+        import json
+
+        with self._connection(readonly=True) as conn:
+            cursor = self._create_cursor(conn)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    "SELECT conditions FROM rebac_tuples WHERE tuple_id = ?"
+                ),
+                (tuple_id,),
+            )
+            row = cursor.fetchone()
+            if row and row["conditions"]:
+                result: dict[str, Any] = json.loads(row["conditions"])
+                return result
+            return None
+
     # ====================================================================================
     # Cross-zone Validation
     # ====================================================================================

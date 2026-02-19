@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -52,7 +54,7 @@ class ConnectionHelper(Protocol):
 def increment_version_token(
     _engine: Engine,
     conn_helper: ConnectionHelper,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     *,
     is_postgresql: bool = False,
 ) -> str:

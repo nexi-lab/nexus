@@ -371,10 +371,14 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize CacheBrick for Dragonfly/Redis or NullCacheStore fallback (Issue #1524)
     # CacheBrick owns all cache domain services with lifecycle management
     try:
-        cache_brick = getattr(_app.state.nexus_fs, "_cache_brick", None)
+        cache_brick = getattr(
+            getattr(_app.state.nexus_fs, "_brick_services", None),
+            "cache_brick",
+            None,
+        )
         if cache_brick is not None:
             await cache_brick.start()
-            _app.state.cache_factory = cache_brick  # Backward-compat alias
+            _app.state.cache_brick = cache_brick
             logger.info("CacheBrick started (Issue #1524)")
 
             # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
@@ -1180,13 +1184,13 @@ async def lifespan(_app: FastAPI) -> Any:
     if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
         _app.state.nexus_fs.close()
 
-    # Shutdown CacheBrick (Issue #1524, replaces #1075 cache_factory)
-    if hasattr(_app.state, "cache_factory") and _app.state.cache_factory:
+    # Shutdown CacheBrick (Issue #1524)
+    if hasattr(_app.state, "cache_brick") and _app.state.cache_brick:
         try:
-            await _app.state.cache_factory.stop()
+            await _app.state.cache_brick.stop()
             logger.info("CacheBrick stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down cache factory: {e}")
+            logger.warning(f"Error shutting down CacheBrick: {e}")
 
     # Shutdown Pyroscope continuous profiling (Issue #763)
     try:
@@ -1350,7 +1354,7 @@ def create_app(
     app.state.search_daemon = None
     app.state.search_daemon_enabled = False
     app.state.directory_grant_expander = None
-    app.state.cache_factory = None
+    app.state.cache_brick = None
     app.state.websocket_manager = None
     app.state.reactive_subscription_manager = None
     app.state.agent_registry = None

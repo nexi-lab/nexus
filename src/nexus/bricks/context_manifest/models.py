@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Discriminator, Field
 # Default constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_TIMEOUT_SECONDS: float = 30.0
+DEFAULT_TIMEOUT_SECONDS: float = 4.0  # Must fit within ManifestResolver.max_resolve_seconds (5.0s)
 DEFAULT_MAX_RESULT_BYTES: int = 1_048_576  # 1 MB
 
 
@@ -123,7 +123,7 @@ class FileGlobSource(BaseModel):
 
     type: Literal["file_glob"] = "file_glob"
     pattern: str = Field(min_length=1)
-    max_files: int = Field(default=50, ge=1)
+    max_files: int = Field(default=50, ge=1, le=500)
     required: bool = True
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     max_result_bytes: int = DEFAULT_MAX_RESULT_BYTES

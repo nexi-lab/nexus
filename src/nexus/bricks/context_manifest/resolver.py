@@ -30,13 +30,13 @@ from typing import Any, Protocol, runtime_checkable
 
 import aiofiles
 
-from nexus.services.context_manifest.models import (
+from nexus.bricks.context_manifest.models import (
     ContextSourceProtocol,
     ManifestResolutionError,
     ManifestResult,
     SourceResult,
 )
-from nexus.services.context_manifest.template import resolve_template
+from nexus.bricks.context_manifest.template import resolve_template
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +259,7 @@ class ManifestResolver:
             raise
         except Exception:
             has_error = True
+            logger.exception("Unexpected error during manifest resolution")
             raise
         finally:
             # Metrics: always signal resolution end
@@ -428,20 +429,32 @@ class ManifestResolver:
         sources: Sequence[ContextSourceProtocol],
         results: list[SourceResult],
     ) -> list[SourceResult]:
-        """Truncate results that exceed max_result_bytes (PERF-1: json.dumps + single encode)."""
+        """Truncate results that exceed max_result_bytes.
+
+        Issue #2130: Produces a valid JSON wrapper dict instead of broken
+        raw bytes, so downstream consumers can safely parse truncated data.
+        """
         truncated: list[SourceResult] = []
         for source, result in zip(sources, results, strict=True):
             max_bytes = source.max_result_bytes
             if result.status == "ok" and result.data is not None:
                 serialized = json.dumps(result.data, default=str).encode("utf-8")
-                if len(serialized) > max_bytes:
-                    cut_data = serialized[:max_bytes].decode("utf-8", errors="ignore")
+                original_bytes = len(serialized)
+                if original_bytes > max_bytes:
+                    # Preview: take first 1000 chars of the JSON for debugging
+                    preview_limit = min(1000, max_bytes)
+                    preview = serialized[:preview_limit].decode("utf-8", errors="replace")
                     truncated.append(
                         SourceResult.truncated(
                             source_type=result.source_type,
                             source_name=result.source_name,
-                            data=cut_data,
-                            error_message=f"Result truncated from {len(serialized)} to {max_bytes} bytes",
+                            data={
+                                "_truncated": True,
+                                "original_bytes": original_bytes,
+                                "max_bytes": max_bytes,
+                                "preview": preview,
+                            },
+                            error_message=f"Result truncated from {original_bytes} to {max_bytes} bytes",
                             elapsed_ms=result.elapsed_ms,
                         )
                     )
@@ -456,9 +469,14 @@ class ManifestResolver:
         results: list[SourceResult],
         manifest_result: ManifestResult,
     ) -> None:
-        """Write individual result files and _index.json to output_dir (async via aiofiles)."""
+        """Write individual result files and _index.json to output_dir.
+
+        Issue #2130: Result files are written in parallel via asyncio.gather.
+        _index.json is written LAST as a crash-safety sentinel (Decision #16).
+        """
         index_entries: list[dict[str, Any]] = []
         existing_files: set[str] = set()
+        write_payloads: list[tuple[Path, str]] = []
 
         for source, result in zip(sources, results, strict=True):
             # Generate a safe filename
@@ -474,7 +492,7 @@ class ManifestResolver:
             filename = f"{filename}.json"
             existing_files.add(filename)
 
-            # Write result file
+            # Prepare result file payload
             result_data = {
                 "source_type": result.source_type,
                 "source_name": result.source_name,
@@ -483,8 +501,9 @@ class ManifestResolver:
                 "error_message": result.error_message,
                 "elapsed_ms": result.elapsed_ms,
             }
-            async with aiofiles.open(output_dir / filename, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(result_data, indent=2, default=str))
+            write_payloads.append(
+                (output_dir / filename, json.dumps(result_data, indent=2, default=str))
+            )
 
             index_entries.append(
                 {
@@ -496,6 +515,9 @@ class ManifestResolver:
                 }
             )
 
+        # Write all result files in parallel
+        await asyncio.gather(*(_write_file(path, content) for path, content in write_payloads))
+
         # Write _index.json LAST (sentinel — Decision #16)
         index_data = {
             "resolved_at": manifest_result.resolved_at,
@@ -503,8 +525,13 @@ class ManifestResolver:
             "source_count": len(results),
             "sources": index_entries,
         }
-        async with aiofiles.open(output_dir / "_index.json", "w", encoding="utf-8") as f:
-            await f.write(json.dumps(index_data, indent=2))
+        await _write_file(output_dir / "_index.json", json.dumps(index_data, indent=2))
+
+
+async def _write_file(path: Path, content: str) -> None:
+    """Write content to a file asynchronously via aiofiles."""
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.write(content)
 
 
 def _sanitize_filename(name: str) -> str:

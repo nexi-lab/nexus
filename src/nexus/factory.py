@@ -795,9 +795,9 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     manifest_resolver: Any = None
     manifest_metrics: Any = None
     try:
-        from nexus.services.context_manifest import ManifestResolver
-        from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
-        from nexus.services.context_manifest.metrics import (
+        from nexus.bricks.context_manifest import ManifestResolver
+        from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
+        from nexus.bricks.context_manifest.metrics import (
             ManifestMetricsConfig,
             ManifestMetricsObserver,
         )
@@ -814,11 +814,11 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
 
         # WorkspaceSnapshotExecutor (Issue #1428)
         try:
-            from nexus.services.context_manifest.executors.snapshot_lookup_db import (
+            from nexus.bricks.context_manifest.executors.snapshot_lookup_db import (
                 CASManifestReader,
                 DatabaseSnapshotLookup,
             )
-            from nexus.services.context_manifest.executors.workspace_snapshot import (
+            from nexus.bricks.context_manifest.executors.workspace_snapshot import (
                 WorkspaceSnapshotExecutor,
             )
 
@@ -833,7 +833,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
 
         import importlib.util
 
-        if importlib.util.find_spec("nexus.services.context_manifest.executors.memory_query"):
+        if importlib.util.find_spec("nexus.bricks.context_manifest.executors.memory_query"):
             logger.debug("MemoryQueryExecutor available for per-agent wiring")
         else:
             logger.debug("MemoryQueryExecutor module not found")

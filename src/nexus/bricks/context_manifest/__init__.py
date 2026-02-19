@@ -27,13 +27,13 @@ References:
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 
-from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
-from nexus.services.context_manifest.executors.memory_query import MemoryQueryExecutor
-from nexus.services.context_manifest.executors.workspace_snapshot import (
+from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
+from nexus.bricks.context_manifest.executors.memory_query import MemoryQueryExecutor
+from nexus.bricks.context_manifest.executors.workspace_snapshot import (
     WorkspaceSnapshotExecutor,
 )
-from nexus.services.context_manifest.metrics import ManifestMetricsConfig, ManifestMetricsObserver
-from nexus.services.context_manifest.models import (
+from nexus.bricks.context_manifest.metrics import ManifestMetricsConfig, ManifestMetricsObserver
+from nexus.bricks.context_manifest.models import (
     ContextSource,
     ContextSourceProtocol,
     FileGlobSource,
@@ -44,12 +44,12 @@ from nexus.services.context_manifest.models import (
     SourceResult,
     WorkspaceSnapshotSource,
 )
-from nexus.services.context_manifest.resolver import (
+from nexus.bricks.context_manifest.resolver import (
     ManifestResolver,
     MetricsObserver,
     SourceExecutor,
 )
-from nexus.services.context_manifest.template import ALLOWED_VARIABLES, resolve_template
+from nexus.bricks.context_manifest.template import ALLOWED_VARIABLES, resolve_template
 
 __all__ = [
     # Models

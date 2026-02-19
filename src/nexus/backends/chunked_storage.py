@@ -48,7 +48,7 @@ from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.backends.cas_blob_store import CASBlobStore
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

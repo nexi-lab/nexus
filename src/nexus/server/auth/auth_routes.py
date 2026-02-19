@@ -495,7 +495,7 @@ async def setup_zone(
         api_key_value = None
         key_id = None
         try:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             nx = get_nexus_instance()
             if not nx:
@@ -1370,7 +1370,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         api_key_value = None
         key_id = None
         try:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             nx = get_nexus_instance()
             if nx:

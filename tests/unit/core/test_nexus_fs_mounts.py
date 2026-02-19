@@ -235,7 +235,7 @@ class TestAddMount:
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that add_mount grants direct_owner permission to the user."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mount_data_dir = temp_dir / "perm_mount"
         mount_data_dir.mkdir()
@@ -530,7 +530,7 @@ class TestSyncMount:
 
     def test_sync_mount_with_context(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test sync_mount with operation context."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mount_data_dir = temp_dir / "context_mount"
         mount_data_dir.mkdir()
@@ -564,7 +564,7 @@ class TestMountPermissionEnforcement:
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that add_mount fails without write permission on parent path."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mount_data_dir = temp_dir / "perm_test_mount"
         mount_data_dir.mkdir()
@@ -591,7 +591,7 @@ class TestMountPermissionEnforcement:
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that remove_mount fails without write permission on mount."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mount_data_dir = temp_dir / "remove_perm_mount"
         mount_data_dir.mkdir()
@@ -629,7 +629,7 @@ class TestMountPermissionEnforcement:
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that sync_mount fails without read permission on mount."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mount_data_dir = temp_dir / "sync_perm_mount"
         mount_data_dir.mkdir()
@@ -667,7 +667,7 @@ class TestMountPermissionEnforcement:
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that get_mount returns None without read permission."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mount_data_dir = temp_dir / "get_perm_mount"
         mount_data_dir.mkdir()
@@ -740,7 +740,7 @@ class TestGrantMountOwnerPermission:
 
     def test_grant_mount_owner_permission_with_context(self, nx_with_permissions: NexusFS) -> None:
         """Test _grant_mount_owner_permission with context."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         context = OperationContext(
             user_id="alice",
@@ -837,7 +837,7 @@ class TestMountContextUtilsIntegration:
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ):
         """Test that add_mount uses context_utils.get_zone_id and get_user_identity."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mount_data_dir = temp_dir / "context_mount"
         mount_data_dir.mkdir()
@@ -873,7 +873,7 @@ class TestMountContextUtilsIntegration:
 
     def test_remove_mount_with_context_works(self, nx_with_permissions: NexusFS, temp_dir: Path):
         """Test that remove_mount works correctly with context (uses context_utils internally)."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mount_data_dir = temp_dir / "remove_context_mount"
         mount_data_dir.mkdir()

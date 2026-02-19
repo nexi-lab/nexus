@@ -12,12 +12,12 @@ from fastapi import WebSocket
 from helpers.mock_websocket import MockWebSocket
 
 from nexus.core.event_bus import FileEvent
-from nexus.core.reactive_subscriptions import (
+from nexus.core.read_set import ReadSet, ReadSetRegistry
+from nexus.server.websocket.manager import WebSocketManager
+from nexus.services.reactive_subscriptions import (
     ReactiveSubscriptionManager,
     Subscription,
 )
-from nexus.core.read_set import ReadSet, ReadSetRegistry
-from nexus.server.websocket.manager import WebSocketManager
 
 
 class TestReactiveWSIntegration:

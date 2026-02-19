@@ -130,13 +130,15 @@ class VersionHistoryGC:
         >>> print(f"Deleted {stats.total_deleted} versions")
     """
 
-    def __init__(self, session_factory: Any) -> None:
+    def __init__(self, session_factory: Any, *, is_postgresql: bool = False) -> None:
         """Initialize garbage collector.
 
         Args:
             session_factory: SQLAlchemy session factory
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         self._session_factory = session_factory
+        self._is_postgresql = is_postgresql
 
     def run_gc(
         self,
@@ -235,12 +237,9 @@ class VersionHistoryGC:
         stats.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
         return stats
 
-    def _is_sqlite(self, session: Session) -> bool:
-        """Check if the database is SQLite."""
-        if session.bind is None:
-            return False
-        bind_url = getattr(session.bind, "url", None)
-        return "sqlite" in str(bind_url) if bind_url else False
+    def _is_sqlite(self) -> bool:
+        """Check if the database is SQLite (config-time, not runtime)."""
+        return not self._is_postgresql
 
     def _delete_old_versions(
         self,
@@ -257,7 +256,7 @@ class VersionHistoryGC:
             Tuple of (deleted_count, bytes_reclaimed)
         """
         cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
-        is_sqlite = self._is_sqlite(session)
+        is_sqlite = self._is_sqlite()
 
         # SQLite-compatible query to find latest version per resource
         # Uses a subquery with GROUP BY instead of DISTINCT ON
@@ -352,7 +351,7 @@ class VersionHistoryGC:
     ) -> tuple[int, int]:
         """Async version that yields between batches."""
         cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
-        is_sqlite = self._is_sqlite(session)
+        is_sqlite = self._is_sqlite()
 
         # SQLite-compatible query to find latest version per resource
         if is_sqlite:
@@ -446,7 +445,7 @@ class VersionHistoryGC:
         Returns:
             Tuple of (deleted_count, bytes_reclaimed)
         """
-        _is_sqlite = self._is_sqlite(session)  # noqa: F841
+        _is_sqlite = self._is_sqlite()  # noqa: F841
 
         # SQLite doesn't support window functions in all contexts the same way,
         # but ROW_NUMBER() is supported in modern SQLite (3.25+)

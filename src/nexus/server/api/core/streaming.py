@@ -45,7 +45,7 @@ async def stream_file(
     try:
         full_path = f"/{path}"
 
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
         from nexus.server.fastapi_server import to_thread_with_timeout
 
         context = OperationContext(

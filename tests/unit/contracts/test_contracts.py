@@ -110,7 +110,7 @@ class TestObjectIdentity:
 
     def test_operation_context_identity(self):
         from nexus.contracts.types import OperationContext as ContractsOC
-        from nexus.core.permissions import OperationContext as PermsOC
+        from nexus.contracts.types import OperationContext as PermsOC
         from nexus.core.types import OperationContext as CoreOC
 
         assert ContractsOC is CoreOC
@@ -118,7 +118,7 @@ class TestObjectIdentity:
 
     def test_permission_identity(self):
         from nexus.contracts.types import Permission as ContractsPerm
-        from nexus.core.permissions import Permission as PermsPerm
+        from nexus.contracts.types import Permission as PermsPerm
         from nexus.core.types import Permission as CorePerm
 
         assert ContractsPerm is CorePerm

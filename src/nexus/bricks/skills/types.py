@@ -15,7 +15,7 @@ from typing import Any, Protocol, runtime_checkable
 class SkillOperationContext(Protocol):
     """Narrow protocol for operation context used by skills module.
 
-    This decouples the skills brick from nexus.core.permissions.OperationContext.
+    This decouples the skills brick from nexus.contracts.types.OperationContext.
     Any object satisfying this interface can be used as a context.
     """
 

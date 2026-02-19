@@ -203,6 +203,12 @@ class SystemServices:
     # Resiliency policies (Issue #1366)
     resiliency_manager: Any = None
 
+    # Agent eviction under resource pressure (Issue #2170)
+    eviction_manager: Any = None
+
+    # Brick reconciler — drift detection and self-healing (Issue #2060)
+    brick_reconciler: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure
@@ -251,6 +257,10 @@ class BrickServices:
     # --- Skills Brick (Issue #2035) ---
     skill_service: Any = None  # SkillService (protocol-based)
     skill_package_service: Any = None  # SkillPackageService
+
+    # --- Delegation & Reputation Bricks (Issue #2131) ---
+    delegation_service: Any = None  # DELEGATION brick
+    reputation_service: Any = None  # REPUTATION brick
 
 
 # ---------------------------------------------------------------------------

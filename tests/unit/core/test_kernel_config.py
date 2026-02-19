@@ -321,11 +321,13 @@ class TestSystemServices:
         expected_fields = {
             "agent_registry",
             "async_agent_registry",
+            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "context_branch_service",
             "scoped_hook_engine",
             "brick_lifecycle_manager",
+            "brick_reconciler",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
@@ -403,6 +405,8 @@ class TestBrickServices:
             "agent_event_log",
             "skill_service",
             "skill_package_service",
+            "delegation_service",
+            "reputation_service",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

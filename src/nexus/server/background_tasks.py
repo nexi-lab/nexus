@@ -337,6 +337,61 @@ async def stale_agent_detection_task(
             logger.exception("[HEARTBEAT] Failed to detect stale agents")
 
 
+async def agent_eviction_task(
+    eviction_manager: Any,
+    interval_seconds: int = 300,
+) -> None:
+    """Periodically run eviction cycle under resource pressure (Issue #2170).
+
+    Args:
+        eviction_manager: EvictionManager instance with run_cycle() method
+        interval_seconds: How often to check for eviction (default: 300)
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            result = await eviction_manager.run_cycle()
+            if result.evicted > 0:
+                logger.info(
+                    "[EVICTION] Evicted %d agents | reason=%s | post_pressure=%s | skipped=%d",
+                    result.evicted,
+                    result.reason,
+                    result.post_pressure,
+                    result.skipped,
+                )
+        except Exception:
+            logger.exception("[EVICTION] Eviction cycle failed")
+
+
+async def checkpoint_cleanup_task(
+    agent_registry: Any,
+    interval_seconds: int = 3600,
+    max_age_seconds: int = 86400,
+) -> None:
+    """Periodically clean up stale checkpoint data from SUSPENDED agents.
+
+    Args:
+        agent_registry: AgentRegistry with cleanup_stale_checkpoints() method.
+        interval_seconds: How often to run cleanup (default: 3600).
+        max_age_seconds: Maximum checkpoint age before removal (default: 86400).
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            cleaned = await asyncio.to_thread(
+                agent_registry.cleanup_stale_checkpoints,
+                max_age_seconds=max_age_seconds,
+            )
+            if cleaned > 0:
+                logger.info(
+                    "[EVICTION] Cleaned %d stale checkpoints (max_age=%ds)",
+                    cleaned,
+                    max_age_seconds,
+                )
+        except Exception:
+            logger.exception("[EVICTION] Checkpoint cleanup failed")
+
+
 def start_background_tasks(
     session_factory: Any,
     sandbox_manager: Any | None = None,

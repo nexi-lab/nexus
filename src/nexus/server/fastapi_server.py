@@ -889,6 +889,9 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             from nexus.bricks.sandbox.auth_service import SandboxAuthService
             from nexus.bricks.sandbox.sandbox_manager import SandboxManager
+            from nexus.storage.repositories.agent_event_log import (
+                SQLAlchemyAgentEventLog as AgentEventLog,
+            )
 
             session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):

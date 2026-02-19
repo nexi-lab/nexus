@@ -37,6 +37,7 @@ from nexus.services.protocols.brick_lifecycle import (
     PRE_UNMOUNT,
     BrickHealthReport,
     BrickLifecycleProtocol,
+    BrickSpec,
     BrickState,
     BrickStatus,
 )
@@ -138,12 +139,14 @@ class CyclicDependencyError(Exception):
 # Maps (current_state, event) → next_state
 _TRANSITIONS: dict[tuple[BrickState, str], BrickState] = {
     (BrickState.REGISTERED, "mount"): BrickState.STARTING,
+    (BrickState.REGISTERED, "failed"): BrickState.FAILED,  # Issue #2060: 5B
     (BrickState.STARTING, "started"): BrickState.ACTIVE,
     (BrickState.STARTING, "failed"): BrickState.FAILED,
     (BrickState.ACTIVE, "unmount"): BrickState.STOPPING,
     (BrickState.ACTIVE, "failed"): BrickState.FAILED,
     (BrickState.STOPPING, "stopped"): BrickState.UNREGISTERED,
     (BrickState.STOPPING, "failed"): BrickState.FAILED,
+    (BrickState.FAILED, "reset"): BrickState.REGISTERED,  # Issue #2060: 7A
 }
 
 
@@ -156,47 +159,61 @@ class _BrickEntry:
     """Mutable internal tracking for a managed brick.
 
     External API only exposes frozen ``BrickStatus`` snapshots.
+    The ``spec`` field is the frozen desired-state declaration (Issue #2060).
     """
 
     __slots__ = (
-        "name",
+        "spec",
         "instance",
-        "protocol_name",
         "state",
         "error",
         "started_at",
         "stopped_at",
-        "depends_on",
+        "retry_count",
         "lock",
     )
 
     def __init__(
         self,
-        name: str,
+        spec: BrickSpec,
         instance: Any,
-        protocol_name: str,
-        depends_on: tuple[str, ...] = (),
     ) -> None:
-        self.name = name
+        self.spec = spec
         self.instance = instance
-        self.protocol_name = protocol_name
         self.state = BrickState.REGISTERED
         self.error: str | None = None
         self.started_at: float | None = None
         self.stopped_at: float | None = None
-        self.depends_on = depends_on
+        self.retry_count: int = 0
         self.lock = asyncio.Lock()
+
+    # Convenience accessors (delegate to spec)
+    @property
+    def name(self) -> str:
+        return self.spec.name
+
+    @property
+    def protocol_name(self) -> str:
+        return self.spec.protocol_name
+
+    @property
+    def depends_on(self) -> tuple[str, ...]:
+        return self.spec.depends_on
 
     def to_status(self) -> BrickStatus:
         """Create an immutable snapshot of current state."""
         return BrickStatus(
-            name=self.name,
+            name=self.spec.name,
             state=self.state,
-            protocol_name=self.protocol_name,
+            protocol_name=self.spec.protocol_name,
             error=self.error,
             started_at=self.started_at,
             stopped_at=self.stopped_at,
         )
+
+    def to_spec(self) -> BrickSpec:
+        """Return the frozen BrickSpec."""
+        return self.spec
 
 
 # ---------------------------------------------------------------------------
@@ -255,12 +272,12 @@ class BrickLifecycleManager:
         """
         if name in self._bricks:
             raise ValueError(f"Brick {name!r} already registered")
-        self._bricks[name] = _BrickEntry(
+        spec = BrickSpec(
             name=name,
-            instance=instance,
             protocol_name=protocol_name,
             depends_on=tuple(depends_on),
         )
+        self._bricks[name] = _BrickEntry(spec=spec, instance=instance)
         logger.info("[LIFECYCLE] Registered brick %r (protocol=%s)", name, protocol_name)
 
     def unregister(self, name: str) -> None:
@@ -363,7 +380,7 @@ class BrickLifecycleManager:
             error_msg = result.error or f"Vetoed by {phase} hook"
             logger.warning("[LIFECYCLE] Brick %r vetoed by %s: %s", entry.name, phase, error_msg)
             if not veto_keeps_current:
-                entry.state = BrickState.FAILED
+                self._transition(entry.name, "failed")
                 entry.error = error_msg
             return False
 
@@ -391,6 +408,58 @@ class BrickLifecycleManager:
             failed=failed,
             bricks=statuses,
         )
+
+    # ------------------------------------------------------------------
+    # Reset (Issue #2060: 7A)
+    # ------------------------------------------------------------------
+
+    def reset(self, name: str) -> None:
+        """Reset a FAILED brick to REGISTERED for retry.
+
+        Clears error, timestamps, and retry counter so the reconciler
+        (or a manual mount) can attempt to bring the brick back.
+
+        Raises:
+            KeyError: If brick not found.
+            InvalidTransitionError: If brick is not in FAILED state.
+        """
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+        self._transition(name, "reset")
+        entry.error = None
+        entry.started_at = None
+        entry.stopped_at = None
+        entry.retry_count = 0
+
+    # ------------------------------------------------------------------
+    # Spec accessors (Issue #2060: 6C)
+    # ------------------------------------------------------------------
+
+    def get_spec(self, name: str) -> BrickSpec | None:
+        """Return the frozen BrickSpec for a brick, or None if not found."""
+        entry = self._bricks.get(name)
+        return entry.spec if entry else None
+
+    def all_specs(self) -> dict[str, BrickSpec]:
+        """Return all brick specs keyed by name."""
+        return {name: entry.spec for name, entry in self._bricks.items()}
+
+    def fail_brick(self, name: str, error: str) -> None:
+        """Transition a brick to FAILED state with an error message.
+
+        Used by the reconciler for health check failures. Only transitions
+        if the brick is in a state that allows the 'failed' event.
+
+        Raises:
+            KeyError: If brick not found.
+            InvalidTransitionError: If transition is not allowed.
+        """
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+        self._transition(name, "failed")
+        entry.error = error
 
     # ------------------------------------------------------------------
     # DAG ordering
@@ -634,20 +703,31 @@ class BrickLifecycleManager:
         )
         return report
 
-    async def _safe_mount(self, name: str, *, timeout: float) -> None:
-        """Mount a brick, catching all exceptions (fail-forward)."""
+    async def _safe_lifecycle_op(
+        self,
+        brick_name: str,
+        op: str,
+        coro: Any,
+    ) -> None:
+        """Execute a lifecycle coroutine, catching exceptions (fail-forward).
+
+        On failure, transitions the brick to FAILED if it isn't already.
+        """
         try:
-            await self.mount(name, timeout=timeout)
+            await coro
         except Exception as exc:
-            logger.warning("[LIFECYCLE] Brick %r failed during mount_all: %s", name, exc)
-            # Ensure the brick is in FAILED state
-            entry = self._bricks.get(name)
+            logger.warning("[LIFECYCLE] Brick %r failed during %s: %s", brick_name, op, exc)
+            entry = self._bricks.get(brick_name)
             if entry is not None and entry.state not in (
                 BrickState.FAILED,
                 BrickState.UNREGISTERED,
             ):
-                entry.state = BrickState.FAILED
+                self._transition(brick_name, "failed")
                 entry.error = str(exc)
+
+    async def _safe_mount(self, name: str, *, timeout: float) -> None:
+        """Mount a brick, catching all exceptions (fail-forward)."""
+        await self._safe_lifecycle_op(name, "mount", self.mount(name, timeout=timeout))
 
     async def unmount_all(self) -> BrickHealthReport:
         """Unmount all ACTIVE bricks in reverse-DAG order.
@@ -672,14 +752,4 @@ class BrickLifecycleManager:
 
     async def _safe_unmount(self, name: str) -> None:
         """Unmount a brick, catching all exceptions (fail-forward)."""
-        try:
-            await self.unmount(name)
-        except Exception as exc:
-            logger.warning("[LIFECYCLE] Brick %r failed during unmount_all: %s", name, exc)
-            entry = self._bricks.get(name)
-            if entry is not None and entry.state not in (
-                BrickState.FAILED,
-                BrickState.UNREGISTERED,
-            ):
-                entry.state = BrickState.FAILED
-                entry.error = str(exc)
+        await self._safe_lifecycle_op(name, "unmount", self.unmount(name))

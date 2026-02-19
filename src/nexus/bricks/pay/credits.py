@@ -48,7 +48,7 @@ from nexus.bricks.pay.constants import (
 from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+    from nexus.bricks.pay.protocols import AuditLoggerProtocol
 
 _audit_logger_module = logging.getLogger(__name__ + ".audit")
 
@@ -133,7 +133,7 @@ class CreditsService:
         tigerbeetle_address: str = "127.0.0.1:3000",
         cluster_id: int = 0,
         enabled: bool = True,
-        audit_logger: ExchangeAuditLogger | None = None,
+        audit_logger: AuditLoggerProtocol | None = None,
     ):
         """Initialize CreditsService.
 
@@ -142,7 +142,7 @@ class CreditsService:
             tigerbeetle_address: TigerBeetle server address.
             cluster_id: TigerBeetle cluster ID.
             enabled: If False, operates in pass-through mode (no real ledger).
-            audit_logger: Optional ExchangeAuditLogger for transaction audit trail (#1360).
+            audit_logger: Optional audit logger for transaction audit trail (#1360).
         """
         self._enabled = enabled
         self._client = client

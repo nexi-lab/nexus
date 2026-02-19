@@ -308,10 +308,15 @@ class TestHeartbeat:
         # With flush_interval=0, should auto-flush immediately
         assert reg._heartbeat_buffer.stats()["buffer_size"] == 0
 
-    def test_heartbeat_nonexistent_agent(self, registry):
-        """Heartbeat for nonexistent agent raises ValueError."""
-        with pytest.raises(ValueError, match="not found"):
-            registry.heartbeat("no-such-agent")
+    def test_heartbeat_nonexistent_agent_buffered(self, registry):
+        """Heartbeat for nonexistent agent is buffered without error (Issue #2170).
+
+        No existence check — the buffer is flushed via UPDATE which silently
+        skips non-existent agents (0 rows affected).
+        """
+        registry.heartbeat("no-such-agent")
+        # Should not raise — just buffered
+        assert "no-such-agent" in registry._heartbeat_buffer._buffer
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +440,30 @@ class TestQueries:
         stale = registry.detect_stale(threshold_seconds=0)
         assert len(stale) >= 1
         assert stale[0].agent_id == "a1"
+
+    def test_detect_stale_excludes_buffered_heartbeats(self, registry):
+        """Agent stale in DB but with recent buffer heartbeat is NOT stale (Issue 10A)."""
+        import time
+
+        registry.register("a1", "alice")
+        registry.transition("a1", AgentState.CONNECTED, expected_generation=0)
+
+        # First heartbeat + flush to DB (so DB has an old timestamp)
+        registry.heartbeat("a1")
+        registry.flush_heartbeats()
+
+        # Small sleep so buffer heartbeat is clearly after the flush
+        time.sleep(0.01)
+
+        # Second heartbeat — only in buffer, not flushed
+        registry.heartbeat("a1")
+
+        # With 1-second threshold: cutoff = now - 1s. The buffer heartbeat
+        # was just recorded (< 1s ago), so ts >= cutoff → agent excluded.
+        # DB timestamp was flushed before the sleep, so DB says "stale".
+        stale = registry.detect_stale(threshold_seconds=1)
+        stale_ids = [a.agent_id for a in stale]
+        assert "a1" not in stale_ids
 
 
 # ---------------------------------------------------------------------------
@@ -721,3 +750,146 @@ class TestAgentLifecycleIntegration:
         registry.unregister("agent_lifecycle")
         assert registry.validate_ownership("agent_lifecycle", "alice") is False
         assert registry.get("agent_lifecycle") is None
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint tests (Issue #2170, 3A)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpoint:
+    """Tests for checkpoint/restore_checkpoint/batch_checkpoint."""
+
+    def test_checkpoint_saves_data(self, registry):
+        """checkpoint() stores data in agent_metadata under _nexus_checkpoint key."""
+        registry.register("agent-1", "alice")
+        registry.checkpoint("agent-1", {"key": "value", "count": 42})
+
+        record = registry.get("agent-1")
+        assert record is not None
+        assert record.metadata.get("_nexus_checkpoint") == {"key": "value", "count": 42}
+
+    def test_restore_checkpoint_returns_data(self, registry):
+        """restore_checkpoint() returns the saved checkpoint data."""
+        registry.register("agent-1", "alice")
+        registry.checkpoint("agent-1", {"key": "value"})
+
+        data = registry.restore_checkpoint("agent-1")
+        assert data == {"key": "value"}
+
+    def test_restore_checkpoint_clears_data(self, registry):
+        """Checkpoint data is cleared after restore."""
+        registry.register("agent-1", "alice")
+        registry.checkpoint("agent-1", {"key": "value"})
+
+        registry.restore_checkpoint("agent-1")
+
+        # Second restore should return None
+        data = registry.restore_checkpoint("agent-1")
+        assert data is None
+
+        # Metadata should not have _nexus_checkpoint key
+        record = registry.get("agent-1")
+        assert "_nexus_checkpoint" not in record.metadata
+
+    def test_restore_checkpoint_no_data(self, registry):
+        """restore_checkpoint() returns None when no checkpoint exists."""
+        registry.register("agent-1", "alice")
+
+        data = registry.restore_checkpoint("agent-1")
+        assert data is None
+
+    def test_restore_checkpoint_nonexistent_agent(self, registry):
+        """restore_checkpoint() raises ValueError for nonexistent agent."""
+        with pytest.raises(ValueError, match="not found"):
+            registry.restore_checkpoint("no-such-agent")
+
+    def test_checkpoint_nonexistent_agent(self, registry):
+        """checkpoint() raises ValueError for nonexistent agent."""
+        with pytest.raises(ValueError, match="not found"):
+            registry.checkpoint("no-such-agent", {"key": "value"})
+
+    def test_batch_checkpoint(self, registry):
+        """batch_checkpoint() writes checkpoints for multiple agents."""
+        registry.register("a1", "alice")
+        registry.register("a2", "bob")
+
+        written = registry.batch_checkpoint(
+            {
+                "a1": {"state": "connected"},
+                "a2": {"state": "idle"},
+            }
+        )
+
+        assert written == 2
+
+        r1 = registry.get("a1")
+        assert r1.metadata.get("_nexus_checkpoint") == {"state": "connected"}
+
+        r2 = registry.get("a2")
+        assert r2.metadata.get("_nexus_checkpoint") == {"state": "idle"}
+
+    def test_batch_checkpoint_skips_nonexistent(self, registry):
+        """batch_checkpoint() skips nonexistent agents and still writes others."""
+        registry.register("a1", "alice")
+
+        written = registry.batch_checkpoint(
+            {
+                "a1": {"state": "connected"},
+                "no-such": {"state": "idle"},
+            }
+        )
+
+        assert written == 1
+
+    def test_batch_checkpoint_empty(self, registry):
+        """batch_checkpoint() with empty dict returns 0."""
+        assert registry.batch_checkpoint({}) == 0
+
+
+# ---------------------------------------------------------------------------
+# Eviction candidates tests (Issue #2170, 8A)
+# ---------------------------------------------------------------------------
+
+
+class TestEvictionCandidates:
+    """Tests for list_eviction_candidates."""
+
+    def test_returns_connected_agents(self, registry):
+        """list_eviction_candidates returns CONNECTED agents."""
+        registry.register("a1", "alice")
+        registry.transition("a1", AgentState.CONNECTED, expected_generation=0)
+
+        candidates = registry.list_eviction_candidates(batch_size=10)
+        assert len(candidates) == 1
+        assert candidates[0].agent_id == "a1"
+
+    def test_excludes_non_connected(self, registry):
+        """Only CONNECTED agents are candidates."""
+        registry.register("a1", "alice")  # UNKNOWN
+        registry.register("a2", "bob")
+        registry.transition("a2", AgentState.CONNECTED, expected_generation=0)
+        registry.transition("a2", AgentState.IDLE, expected_generation=1)
+
+        candidates = registry.list_eviction_candidates(batch_size=10)
+        assert len(candidates) == 0
+
+    def test_respects_batch_size(self, registry):
+        """Returns at most batch_size candidates."""
+        for i in range(5):
+            registry.register(f"a{i}", "alice")
+            registry.transition(f"a{i}", AgentState.CONNECTED, expected_generation=0)
+
+        candidates = registry.list_eviction_candidates(batch_size=2)
+        assert len(candidates) == 2
+
+    def test_excludes_buffered_heartbeats(self, registry):
+        """Agents with buffered heartbeats are excluded."""
+        registry.register("a1", "alice")
+        registry.transition("a1", AgentState.CONNECTED, expected_generation=0)
+
+        # Heartbeat only in buffer (not flushed)
+        registry.heartbeat("a1")
+
+        candidates = registry.list_eviction_candidates(batch_size=10)
+        assert len(candidates) == 0

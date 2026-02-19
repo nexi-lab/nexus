@@ -13,9 +13,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.rebac.consistency.zone_manager import ZoneIsolationError
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.manager import ReBACManager
+from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
 from nexus.storage.models import Base
 
 

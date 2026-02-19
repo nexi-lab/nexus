@@ -13,7 +13,7 @@ Nexus supports two types of operation contexts for permission checks and tenant 
 The simple context for basic permission checks:
 
 ```python
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 context = OperationContext(
     user: str,                    # User ID
@@ -26,7 +26,7 @@ context = OperationContext(
 **Examples:**
 
 ```python
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Create context for a user
 ctx = OperationContext(
@@ -47,7 +47,7 @@ content = nx.read("/workspace/alice/notes.txt", context=ctx)
 Enhanced context with P0-4 security features (scoped admin, audit trail):
 
 ```python
-from nexus.core.permissions_enhanced import EnhancedOperationContext, AdminCapability
+from nexus.contracts.types_enhanced import EnhancedOperationContext, AdminCapability
 
 context = EnhancedOperationContext(
     user: str,                              # User ID (legacy - use subject_id)
@@ -65,7 +65,7 @@ context = EnhancedOperationContext(
 **Examples:**
 
 ```python
-from nexus.core.permissions_enhanced import EnhancedOperationContext, AdminCapability
+from nexus.contracts.types_enhanced import EnhancedOperationContext, AdminCapability
 
 # Regular user context
 user_ctx = EnhancedOperationContext(

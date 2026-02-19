@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 
 
 class TestManifestEntry:

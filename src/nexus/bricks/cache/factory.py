@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
     from nexus.bricks.cache.dragonfly import DragonflyClient
-    from nexus.storage.record_store import RecordStoreABC
+    from nexus.bricks.cache.protocols import RecordStoreProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -79,14 +79,14 @@ class CacheFactory:
         self,
         settings: CacheSettings,
         cache_store: CacheStoreABC | None = None,
-        record_store: RecordStoreABC | None = None,
+        record_store: RecordStoreProtocol | None = None,
     ):
         """Initialize cache factory.
 
         Args:
             settings: Cache configuration
             cache_store: Pre-built CacheStoreABC driver. If None, created from settings.
-            record_store: RecordStoreABC for PostgreSQL cache fallback.
+            record_store: RecordStoreProtocol for PostgreSQL cache fallback.
                 If provided and Dragonfly is not available, the factory uses
                 record_store.engine for PostgreSQL-backed caches instead of NullCacheStore.
         """
@@ -100,7 +100,7 @@ class CacheFactory:
         self._settings = settings
         self._cache_store: CacheStoreABC = cache_store or NullCacheStore()
         self._cache_client: DragonflyClient | None = None  # kept for embedding cache
-        self._record_store: RecordStoreABC | None = record_store
+        self._record_store: RecordStoreProtocol | None = record_store
         self._initialized = False
         self._has_cache_store = False
         self._using_postgres = False
@@ -276,7 +276,7 @@ class CacheFactory:
         Issue #1524, Decision #5A: prefer AsyncEngine for non-blocking I/O.
         """
         assert self._record_store is not None
-        async_engine = getattr(self._record_store, "_async_engine", None)
+        async_engine = self._record_store.async_engine
         if async_engine is not None:
             return async_engine
         return self._record_store.engine

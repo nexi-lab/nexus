@@ -254,7 +254,7 @@ def build_v2_registry(
         registry.add(
             RouterEntry(router=bricks_health_router, name="bricks_health", endpoint_count=1)
         )
-        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=3))
+        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=5))
     except ImportError as e:
         logger.warning("Failed to import Bricks routes: %s", e)
 
@@ -273,6 +273,14 @@ def build_v2_registry(
         )
     except ImportError as e:
         logger.warning("Failed to import Batch routes: %s", e)
+
+    # ---- Eviction router (Issue #2170) ----
+    try:
+        from nexus.server.api.v2.routers.eviction import router as eviction_router
+
+        registry.add(RouterEntry(router=eviction_router, name="eviction", endpoint_count=1))
+    except ImportError as e:
+        logger.warning("Failed to import Eviction routes: %s", e)
 
     # ---- Governance router (Issue #1359) — admin auth required ----
     try:

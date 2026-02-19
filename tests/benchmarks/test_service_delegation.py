@@ -120,10 +120,10 @@ class TestAsyncDelegationOverhead:
     """
 
     def test_version_get_delegation(self, benchmark, mock_nexus_fs, context):
-        """Benchmark aget_version delegation overhead."""
+        """Benchmark version_service.get_version (direct brick-source call)."""
 
         def run():
-            asyncio.run(mock_nexus_fs.aget_version("/file.txt", 1, context))
+            asyncio.run(mock_nexus_fs.version_service.get_version("/file.txt", 1, context))
 
         benchmark(run)
 

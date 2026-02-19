@@ -211,18 +211,26 @@ class MessageSender:
         await self._storage.write(msg_path, data, self._zone_id)
 
         # Outbox copy (best-effort)
+        outbox_dir = outbox_path(envelope.sender)
         try:
-            outbox_dir = outbox_path(envelope.sender)
             if await self._storage.exists(outbox_dir, self._zone_id):
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )
                 await self._storage.write(outbox_msg_path, data, self._zone_id)
-        except Exception:
+        except Exception as exc:
             logger.warning(
-                "Failed to write outbox copy for message %s from %s",
-                envelope.id,
-                envelope.sender,
+                "Failed to write outbox copy",
+                extra={
+                    "message_id": envelope.id,
+                    "sender": envelope.sender,
+                    "recipient": envelope.recipient,
+                    "zone_id": self._zone_id,
+                    "outbox_dir": outbox_dir,
+                    "storage_backend": type(self._storage).__name__,
+                    "error_type": type(exc).__name__,
+                    "error_detail": str(exc),
+                },
                 exc_info=True,
             )
 
@@ -240,11 +248,22 @@ class MessageSender:
                         "path": msg_path,
                     },
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "EventBus notification failed for message %s "
-                    "(message IS written, delivery will be picked up by poll)",
-                    envelope.id,
+                    "EventBus notification failed (message IS written, delivery will be picked up by poll)",
+                    extra={
+                        "message_id": envelope.id,
+                        "sender": envelope.sender,
+                        "recipient": envelope.recipient,
+                        "zone_id": self._zone_id,
+                        "channel": f"ipc.inbox.{envelope.recipient}",
+                        "message_path": msg_path,
+                        "publisher_type": type(self._publisher).__name__
+                        if self._publisher
+                        else None,
+                        "error_type": type(exc).__name__,
+                        "error_detail": str(exc),
+                    },
                     exc_info=True,
                 )
 
@@ -257,10 +276,19 @@ class MessageSender:
             async with self._cold_semaphore:
                 try:
                     await self._cold_send(envelope, data)
-                except Exception:
+                except Exception as exc:
                     logger.warning(
-                        "Background cold write failed for message %s",
-                        envelope.id,
+                        "Background cold write failed",
+                        extra={
+                            "message_id": envelope.id,
+                            "sender": envelope.sender,
+                            "recipient": envelope.recipient,
+                            "zone_id": self._zone_id,
+                            "delivery_mode": self._mode.value,
+                            "storage_backend": type(self._storage).__name__,
+                            "error_type": type(exc).__name__,
+                            "error_detail": str(exc),
+                        },
                         exc_info=True,
                     )
 
@@ -350,6 +378,7 @@ class MessageProcessor:
         signing_mode: SigningMode = SigningMode.OFF,
         max_retries: int = 3,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
+        event_subscriber: EventPublisher | None = None,
     ) -> None:
         self._storage = storage
         self._agent_id = agent_id
@@ -359,6 +388,8 @@ class MessageProcessor:
         self._dedup_ttl = dedup_ttl_seconds
         self._hot_subscriber = hot_subscriber
         self._hot_task: asyncio.Task[None] | None = None
+        self._event_subscriber = event_subscriber
+        self._event_task: asyncio.Task[None] | None = None
         self._handler_semaphore = asyncio.Semaphore(max_handler_concurrency)
         self._handler_tasks: set[asyncio.Task[None]] = set()
         self._verifier = verifier
@@ -382,22 +413,33 @@ class MessageProcessor:
             await self._cache_store.set(self._dedup_key(message_id), b"1", ttl=self._dedup_ttl)
 
     async def start(self) -> None:
-        """Start the hot-path listener (if a subscriber is configured)."""
+        """Start the hot-path and EventBus listeners (if subscribers are configured)."""
         if self._hot_subscriber is not None and self._hot_task is None:
             self._hot_task = asyncio.create_task(self._hot_listen_loop())
             logger.info("Hot-path listener started for agent %s", self._agent_id)
 
+        if self._event_subscriber is not None and self._event_task is None:
+            self._event_task = asyncio.create_task(self._event_listen_loop())
+            logger.info("EventBus listener started for agent %s", self._agent_id)
+
     async def stop(self) -> None:
-        """Stop the hot-path listener and await pending handler tasks."""
+        """Stop the hot-path and EventBus listeners and await pending handler tasks."""
         if self._hot_task is not None:
             self._hot_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._hot_task
             self._hot_task = None
+
+        if self._event_task is not None:
+            self._event_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._event_task
+            self._event_task = None
+
         if self._handler_tasks:
             await asyncio.gather(*self._handler_tasks, return_exceptions=True)
             self._handler_tasks.clear()
-        logger.info("Hot-path listener stopped for agent %s", self._agent_id)
+        logger.info("Listeners stopped for agent %s", self._agent_id)
 
     async def _hot_listen_loop(self) -> None:
         """Subscribe to hot-path subject and dispatch messages."""
@@ -442,6 +484,34 @@ class MessageProcessor:
         except Exception:
             logger.error(
                 "Hot-path listen loop crashed for agent %s",
+                self._agent_id,
+                exc_info=True,
+            )
+
+    async def _event_listen_loop(self) -> None:
+        """Subscribe to EventBus for cold-path push notifications.
+
+        Listens for "message_delivered" events on the agent's inbox channel
+        and triggers process_inbox() when messages arrive.
+        """
+        assert self._event_subscriber is not None  # noqa: S101
+        channel = f"ipc.inbox.{self._agent_id}"
+        try:
+            async for _event in self._event_subscriber.subscribe(channel):
+                try:
+                    # Trigger inbox processing when notified
+                    await self.process_inbox()
+                except Exception:
+                    logger.warning(
+                        "EventBus-triggered inbox processing failed for agent %s",
+                        self._agent_id,
+                        exc_info=True,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error(
+                "EventBus listen loop crashed for agent %s",
                 self._agent_id,
                 exc_info=True,
             )

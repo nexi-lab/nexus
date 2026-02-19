@@ -6,9 +6,9 @@ Validates that Memory brick fails gracefully and provides useful error messages.
 Related: Issue #2128 (Memory brick extraction)
 """
 
+from typing import Any
 from unittest.mock import Mock, patch
 
-from typing import Any
 import pytest
 
 

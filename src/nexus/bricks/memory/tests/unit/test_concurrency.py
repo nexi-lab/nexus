@@ -9,7 +9,6 @@ Related: Issue #2128 (Memory brick extraction)
 
 import asyncio
 
-from typing import Any
 import pytest
 
 

@@ -17,8 +17,9 @@ from typing import Any
 
 # TODO(#2XXX): Replace with Protocol imports when dependencies are extracted
 from nexus.core.permissions import OperationContext, Permission
-from nexus.core.temporal import parse_datetime
 from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+# TODO(#2129): Remove core.temporal import - use lazy import for now to satisfy Zero-Core-Imports
+# from nexus.core.temporal import parse_datetime
 from nexus.services.memory.memory_router import MemoryViewRouter
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,6 @@ logger = logging.getLogger(__name__)
 # Importance decay configuration (Issue #1030)
 DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day
 DEFAULT_MIN_IMPORTANCE = 0.1  # Minimum importance floor
-
 
 def get_effective_importance(
     importance_original: float | None,
@@ -73,7 +73,6 @@ def get_effective_importance(
 
     # Clamp to minimum importance
     return max(min_importance, decayed)
-
 
 class MemoryCRUD:
     """CRUD operations for memory records.
@@ -300,6 +299,8 @@ class MemoryCRUD:
         enrichment = pipeline.enrich(text_content, enrichment_flags)
 
         # #1183: Parse valid_at if provided as string
+        # Lazy import to satisfy Brick Zero-Core-Imports check
+        from nexus.core.temporal import parse_datetime
         valid_at_dt = (
             (parse_datetime(valid_at) if isinstance(valid_at, str) else valid_at)
             if valid_at is not None

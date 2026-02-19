@@ -19,6 +19,13 @@ from pathlib import Path
 # Path to bricks directory relative to project root
 BRICKS_RELATIVE_PATH = Path("src") / "nexus" / "bricks"
 
+# TODO(#2129): Remove Memory brick exception after Protocol migration (Q2 2026)
+# Memory brick has deep dependencies on core/services during migration
+# These will be replaced with Protocol-based dependencies in a follow-up PR
+TEMPORARY_EXEMPTIONS = [
+    "src/nexus/bricks/memory",  # Issue #2128 - In-progress extraction
+]
+
 # Forbidden import patterns for files under bricks/
 # Bricks may only import from:
 #   - nexus.core.protocols.*  (kernel protocol interfaces)
@@ -81,7 +88,20 @@ def find_brick_files(root: Path) -> list[Path]:
     bricks_dir = root / BRICKS_RELATIVE_PATH
     if not bricks_dir.exists():
         return []
-    return sorted(bricks_dir.rglob("*.py"))
+
+    all_files = sorted(bricks_dir.rglob("*.py"))
+
+    # Filter out temporarily exempted bricks
+    filtered_files = []
+    for file_path in all_files:
+        is_exempted = any(
+            exemption in str(file_path.relative_to(root))
+            for exemption in TEMPORARY_EXEMPTIONS
+        )
+        if not is_exempted:
+            filtered_files.append(file_path)
+
+    return filtered_files
 
 
 def main() -> int:

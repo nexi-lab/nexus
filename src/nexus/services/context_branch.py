@@ -26,7 +26,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BranchConflictError,
     BranchExistsError,
     BranchNotFoundError,

@@ -438,7 +438,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # MCPService: Model Context Protocol operations
-        self.mcp_service = MCPService(nexus_fs=self)
+        self.mcp_service = MCPService(filesystem=self)
 
         # LLMService: LLM integration operations
         self.llm_service = LLMService(nexus_fs=self)
@@ -447,10 +447,17 @@ class NexusFS(  # type: ignore[misc]
         self._llm_subsystem = LLMSubsystem(llm_service=self.llm_service)
 
         # OAuthService: OAuth authentication operations
+        import os
+
         self.oauth_service = OAuthService(
             oauth_factory=None,
             token_manager=None,
-            nexus_fs=self,
+            filesystem=self,
+            database_url=os.getenv("TOKEN_MANAGER_DB"),
+            oauth_config=getattr(self._config, "oauth", None) if self._config else None,
+            mount_lister=lambda: [
+                (m.mount_point, type(m.backend).__name__) for m in self.router.list_mounts()
+            ],
         )
 
         # Shared gateway for all extracted services (Issue #1287)

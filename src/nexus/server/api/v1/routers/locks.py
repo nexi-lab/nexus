@@ -19,6 +19,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.api.v1.dependencies import get_lock_manager
 from nexus.server.api.v1.models.locks import (
     LockAcquireRequest,
@@ -48,7 +49,7 @@ async def acquire_lock(
     Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
     Use blocking=false for non-blocking acquisition (returns immediately).
     """
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     # Normalize path to ensure leading slash
     path = request.path if request.path.startswith("/") else "/" + request.path
@@ -107,7 +108,7 @@ async def list_locks(
     lock_manager: Any = Depends(get_lock_manager),
 ) -> LockListResponse:
     """List active locks for the current zone."""
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     lock_infos = await lock_manager.list_locks(zone_id, pattern=pattern, limit=limit)
 
@@ -153,7 +154,7 @@ async def get_lock_status(
     lock_manager: Any = Depends(get_lock_manager),
 ) -> LockStatusResponse:
     """Get lock status for a specific path."""
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     # Normalize path to ensure leading slash (URL path captures without leading /)
     if not path.startswith("/"):
@@ -206,7 +207,7 @@ async def release_lock(
     The lock_id must match the ID returned during acquisition.
     Use force=true for admin recovery of stuck locks (requires admin role).
     """
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     # Normalize path to ensure leading slash (URL path captures without leading /)
     if not path.startswith("/"):
@@ -243,7 +244,7 @@ async def extend_lock(
     Call this periodically (e.g., every TTL/2) to keep long-running
     operations alive. The lock must be owned by the caller (lock_id match).
     """
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     # Normalize path to ensure leading slash (URL path captures without leading /)
     if not path.startswith("/"):

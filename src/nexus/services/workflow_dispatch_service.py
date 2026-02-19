@@ -22,6 +22,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.core.mutation_hooks import MutationEvent
     from nexus.core.pipe_manager import PipeManager
@@ -132,7 +134,7 @@ class WorkflowDispatchService:
                 self._subscription_manager.broadcast(
                     event_type,
                     event_context,
-                    event_context.get("zone_id", "root"),
+                    event_context.get("zone_id", ROOT_ZONE_ID),
                 )
             )
 

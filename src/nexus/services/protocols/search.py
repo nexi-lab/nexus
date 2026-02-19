@@ -22,7 +22,7 @@ import builtins
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.types import OperationContext
+    from nexus.contracts.types import OperationContext
 
 # =============================================================================
 # Issue #1520: Search Brick Protocol

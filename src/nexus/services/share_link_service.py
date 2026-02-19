@@ -21,6 +21,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
 from nexus.core.response import HandlerResponse
 from nexus.core.rpc_decorator import rpc_expose
@@ -118,11 +119,11 @@ class ShareLinkService:
         Returns:
             Tuple of (zone_id, user_id, is_admin)
         """
-        zone_id = "root"
+        zone_id = ROOT_ZONE_ID
         user_id = "anonymous"
         is_admin = False
         if context:
-            zone_id = getattr(context, "zone_id", None) or "root"
+            zone_id = getattr(context, "zone_id", None) or ROOT_ZONE_ID
             user_id = (
                 getattr(context, "user_id", None)
                 or getattr(context, "subject_id", None)

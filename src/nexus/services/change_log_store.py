@@ -17,6 +17,7 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
 
@@ -60,7 +61,7 @@ class ChangeLogStore(SyncStoreBase):
         super().__init__(session_factory, is_postgresql=is_postgresql)
 
     def get_change_log(
-        self, path: str, backend_name: str, zone_id: str = "root"
+        self, path: str, backend_name: str, zone_id: str = ROOT_ZONE_ID
     ) -> ChangeLogEntry | None:
         """Get change log entry for a path.
 
@@ -102,7 +103,7 @@ class ChangeLogStore(SyncStoreBase):
         self,
         path: str,
         backend_name: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         size_bytes: int | None = None,
         mtime: datetime | None = None,
         backend_version: str | None = None,
@@ -158,7 +159,7 @@ class ChangeLogStore(SyncStoreBase):
             logger.warning("Failed to upsert change log for %s: %s", path, e)
             return False
 
-    def get_last_sync_time(self, backend_name: str, zone_id: str = "root") -> datetime | None:
+    def get_last_sync_time(self, backend_name: str, zone_id: str = ROOT_ZONE_ID) -> datetime | None:
         """Get the most recent sync time for a backend.
 
         Args:
@@ -254,7 +255,7 @@ class ChangeLogStore(SyncStoreBase):
                     {
                         "path": entry.path,
                         "backend_name": entry.backend_name,
-                        "zone_id": getattr(entry, "zone_id", "root") or "root",
+                        "zone_id": getattr(entry, "zone_id", ROOT_ZONE_ID) or ROOT_ZONE_ID,
                         "size_bytes": entry.size_bytes,
                         "mtime": entry.mtime,
                         "backend_version": entry.backend_version,
@@ -309,7 +310,7 @@ class ChangeLogStore(SyncStoreBase):
             logger.warning("Failed to batch-upsert %d change logs: %s", len(entries), e)
             return False
 
-    def delete_change_log(self, path: str, backend_name: str, zone_id: str = "root") -> bool:
+    def delete_change_log(self, path: str, backend_name: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Delete change log entry for a path.
 
         Used during file deletion to prevent stale entries that could
@@ -339,7 +340,7 @@ class ChangeLogStore(SyncStoreBase):
             return False
 
     def delete_change_logs_batch(
-        self, paths: list[str], backend_name: str, zone_id: str = "root"
+        self, paths: list[str], backend_name: str, zone_id: str = ROOT_ZONE_ID
     ) -> bool:
         """Delete change log entries for multiple paths in a single transaction.
 

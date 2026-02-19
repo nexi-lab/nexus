@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
-DEFAULT_ZONE: str = "root"
+from nexus.constants import ROOT_ZONE_ID
+
+DEFAULT_ZONE: str = ROOT_ZONE_ID
 
 
 def normalize_zone_id(zone_id: str | None) -> str:

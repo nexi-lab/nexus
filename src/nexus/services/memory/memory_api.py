@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
 from nexus.rebac.entity_registry import EntityRegistry
@@ -542,7 +543,7 @@ class Memory:
             return
 
         # Use default zone if not provided
-        effective_zone_id = zone_id or "root"
+        effective_zone_id = zone_id or ROOT_ZONE_ID
 
         async def _do_store() -> None:
             _store = SQLAlchemyRecordStore(db_url=db_url)

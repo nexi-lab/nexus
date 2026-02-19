@@ -116,7 +116,7 @@ class TestLazyInit:
         NexusFSCoreMixin._revision_notifier = None
 
         with patch(
-            "nexus.services.revision_notifier.RevisionNotifier.__init__",
+            "nexus.lib.revision_notifier.RevisionNotifier.__init__",
             side_effect=RuntimeError("boom"),
         ):
             mixin = NexusFSCoreMixin()

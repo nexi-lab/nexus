@@ -10,12 +10,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-import json
 import logging
 from dataclasses import asdict
-from typing import Any, cast
-
-import httpx
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.proxy.circuit_breaker import AsyncCircuitBreaker, CircuitState
 from nexus.proxy.config import ProxyBrickConfig
@@ -23,9 +20,14 @@ from nexus.proxy.errors import (
     CircuitOpenError,
     OfflineQueuedError,
     RemoteCallError,
+    is_connection_error,
 )
 from nexus.proxy.offline_queue import OfflineQueue
+from nexus.proxy.replay_engine import ReplayEngine
 from nexus.proxy.transport import HttpTransport
+
+if TYPE_CHECKING:
+    from nexus.proxy.queue_protocol import OfflineQueueProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +58,11 @@ class ProxyBrick:
         config: ProxyBrickConfig,
         *,
         transport: HttpTransport | None = None,
-        queue: OfflineQueue | None = None,
+        queue: OfflineQueueProtocol | None = None,
     ) -> None:
         self._config = config
         self._transport = transport or HttpTransport(config)
-        self._queue = queue or OfflineQueue(
+        self._queue: OfflineQueueProtocol = queue or OfflineQueue(
             config.queue_db_path, max_retry_count=config.max_retry_count
         )
         self._circuit = AsyncCircuitBreaker(
@@ -68,6 +70,7 @@ class ProxyBrick:
             recovery_timeout=config.cb_recovery_timeout,
             half_open_max_calls=config.cb_half_open_max_calls,
         )
+        self._replay_engine: ReplayEngine | None = None
         self._replay_task: asyncio.Task[None] | None = None
         self._stopped = False
 
@@ -95,12 +98,21 @@ class ProxyBrick:
         """Initialize the offline queue and start the replay loop."""
         await self._queue.initialize()
         self._stopped = False
-        self._replay_task = asyncio.create_task(self._replay_loop())
+        self._replay_engine = ReplayEngine(
+            queue=self._queue,
+            transport=self._transport,
+            circuit=self._circuit,
+            batch_size=self._config.replay_batch_size,
+            poll_interval=self._config.replay_poll_interval,
+        )
+        self._replay_task = asyncio.create_task(self._replay_engine.run())
         logger.info("ProxyBrick started for %s", self._config.remote_url)
 
     async def stop(self) -> None:
         """Gracefully shut down — cancel replay and close resources."""
         self._stopped = True
+        if self._replay_engine is not None:
+            await self._replay_engine.stop()
         if self._replay_task is not None:
             self._replay_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -114,14 +126,8 @@ class ProxyBrick:
     # Core forwarding
     # ------------------------------------------------------------------
 
-    async def _forward(self, method: str, **kwargs: Any) -> Any:
-        """Forward a method call to the remote kernel.
-
-        1. Check circuit breaker — if OPEN, enqueue and raise.
-        2. Try transport.call() (with tenacity retries).
-        3. On success → record_success().
-        4. On connection failure → record_failure() → enqueue → raise OfflineQueuedError.
-        """
+    async def _do_forward(self, method: str, *, data: bytes | None = None, **kwargs: Any) -> Any:
+        """Unified forward — handles both regular and streaming calls (#6-A)."""
         allowed = await self._circuit.allow_request()
         if not allowed:
             queue_id = await self._queue.enqueue(method, kwargs=kwargs)
@@ -132,90 +138,27 @@ class ProxyBrick:
             )
 
         try:
-            result = await self._transport.call(method, params=kwargs)
+            if data is not None:
+                result = await self._transport.stream_upload(method, data, params=kwargs)
+            else:
+                result = await self._transport.call(method, params=kwargs)
             await self._circuit.record_success()
             return result
         except RemoteCallError as exc:
-            if _is_connection_error(exc):
+            if is_connection_error(exc):
                 await self._circuit.record_failure()
                 queue_id = await self._queue.enqueue(method, kwargs=kwargs)
                 logger.warning("Operation '%s' queued for offline replay (id=%d)", method, queue_id)
                 raise OfflineQueuedError(method, queue_id) from exc
             raise
 
+    async def _forward(self, method: str, **kwargs: Any) -> Any:
+        """Forward a method call to the remote kernel."""
+        return await self._do_forward(method, **kwargs)
+
     async def _forward_stream(self, method: str, data: bytes, **kwargs: Any) -> Any:
         """Forward a large-payload call via streaming upload."""
-        allowed = await self._circuit.allow_request()
-        if not allowed:
-            queue_id = await self._queue.enqueue(method, kwargs=kwargs)
-            raise CircuitOpenError(
-                self._config.remote_url,
-                retry_after=self._config.cb_recovery_timeout,
-            )
-
-        try:
-            result = await self._transport.stream_upload(method, data, params=kwargs)
-            await self._circuit.record_success()
-            return result
-        except RemoteCallError as exc:
-            if _is_connection_error(exc):
-                await self._circuit.record_failure()
-                queue_id = await self._queue.enqueue(method, kwargs=kwargs)
-                logger.warning(
-                    "Streaming operation '%s' queued for offline replay (id=%d)",
-                    method,
-                    queue_id,
-                )
-                raise OfflineQueuedError(method, queue_id) from exc
-            raise
-
-    # ------------------------------------------------------------------
-    # Replay loop
-    # ------------------------------------------------------------------
-
-    async def _replay_loop(self) -> None:
-        """Background task that drains the offline queue when online."""
-        while not self._stopped:
-            try:
-                await asyncio.sleep(self._config.replay_poll_interval)
-                if self._circuit.is_open:
-                    continue
-
-                batch = await self._queue.dequeue_batch(self._config.replay_batch_size)
-                if not batch:
-                    continue
-
-                logger.info("Replaying %d queued operations", len(batch))
-                for op in batch:
-                    try:
-                        kwargs = json.loads(op.kwargs_json)
-                        if not isinstance(kwargs, dict):
-                            logger.error("Invalid kwargs_json for op %d: not a dict", op.id)
-                            await self._queue.mark_dead_letter(op.id)
-                            continue
-                        await self._transport.call(op.method, params=kwargs)
-                        await self._queue.mark_done(op.id)
-                        await self._circuit.record_success()
-                    except json.JSONDecodeError as jexc:
-                        logger.error("Failed to decode op %d: %s", op.id, jexc)
-                        await self._queue.mark_dead_letter(op.id)
-                    except RemoteCallError as exc:
-                        if _is_connection_error(exc):
-                            await self._circuit.record_failure()
-                            await self._queue.mark_failed(op.id)
-                            logger.warning(
-                                "Replay failed for op %d (%s) — stopping batch",
-                                op.id,
-                                op.method,
-                            )
-                            break
-                        await self._queue.mark_failed(op.id)
-                        logger.error("Replay error for op %d (%s): %s", op.id, op.method, exc)
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                logger.exception("Unexpected error in replay loop")
-                await asyncio.sleep(self._config.replay_poll_interval)
+        return await self._do_forward(method, data=data, **kwargs)
 
     # ------------------------------------------------------------------
     # Properties
@@ -374,16 +317,3 @@ class ProxyAgentRegistryBrick(ProxyBrick):
 
     async def unregister(self, agent_id: str) -> bool:
         return await self._forward("agent_registry.unregister", agent_id=agent_id)  # type: ignore[no-any-return]
-
-
-# ======================================================================
-# Helpers
-# ======================================================================
-
-
-def _is_connection_error(exc: RemoteCallError) -> bool:
-    """Return True if the underlying cause is a connectivity failure."""
-    cause = exc.cause
-    if cause is None:
-        return False
-    return isinstance(cause, (httpx.ConnectError, httpx.TimeoutException, ConnectionError, OSError))

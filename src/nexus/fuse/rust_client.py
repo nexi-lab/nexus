@@ -7,6 +7,7 @@ Rust daemon, enabling 10-100x speedup on hot path operations.
 import base64
 import contextlib
 import json
+import os
 import socket
 import subprocess
 import time
@@ -124,18 +125,24 @@ class RustFUSEClient:
         )
 
     def _start_daemon(self) -> None:
-        """Spawn Rust daemon process."""
+        """Spawn Rust daemon process.
+
+        Security: API key is passed via NEXUS_API_KEY environment variable
+        instead of command-line arguments, to avoid exposure in process listings
+        (ps, /proc/pid/cmdline). The Rust daemon reads it via clap's env support.
+        """
         cmd = [
             self.rust_binary,
             "daemon",
             "--url",
             self.nexus_url,
-            "--api-key",
-            self.api_key,
         ]
 
         if self.agent_id:
             cmd.extend(["--agent-id", self.agent_id])
+
+        # Pass API key via environment to avoid exposure in argv
+        daemon_env = {**os.environ, "NEXUS_API_KEY": self.api_key}
 
         logger.info("Starting Rust FUSE daemon", cmd=cmd)
 
@@ -145,6 +152,7 @@ class RustFUSEClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=daemon_env,
         )
 
         # Read socket path from stdout

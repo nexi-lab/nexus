@@ -15,8 +15,8 @@ console = Console()
 
 def _get_branch_service(nx: Any) -> Any:
     """Extract ContextBranchService from NexusFS (type-safe for mypy)."""
-    services = getattr(nx, "_services", None)
-    return getattr(services, "context_branch_service", None) if services else None
+    _sys = getattr(nx, "_system_services", None)
+    return getattr(_sys, "context_branch_service", None) if _sys else None
 
 
 @click.group(name="context")

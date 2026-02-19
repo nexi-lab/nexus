@@ -18,9 +18,15 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from nexus.server.dependencies import require_admin
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v2/bricks", tags=["bricks"])
+# Public router for K8s probes — no auth required
+health_router = APIRouter(prefix="/api/v2/bricks", tags=["bricks"])
+
+# Admin router for lifecycle management — requires admin auth
+router = APIRouter(prefix="/api/v2/bricks", tags=["bricks"], dependencies=[Depends(require_admin)])
 
 
 # ---------------------------------------------------------------------------
@@ -68,11 +74,11 @@ def _get_lifecycle_manager(request: Request) -> Any:
     if nx is None:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
-    services = getattr(nx, "services", None)
-    if services is None:
-        raise HTTPException(status_code=503, detail="Kernel services not available")
+    _sys = getattr(nx, "_system_services", None)
+    if _sys is None:
+        raise HTTPException(status_code=503, detail="System services not available")
 
-    manager = getattr(services, "brick_lifecycle_manager", None)
+    manager = getattr(_sys, "brick_lifecycle_manager", None)
     if manager is None:
         raise HTTPException(status_code=503, detail="Brick lifecycle manager not available")
 
@@ -84,7 +90,7 @@ def _get_lifecycle_manager(request: Request) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/health", response_model=BrickHealthResponse)
+@health_router.get("/health", response_model=BrickHealthResponse)
 async def brick_health(
     manager: Any = Depends(_get_lifecycle_manager),
 ) -> BrickHealthResponse:

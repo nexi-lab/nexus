@@ -155,7 +155,7 @@ class InMemoryScheduler:
         self._task_map.pop(task_id, None)
 
     async def classify(self, request: AgentRequest) -> str:
-        from nexus.scheduler.constants import (
+        from nexus.bricks.scheduler.constants import (
             TIER_TO_CLASS,
             PriorityClass,
             PriorityTier,

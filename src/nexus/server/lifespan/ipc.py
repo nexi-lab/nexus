@@ -1,0 +1,89 @@
+"""IPC Brick lifespan: TTLSweeper background task.
+
+Issue: #1727, LEGO §8: Filesystem-as-IPC.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+logger = logging.getLogger(__name__)
+
+
+async def startup_ipc(app: FastAPI) -> list[asyncio.Task]:
+    """Start IPC background tasks (TTLSweeper).
+
+    Reads ``ipc_storage_driver`` and ``ipc_provisioner`` from
+    ``app.state.nexus_fs._brick_services`` and exposes them on ``app.state``
+    for the IPC REST router.
+
+    Returns list of background tasks to cancel on shutdown.
+    """
+    bg_tasks: list[asyncio.Task] = []
+
+    nx = getattr(app.state, "nexus_fs", None)
+    if nx is None:
+        return bg_tasks
+
+    brk = getattr(nx, "_brick_services", None)
+    if brk is None:
+        return bg_tasks
+
+    ipc_storage = getattr(brk, "ipc_storage_driver", None)
+    ipc_provisioner = getattr(brk, "ipc_provisioner", None)
+
+    if ipc_storage is None:
+        logger.debug("[IPC] IPC storage driver not available, skipping IPC startup")
+        return bg_tasks
+
+    # Expose IPC services on app.state for REST router access
+    app.state.ipc_storage_driver = ipc_storage
+    app.state.ipc_provisioner = ipc_provisioner
+
+    zone_id = getattr(app.state, "zone_id", None) or "root"
+
+    # Start TTLSweeper background task
+    try:
+        from nexus.ipc.sweep import TTLSweeper
+
+        sweeper = TTLSweeper(
+            storage=ipc_storage,
+            zone_id=zone_id,
+            interval=60,
+        )
+        app.state.ipc_sweeper = sweeper
+        await sweeper.start()  # creates internal asyncio.Task
+        logger.info("[IPC] TTLSweeper started (zone=%s)", zone_id)
+    except Exception as exc:
+        logger.warning("[IPC] TTLSweeper unavailable: %s", exc)
+
+    logger.info("[IPC] IPC brick ready (zone=%s)", zone_id)
+    return bg_tasks
+
+
+async def shutdown_ipc(app: FastAPI) -> None:
+    """Stop IPC background tasks."""
+    sweeper = getattr(app.state, "ipc_sweeper", None)
+    if sweeper is not None and hasattr(sweeper, "stop"):
+        try:
+            await sweeper.stop()
+            logger.info("[IPC] TTLSweeper stopped")
+        except Exception as exc:
+            logger.warning("[IPC] Error stopping TTLSweeper: %s", exc)
+
+    # Close IPCVFSDriver's background event loop
+    nx = getattr(app.state, "nexus_fs", None)
+    if nx is not None:
+        brk = getattr(nx, "_brick_services", None)
+        vfs_driver = getattr(brk, "ipc_vfs_driver", None) if brk else None
+        if vfs_driver is not None and hasattr(vfs_driver, "close"):
+            try:
+                vfs_driver.close()
+                logger.info("[IPC] IPCVFSDriver closed")
+            except Exception as exc:
+                logger.warning("[IPC] Error closing IPCVFSDriver: %s", exc)

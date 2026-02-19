@@ -22,12 +22,14 @@ if TYPE_CHECKING:
     from nexus.services.memory.memory_api import Memory
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
+    BrickServices,
     CacheConfig,
     DistributedConfig,
     KernelServices,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
+    SystemServices,
 )
 from nexus.core.export_import import (
     CollisionDetail,
@@ -87,12 +89,22 @@ class NexusFS(  # type: ignore[misc]
         distributed: DistributedConfig | None = None,
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
-        services: KernelServices | None = None,
+        kernel_services: KernelServices | None = None,
+        system_services: SystemServices | None = None,
+        brick_services: BrickServices | None = None,
         parse_fn: Any | None = None,
         content_cache: Any | None = None,
         parser_registry: ParserRegistry | None = None,
         provider_registry: Any | None = None,
         vfs_lock_manager: Any | None = None,
+        # Test injection params — "accept or build" services (Issue #2034)
+        rebac_service: Any | None = None,
+        search_service: Any | None = None,
+        events_service: Any | None = None,
+        mount_core_service: Any | None = None,
+        sync_service: Any | None = None,
+        sync_job_service: Any | None = None,
+        mount_persist_service: Any | None = None,
     ):
         """Initialize NexusFS kernel.
 
@@ -108,11 +120,20 @@ class NexusFS(  # type: ignore[misc]
             distributed: Distributed coordination config. Defaults to DistributedConfig().
             memory: Memory paging config. Defaults to MemoryConfig().
             parsing: File parsing config. Defaults to ParseConfig().
-            services: Injected service dependencies. Defaults to KernelServices().
+            kernel_services: Tier 0 kernel service dependencies. Defaults to KernelServices().
+            system_services: Tier 1 system service dependencies. Defaults to SystemServices().
+            brick_services: Tier 2 brick service dependencies. Defaults to BrickServices().
             parse_fn: Pre-built parse callback ``(bytes, str) -> bytes | None``
                 for virtual views. Created by factory.py via ParsersBrick.create_parse_fn().
             parser_registry: Injected ParserRegistry from ParsersBrick (Issue #1523).
             provider_registry: Injected ProviderRegistry from ParsersBrick (Issue #1523).
+            rebac_service: Pre-built ReBACService (test injection).
+            search_service: Pre-built SearchService (test injection).
+            events_service: Pre-built EventsService (test injection).
+            mount_core_service: Pre-built MountCoreService (test injection).
+            sync_service: Pre-built SyncService (test injection).
+            sync_job_service: Pre-built SyncJobService (test injection).
+            mount_persist_service: Pre-built MountPersistService (test injection).
         """
         # Apply defaults — config dataclasses are SSOT for default values
         cache = cache or CacheConfig()
@@ -120,7 +141,9 @@ class NexusFS(  # type: ignore[misc]
         distributed = distributed or DistributedConfig()
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
-        svc = services or KernelServices()
+        ksvc = kernel_services or KernelServices()
+        sys_svc = system_services or SystemServices()
+        brk_svc = brick_services or BrickServices()
 
         # Store config objects for introspection
         self._cache_config = cache
@@ -128,7 +151,20 @@ class NexusFS(  # type: ignore[misc]
         self._distributed_config = distributed
         self._memory_config_obj = memory
         self._parse_config = parsing
-        self._services = svc
+
+        # Store 3-tier service containers (Issue #2034)
+        self._kernel_services = ksvc
+        self._system_services = sys_svc
+        self._brick_services = brk_svc
+
+        # Store test injection params for _wire_services()
+        self._inject_rebac_service = rebac_service
+        self._inject_search_service = search_service
+        self._inject_events_service = events_service
+        self._inject_mount_core_service = mount_core_service
+        self._inject_sync_service = sync_service
+        self._inject_sync_job_service = sync_job_service
+        self._inject_mount_persist_service = mount_persist_service
 
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -173,8 +209,8 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Initialize path router (Task #23: injectable)
-        if svc.router is not None:
-            self.router = svc.router
+        if ksvc.router is not None:
+            self.router = ksvc.router
         else:
             self.router = PathRouter()
             if custom_namespaces:
@@ -222,40 +258,40 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # =====================================================================
-        # Services layer (Task #23: pure dependency injection via KernelServices)
+        # Tier 0: KERNEL services (Issue #2034: from KernelServices)
         # =====================================================================
-        self._rebac_manager = svc.rebac_manager
-        self._dir_visibility_cache = svc.dir_visibility_cache
-        self._audit_store = svc.audit_store
-        self._entity_registry = svc.entity_registry
-        self._permission_enforcer = svc.permission_enforcer
-        self._hierarchy_manager = svc.hierarchy_manager
-        self._deferred_permission_buffer = svc.deferred_permission_buffer
-        self._workspace_registry = svc.workspace_registry
-        self.mount_manager = svc.mount_manager
-        self._workspace_manager = svc.workspace_manager
-        self._write_observer = svc.write_observer
-        self._overlay_resolver = svc.overlay_resolver
-        self._wallet_provisioner = svc.wallet_provisioner
+        self._rebac_manager = ksvc.rebac_manager
+        self._dir_visibility_cache = ksvc.dir_visibility_cache
+        self._audit_store = ksvc.audit_store
+        self._entity_registry = ksvc.entity_registry
+        self._permission_enforcer = ksvc.permission_enforcer
+        self._hierarchy_manager = ksvc.hierarchy_manager
+        self._deferred_permission_buffer = ksvc.deferred_permission_buffer
+        self._workspace_registry = ksvc.workspace_registry
+        self.mount_manager = ksvc.mount_manager
+        self._workspace_manager = ksvc.workspace_manager
+        self._write_observer = ksvc.write_observer
+        self._overlay_resolver = ksvc.overlay_resolver
 
-        # Issue #1752: Transactional snapshot service (optional)
-        self._snapshot_service = getattr(svc, "snapshot_service", None)
+        # =====================================================================
+        # Tier 1: SYSTEM services (Issue #2034: from SystemServices)
+        # =====================================================================
+        self._agent_registry = sys_svc.agent_registry
+        self._namespace_manager = sys_svc.namespace_manager
+        self._async_agent_registry = sys_svc.async_agent_registry
+        self._async_namespace_manager = sys_svc.async_namespace_manager
+        self._context_branch_service = sys_svc.context_branch_service
 
-        # Kernel protocol services + async wrappers (Issue #1502)
-        self._agent_registry = svc.agent_registry
-        self._namespace_manager = svc.namespace_manager
-        self._async_agent_registry = svc.async_agent_registry
-        self._async_namespace_manager = svc.async_namespace_manager
-        self._async_vfs_router = svc.async_vfs_router
-
-        # Infrastructure services (previously created inline, now injected)
-        self._event_bus = svc.event_bus
-        self._lock_manager = svc.lock_manager
+        # =====================================================================
+        # Tier 2: BRICK services (Issue #2034: from BrickServices)
+        # =====================================================================
+        self._event_bus = brk_svc.event_bus
+        self._lock_manager = brk_svc.lock_manager
         self.enable_workflows = distributed.enable_workflows
-        self.workflow_engine = svc.workflow_engine
-
-        # Auth services — injected from server layer (Issue #1519, 3A)
-        self._api_key_creator = svc.api_key_creator
+        self.workflow_engine = brk_svc.workflow_engine
+        self._wallet_provisioner = brk_svc.wallet_provisioner
+        self._snapshot_service = brk_svc.snapshot_service
+        self._api_key_creator = brk_svc.api_key_creator
 
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
@@ -272,7 +308,9 @@ class NexusFS(  # type: ignore[misc]
         }
 
         # Issue #372: Sandbox manager - lazy initialization
-        from nexus.sandbox.sandbox_manager import SandboxManager
+        # TODO(#2032): Extract SandboxProtocol to services/protocols/ and
+        # inject via factory.py DI instead of importing the brick directly.
+        from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
         self._sandbox_manager: SandboxManager | None = None
 
@@ -315,7 +353,7 @@ class NexusFS(  # type: ignore[misc]
             self._read_tracking_enabled = True
 
         # Issue #1519: Cache observer — decouples kernel from ReadSetAwareCache
-        self._cache_observer = svc.cache_observer
+        self._cache_observer = ksvc.cache_observer
         if self._cache_observer is None and self._read_set_cache is not None:
             from nexus.core.cache_invalidation import ReadSetCacheObserver
 
@@ -327,15 +365,18 @@ class NexusFS(  # type: ignore[misc]
     def _wire_services(self) -> None:
         """Wire services that require a reference to self (NexusFS).
 
-        Called at end of __init__. Services follow "accept or build" pattern
-        (Issue #1519, 4B): if pre-built via KernelServices, use that instance;
-        otherwise build internally. This enables factory pre-wiring and
-        test-time mock injection.
-        """
-        svc = self._services
+        Called at end of __init__. Services follow "accept or build" pattern:
+        if pre-built via constructor injection params, use that instance;
+        otherwise build internally. This enables test-time mock injection.
 
-        # VersionService: injected by factory (Task #45)
-        self.version_service = svc.version_service
+        Issue #2034: Service sources are now the 3-tier containers
+        (KernelServices, SystemServices, BrickServices) + explicit constructor
+        params for "accept or build" services.
+        """
+        brk_svc = self._brick_services
+
+        # VersionService: injected by factory (Task #45) — from kernel tier
+        self.version_service = self._kernel_services.version_service
 
         # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
         from nexus.services.llm_service import LLMService
@@ -345,8 +386,8 @@ class NexusFS(  # type: ignore[misc]
         from nexus.services.search_service import SearchService
 
         # ReBACService: Permission and access control operations
-        if svc.rebac_service is not None:
-            self.rebac_service = svc.rebac_service
+        if self._inject_rebac_service is not None:
+            self.rebac_service = self._inject_rebac_service
         else:
             from nexus.services.rebac_service import ReBACService
 
@@ -354,7 +395,7 @@ class NexusFS(  # type: ignore[misc]
                 rebac_manager=self._rebac_manager,
                 enforce_permissions=self._enforce_permissions,
                 enable_audit_logging=True,
-                circuit_breaker=self._services.rebac_circuit_breaker,
+                circuit_breaker=brk_svc.rebac_circuit_breaker,
             )
 
         # MountService: Dynamic backend mounting operations
@@ -386,29 +427,29 @@ class NexusFS(  # type: ignore[misc]
         self._gateway = NexusFSGateway(self)
 
         # Mount/sync services: accept pre-built or create (Issue #655)
-        if svc.mount_core_service is not None:
-            self._mount_core_service = svc.mount_core_service
+        if self._inject_mount_core_service is not None:
+            self._mount_core_service = self._inject_mount_core_service
         else:
             from nexus.services.mount_core_service import MountCoreService
 
             self._mount_core_service = MountCoreService(self._gateway)
 
-        if svc.sync_service is not None:
-            self._sync_service = svc.sync_service
+        if self._inject_sync_service is not None:
+            self._sync_service = self._inject_sync_service
         else:
             from nexus.services.sync_service import SyncService
 
             self._sync_service = SyncService(self._gateway)
 
-        if svc.sync_job_service is not None:
-            self._sync_job_service = svc.sync_job_service
+        if self._inject_sync_job_service is not None:
+            self._sync_job_service = self._inject_sync_job_service
         else:
             from nexus.services.sync_job_service import SyncJobService
 
             self._sync_job_service = SyncJobService(self._gateway, self._sync_service)
 
-        if svc.mount_persist_service is not None:
-            self._mount_persist_service = svc.mount_persist_service
+        if self._inject_mount_persist_service is not None:
+            self._mount_persist_service = self._inject_mount_persist_service
         else:
             from nexus.services.mount_persist_service import MountPersistService
 
@@ -418,9 +459,9 @@ class NexusFS(  # type: ignore[misc]
                 sync_service=self._sync_service,
             )
 
-        # TaskQueueService: accept pre-built (Issue #655)
-        if svc.task_queue_service is not None:
-            self.task_queue_service = svc.task_queue_service
+        # TaskQueueService: from brick tier (Issue #655)
+        if brk_svc.task_queue_service is not None:
+            self.task_queue_service = brk_svc.task_queue_service
 
         # SkillService: Skill management
         from nexus.services.skill_service import SkillService as _SkillService
@@ -428,8 +469,8 @@ class NexusFS(  # type: ignore[misc]
         self.skill_service = _SkillService(gateway=self._gateway)
 
         # SearchService: Search operations
-        if svc.search_service is not None:
-            self.search_service = svc.search_service
+        if self._inject_search_service is not None:
+            self.search_service = self._inject_search_service
         else:
             self.search_service = SearchService(
                 metadata_store=self.metadata,
@@ -451,8 +492,8 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # EventsService: File watching + advisory locking
-        if svc.events_service is not None:
-            self.events_service = svc.events_service
+        if self._inject_events_service is not None:
+            self.events_service = self._inject_events_service
         else:
             from nexus.services.events_service import EventsService
 
@@ -467,23 +508,6 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=None,
                 metadata_cache=metadata_cache,
             )
-
-    @property
-    def _service_extras(self) -> dict[str, Any]:
-        """Server layer reads typed service fields as a dict interface."""
-        _fields = (
-            "observability_subsystem",
-            "chunked_upload_service",
-            "manifest_resolver",
-            "manifest_metrics",
-            "rebac_circuit_breaker",
-            "tool_namespace_middleware",
-            "resiliency_manager",
-            "delivery_worker",
-        )
-        return {
-            k: getattr(self._services, k) for k in _fields if getattr(self._services, k) is not None
-        }
 
     @property
     def read_set_cache(self) -> Any | None:
@@ -6079,7 +6103,7 @@ class NexusFS(  # type: ignore[misc]
         if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
             import os
 
-            from nexus.sandbox.sandbox_manager import SandboxManager
+            from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
             # Pass config if available (needed for Docker provider initialization)
@@ -6094,7 +6118,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Attach smart router if providers are available (Issue #1317)
             if self._sandbox_manager.providers:
-                from nexus.sandbox.sandbox_router import SandboxRouter
+                from nexus.bricks.sandbox.sandbox_router import SandboxRouter
 
                 self._sandbox_manager._router = SandboxRouter(
                     available_providers=self._sandbox_manager.providers,

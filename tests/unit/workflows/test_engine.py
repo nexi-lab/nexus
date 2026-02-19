@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.workflows.engine import WorkflowEngine
-from nexus.workflows.types import (
+from nexus.bricks.workflows.engine import WorkflowEngine
+from nexus.bricks.workflows.types import (
     TriggerType,
     WorkflowAction,
     WorkflowContext,

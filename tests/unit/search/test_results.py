@@ -187,10 +187,8 @@ class TestBaseSearchResultMigration:
         assert result.vector_score == 0.9
 
     def test_semantic_search_result_compat(self) -> None:
-        """SemanticSearchResult should still work as BaseSearchResult subclass."""
-        from nexus.search.semantic import SemanticSearchResult
-
-        result = SemanticSearchResult(
+        """SemanticSearchResult (now BaseSearchResult alias) should work with ranking fields."""
+        result = BaseSearchResult(
             path="/src/test.py",
             chunk_text="test",
             score=0.85,
@@ -235,9 +233,9 @@ class TestBaseSearchResultMigration:
         ("result_cls", "extra_kwargs"),
         [
             pytest.param(
-                "SemanticSearchResult",
+                "BaseSearchResult",
                 {"matched_field": "content", "attribute_boost": 1.0, "original_score": 0.5},
-                id="semantic",
+                id="base-with-ranking",
             ),
             pytest.param(
                 "SearchResult",
@@ -254,8 +252,8 @@ class TestBaseSearchResultMigration:
     def test_all_subclasses_share_base_fields(self, result_cls: str, extra_kwargs: dict) -> None:
         """All result subclasses should share identical base field behavior."""
         # Import dynamically
-        if result_cls == "SemanticSearchResult":
-            from nexus.search.semantic import SemanticSearchResult as cls
+        if result_cls == "BaseSearchResult":
+            cls = BaseSearchResult
         elif result_cls == "SearchResult":
             from nexus.search.daemon import SearchResult as cls
         else:

@@ -305,6 +305,5 @@ def _startup_cache_warmup(app: FastAPI) -> None:
 def _startup_circuit_breaker(app: FastAPI) -> None:
     """Wire circuit breaker from factory for health endpoint access (Issue #726)."""
     if app.state.nexus_fs:
-        app.state.rebac_circuit_breaker = app.state.nexus_fs._service_extras.get(
-            "rebac_circuit_breaker"
-        )
+        _brk = getattr(app.state.nexus_fs, "_brick_services", None)
+        app.state.rebac_circuit_breaker = getattr(_brk, "rebac_circuit_breaker", None)

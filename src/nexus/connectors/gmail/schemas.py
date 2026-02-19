@@ -26,13 +26,11 @@ Example email composition:
 
 from __future__ import annotations
 
-import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
-# Email address pattern (simplified RFC 5322)
-EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+from nexus.contracts.validators import EmailAddress, EmailList, EmailListRequired
 
 
 class Recipient(BaseModel):
@@ -41,16 +39,8 @@ class Recipient(BaseModel):
     Can be specified as just an email string or with full details.
     """
 
-    email: Annotated[str, Field(description="Recipient email address")]
+    email: Annotated[EmailAddress, Field(description="Recipient email address")]
     name: Annotated[str | None, Field(default=None, description="Display name (optional)")]
-
-    @field_validator("email")
-    @classmethod
-    def validate_email(cls, v: str) -> str:
-        """Validate email format."""
-        if not EMAIL_PATTERN.match(v):
-            raise ValueError(f"Invalid email address format: {v}")
-        return v.lower()
 
 
 class Attachment(BaseModel):
@@ -101,18 +91,9 @@ class SendEmailSchema(BaseModel):
             description="Explanation of why this email is being sent (required for audit)",
         ),
     ]
-    to: Annotated[
-        list[str],
-        Field(min_length=1, description="List of recipient email addresses"),
-    ]
-    cc: Annotated[
-        list[str] | None,
-        Field(default=None, description="CC recipients (optional)"),
-    ]
-    bcc: Annotated[
-        list[str] | None,
-        Field(default=None, description="BCC recipients (optional)"),
-    ]
+    to: Annotated[EmailListRequired, Field(description="List of recipient email addresses")]
+    cc: Annotated[EmailList, Field(default=None, description="CC recipients (optional)")]
+    bcc: Annotated[EmailList, Field(default=None, description="BCC recipients (optional)")]
     subject: Annotated[
         str,
         Field(min_length=1, max_length=998, description="Email subject line"),
@@ -137,19 +118,6 @@ class SendEmailSchema(BaseModel):
         bool,
         Field(default=False, description="Set to true to confirm sending"),
     ]
-
-    @field_validator("to", "cc", "bcc", mode="before")
-    @classmethod
-    def validate_email_list(cls, v: list[str] | None) -> list[str] | None:
-        """Validate all emails in list."""
-        if v is None:
-            return None
-        validated = []
-        for email in v:
-            if not EMAIL_PATTERN.match(email):
-                raise ValueError(f"Invalid email address: {email}")
-            validated.append(email.lower())
-        return validated
 
     @model_validator(mode="after")
     def validate_confirm_required(self) -> SendEmailSchema:
@@ -206,8 +174,7 @@ class ReplyEmailSchema(BaseModel):
         Field(default=False, description="Reply to all recipients"),
     ]
     additional_to: Annotated[
-        list[str] | None,
-        Field(default=None, description="Additional recipients to add"),
+        EmailList, Field(default=None, description="Additional recipients to add")
     ]
     attachments: Annotated[
         list[Attachment] | None,
@@ -255,14 +222,8 @@ class ForwardEmailSchema(BaseModel):
         str,
         Field(description="Gmail message ID to forward"),
     ]
-    to: Annotated[
-        list[str],
-        Field(min_length=1, description="Forward recipients"),
-    ]
-    cc: Annotated[
-        list[str] | None,
-        Field(default=None, description="CC recipients"),
-    ]
+    to: Annotated[EmailListRequired, Field(description="Forward recipients")]
+    cc: Annotated[EmailList, Field(default=None, description="CC recipients")]
     comment: Annotated[
         str | None,
         Field(default=None, description="Comment to add before forwarded content"),
@@ -275,19 +236,6 @@ class ForwardEmailSchema(BaseModel):
         bool,
         Field(default=False, description="Set to true to confirm forwarding"),
     ]
-
-    @field_validator("to", "cc", mode="before")
-    @classmethod
-    def validate_email_list(cls, v: list[str] | None) -> list[str] | None:
-        """Validate all emails in list."""
-        if v is None:
-            return None
-        validated = []
-        for email in v:
-            if not EMAIL_PATTERN.match(email):
-                raise ValueError(f"Invalid email address: {email}")
-            validated.append(email.lower())
-        return validated
 
     @model_validator(mode="after")
     def validate_confirm_required(self) -> ForwardEmailSchema:
@@ -323,14 +271,8 @@ class DraftEmailSchema(BaseModel):
             description="Explanation of why this draft is being created",
         ),
     ]
-    to: Annotated[
-        list[str] | None,
-        Field(default=None, description="Recipients (optional for drafts)"),
-    ]
-    cc: Annotated[
-        list[str] | None,
-        Field(default=None, description="CC recipients"),
-    ]
+    to: Annotated[EmailList, Field(default=None, description="Recipients (optional for drafts)")]
+    cc: Annotated[EmailList, Field(default=None, description="CC recipients")]
     subject: Annotated[
         str | None,
         Field(default=None, description="Subject line"),
@@ -347,16 +289,3 @@ class DraftEmailSchema(BaseModel):
         str | None,
         Field(default=None, description="Thread ID if this is a reply draft"),
     ]
-
-    @field_validator("to", "cc", mode="before")
-    @classmethod
-    def validate_email_list(cls, v: list[str] | None) -> list[str] | None:
-        """Validate all emails in list."""
-        if v is None:
-            return None
-        validated = []
-        for email in v:
-            if not EMAIL_PATTERN.match(email):
-                raise ValueError(f"Invalid email address: {email}")
-            validated.append(email.lower())
-        return validated

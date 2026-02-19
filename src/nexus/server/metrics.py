@@ -172,3 +172,19 @@ def setup_prometheus() -> None:
     version = get_nexus_version()
     NEXUS_INFO.info({"version": version})
     logger.info("Prometheus metrics initialized (version=%s)", version)
+
+
+def shutdown_prometheus() -> None:
+    """Unregister custom Prometheus collectors.
+
+    Issue #2072: Proper Prometheus shutdown for clean process exit
+    and test isolation.
+    """
+    import contextlib
+
+    from prometheus_client import REGISTRY
+
+    for collector in (REQUEST_DURATION, REQUEST_COUNT, REQUESTS_IN_PROGRESS, NEXUS_INFO):
+        with contextlib.suppress(Exception):
+            REGISTRY.unregister(collector)
+    logger.info("Prometheus metrics shut down")

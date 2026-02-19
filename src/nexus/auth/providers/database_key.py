@@ -113,19 +113,24 @@ class DatabaseAPIKeyAuth(AuthProvider):
         """Fire-and-forget update of last_used_at (Decision #13).
 
         Runs in a separate session so it doesn't block the auth response.
-        Failures are logged but don't affect authentication.
+        Failures are logged at WARNING but don't affect authentication.
+        Uses a single UPDATE statement (no SELECT round-trip needed).
         """
+        from sqlalchemy import update
+        from sqlalchemy.exc import OperationalError, ProgrammingError
+
         try:
             from nexus.storage.models import APIKeyModel
 
             with self.session_factory() as session:
-                stmt = select(APIKeyModel).where(APIKeyModel.key_hash == token_hash)
-                api_key = session.scalar(stmt)
-                if api_key:
-                    api_key.last_used_at = datetime.now(UTC)
-                    session.commit()
-        except Exception:
-            logger.debug("Failed to update last_used_at (non-critical)", exc_info=True)
+                session.execute(
+                    update(APIKeyModel)
+                    .where(APIKeyModel.key_hash == token_hash)
+                    .values(last_used_at=datetime.now(UTC))
+                )
+                session.commit()
+        except (OperationalError, ProgrammingError):
+            logger.warning("Failed to update last_used_at (non-critical)", exc_info=True)
 
     async def validate_token(self, token: str) -> bool:
         result = await self.authenticate(token)
@@ -197,8 +202,14 @@ class DatabaseAPIKeyAuth(AuthProvider):
         return (api_key.key_id, raw_key)
 
     @classmethod
-    def revoke_key(cls, session: Session, key_id: str) -> bool:
+    def revoke_key(cls, session: Session, key_id: str, *, zone_id: str | None = None) -> bool:
         """Revoke an API key.
+
+        Args:
+            session: SQLAlchemy session.
+            key_id: Key ID to revoke.
+            zone_id: Zone isolation filter. When provided, only keys
+                belonging to this zone can be revoked.
 
         Returns:
             True if key was revoked, False if not found.
@@ -206,6 +217,8 @@ class DatabaseAPIKeyAuth(AuthProvider):
         from nexus.storage.models import APIKeyModel
 
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
+        if zone_id is not None:
+            stmt = stmt.where(APIKeyModel.zone_id == zone_id)
         api_key = session.scalar(stmt)
 
         if not api_key:

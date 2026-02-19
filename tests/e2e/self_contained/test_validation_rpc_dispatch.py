@@ -109,13 +109,13 @@ class TestCodeExecutionResultValidations:
     """Verify CodeExecutionResult carries validations correctly."""
 
     def test_default_no_validations(self):
-        from nexus.sandbox.sandbox_provider import CodeExecutionResult
+        from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
 
         result = CodeExecutionResult(stdout="", stderr="", exit_code=0, execution_time=0.1)
         assert result.validations is None
 
     def test_with_validations(self):
-        from nexus.sandbox.sandbox_provider import CodeExecutionResult
+        from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
 
         v = ValidationResult(validator="ruff", passed=True)
         result = CodeExecutionResult(
@@ -127,7 +127,7 @@ class TestCodeExecutionResultValidations:
 
     def test_dataclass_asdict_with_validations(self):
         """Verify dataclasses.asdict works for RPC serialization."""
-        from nexus.sandbox.sandbox_provider import CodeExecutionResult
+        from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
 
         result = CodeExecutionResult(stdout="out", stderr="err", exit_code=0, execution_time=0.1)
         d = dataclasses.asdict(result)
@@ -191,7 +191,7 @@ class TestPerformanceCharacteristics:
         """Detection uses exactly one ls command."""
         from unittest.mock import AsyncMock
 
-        from nexus.sandbox.sandbox_provider import CodeExecutionResult
+        from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
         from nexus.validation.detector import detect_project_validators
 
         provider = AsyncMock()

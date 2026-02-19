@@ -27,7 +27,12 @@ from nexus.search.results import BaseSearchResult
 if TYPE_CHECKING:
     from nexus.search.embeddings import EmbeddingProvider
     from nexus.search.graph_store import Entity, GraphStore, Relationship
-    from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+    from nexus.search.protocols import SearchableProtocol
+    from nexus.search.results import BaseSearchResult as SemanticSearchResult
+
+# Issue #2075: SemanticSearch replaced by SearchableProtocol.
+# Type alias kept for backward compat in annotations.
+SemanticSearch = Any  # duck-typed: needs .search() and .embedding_provider
 
 # Type alias for HierarchicalMemoryManager (Issue #1520: avoid nexus.services import)
 HierarchicalMemoryManager = Any
@@ -337,7 +342,7 @@ class GraphEnhancedRetriever:
 
     def __init__(
         self,
-        semantic_search: SemanticSearch,
+        semantic_search: SearchableProtocol | Any,
         graph_store: GraphStore | None = None,
         hierarchy_manager: HierarchicalMemoryManager | None = None,
         embedding_provider: EmbeddingProvider | None = None,
@@ -346,7 +351,7 @@ class GraphEnhancedRetriever:
         """Initialize graph-enhanced retriever.
 
         Args:
-            semantic_search: SemanticSearch instance for keyword+vector search
+            semantic_search: Any object with .search() and .embedding_provider
             graph_store: GraphStore instance for entity operations (optional)
             hierarchy_manager: HierarchicalMemoryManager for theme search (optional)
             embedding_provider: EmbeddingProvider for query embeddings (optional,

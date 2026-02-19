@@ -1,7 +1,7 @@
 """Payment service protocol (Issue #1357).
 
 Defines the contract for payment protocol implementations.
-Concrete implementations live in ``nexus.pay.protocol``.
+Concrete implementations live in ``nexus.bricks.pay.protocol``.
 
 Storage Affinity: **RecordStore** — transaction records + audit trail.
 
@@ -16,8 +16,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.pay.audit_types import TransactionProtocol
-    from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
+    from nexus.bricks.pay.audit_types import TransactionProtocol
+    from nexus.bricks.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 
 
 @runtime_checkable

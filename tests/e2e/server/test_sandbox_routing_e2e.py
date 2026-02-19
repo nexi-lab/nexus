@@ -31,9 +31,9 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not MONTY_AVAILABLE, reason="pydantic-monty not installed")
 
-from nexus.sandbox.sandbox_manager import SandboxManager  # noqa: E402
-from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
-from nexus.sandbox.sandbox_provider import (  # noqa: E402
+from nexus.bricks.sandbox.sandbox_manager import SandboxManager  # noqa: E402
+from nexus.bricks.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
+from nexus.bricks.sandbox.sandbox_provider import (  # noqa: E402
     CodeExecutionResult,
     SandboxProvider,
 )
@@ -186,7 +186,7 @@ class TestLogValidation:
         """Router logs tier selection decisions."""
         _, router = full_stack
 
-        with caplog.at_level(logging.DEBUG, logger="nexus.sandbox"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.bricks.sandbox"):
             # History-based override triggers debug log
             for _ in range(8):
                 router.record_execution("agent-log", "docker", escalated=False)
@@ -199,7 +199,7 @@ class TestLogValidation:
         """Escalation events are logged."""
         _, router = full_stack
 
-        with caplog.at_level(logging.INFO, logger="nexus.sandbox"):
+        with caplog.at_level(logging.INFO, logger="nexus.bricks.sandbox"):
             router.record_escalation("agent-log-esc", "monty", "docker")
 
         assert any("escalation" in r.message.lower() for r in caplog.records)

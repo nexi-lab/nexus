@@ -139,8 +139,9 @@ class TestVerifyImportsErrors:
         from nexus.search.manifest import verify_imports
 
         result = verify_imports()
-        # These core modules should always be importable
-        assert result.get("nexus.search.semantic") is True
+        # These core modules should always be importable (Issue #2075: CQRS split)
+        assert result.get("nexus.search.query_service") is True
+        assert result.get("nexus.search.indexing_service") is True
         assert result.get("nexus.search.fusion") is True
         assert result.get("nexus.search.chunking") is True
         assert result.get("nexus.search.embeddings") is True
@@ -165,13 +166,13 @@ class TestVerifyImportsErrors:
         original_import = importlib.import_module
 
         def mock_import(name: str) -> Any:
-            if name == "nexus.search.async_search":
+            if name == "nexus.search.query_service":
                 raise ImportError(f"No module named '{name}'")
             return original_import(name)
 
         with patch("importlib.import_module", side_effect=mock_import):
             result = verify_imports()
-            assert result["nexus.search.async_search"] is False
+            assert result["nexus.search.query_service"] is False
 
 
 # =============================================================================
@@ -179,60 +180,63 @@ class TestVerifyImportsErrors:
 # =============================================================================
 
 
-class TestSemanticSearchErrors:
-    """Test SemanticSearch error conditions."""
-
-    def test_init_requires_engine(self) -> None:
-        """SemanticSearch should raise RuntimeError without engine."""
-        from nexus.search.semantic import SemanticSearch
-
-        nx = MagicMock()
-        with pytest.raises(RuntimeError, match="requires a SQL engine"):
-            SemanticSearch(nx=nx, engine=None)
+class TestQueryServiceErrors:
+    """Test QueryService error conditions (migrated from SemanticSearch, Issue #2075)."""
 
     @pytest.mark.asyncio
     async def test_semantic_search_without_embedding_provider(self) -> None:
         """Semantic search mode should raise when no embedding provider."""
-        from nexus.search.semantic import SemanticSearch
+        from nexus.search.query_service import QueryService
 
-        nx = MagicMock()
-        engine = MagicMock()
-        engine.dialect.name = "sqlite"
+        vector_db = MagicMock()
+        vector_db.vec_available = True
+        session_factory = MagicMock()
 
-        ss = SemanticSearch(nx=nx, engine=engine, embedding_provider=None)
+        qs = QueryService(
+            vector_db=vector_db,
+            session_factory=session_factory,
+            embedding_provider=None,
+        )
 
         with pytest.raises(ValueError, match="requires an embedding provider"):
-            await ss.search("test", search_mode="semantic")
+            await qs.search("test", search_mode="semantic")
 
     @pytest.mark.asyncio
     async def test_hybrid_search_without_embedding_provider(self) -> None:
         """Hybrid search mode should raise when no embedding provider."""
-        from nexus.search.semantic import SemanticSearch
+        from nexus.search.query_service import QueryService
 
-        nx = MagicMock()
-        engine = MagicMock()
-        engine.dialect.name = "sqlite"
+        vector_db = MagicMock()
+        vector_db.vec_available = True
+        session_factory = MagicMock()
 
-        ss = SemanticSearch(nx=nx, engine=engine, embedding_provider=None)
+        qs = QueryService(
+            vector_db=vector_db,
+            session_factory=session_factory,
+            embedding_provider=None,
+        )
 
         with pytest.raises(ValueError, match="requires an embedding provider"):
-            await ss.search("test", search_mode="hybrid")
+            await qs.search("test", search_mode="hybrid")
 
     @pytest.mark.asyncio
     async def test_hybrid_search_without_vec_extension(self) -> None:
         """Hybrid search should raise when vector extension unavailable."""
-        from nexus.search.semantic import SemanticSearch
+        from nexus.search.query_service import QueryService
 
-        nx = MagicMock()
-        engine = MagicMock()
-        engine.dialect.name = "sqlite"
-
+        vector_db = MagicMock()
+        vector_db.vec_available = False
+        session_factory = MagicMock()
         emb = MagicMock()
-        ss = SemanticSearch(nx=nx, engine=engine, embedding_provider=emb)
-        ss.vector_db.vec_available = False
 
-        with pytest.raises(ValueError, match="requires vector database extension"):
-            await ss.search("test", search_mode="hybrid")
+        qs = QueryService(
+            vector_db=vector_db,
+            session_factory=session_factory,
+            embedding_provider=emb,
+        )
+
+        with pytest.raises(ValueError, match="requires a vector database extension"):
+            await qs.search("test", search_mode="hybrid")
 
 
 # =============================================================================

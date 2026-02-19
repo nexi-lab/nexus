@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, Discriminator, Field, Tag, model_validator
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusFileNotFoundError,

@@ -232,7 +232,7 @@ class HandlerResponse(Generic[T]):
             HandlerResponse with appropriate status
         """
         # Import here to avoid circular imports
-        from nexus.core.exceptions import ConflictError, NexusFileNotFoundError
+        from nexus.contracts.exceptions import ConflictError, NexusFileNotFoundError
 
         # Get path from exception if not provided
         exc_path = path or getattr(e, "path", None)
@@ -292,7 +292,7 @@ class HandlerResponse(Generic[T]):
             return self.data  # type: ignore[return-value]
 
         # Import here to avoid circular imports
-        from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+        from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 
         if self.resp_type == ResponseType.NOT_FOUND:
             raise NexusFileNotFoundError(

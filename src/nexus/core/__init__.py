@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 # =============================================================================
 # Lightweight imports (always loaded) - these are fast
 # =============================================================================
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     AccessDeniedError,
     BackendError,
     InvalidPathError,

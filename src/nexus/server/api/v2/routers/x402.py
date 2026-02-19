@@ -17,12 +17,18 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from nexus.server.dependencies import require_auth
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/x402", tags=["x402"])
+# Public router for webhook (called by external x402 facilitator)
+webhook_router = APIRouter(prefix="/x402", tags=["x402"])
+
+# Auth'd router for topup/config (called by authenticated agents)
+router = APIRouter(prefix="/x402", tags=["x402"], dependencies=[Depends(require_auth)])
 
 
 # =============================================================================
@@ -115,7 +121,7 @@ def get_credits_service(request: Request) -> Any:
 # =============================================================================
 
 
-@router.post("/webhook", response_model=WebhookResponse)
+@webhook_router.post("/webhook", response_model=WebhookResponse)
 async def x402_webhook(
     payload: WebhookPayload,
     x402_client: Any = Depends(get_x402_client),
@@ -236,4 +242,4 @@ async def get_x402_config(
 # Module Exports
 # =============================================================================
 
-__all__ = ["router"]
+__all__ = ["router", "webhook_router"]

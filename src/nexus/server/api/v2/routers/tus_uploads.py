@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
+from nexus.server.dependencies import require_auth
+
 if TYPE_CHECKING:
     from nexus.services.chunked_upload_service import ChunkedUploadService
 
@@ -72,17 +74,20 @@ def _parse_upload_metadata(raw: str | None) -> dict[str, str]:
 
 def create_tus_uploads_router(
     get_upload_service: object,
-) -> APIRouter:
-    """Factory function to create the tus uploads router.
+) -> tuple[APIRouter, APIRouter]:
+    """Factory function to create the tus uploads routers.
 
     Args:
         get_upload_service: Callable that returns the ChunkedUploadService.
             Follows the same factory pattern as create_async_files_router().
 
     Returns:
-        Configured APIRouter for tus endpoints.
+        Tuple of (public_router, auth_router). The public router contains
+        only the OPTIONS endpoint (for CORS preflight). The auth router
+        contains all other endpoints requiring authentication.
     """
-    router = APIRouter(tags=["uploads"])
+    public_router = APIRouter(tags=["uploads"])
+    router = APIRouter(tags=["uploads"], dependencies=[Depends(require_auth)])
 
     def _get_service() -> ChunkedUploadService:
         svc: ChunkedUploadService | None = get_upload_service()  # type: ignore[operator]
@@ -90,9 +95,9 @@ def create_tus_uploads_router(
             raise HTTPException(status_code=503, detail="Upload service not available")
         return svc
 
-    # --- OPTIONS: Server capabilities ---
+    # --- OPTIONS: Server capabilities (public — no auth required) ---
 
-    @router.options("")
+    @public_router.options("")
     async def tus_options() -> Response:
         """Return tus server capabilities."""
         service = _get_service()
@@ -303,4 +308,4 @@ def create_tus_uploads_router(
             headers={"Tus-Resumable": TUS_RESUMABLE},
         )
 
-    return router
+    return public_router, router

@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.types import OperationContext
 from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.permissions import OperationContext
 
 
 class _StubFS:

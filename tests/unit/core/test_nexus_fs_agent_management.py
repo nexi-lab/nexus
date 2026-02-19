@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import APIKeyModel
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -542,7 +542,7 @@ class TestDeleteAgentCleanup:
 
         # Manually remove directory - use admin context to bypass permission checks
         agent_dir = "/agent/alice/test_agent"
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         ctx = nx._parse_context(context)
         # Create admin context to bypass permission checks

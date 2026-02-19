@@ -213,10 +213,8 @@ class TestCacheMixinBulkOperations:
 
         # Test bulk read (should use single disk bulk call via read_meta_bulk)
         file_cache = FileContentCache(tmp_path / "cache")
-        with (
-            patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache),
-            patch.object(file_cache, "read_meta_bulk", return_value={}) as mock_bulk_meta,
-        ):
+        backend._cache_service._file_cache = file_cache
+        with patch.object(file_cache, "read_meta_bulk", return_value={}) as mock_bulk_meta:
             paths = [f"/test/file{i}.txt" for i in range(100)]
             backend.read_bulk_from_cache(paths)
 

@@ -521,8 +521,8 @@ class Memory:
         import json
         import os
 
-        from nexus.core.sync_bridge import run_sync
         from nexus.bricks.search.graph_store import GraphStore
+        from nexus.core.sync_bridge import run_sync
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Get database URL from session's engine

@@ -275,24 +275,13 @@ class QueryService:
         return int(new_limit)
 
     def _get_or_create_context_builder(self) -> Any:
-        if self._context_builder is not None:
-            return self._context_builder
-        try:
-            from nexus.services.llm_context_builder import (
-                AdaptiveRetrievalConfig,
-                ContextBuilder,
-            )
+        """Return the injected AdaptiveKProtocol provider, or None.
 
-            self._context_builder = ContextBuilder(
-                adaptive_config=AdaptiveRetrievalConfig(),
-            )
-            return self._context_builder
-        except Exception:
-            logger.warning(
-                "Failed to initialise ContextBuilder for adaptive-k; falling back to fixed limit",
-                exc_info=True,
-            )
-            return None
+        Issue #2036: Replaced lazy import of ``nexus.services.llm_context_builder``
+        with protocol-based DI.  The ``context_builder`` is now injected via the
+        constructor by the composition root (factory.py).
+        """
+        return self._context_builder
 
     # ------------------------------------------------------------------
     # Validation helpers

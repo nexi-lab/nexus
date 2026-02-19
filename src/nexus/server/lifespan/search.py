@@ -71,6 +71,26 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
 
         app.state.search_daemon._file_reader = _NexusFSFileReader(app.state.nexus_fs)
 
+        # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
+        with contextlib.suppress(Exception):
+            from nexus.services.llm_context_builder import ContextBuilder
+
+            app.state.search_daemon._adaptive_k_provider = ContextBuilder()
+
+        # Issue #2036: Register with BrickLifecycleManager
+        _blm = getattr(app.state, "brick_lifecycle_manager", None)
+        if _blm is not None:
+            with contextlib.suppress(Exception):
+                from nexus.bricks.search.lifecycle_adapter import (
+                    SearchBrickLifecycleAdapter,
+                )
+
+                _blm.register(
+                    "search",
+                    SearchBrickLifecycleAdapter(app.state.search_daemon),
+                    protocol_name="SearchBrickProtocol",
+                )
+
         stats = app.state.search_daemon.get_stats()
         logger.info(
             f"Search Daemon started: {stats['bm25_documents']} docs indexed, "

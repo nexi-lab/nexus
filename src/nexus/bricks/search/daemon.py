@@ -177,6 +177,9 @@ class SearchDaemon:
         # Issue #1520: Replaces direct NexusFS dependency
         self._file_reader: Any = None
 
+        # Issue #2036: Injected adaptive-k provider (replaces lazy import)
+        self._adaptive_k_provider: Any = None
+
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
         self._max_latency_samples = 1000
@@ -460,13 +463,10 @@ class SearchDaemon:
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
 
-        # Apply adaptive k if enabled (Issue #1021)
-        if adaptive_k:
-            from nexus.services.llm_context_builder import ContextBuilder
-
-            context_builder = ContextBuilder()
+        # Apply adaptive k if enabled (Issue #1021, #2036: protocol-based DI)
+        if adaptive_k and self._adaptive_k_provider is not None:
             original_limit = limit
-            limit = context_builder.calculate_k_dynamic(query, k_base=limit)
+            limit = self._adaptive_k_provider.calculate_k_dynamic(query, k_base=limit)
             if limit != original_limit:
                 logger.info(
                     "[SEARCH-DAEMON] Adaptive k applied: %d -> %d for query: %s",

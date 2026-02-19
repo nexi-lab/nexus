@@ -67,7 +67,6 @@ def verify_imports() -> dict[str, bool]:
         "nexus.bricks.search.bm25s_search",
         "nexus.bricks.search.zoekt_client",
         "nexus.bricks.search.graph_store",
-        "nexus.core.trigram_fast",
     ]:
         try:
             importlib.import_module(mod)

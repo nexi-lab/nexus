@@ -22,7 +22,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.bricks.search import AsyncSemanticSearch  # noqa: F811 — removed in #2075, raises RuntimeError
 from nexus.bricks.search.chunking import ChunkStrategy, DocumentChunker
 from nexus.bricks.search.contextual_chunking import (
     ChunkContext,
@@ -30,6 +29,9 @@ from nexus.bricks.search.contextual_chunking import (
     ContextualChunkingConfig,
     create_context_generator,
 )
+
+# Issue #2036: AsyncSemanticSearch removed; stub for skipped tests below
+AsyncSemanticSearch = None  # type: ignore[assignment]  # dead code in skipped tests
 
 # Use small chunk size so the test doc produces multiple chunks
 SMALL_CHUNKER = DocumentChunker(chunk_size=40, strategy=ChunkStrategy.FIXED)

@@ -24,10 +24,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
-from nexus.core import glob_fast, grep_fast, trigram_fast
-from nexus.core.exceptions import PermissionDeniedError
-from nexus.core.permissions import Permission
-from nexus.core.rpc_decorator import rpc_expose
 from nexus.bricks.search.strategies import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
@@ -39,6 +35,10 @@ from nexus.bricks.search.strategies import (
     GlobStrategy,
     SearchStrategy,
 )
+from nexus.core import glob_fast, grep_fast, trigram_fast
+from nexus.core.exceptions import PermissionDeniedError
+from nexus.core.permissions import Permission
+from nexus.core.rpc_decorator import rpc_expose
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.search_semantic import SemanticSearchMixin
 

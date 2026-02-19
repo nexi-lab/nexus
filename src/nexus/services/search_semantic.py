@@ -163,11 +163,22 @@ class SemanticSearchMixin:
         self._indexing_pipeline = pipeline
 
         # --- QueryService ---
+        # Issue #2036: Inject ContextBuilder as AdaptiveKProtocol provider
+        _context_builder = None
+        with contextlib.suppress(Exception):
+            from nexus.services.llm_context_builder import (
+                AdaptiveRetrievalConfig,
+                ContextBuilder,
+            )
+
+            _context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
+
         if _sync_sf is not None:
             self._query_service = QueryService(
                 vector_db=vector_db,
                 session_factory=_sync_sf,
                 embedding_provider=emb_provider,
+                context_builder=_context_builder,
             )
         else:
             self._query_service = None
@@ -405,10 +416,21 @@ class SemanticSearchMixin:
             cross_doc_batching=True,
         )
 
+        # Issue #2036: Inject ContextBuilder as AdaptiveKProtocol provider
+        _rpc_context_builder = None
+        with contextlib.suppress(Exception):
+            from nexus.services.llm_context_builder import (
+                AdaptiveRetrievalConfig,
+                ContextBuilder,
+            )
+
+            _rpc_context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
+
         self._query_service = QueryService(
             vector_db=vector_db,
             session_factory=_sync_sf,
             embedding_provider=emb_provider,
+            context_builder=_rpc_context_builder,
         )
 
         # No file_reader available in RPC path — IndexingService not created.

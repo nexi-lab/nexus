@@ -194,23 +194,6 @@ from nexus.bricks.search.zoekt_client import (
     zoekt_search,
 )
 
-# Issue #2075: Backward-compat aliases for deleted modules
-SemanticSearch = QueryService  # Use QueryService directly
-SemanticSearchResult = BaseSearchResult  # Merged into BaseSearchResult (decision 8A)
-AsyncSearchResult = BaseSearchResult  # Merged into BaseSearchResult
-
-
-class AsyncSemanticSearch:
-    """Removed in Issue #2075. Use QueryService + IndexingService instead."""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:  # noqa: ARG002
-        raise RuntimeError(
-            "AsyncSemanticSearch was removed in Issue #2075. "
-            "Use nexus.bricks.search.QueryService for search and "
-            "nexus.bricks.search.IndexingService for indexing."
-        )
-
-
 __all__ = [
     # Search Brick (Issue #1520)
     "BaseSearchResult",
@@ -273,12 +256,6 @@ __all__ = [
     # CQRS Services (Issue #2075)
     "IndexingService",
     "QueryService",
-    # Semantic Search (legacy — use IndexingService + QueryService)
-    "SemanticSearch",
-    "SemanticSearchResult",
-    # Async Semantic Search (legacy — use IndexingService + QueryService)
-    "AsyncSemanticSearch",
-    "AsyncSearchResult",
     # Hybrid Search Fusion (Issue #798)
     "FusionConfig",
     "FusionMethod",

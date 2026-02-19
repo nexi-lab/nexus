@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BackendError,
     UploadChecksumMismatchError,
     UploadExpiredError,

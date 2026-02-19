@@ -28,6 +28,7 @@ from nexus.bricks.a2a.models import (
     TaskStatusUpdateEvent,
     is_valid_transition,
 )
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     import asyncio
@@ -90,7 +91,7 @@ class TaskManager:
         self,
         message: Message,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         agent_id: str | None = None,
         context_id: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -117,7 +118,7 @@ class TaskManager:
         self,
         task_id: str,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         history_length: int | None = None,
     ) -> Task:
         """Retrieve a task by ID.
@@ -139,7 +140,7 @@ class TaskManager:
     async def list_tasks(
         self,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         agent_id: str | None = None,
         state: TaskState | None = None,
         limit: int = 50,
@@ -158,7 +159,7 @@ class TaskManager:
         self,
         task_id: str,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> Task:
         """Cancel a task.
 
@@ -184,7 +185,7 @@ class TaskManager:
         task_id: str,
         new_state: TaskState,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         message: Message | None = None,
     ) -> Task:
         """Transition a task to a new state.
@@ -237,7 +238,7 @@ class TaskManager:
         task_id: str,
         artifact: Artifact,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         append: bool = True,
     ) -> Task:
         """Add an artifact to a task.

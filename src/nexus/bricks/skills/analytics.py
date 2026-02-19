@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.skills.exceptions import SkillValidationError
+
+if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +85,33 @@ class DashboardMetrics:
     avg_execution_times: dict[str, float] = field(default_factory=dict)
 
 
+# ---------------------------------------------------------------------------
+# Serialization helpers
+# ---------------------------------------------------------------------------
+
+_KEY_PREFIX = "skills:usage"
+
+
+def _usage_key(usage_id: str) -> str:
+    return f"{_KEY_PREFIX}:{usage_id}"
+
+
+def _json_default(obj: object) -> str:
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Not JSON serializable: {type(obj)}")
+
+
+def _serialize_record(record: SkillUsageRecord) -> bytes:
+    return json.dumps(dataclasses.asdict(record), default=_json_default).encode()
+
+
+def _deserialize_record(raw: bytes) -> SkillUsageRecord:
+    data: dict[str, Any] = json.loads(raw)
+    data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+    return SkillUsageRecord(**data)
+
+
 class SkillAnalyticsTracker:
     """Tracker for skill usage analytics.
 
@@ -111,9 +144,35 @@ class SkillAnalyticsTracker:
         >>> print(f"Total skills: {metrics.total_skills}")
     """
 
-    def __init__(self) -> None:
-        """Initialize analytics tracker."""
-        self._in_memory_records: list[SkillUsageRecord] = []
+    def __init__(self, cache_store: CacheStoreABC | None = None) -> None:
+        """Initialize analytics tracker.
+
+        Args:
+            cache_store: Optional CacheStoreABC for ephemeral record storage.
+                         Defaults to InMemoryCacheStore when *None*.
+        """
+        if cache_store is not None:
+            self._cache: CacheStoreABC = cache_store
+        else:
+            from nexus.cache.inmemory import InMemoryCacheStore
+
+            self._cache = InMemoryCacheStore()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _all_records(self) -> list[SkillUsageRecord]:
+        """Load all usage records from the cache."""
+        keys = await self._cache.keys_by_pattern(f"{_KEY_PREFIX}:*")
+        if not keys:
+            return []
+        values = await self._cache.get_many(keys)
+        return [_deserialize_record(v) for v in values.values() if v is not None]
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     async def track_usage(
         self,
@@ -161,7 +220,7 @@ class SkillAnalyticsTracker:
 
         record.validate()
 
-        self._in_memory_records.append(record)
+        await self._cache.set(_usage_key(usage_id), _serialize_record(record))
 
         logger.debug(f"Tracked usage for skill '{skill_name}': success={success}")
         return usage_id
@@ -184,7 +243,8 @@ class SkillAnalyticsTracker:
             >>> print(f"Success rate: {analytics.success_rate:.2%}")
             >>> print(f"Avg time: {analytics.avg_execution_time:.2f}s")
         """
-        records = [r for r in self._in_memory_records if r.skill_name == skill_name]
+        all_records = await self._all_records()
+        records = [r for r in all_records if r.skill_name == skill_name]
 
         if zone_id:
             records = [r for r in records if r.zone_id == zone_id]
@@ -235,7 +295,7 @@ class SkillAnalyticsTracker:
             >>> print(f"Most used: {metrics.most_used_skills[:5]}")
             >>> print(f"Top contributors: {metrics.top_contributors[:5]}")
         """
-        records = self._in_memory_records
+        records = await self._all_records()
 
         if zone_id:
             records = [r for r in records if r.zone_id == zone_id]
@@ -257,18 +317,18 @@ class SkillAnalyticsTracker:
 
         # Success rates
         success_rates = {}
-        for skill_name in usage_by_skill:
-            skill_records = [r for r in records if r.skill_name == skill_name]
+        for skill_name_key in usage_by_skill:
+            skill_records = [r for r in records if r.skill_name == skill_name_key]
             successes = sum(1 for r in skill_records if r.success)
-            success_rates[skill_name] = successes / len(skill_records) if skill_records else 0.0
+            success_rates[skill_name_key] = successes / len(skill_records) if skill_records else 0.0
 
         # Avg execution times
         avg_execution_times = {}
-        for skill_name in usage_by_skill:
-            skill_records = [r for r in records if r.skill_name == skill_name]
+        for skill_name_key in usage_by_skill:
+            skill_records = [r for r in records if r.skill_name == skill_name_key]
             times = [r.execution_time for r in skill_records if r.execution_time is not None]
             if times:
-                avg_execution_times[skill_name] = sum(times) / len(times)
+                avg_execution_times[skill_name_key] = sum(times) / len(times)
 
         return DashboardMetrics(
             total_skills=len(usage_by_skill),

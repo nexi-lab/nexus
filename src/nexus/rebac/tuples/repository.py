@@ -49,9 +49,12 @@ class TupleRepository:
                     Defaults to ``engine`` when not provided.
     """
 
-    def __init__(self, engine: Engine, read_engine: Engine | None = None) -> None:
+    def __init__(
+        self, engine: Engine, read_engine: Engine | None = None, *, is_postgresql: bool = False
+    ) -> None:
         self.engine = engine
         self.read_engine = read_engine or engine
+        self._is_postgresql = is_postgresql
 
         # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
         # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
@@ -176,7 +179,7 @@ class TupleRepository:
         Returns:
             SQL query with appropriate placeholders for the database dialect
         """
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             return sql.replace("?", "%s")
         return sql
 
@@ -189,7 +192,7 @@ class TupleRepository:
         Returns:
             True if PostgreSQL 18+, False otherwise
         """
-        if self.engine.dialect.name != "postgresql":
+        if not self._is_postgresql:
             return False
 
         if self._pg_version is None:
@@ -266,7 +269,7 @@ class TupleRepository:
         effective_zone = zone_id or "root"
         cursor = self.create_cursor(conn)
 
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             cursor.execute(
                 """
                 INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
@@ -349,7 +352,7 @@ class TupleRepository:
         cursor = self.create_cursor(conn)
         max_depth = 50
 
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             query = """
                 WITH RECURSIVE ancestors AS (
                     SELECT

@@ -53,6 +53,8 @@ class DirectoryGrantExpander:
         engine: Engine,
         tiger_cache: TigerCache,
         metadata_store: Any = None,
+        *,
+        is_postgresql: bool = False,
     ):
         """Initialize the expander.
 
@@ -64,7 +66,7 @@ class DirectoryGrantExpander:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._metadata_store = metadata_store
-        self._is_postgresql = "postgresql" in str(engine.url)
+        self._is_postgresql = is_postgresql
         self._running = False
         self._stop_event: asyncio.Event | None = None
 

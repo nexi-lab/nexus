@@ -294,6 +294,11 @@ class NexusFS(  # type: ignore[misc]
         self._snapshot_service = brk_svc.snapshot_service
         self._api_key_creator = brk_svc.api_key_creator
 
+        # DT_PIPE: Kernel pipe manager for IPC ring buffers (Task #808)
+        from nexus.core.pipe_manager import PipeManager
+
+        self._pipe_manager = PipeManager(self.metadata, zone_id=ROOT_ZONE_ID)
+
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
 
@@ -10848,6 +10853,10 @@ class NexusFS(  # type: ignore[misc]
                 self._memory_api.session.close()
             except Exception as e:
                 logger.debug("Failed to close memory API session: %s", e)
+
+        # Close all kernel pipes (DT_PIPE cleanup, Task #808)
+        if hasattr(self, "_pipe_manager"):
+            self._pipe_manager.close_all()
 
         # Close metadata store after all parsers have finished
         self.metadata.close()

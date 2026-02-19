@@ -3515,7 +3515,7 @@ class NexusFSCoreMixin:
                 # Fall back to descendant access check if TRAVERSE denied (Unix-like behavior)
                 has_permission = self._permission_enforcer.check(path, Permission.TRAVERSE, ctx)
                 if not has_permission:
-                    has_permission = self._has_descendant_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]
+                    has_permission = self._descendant_checker.has_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]
                 if not has_permission:
                     raise PermissionError(
                         f"Access denied: User '{ctx.user}' does not have TRAVERSE "

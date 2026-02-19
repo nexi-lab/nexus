@@ -613,8 +613,8 @@ class NexusFSGateway:
         Returns:
             True if access exists to any descendant
         """
-        assert context is not None, "context required for _has_descendant_access"
-        return self._fs._has_descendant_access(path, permission, context)
+        assert context is not None, "context required for has_descendant_access"
+        return self._fs._descendant_checker.has_access(path, permission, context)
 
     def get_backend_directory_entries(self, path: str) -> set[str]:
         """Get directory entries directly from backend storage.

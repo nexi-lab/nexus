@@ -133,6 +133,22 @@ Map **data requiring properties** ↔ **storage providing properties**.
 
 ---
 
+## PART 4b: KNOWLEDGE GRAPH (GraphRAG)
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **EntityModel** | Med | Med | EC | Relational + Vector (embedding similarity, name lookup, batch fetch) | Medium | High | Persistent | Zone | Knowledge graph entities with embeddings for entity resolution (pgvector HNSW) | SQLAlchemy with vector index | **Keep RecordStore** (relational + vector) | ✅ KEEP |
+| **RelationshipModel** | Med | Med | EC | Relational (FK to entities, recursive CTE for N-hop traversal) | Small | Very High | Persistent | Zone | Directed typed relationships between entities for graph traversal | SQLAlchemy with composite indexes | **Keep RecordStore** (relational FK + recursive CTE) | ✅ KEEP |
+| **EntityMentionModel** | Low | Med | EC | Relational (FK to entity + memory, JOIN for provenance) | Tiny | High | Persistent | Zone | Links entities to source memories for provenance tracking | SQLAlchemy | **Keep RecordStore** (relational FK) | ✅ KEEP |
+
+**Analysis:**
+- **EntityModel**: ✅ KEEP RecordStore — uses pgvector for embedding similarity search (same pattern as MemoryModel). Composite indexes on `(zone_id, canonical_name)`.
+- **RelationshipModel**: ✅ KEEP RecordStore — recursive CTEs for N-hop neighbor traversal require SQL. FK to EntityModel.
+- **EntityMentionModel**: ✅ KEEP RecordStore — FK to both EntityModel and MemoryModel for provenance tracking.
+- **GraphStore** is a RecordStore consumer (receives `RecordStoreABC` + session). Dialect selection is config-time via `RecordStoreABC._is_postgresql`.
+
+---
+
 ## PART 5: ACCESS CONTROL (ReBAC)
 
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |

@@ -962,7 +962,7 @@ class ReBACService(ReBACShareMixin):
         # Import dependencies
         import uuid
 
-        from nexus.core.rebac import NamespaceConfig
+        from nexus.rebac.domain import NamespaceConfig
 
         # Create NamespaceConfig object
         ns = NamespaceConfig(
@@ -2114,7 +2114,7 @@ class ReBACService(ReBACShareMixin):
 
         import uuid
 
-        from nexus.core.rebac import NamespaceConfig
+        from nexus.rebac.domain import NamespaceConfig
 
         ns = NamespaceConfig(
             namespace_id=str(uuid.uuid4()),

@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from nexus.server.api.v1.dependencies import (
     get_async_read_session_factory,
     get_optional_search_daemon,
+    get_record_store,
     get_search_daemon,
 )
 from nexus.server.dependencies import require_auth
@@ -87,6 +88,7 @@ async def search_query(
     ),
     _auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(get_search_daemon),
+    record_store: Any = Depends(get_record_store),
     async_session_factory: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon.
@@ -173,6 +175,7 @@ async def search_query(
                 path_filter=path,
                 alpha=alpha,
                 graph_mode=effective_graph_mode,
+                record_store=record_store,
                 async_session_factory=async_session_factory,
                 search_daemon=search_daemon,
             )

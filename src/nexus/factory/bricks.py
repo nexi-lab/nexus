@@ -243,6 +243,72 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except Exception as _tq_exc:
         logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
+    # --- ReputationService (Issue #2131: extracted to bricks) ---
+    reputation_service: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.bricks.reputation.reputation_service import ReputationService
+
+            reputation_service = ReputationService(
+                session_factory=ctx.session_factory,
+            )
+            logger.debug("[BOOT:BRICK] ReputationService created")
+        except Exception as _rep_exc:
+            logger.debug("[BOOT:BRICK] ReputationService unavailable: %s", _rep_exc)
+
+    # --- DelegationService (Issue #2131: extracted to bricks) ---
+    delegation_service: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.bricks.delegation.service import DelegationService
+
+            delegation_service = DelegationService(
+                session_factory=ctx.session_factory,
+                rebac_manager=kernel["rebac_manager"],
+                entity_registry=kernel.get("entity_registry"),
+                reputation_service=reputation_service,
+            )
+            logger.debug("[BOOT:BRICK] DelegationService created")
+        except Exception as _del_exc:
+            logger.debug("[BOOT:BRICK] DelegationService unavailable: %s", _del_exc)
+
+    # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
+    ipc_storage_driver: Any = None
+    ipc_vfs_driver: Any = None
+    ipc_provisioner: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.ipc.driver import IPCVFSDriver
+            from nexus.ipc.provisioning import AgentProvisioner
+            from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+
+            ipc_storage_driver = RecordStoreStorageDriver(
+                session_factory=ctx.session_factory,
+            )
+            _ipc_zone = ctx.zone_id or "root"
+            ipc_vfs_driver = IPCVFSDriver(
+                storage=ipc_storage_driver,
+                zone_id=_ipc_zone,
+            )
+            ipc_provisioner = AgentProvisioner(
+                storage=ipc_storage_driver,
+                zone_id=_ipc_zone,
+            )
+            logger.debug("[BOOT:BRICK] IPC brick created (zone=%s)", _ipc_zone)
+        except Exception as _ipc_exc:
+            logger.debug("[BOOT:BRICK] IPC brick unavailable: %s", _ipc_exc)
+
+    # --- Sandbox Brick: AgentEventLog (Issue #1307) ---
+    agent_event_log: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.bricks.sandbox.events import AgentEventLog
+
+            agent_event_log = AgentEventLog(session_factory=ctx.session_factory)
+            logger.debug("[BOOT:BRICK] AgentEventLog created")
+        except Exception as _ael_exc:
+            logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
+
     # --- Skills Brick (Issue #2035) ---
     # Wired later in NexusFS._wire_services() via gateway adapters.
     # Flagged here for availability tracking.
@@ -261,8 +327,14 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
         "task_queue_service": task_queue_service,
+        "ipc_storage_driver": ipc_storage_driver,
+        "ipc_vfs_driver": ipc_vfs_driver,
+        "ipc_provisioner": ipc_provisioner,
+        "agent_event_log": agent_event_log,
         "skill_service": skill_service,
         "skill_package_service": skill_package_service,
+        "delegation_service": delegation_service,
+        "reputation_service": reputation_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -311,6 +383,8 @@ _FACTORY_BRICKS: list[tuple[str, str]] = [
     ("task_queue_service", "TaskQueueProtocol"),
     ("ipc_vfs_driver", "IPCProtocol"),
     ("wallet_provisioner", "WalletProtocol"),
+    ("delegation_service", "DelegationProtocol"),
+    ("reputation_service", "ReputationProtocol"),
 ]
 
 # Entries intentionally NOT registered with lifecycle manager.

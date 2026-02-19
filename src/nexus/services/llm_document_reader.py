@@ -10,6 +10,8 @@ Key refactoring (Issue #1521):
 - Moved to services/ as an orchestration concern (Issue 1)
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass

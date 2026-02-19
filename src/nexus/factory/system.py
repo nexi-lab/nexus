@@ -155,9 +155,41 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
 
+    # --- Eviction Manager (Issue #2170) ---
+    eviction_manager: Any = None
+    if agent_registry is not None:
+        try:
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
+
+            eviction_tuning = ctx.profile_tuning.eviction
+            resource_monitor = ResourceMonitor(tuning=eviction_tuning)
+            eviction_policy = LRUEvictionPolicy()
+            eviction_manager = EvictionManager(
+                registry=agent_registry,
+                monitor=resource_monitor,
+                policy=eviction_policy,
+                tuning=eviction_tuning,
+            )
+        except Exception as exc:
+            logger.debug("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
+
+    # --- Brick Reconciler (Issue #2060) ---
+    brick_reconciler: Any = None
+    if brick_lifecycle_manager is not None:
+        try:
+            from nexus.services.brick_reconciler import BrickReconciler
+
+            brick_reconciler = BrickReconciler(lifecycle_manager=brick_lifecycle_manager)
+            logger.debug("[BOOT:SYSTEM] BrickReconciler created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
+
     result = {
         "agent_registry": agent_registry,
         "async_agent_registry": async_agent_registry,
+        "eviction_manager": eviction_manager,
         "namespace_manager": namespace_manager,
         "async_namespace_manager": async_namespace_manager,
         "async_vfs_router": async_vfs_router,
@@ -166,6 +198,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
+        "brick_reconciler": brick_reconciler,
         "scoped_hook_engine": scoped_hook_engine,
     }
 

@@ -246,10 +246,11 @@ class NexusFS(  # type: ignore[misc]
             self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
-        # VFS Hook Pipeline
+        # VFS Hook Pipeline — use injected pipeline from KernelServices if available
         from nexus.core.vfs_hooks import VFSHookPipeline
 
-        self._hook_pipeline: VFSHookPipeline = VFSHookPipeline()
+        _injected_pipeline = getattr(self._kernel_services, "hook_pipeline", None) if self._kernel_services else None
+        self._hook_pipeline: VFSHookPipeline = _injected_pipeline if _injected_pipeline is not None else VFSHookPipeline()
         self._post_mutation_hooks: builtins.list[Any] = []
 
         # Wire self-dependent services, then register hooks
@@ -1183,6 +1184,10 @@ class NexusFS(  # type: ignore[misc]
         "oauth_list_providers": "oauth_service",
         # LLMService
         "create_llm_reader": "llm_service",
+        # ReBACService direct methods (no _sync suffix)
+        "set_rebac_option": "rebac_service",
+        "get_rebac_option": "rebac_service",
+        "register_namespace": "rebac_service",
     }
 
     # Special aliases where service method name differs
@@ -1217,6 +1222,22 @@ class NexusFS(  # type: ignore[misc]
         "arebac_explain": ("rebac_service", "rebac_explain"),
         "arebac_list_tuples": ("rebac_service", "rebac_list_tuples"),
         "aget_namespace": ("rebac_service", "get_namespace"),
+        # ReBACService sync methods with _sync suffix (Issue #2033)
+        "rebac_expand": ("rebac_service", "rebac_expand_sync"),
+        "rebac_explain": ("rebac_service", "rebac_explain_sync"),
+        "share_with_user": ("rebac_service", "share_with_user_sync"),
+        "share_with_group": ("rebac_service", "share_with_group_sync"),
+        "grant_consent": ("rebac_service", "grant_consent_sync"),
+        "revoke_consent": ("rebac_service", "revoke_consent_sync"),
+        "make_public": ("rebac_service", "make_public_sync"),
+        "make_private": ("rebac_service", "make_private_sync"),
+        "apply_dynamic_viewer_filter": ("rebac_service", "apply_dynamic_viewer_filter_sync"),
+        "list_outgoing_shares": ("rebac_service", "list_outgoing_shares_sync"),
+        "list_incoming_shares": ("rebac_service", "list_incoming_shares_sync"),
+        "get_dynamic_viewer_config": ("rebac_service", "get_dynamic_viewer_config_sync"),
+        "namespace_create": ("rebac_service", "namespace_create_sync"),
+        "namespace_delete": ("rebac_service", "namespace_delete_sync"),
+        "get_namespace": ("rebac_service", "get_namespace_sync"),
         # SkillService (Issue #2035): NexusFS facade → skill_service RPC methods
         "skills_share": ("skill_service", "rpc_share"),
         "skills_discover": ("skill_service", "rpc_discover"),
@@ -1508,14 +1529,14 @@ class NexusFS(  # type: ignore[misc]
             io_profile=io_profile,
         )
 
-    def remove_mount(self, mount_point: str) -> dict[str, Any]:
-        return self._mount_core_service.remove_mount(mount_point=mount_point)
+    def remove_mount(self, mount_point: str, context: Any = None) -> dict[str, Any]:
+        return self._mount_core_service.remove_mount(mount_point=mount_point, context=context)
 
-    def list_mounts(self) -> builtins.list[dict[str, Any]]:
-        return self._mount_core_service.list_mounts()
+    def list_mounts(self, context: Any = None) -> builtins.list[dict[str, Any]]:
+        return self._mount_core_service.list_mounts(context=context)
 
-    def get_mount(self, mount_point: str) -> dict[str, Any] | None:
-        return self._mount_core_service.get_mount(mount_point=mount_point)
+    def get_mount(self, mount_point: str, context: Any = None) -> dict[str, Any] | None:
+        return self._mount_core_service.get_mount(mount_point=mount_point, context=context)
 
     # --- Search (list/glob/grep already have concrete impls below) ---
 

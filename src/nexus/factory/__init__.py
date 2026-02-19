@@ -36,9 +36,9 @@ Usage::
 from nexus.factory.adapters import _NexusFSFileReader
 from nexus.factory.boot_context import _BootContext
 from nexus.factory.bricks import (
-    _boot_brick_services,
     _FACTORY_BRICKS,
     _FACTORY_SKIP,
+    _boot_brick_services,
     _register_factory_bricks,
     _WorkflowLifecycleAdapter,
 )

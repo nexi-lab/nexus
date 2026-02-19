@@ -183,6 +183,52 @@ See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matchin
 
 ---
 
+## 3.1. Tier-Neutral Layers (`contracts/`, `lib/`)
+
+Two packages sit **outside** the Kernel → Services → Drivers stack.
+Any layer may import from them; they must **not** import from `nexus.core`,
+`nexus.services`, `nexus.fuse`, `nexus.bricks`, or any other tier-specific package.
+
+| Package | Contains | Linux Analogue | Rule |
+|---------|----------|----------------|------|
+| **`contracts/`** | Types, enums, exceptions, constants | `include/linux/` (header files) | Declarations only — no implementation logic, no I/O |
+| **`lib/`** | Reusable helper functions, pure utilities | `lib/` (libc, libm) | Implementation allowed, but zero kernel deps |
+
+**Core distinction:** `contracts/` = **what** (shapes of data). `lib/` = **how** (behavior).
+When you see `from nexus.contracts import X` you know X is a lightweight type/exception
+with near-zero deps. `from nexus.lib import Y` means Y is a function that *does* something.
+
+### Placement Decision Tree
+
+```
+Is it used by a SINGLE layer?
+  → Yes: stays in that layer (e.g. fuse/filters.py)
+  → No (multi-layer):
+       Is it a type / ABC / exception / enum / constant?
+         → Yes: contracts/
+         → No (function / helper / I/O logic): lib/
+```
+
+### Import Rules
+
+`contracts/` and `lib/` may import from: each other, stdlib, third-party packages.
+They must **never** import from: `nexus.core`, `nexus.services`, `nexus.server`,
+`nexus.cli`, `nexus.fuse`, `nexus.bricks`, `nexus.rebac`.
+
+### What Goes Where — Examples
+
+| Module | Destination | Reason |
+|--------|-------------|--------|
+| `OperationContext`, `Permission` (type defs) | `contracts/types.py` | Type declarations |
+| `NexusError`, `BackendError` (exceptions) | `contracts/exceptions.py` | Exception hierarchy |
+| `Base`, `TimestampMixin` (ORM base/mixins) | `lib/db_base.py` | Schema helpers with implementation (uuid gen, server_default) |
+| `EmailList`, `ISODateTimeStr` (Pydantic Annotated) | `lib/validators.py` | Annotated types with validation logic |
+| `get_database_url()` (env var resolution) | `lib/env.py` | Implementation helper |
+| `path_matches_pattern()` (glob matching) | `lib/path_utils.py` | Pure utility function |
+| `is_os_metadata_file()` (OS file filter) | `fuse/filters.py` | Single-layer (FUSE only) |
+
+---
+
 ## 4. Zone
 
 A Zone is the **fundamental isolation and consensus unit** in NexusFS.

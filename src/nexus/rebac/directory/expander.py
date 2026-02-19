@@ -118,10 +118,13 @@ class DirectoryExpander:
         engine: Engine,
         tiger_cache: TigerCache | None = None,
         metadata_store: Any | None = None,
+        *,
+        is_postgresql: bool = False,
     ) -> None:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._metadata_store = metadata_store
+        self._is_postgresql = is_postgresql
 
     def set_metadata_store(self, metadata_store: Any) -> None:
         """Set the metadata store reference for directory queries."""

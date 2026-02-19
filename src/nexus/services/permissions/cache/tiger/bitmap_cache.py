@@ -92,6 +92,8 @@ class TigerCache:
         rebac_manager: EnhancedReBACManager | None = None,
         dragonfly_cache: TigerCacheProtocol | None = None,
         l2_max_workers: int = 4,
+        *,
+        is_postgresql: bool = False,
     ):
         """Initialize Tiger Cache.
 
@@ -102,13 +104,14 @@ class TigerCache:
             dragonfly_cache: Optional Dragonfly cache for L2 distributed caching
             l2_max_workers: Thread pool size for L2 dragonfly operations.
                 Sourced from ProfileTuning.cache.tiger_max_workers.
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap as _TRM
 
         self._engine = engine
-        self._resource_map = resource_map or _TRM(engine)
+        self._resource_map = resource_map or _TRM(engine, is_postgresql=is_postgresql)
         self._rebac_manager = rebac_manager
-        self._is_postgresql = "postgresql" in str(engine.url)
+        self._is_postgresql = is_postgresql
 
         # L2: Dragonfly distributed cache (optional)
         self._dragonfly: TigerCacheProtocol | None = dragonfly_cache

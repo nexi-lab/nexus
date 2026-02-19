@@ -70,6 +70,8 @@ class BulkPermissionChecker:
         rebac_check_single: Callable[..., bool],
         cache_result: Callable[..., None],
         tuple_version: int,
+        *,
+        is_postgresql: bool = False,
     ) -> None:
         self._engine = engine
         self._get_namespace = get_namespace
@@ -80,6 +82,7 @@ class BulkPermissionChecker:
         self._rebac_check_single = rebac_check_single
         self._cache_result = cache_result
         self._tuple_version = tuple_version
+        self._is_postgresql = is_postgresql
 
     def update_refs(
         self,
@@ -410,7 +413,7 @@ class BulkPermissionChecker:
         entity_types = [e[0] for e in entities]
         entity_ids = [e[1] for e in entities]
 
-        is_postgresql = self._engine.dialect.name == "postgresql"
+        is_postgresql = self._is_postgresql
 
         if is_postgresql:
             if self._enforce_zone_isolation:
@@ -525,7 +528,7 @@ class BulkPermissionChecker:
     ) -> int:
         """Fetch cross-zone share tuples and append to tuples_graph. Returns count added."""
         cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
-        is_postgresql = self._engine.dialect.name == "postgresql"
+        is_postgresql = self._is_postgresql
 
         subject_types = [s[0] for s in all_subjects_list]
         subject_ids = [s[1] for s in all_subjects_list]

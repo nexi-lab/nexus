@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from nexus.services.delegation.service import MAX_TTL_SECONDS as _MAX_TTL
+from nexus.bricks.delegation.service import MAX_TTL_SECONDS as _MAX_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def _get_delegation_service(request: Request) -> Any:
     if rebac_manager is None:
         raise HTTPException(status_code=503, detail="ReBAC manager not available")
 
-    from nexus.services.delegation.service import DelegationService
+    from nexus.bricks.delegation.service import DelegationService
 
     service = DelegationService(
         session_factory=session_factory,
@@ -220,7 +220,7 @@ async def create_delegation(
     zone_id = auth_result.get("zone_id")
 
     # Validate namespace_mode
-    from nexus.services.delegation.models import DelegationMode, DelegationScope
+    from nexus.bricks.delegation.models import DelegationMode, DelegationScope
 
     try:
         mode = DelegationMode(body.namespace_mode)
@@ -331,7 +331,7 @@ async def list_delegations(
     coordinator_agent_id = auth_result.get("subject_id", "")
 
     # Parse optional status filter
-    from nexus.services.delegation.models import DelegationStatus
+    from nexus.bricks.delegation.models import DelegationStatus
 
     status_filter: DelegationStatus | None = None
     if status is not None:
@@ -436,7 +436,7 @@ async def complete_delegation(
         )
 
     # Parse outcome
-    from nexus.services.delegation.models import DelegationOutcome
+    from nexus.bricks.delegation.models import DelegationOutcome
 
     try:
         outcome = DelegationOutcome(request.outcome)
@@ -471,7 +471,7 @@ async def complete_delegation(
 
 def _handle_delegation_error(e: Exception) -> None:
     """Map domain errors to HTTP responses. Always raises."""
-    from nexus.services.delegation.errors import (
+    from nexus.bricks.delegation.errors import (
         DelegationChainError,
         DelegationNotFoundError,
         DepthExceededError,

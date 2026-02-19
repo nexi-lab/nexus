@@ -5,6 +5,7 @@ services. Any service that needs session-per-operation semantics can inherit
 from SessionMixin and set self._session_factory.
 
 Issue #1355: Created for AgentKeyService, available for future services.
+Issue #2131: Added ``commit`` parameter for read-only operations.
 """
 
 from __future__ import annotations
@@ -26,12 +27,18 @@ class SessionMixin:
     _session_factory: sessionmaker[Session]
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
-        """Create a session with auto-commit/rollback/close."""
+    def _get_session(self, *, commit: bool = True) -> Generator[Session, None, None]:
+        """Create a session with auto-commit/rollback/close.
+
+        Args:
+            commit: If True (default), commit on success. Set False for
+                read-only operations to skip the commit overhead.
+        """
         session = self._session_factory()
         try:
             yield session
-            session.commit()
+            if commit:
+                session.commit()
         except Exception:
             session.rollback()
             raise

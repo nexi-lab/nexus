@@ -1303,7 +1303,7 @@ def _create_workflow_engine(
         from nexus.bricks.workflows.engine import WorkflowEngine
         from nexus.bricks.workflows.protocol import WorkflowServices
         from nexus.bricks.workflows.storage import WorkflowStore
-        from nexus.raft.zone_manager import ROOT_ZONE_ID
+        from nexus.constants import ROOT_ZONE_ID
         from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
 
         workflow_store = WorkflowStore(

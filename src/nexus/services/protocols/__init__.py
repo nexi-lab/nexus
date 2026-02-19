@@ -77,6 +77,7 @@ from nexus.services.protocols.workflow import (
     MetadataStoreProtocol,
     NexusOperationsProtocol,
 )
+from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.services.protocols.write_back import WriteBackProtocol
 
 __all__ = [
@@ -135,5 +136,6 @@ __all__ = [
     "TrajectoryProtocol",
     "VersionProtocol",
     "WatchProtocol",
+    "WorkflowDispatchProtocol",
     "WriteBackProtocol",
 ]

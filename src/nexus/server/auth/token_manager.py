@@ -35,8 +35,8 @@ if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
 
 from nexus.auth.oauth.crypto import OAuthCrypto
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import AuthenticationError
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.storage.models import OAuthCredentialModel
 from nexus.storage.token_rotation_store import TokenRotationStore
 

@@ -10,8 +10,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.server.streaming import _verify_stream_token
 
 logger = logging.getLogger(__name__)

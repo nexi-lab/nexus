@@ -23,8 +23,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.services.event_bus.protocol import AckableEvent
 
 # ============================================================================

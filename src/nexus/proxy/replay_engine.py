@@ -7,6 +7,7 @@ when the circuit breaker allows requests.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -52,12 +53,25 @@ class ReplayEngine:
         self._batch_size = batch_size
         self._poll_interval = poll_interval
         self._stopped = False
+        self._wake = asyncio.Event()
+
+    def wake(self) -> None:
+        """Signal the replay loop to check the queue immediately.
+
+        Called by ``ProxyBrick`` after enqueueing an operation so that
+        replay starts without waiting for the next poll interval.
+        """
+        self._wake.set()
 
     async def run(self) -> None:
         """Background task that drains the offline queue when online."""
         while not self._stopped:
             try:
-                await asyncio.sleep(self._poll_interval)
+                # Wait for wake signal or poll interval, whichever comes first
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._wake.wait(), timeout=self._poll_interval)
+                self._wake.clear()
+
                 if self._circuit.is_open:
                     continue
 
@@ -98,5 +112,6 @@ class ReplayEngine:
                 await asyncio.sleep(self._poll_interval)
 
     async def stop(self) -> None:
-        """Signal stop and wait for clean shutdown."""
+        """Signal stop and wake the loop so it exits promptly."""
         self._stopped = True
+        self._wake.set()

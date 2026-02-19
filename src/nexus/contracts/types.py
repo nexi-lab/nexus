@@ -5,13 +5,6 @@ This module has **zero** runtime imports from ``nexus.*`` --- only stdlib --- so
 bricks, services, and backends can depend on it without pulling in kernel
 internals.
 
-Backward compatibility:
-    ``from nexus.core.types import OperationContext, Permission`` still works
-    via re-exports in ``core/types.py``.
-
-    ``from nexus.core.permissions import OperationContext, Permission`` still
-    works via re-exports in ``core/permissions.py``.
-
 Types:
     - ``Permission``: IntFlag for file operation permissions (read/write/execute/traverse).
     - ``OperationContext``: Dataclass carrying auth context through filesystem operations.

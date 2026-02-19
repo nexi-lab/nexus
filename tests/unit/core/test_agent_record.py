@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.services.agents.agent_record import (
+from nexus.contracts.agent_types import (
     VALID_TRANSITIONS,
     AgentRecord,
     AgentState,

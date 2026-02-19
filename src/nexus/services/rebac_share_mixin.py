@@ -509,7 +509,7 @@ class ReBACShareMixin:
         """Grant TRAVERSE permission on root-level implicit directories (sync)."""
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.lib.zone import normalize_zone_id
 
         mgr = self._require_manager()
         if subject is None:
@@ -567,7 +567,7 @@ class ReBACShareMixin:
         """Warm the Tiger Cache by pre-computing permissions for subjects (sync)."""
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.lib.zone import normalize_zone_id
 
         if not self._rebac_manager:
             return 0

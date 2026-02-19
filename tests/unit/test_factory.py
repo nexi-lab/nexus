@@ -151,8 +151,8 @@ class TestBootKernelServices:
         ctx = _make_mock_ctx(enable_write_buffer=False)
         result = _boot_kernel_services(ctx)
         wo = result["write_observer"]
-        # RecordStoreSyncer doesn't have .start() called in kernel boot
-        # (only BufferedRecordStoreSyncer does, and only in _start_background_services)
+        # RecordStoreWriteObserver doesn't have .start() called in kernel boot
+        # (only BufferedRecordStoreWriteObserver does, and only in _start_background_services)
         assert wo is not None
 
     def test_deferred_buffer_created_when_enabled(self) -> None:
@@ -313,9 +313,9 @@ class TestStartBackgroundServices:
 
     def test_buffered_syncer_started(self) -> None:
         from nexus.factory import _start_background_services
-        from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
 
-        wo = MagicMock(spec=BufferedRecordStoreSyncer)
+        wo = MagicMock(spec=BufferedRecordStoreWriteObserver)
         kernel = {"deferred_permission_buffer": None, "write_observer": wo}
         system = {"delivery_worker": None}
         _start_background_services(kernel, system)

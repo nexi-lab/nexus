@@ -18,6 +18,7 @@ from typing import Any
 # TODO(#2XXX): Replace with Protocol imports when dependencies are extracted
 from nexus.core.permissions import OperationContext, Permission
 from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+
 # TODO(#2129): Remove core.temporal import - use lazy import for now to satisfy Zero-Core-Imports
 # from nexus.core.temporal import parse_datetime
 from nexus.services.memory.memory_router import MemoryViewRouter

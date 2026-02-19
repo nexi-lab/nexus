@@ -27,8 +27,8 @@ from cachetools import TTLCache
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.types import Permission
-from nexus.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.search.strategies import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,

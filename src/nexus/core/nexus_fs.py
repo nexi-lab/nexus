@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from nexus.backends.backend import Backend
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
@@ -885,14 +885,11 @@ class NexusFS(  # type: ignore[misc]
 
             # Issue #2128: Use MemoryBrick if factory is available in brick_services
             if self._brick_services and self._brick_services.memory_brick_factory:
-                try:
+                with contextlib.suppress(Exception):
                     self._memory_api = self._brick_services.memory_brick_factory(
                         session=session,
                         entity_registry=self._entity_registry,
                     )
-                except Exception:
-                    # Fall back to legacy Memory if brick fails
-                    pass
 
             # Fall back to legacy Memory if brick not available
             if self._memory_api is None:

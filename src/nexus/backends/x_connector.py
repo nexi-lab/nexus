@@ -51,8 +51,8 @@ from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
-from nexus.search.primitives import glob_fast
 from nexus.core.response import HandlerResponse, timed_response
+from nexus.search.primitives import glob_fast
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

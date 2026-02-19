@@ -10,8 +10,6 @@ from __future__ import annotations
 import fnmatch
 from typing import Any
 
-from nexus.search.primitives import glob_fast
-
 # Try to import Rust acceleration
 try:
     import nexus_fast

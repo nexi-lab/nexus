@@ -407,6 +407,7 @@ class TestBrickServices:
             "skill_package_service",
             "delegation_service",
             "reputation_service",
+            "memory_brick_factory",  # Issue #2128: Memory brick factory (request-scoped)
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

@@ -16,7 +16,6 @@ from typing import Any
 
 # TODO(#2XXX): Replace with Protocol imports when MemoryRouter is extracted
 from nexus.core.permissions import OperationContext, Permission
-
 from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
 
@@ -142,6 +141,7 @@ class MemoryLifecycle:
         invalid_at_dt: datetime = datetime.now(UTC)
         if invalid_at is not None:
             if isinstance(invalid_at, str):
+                from nexus.core.temporal import parse_datetime  # TODO(#2129): lazy import
                 parsed = parse_datetime(invalid_at)
                 if parsed is not None:
                     invalid_at_dt = parsed

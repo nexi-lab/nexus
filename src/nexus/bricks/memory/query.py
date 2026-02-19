@@ -18,7 +18,6 @@ from typing import Any
 
 # TODO(#2XXX): Replace with Protocol imports when dependencies are extracted
 from nexus.core.permissions import OperationContext, Permission
-
 from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
 
@@ -171,6 +170,7 @@ class MemoryQuery:
             zone_id = context.zone_id if context else self._zone_id
 
         # Validate and normalize temporal parameters
+        from nexus.core.temporal import parse_datetime, validate_temporal_params  # TODO(#2129)
         after_dt, before_dt = validate_temporal_params(after, before, during)
 
         # Parse event date parameters if strings
@@ -352,6 +352,7 @@ class MemoryQuery:
             >>> results = search("project updates", during="2025-01")
         """
         from nexus.core.sync_bridge import run_sync
+        from nexus.core.temporal import validate_temporal_params  # TODO(#2129)
 
         # Validate and normalize temporal parameters
         after_dt, before_dt = validate_temporal_params(after, before, during)

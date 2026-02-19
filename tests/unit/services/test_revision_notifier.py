@@ -6,7 +6,11 @@ import threading
 import time
 from unittest.mock import patch
 
-from nexus.core.revision_notifier import NullRevisionNotifier, RevisionNotifier
+from nexus.services.revision_notifier import (
+    NullRevisionNotifier,
+    RevisionNotifier,
+    RevisionNotifierBase,
+)
 
 
 class TestRevisionNotifier:
@@ -78,6 +82,18 @@ class TestNullRevisionNotifier:
         assert null.wait_for_revision("z", 1, 10) is False
 
 
+class TestABC:
+    """Tests for RevisionNotifierBase ABC."""
+
+    def test_concrete_is_base_instance(self) -> None:
+        """RevisionNotifier inherits from RevisionNotifierBase."""
+        assert isinstance(RevisionNotifier(), RevisionNotifierBase)
+
+    def test_null_is_base_instance(self) -> None:
+        """NullRevisionNotifier inherits from RevisionNotifierBase."""
+        assert isinstance(NullRevisionNotifier(), RevisionNotifierBase)
+
+
 class TestLazyInit:
     """Tests for the lazy init pattern in NexusFSCoreMixin."""
 
@@ -100,7 +116,7 @@ class TestLazyInit:
         NexusFSCoreMixin._revision_notifier = None
 
         with patch(
-            "nexus.core.revision_notifier.RevisionNotifier.__init__",
+            "nexus.services.revision_notifier.RevisionNotifier.__init__",
             side_effect=RuntimeError("boom"),
         ):
             mixin = NexusFSCoreMixin()

@@ -345,7 +345,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             return db_url
 
         # Check environment variables
-        env_url = os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+        from nexus.lib.env import get_database_url
+
+        env_url = get_database_url()
         if env_url:
             return env_url
 

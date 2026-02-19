@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ class ZoneManager:
             Tuple of (zone_id, subject_zone_id, object_zone_id)
         """
         if not zone_id:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
         subject_zone_id = subject_zone_id or zone_id
         object_zone_id = object_zone_id or zone_id
         return zone_id, subject_zone_id, object_zone_id

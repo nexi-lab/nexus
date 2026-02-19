@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.models.base import ApiModel
 
 
@@ -10,7 +11,7 @@ class BeginSnapshotRequest(ApiModel):
 
     agent_id: str
     paths: list[str]
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
 
 
 class BeginSnapshotResponse(ApiModel):

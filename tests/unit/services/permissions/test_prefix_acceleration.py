@@ -6,7 +6,7 @@ Tests both the Rust functions (when available) and the Python fallback path.
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 
 # Check if Rust module is available
 try:

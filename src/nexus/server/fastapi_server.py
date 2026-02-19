@@ -50,7 +50,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
-from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
+from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL, ROOT_ZONE_ID
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -1461,7 +1461,9 @@ def create_app(
         "1",
         "yes",
     )
-    redis_url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+    from nexus.lib.env import get_dragonfly_url, get_redis_url
+
+    redis_url = get_redis_url() or get_dragonfly_url()
 
     limiter = Limiter(
         key_func=_get_rate_limit_key,
@@ -1867,7 +1869,7 @@ def _register_routes(app: FastAPI) -> None:
                 if session_factory is None:
                     raise HTTPException(status_code=500, detail="Secrets audit not configured")
                 _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
-            zone_id = auth_result.get("zone_id", "root")
+            zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
             return _secrets_audit_logger_instance, zone_id
 
         app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override

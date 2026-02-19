@@ -362,27 +362,39 @@ class TestSavedMounts:
 
 
 class TestSyncMountDelegation:
-    """Tests for sync_mount delegation to NexusFS."""
+    """Tests for sync_mount delegation to sync_service."""
 
-    def test_sync_mount_delegates_to_nexus_fs(self, mount_service, mock_nexus_fs):
-        """sync_mount delegates to nexus_fs.sync_mount."""
-        mock_nexus_fs.sync_mount.return_value = {"files_synced": 10}
+    def test_sync_mount_delegates_to_sync_service(
+        self, mock_router, mock_mount_manager, mock_nexus_fs
+    ):
+        """sync_mount delegates to _sync_service.sync_mount."""
+        mock_sync_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.to_dict.return_value = {"files_synced": 10}
+        mock_sync_service.sync_mount.return_value = mock_result
+
+        service = MountService(
+            router=mock_router,
+            mount_manager=mock_mount_manager,
+            nexus_fs=mock_nexus_fs,
+            sync_service=mock_sync_service,
+        )
 
         result = asyncio.run(
-            mount_service.sync_mount(
+            service.sync_mount(
                 mount_point="/mnt/test",
                 recursive=True,
             )
         )
 
         assert result == {"files_synced": 10}
-        mock_nexus_fs.sync_mount.assert_called_once()
+        mock_sync_service.sync_mount.assert_called_once()
 
-    def test_sync_mount_requires_nexus_fs(self, mock_router):
-        """sync_mount raises RuntimeError without nexus_fs."""
-        service = MountService(router=mock_router, nexus_fs=None)
+    def test_sync_mount_requires_sync_service(self, mock_router):
+        """sync_mount raises RuntimeError without sync_service."""
+        service = MountService(router=mock_router, sync_service=None)
 
-        with pytest.raises(RuntimeError, match="requires NexusFS integration"):
+        with pytest.raises(RuntimeError, match="sync_mount requires sync_service"):
             asyncio.run(service.sync_mount(mount_point="/mnt/test"))
 
 

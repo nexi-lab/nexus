@@ -5594,10 +5594,10 @@ class NexusFS(  # type: ignore[misc]
 
                 zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
 
-                result = self.skills_import(
+                result = self.skill_package_service.import_skill(
                     zip_data=zip_base64,
-                    tier="personal",  # User's personal skills
-                    allow_overwrite=False,  # Allow overwrite during provisioning
+                    tier="personal",
+                    allow_overwrite=False,
                     context=context,
                 )
 
@@ -8729,54 +8729,6 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(f"[WARM-TIGER] Queue processing failed: {e}")
 
         return entries_created
-
-    # -------------------------------------------------------------------------
-    # Service router — kernel delegates to brick services via __getattr__.
-    # RPC discovery uses _brick_sources; embedded callers hit __getattr__.
-    # When RemoteNexusFS becomes a distro (task #844), both sides share
-    # the same nested-service API: nx.mount_service.add_mount(), etc.
-    # -------------------------------------------------------------------------
-
-    # Skills use renamed methods (name mapping).
-    _SKILLS_COMPAT_MAP: dict[str, tuple[str, str]] = {
-        "skills_share": ("skill_service", "rpc_share"),
-        "skills_unshare": ("skill_service", "rpc_unshare"),
-        "skills_discover": ("skill_service", "rpc_discover"),
-        "skills_subscribe": ("skill_service", "rpc_subscribe"),
-        "skills_unsubscribe": ("skill_service", "rpc_unsubscribe"),
-        "skills_get_prompt_context": ("skill_service", "rpc_get_prompt_context"),
-        "skills_load": ("skill_service", "rpc_load"),
-        "skills_export": ("skill_package_service", "export"),
-        "skills_import": ("skill_package_service", "import_skill"),
-        "skills_validate_zip": ("skill_package_service", "validate_zip"),
-    }
-
-    # Services whose @rpc_expose methods are served via _brick_sources.
-    # __getattr__ probes these in order for same-name delegation.
-    _SERVICE_ROUTE: tuple[str, ...] = (
-        "mount_service",
-        "llm_service",
-        "oauth_service",
-        "mcp_service",
-    )
-
-    def __getattr__(self, name: str) -> Any:
-        """Route method calls to the owning brick service."""
-        # 1. Skills renamed-method mapping
-        mapping = type(self)._SKILLS_COMPAT_MAP.get(name)
-        if mapping is not None:
-            svc_attr, method_name = mapping
-            svc = self.__dict__.get(svc_attr)
-            if svc is not None:
-                return getattr(svc, method_name)
-
-        # 2. Same-name service routing (mount, llm, oauth, mcp)
-        for svc_attr in type(self)._SERVICE_ROUTE:
-            svc = self.__dict__.get(svc_attr)
-            if svc is not None and hasattr(svc, name):
-                return getattr(svc, name)
-
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     # =========================================================================
     # MountService Delegation Methods

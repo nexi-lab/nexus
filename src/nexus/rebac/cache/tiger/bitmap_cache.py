@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 from pyroaring import BitMap as RoaringBitmap
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
@@ -1545,7 +1547,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_int_ids: set[int],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> bool:
         """Persist bitmap to database after bulk read operations (Issue #979).
 

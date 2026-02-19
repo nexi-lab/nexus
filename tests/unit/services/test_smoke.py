@@ -252,7 +252,9 @@ class TestSkillServiceSmoke:
 
         mock_gateway = MagicMock()
         service = SkillService(gateway=mock_gateway)
-        assert service._gw is mock_gateway
+        # After Issue #2035, SkillService uses protocol adapters (_fs, _perms)
+        assert service._fs is not None
+        assert service._perms is not None
 
     @pytest.mark.asyncio
     async def test_skills_discover_requires_gateway(self):
@@ -265,7 +267,8 @@ class TestSkillServiceSmoke:
         mock_gateway.get_context.return_value = None
         service = SkillService(gateway=mock_gateway)
         # Service should be initialized even with mock gateway
-        assert service._gw is mock_gateway
+        assert service._fs is not None
+        assert service._perms is not None
 
 
 # =============================================================================

@@ -1322,8 +1322,13 @@ def create_app(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
     )
 
-    # Discover exposed methods
-    app.state.exposed_methods = _discover_exposed_methods(nexus_fs)
+    # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
+    _brick_sources: list[Any] = []
+    for _attr_name in ("skill_service", "skill_package_service"):
+        _brick_svc = getattr(nexus_fs, _attr_name, None)
+        if _brick_svc is not None:
+            _brick_sources.append(_brick_svc)
+    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)
     app.state.async_nexus_fs = None
@@ -1612,30 +1617,54 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     # (moved from here to avoid being gated on OAuth credentials)
 
 
-def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
-    """Discover all methods marked with @rpc_expose decorator."""
-    exposed = {}
+def _discover_exposed_methods(
+    nexus_fs: NexusFS, *additional_sources: Any
+) -> dict[str, Any]:
+    """Discover all methods marked with @rpc_expose decorator.
 
-    for name in dir(nexus_fs):
-        if name.startswith("_"):
+    Scans NexusFS and any additional sources (brick services) for methods
+    decorated with @rpc_expose. This allows bricks to expose RPC methods
+    directly without NexusFS delegation boilerplate (Issue #2035, Follow-up 1).
+
+    Args:
+        nexus_fs: The NexusFS kernel instance (always scanned).
+        *additional_sources: Brick service instances to scan for @rpc_expose.
+    """
+    exposed: dict[str, Any] = {}
+
+    for source in (nexus_fs, *additional_sources):
+        if source is None:
             continue
 
-        try:
-            attr = getattr(nexus_fs, name)
-            if callable(attr) and hasattr(attr, "_rpc_exposed"):
-                method_name = getattr(attr, "_rpc_name", name)
-                # Issue #2136: Block rpc_name bypass — skip private method names
-                if method_name.startswith("_"):
-                    logger.warning(
-                        "Skipping RPC method with private rpc_name: %s -> %s", name, method_name
-                    )
-                    continue
-                exposed[method_name] = attr
-                logger.debug(f"Discovered RPC method: {method_name}")
-        except Exception:
-            continue
+        source_name = type(source).__name__
+        for name in dir(source):
+            if name.startswith("_"):
+                continue
 
-    logger.info(f"Auto-discovered {len(exposed)} RPC methods")
+            try:
+                attr = getattr(source, name)
+                if callable(attr) and hasattr(attr, "_rpc_exposed"):
+                    method_name = getattr(attr, "_rpc_name", name)
+                    # Issue #2136: Block rpc_name bypass — skip private method names
+                    if method_name.startswith("_"):
+                        logger.warning(
+                            "Skipping RPC method with private rpc_name: %s -> %s",
+                            name,
+                            method_name,
+                        )
+                        continue
+                    if method_name in exposed:
+                        logger.debug(
+                            "RPC method %s from %s overrides previous source",
+                            method_name,
+                            source_name,
+                        )
+                    exposed[method_name] = attr
+                    logger.debug("Discovered RPC method: %s (from %s)", method_name, source_name)
+            except Exception:
+                continue
+
+    logger.info("Auto-discovered %d RPC methods", len(exposed))
     return exposed
 
 

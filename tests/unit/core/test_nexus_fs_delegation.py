@@ -325,121 +325,62 @@ class TestMCPServiceDelegation:
 
 
 # =============================================================================
-# SkillService Delegation (10 sync methods with result wrapping)
+# SkillService Backward Compat (Issue #2035, Follow-up 1)
+# Skills RPC methods are on brick services; NexusFS provides __getattr__ compat
 # =============================================================================
 
 
-class TestSkillServiceDelegation:
-    """Tests for NexusFS → SkillService delegation with result wrapping."""
+class TestSkillServiceBackwardCompat:
+    """Tests for NexusFS → brick service backward compat via __getattr__."""
 
-    def test_skills_share_wraps_result(self, mock_fs, context):
-        """skills_share wraps tuple_id in success dict."""
-        mock_fs.skill_service.share = MagicMock(return_value="tuple-abc")
+    def test_skills_share_via_getattr(self, mock_fs, context):
+        """skills_share dispatches to skill_service.rpc_share via __getattr__."""
+        mock_fs.skill_service.rpc_share = MagicMock(
+            return_value={"success": True, "tuple_id": "tuple-abc"}
+        )
         result = mock_fs.skills_share("/skills/test.py", "user:bob", context)
-        assert result == {
-            "success": True,
-            "tuple_id": "tuple-abc",
-            "skill_path": "/skills/test.py",
-            "share_with": "user:bob",
-        }
-        mock_fs.skill_service.share.assert_called_once_with("/skills/test.py", "user:bob", context)
-
-    def test_skills_unshare_wraps_result(self, mock_fs, context):
-        """skills_unshare wraps success boolean."""
-        mock_fs.skill_service.unshare = MagicMock(return_value=True)
-        result = mock_fs.skills_unshare("/skills/test.py", "user:bob", context)
-        assert result == {
-            "success": True,
-            "skill_path": "/skills/test.py",
-            "unshare_from": "user:bob",
-        }
-
-    def test_skills_discover_wraps_list(self, mock_fs, context):
-        """skills_discover wraps list of skill dicts."""
-        skill_mock = MagicMock()
-        skill_mock.to_dict.return_value = {"name": "test_skill"}
-        mock_fs.skill_service.discover = MagicMock(return_value=[skill_mock])
-        result = mock_fs.skills_discover("all", context)
-        assert result == {"skills": [{"name": "test_skill"}], "count": 1}
-        mock_fs.skill_service.discover.assert_called_once_with(context, "all")
-
-    def test_skills_subscribe_wraps_result(self, mock_fs, context):
-        """skills_subscribe wraps newly_subscribed boolean."""
-        mock_fs.skill_service.subscribe = MagicMock(return_value=True)
-        result = mock_fs.skills_subscribe("/skills/test.py", context)
         assert result["success"] is True
-        assert result["already_subscribed"] is False
+        mock_fs.skill_service.rpc_share.assert_called_once_with(
+            "/skills/test.py", "user:bob", context
+        )
 
-    def test_skills_subscribe_already_subscribed(self, mock_fs, context):
-        """skills_subscribe reports already_subscribed when False returned."""
-        mock_fs.skill_service.subscribe = MagicMock(return_value=False)
-        result = mock_fs.skills_subscribe("/skills/test.py", context)
-        assert result["already_subscribed"] is True
+    def test_skills_discover_via_getattr(self, mock_fs, context):
+        """skills_discover dispatches to skill_service.rpc_discover via __getattr__."""
+        mock_fs.skill_service.rpc_discover = MagicMock(
+            return_value={"skills": [], "count": 0}
+        )
+        result = mock_fs.skills_discover("all", context)
+        assert result == {"skills": [], "count": 0}
 
-    def test_skills_unsubscribe_wraps_result(self, mock_fs, context):
-        """skills_unsubscribe wraps was_subscribed boolean."""
-        mock_fs.skill_service.unsubscribe = MagicMock(return_value=True)
-        result = mock_fs.skills_unsubscribe("/skills/test.py", context)
-        assert result == {
-            "success": True,
-            "skill_path": "/skills/test.py",
-            "was_subscribed": True,
-        }
-
-    def test_skills_get_prompt_context_delegates(self, mock_fs, context):
-        """skills_get_prompt_context calls to_dict on result."""
-        prompt_ctx = MagicMock()
-        prompt_ctx.to_dict.return_value = {"skills": [], "total": 0}
-        mock_fs.skill_service.get_prompt_context = MagicMock(return_value=prompt_ctx)
-        result = mock_fs.skills_get_prompt_context(50, context)
-        assert result == {"skills": [], "total": 0}
-        mock_fs.skill_service.get_prompt_context.assert_called_once_with(context, 50)
-
-    def test_skills_load_delegates(self, mock_fs, context):
-        """skills_load calls to_dict on result."""
-        content = MagicMock()
-        content.to_dict.return_value = {"content": "# My Skill"}
-        mock_fs.skill_service.load = MagicMock(return_value=content)
-        result = mock_fs.skills_load("/skills/test.py", context)
-        assert result == {"content": "# My Skill"}
-
-    def test_skills_export_delegates(self, mock_fs, context):
-        """skills_export forwards all args directly."""
-        export_result = {"path": "/tmp/test.skill"}
-        mock_fs.skill_service.export = MagicMock(return_value=export_result)
+    def test_skills_export_via_getattr(self, mock_fs, context):
+        """skills_export dispatches to skill_package_service.export via __getattr__."""
+        mock_fs.skill_package_service = MagicMock()
+        mock_fs.skill_package_service.export = MagicMock(
+            return_value={"path": "/tmp/test.skill"}
+        )
         result = mock_fs.skills_export(
             skill_path="/skills/test.py",
             format="generic",
             context=context,
         )
-        assert result == export_result
-        mock_fs.skill_service.export.assert_called_once_with(
-            skill_path="/skills/test.py",
-            skill_name=None,
-            output_path=None,
-            format="generic",
-            include_dependencies=False,
-            context=context,
-        )
+        assert result == {"path": "/tmp/test.skill"}
 
-    def test_skills_import_delegates(self, mock_fs, context):
-        """skills_import forwards all args directly."""
-        import_result = {"imported": True}
-        mock_fs.skill_service.import_skill = MagicMock(return_value=import_result)
+    def test_skills_import_via_getattr(self, mock_fs, context):
+        """skills_import dispatches to skill_package_service.import_skill."""
+        mock_fs.skill_package_service = MagicMock()
+        mock_fs.skill_package_service.import_skill = MagicMock(
+            return_value={"imported": True}
+        )
         result = mock_fs.skills_import(
             source_path="/tmp/test.skill",
             context=context,
         )
-        assert result == import_result
-        mock_fs.skill_service.import_skill.assert_called_once_with(
-            source_path="/tmp/test.skill",
-            zip_bytes=None,
-            zip_data=None,
-            target_path=None,
-            allow_overwrite=False,
-            context=context,
-            tier=None,
-        )
+        assert result == {"imported": True}
+
+    def test_unknown_attr_raises(self, mock_fs):
+        """Non-skills attributes still raise AttributeError."""
+        with pytest.raises(AttributeError, match="no attribute"):
+            _ = mock_fs.nonexistent_method
 
 
 # =============================================================================

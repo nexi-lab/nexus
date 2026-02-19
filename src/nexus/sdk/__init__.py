@@ -130,8 +130,8 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem as Filesystem
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext, PermissionEnforcer
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity, ReBACTuple
 from nexus.core.router import NamespaceConfig
+from nexus.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
 from nexus.rebac.manager import (
     CheckResult,
     ConsistencyLevel,

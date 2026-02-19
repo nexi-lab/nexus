@@ -113,7 +113,7 @@ Agent **inherits** user's permissions automatically via `delegates-to` relations
 #### Step 1: Define Delegation Namespace
 
 ```python
-from nexus.core.rebac import NamespaceConfig
+from nexus.rebac.domain import NamespaceConfig
 
 DELEGATION_NAMESPACE = NamespaceConfig(
     namespace_id="delegation-namespace",
@@ -324,7 +324,7 @@ grant_agent_temporary_access(
 ### Option 2: Namespace-Based (For Advanced Use Cases)
 
 ```python
-from nexus.core.rebac import NamespaceConfig
+from nexus.rebac.domain import NamespaceConfig
 from datetime import datetime, timedelta, UTC
 
 def setup_delegation_system(nx):

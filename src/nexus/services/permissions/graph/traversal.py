@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity
+from nexus.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.storage.models.permissions import ReBACTupleModel as RT
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Connection
 
-    from nexus.core.rebac import NamespaceConfig
+    from nexus.rebac.domain import NamespaceConfig
     from nexus.services.permissions.tuples.repository import TupleRepository
 
 logger = logging.getLogger(__name__)

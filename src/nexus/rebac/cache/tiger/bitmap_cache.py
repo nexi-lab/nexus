@@ -38,18 +38,15 @@ logger = logging.getLogger(__name__)
 class CacheKey:
     """Key for Tiger Cache lookup.
 
-    Note: zone_id is intentionally excluded from the cache key.
-    Zone isolation is enforced during permission computation, not caching.
-    This allows shared resources (e.g., /skills in 'root' zone) to be
-    accessible across zones without cache misses.
-
-    See: Issue #979 - Tiger Cache persistence and cross-zone optimization
+    zone_id is included for multi-zone federation isolation — each zone
+    gets its own cache partition to prevent cross-zone cache pollution.
     """
 
     subject_type: str
     subject_id: str
     permission: str
     resource_type: str
+    zone_id: str = ""
 
     def __hash__(self) -> int:
         return hash(
@@ -58,6 +55,7 @@ class CacheKey:
                 self.subject_id,
                 self.permission,
                 self.resource_type,
+                self.zone_id,
             )
         )
 
@@ -269,7 +267,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         conn: Connection | None = None,
     ) -> set[int]:
         """Get all resource integer IDs that subject can access.
@@ -279,13 +277,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             conn: Optional database connection
 
         Returns:
             Set of integer resource IDs
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         # Check in-memory cache first
         with self._lock:
@@ -371,7 +369,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         conn: Connection | None = None,
     ) -> bytes | None:
         """Get serialized bitmap bytes for Rust interop (Issue #896).
@@ -384,13 +382,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             conn: Optional database connection
 
         Returns:
             Serialized bitmap bytes if found, None if not in cache
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         # Check in-memory cache first
         with self._lock:
@@ -497,7 +495,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str = "",  # noqa: ARG002 - Kept for API compatibility, not used in cache key
+        zone_id: str = "",
     ) -> float | None:
         """Get cache age in seconds for a specific entry (Issue #921).
 
@@ -509,12 +507,12 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Deprecated, kept for API compatibility
+            zone_id: Zone ID for cache partitioning
 
         Returns:
             Age in seconds if entry is in memory cache, None if not cached
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         with self._lock:
             if key in self._cache:
@@ -888,7 +886,7 @@ class TigerCache:
         bitmap = RoaringBitmap(resource_int_ids)
 
         bitmap_data = bitmap.serialize()
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         # Upsert to database (zone_id removed from unique constraint per Issue #979)
         # Note: zone_id still included in INSERT for backward compatibility (NOT NULL column)
@@ -1108,7 +1106,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         resource_int_id: int,
     ) -> bool:
         """Add a single resource to subject's permission bitmap (in-memory only).
@@ -1121,13 +1119,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             resource_int_id: Integer ID of the resource to add
 
         Returns:
             True if added successfully, False otherwise
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         with self._lock:
             if key in self._cache:
@@ -1187,7 +1185,7 @@ class TigerCache:
         """
         from sqlalchemy import text
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         try:
             # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
@@ -1314,7 +1312,7 @@ class TigerCache:
         """
         from sqlalchemy import text
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         try:
             with self._engine.begin() as conn:
@@ -1445,7 +1443,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         resource_int_id: int,
     ) -> bool:
         """Remove a resource from subject's permission bitmap (write-through).
@@ -1458,7 +1456,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             resource_int_id: Integer ID of the resource to remove
 
         Returns:
@@ -1468,7 +1466,7 @@ class TigerCache:
             This is a write-through operation. For security, revocations
             should also invalidate L1 cache entries.
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         with self._lock:
             if key in self._cache:
@@ -1494,7 +1492,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         resource_int_ids: set[int],
     ) -> int:
         """Add multiple resources to subject's permission bitmap in bulk.
@@ -1507,7 +1505,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type
             resource_type: Type of resource
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             resource_int_ids: Set of integer resource IDs to add
 
         Returns:
@@ -1516,7 +1514,7 @@ class TigerCache:
         if not resource_int_ids:
             return 0
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         with self._lock:
             if key in self._cache:
@@ -1578,7 +1576,7 @@ class TigerCache:
         if not resource_int_ids:
             return True
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         try:
             # Get current bitmap from memory (may have more entries than resource_int_ids)

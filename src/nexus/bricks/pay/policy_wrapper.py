@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.pay.audit_types import TransactionProtocol
 from nexus.bricks.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 from nexus.bricks.pay.spending_policy import ApprovalRequiredError, PolicyDeniedError
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.spending_policy_service import SpendingPolicyService
@@ -67,7 +68,9 @@ class PolicyEnforcedPayment:
             5. Delegate to inner protocol
             6. On success → fire-and-forget ledger update
         """
-        zone_id = request.metadata.get("zone_id", "root") if request.metadata else "root"
+        zone_id = (
+            request.metadata.get("zone_id", ROOT_ZONE_ID) if request.metadata else ROOT_ZONE_ID
+        )
         approval_id = request.metadata.get("approval_id") if request.metadata else None
 
         # 1. If approval_id provided, check it before evaluation

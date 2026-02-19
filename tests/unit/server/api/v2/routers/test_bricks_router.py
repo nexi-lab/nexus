@@ -14,8 +14,10 @@ from fastapi.testclient import TestClient
 
 from nexus.server.api.v2.routers.bricks import (
     _get_lifecycle_manager,
+    health_router,
     router,
 )
+from nexus.server.dependencies import require_admin
 from nexus.services.protocols.brick_lifecycle import (
     BrickHealthReport,
     BrickState,
@@ -27,6 +29,7 @@ from nexus.services.protocols.brick_lifecycle import (
 # ---------------------------------------------------------------------------
 
 _test_app = FastAPI()
+_test_app.include_router(health_router)
 _test_app.include_router(router)
 
 
@@ -53,6 +56,10 @@ def _override_manager() -> MagicMock:
 
 
 _test_app.dependency_overrides[_get_lifecycle_manager] = _override_manager
+
+# Override require_admin for existing functional tests (simulates authenticated admin)
+_admin_result = {"authenticated": True, "is_admin": True, "subject_id": "test-admin"}
+_test_app.dependency_overrides[require_admin] = lambda: _admin_result
 
 client = TestClient(_test_app)
 
@@ -276,9 +283,45 @@ class TestManagerUnavailable:
 
     def test_health_without_manager(self) -> None:
         app = FastAPI()
-        app.include_router(router)
+        app.include_router(health_router)
         # No dependency override — _get_lifecycle_manager will fail
         # We need to mock the app state
         c = TestClient(app)
         resp = c.get("/api/v2/bricks/health")
         assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Auth enforcement (Issue #2048)
+# ---------------------------------------------------------------------------
+
+
+class TestAuthRequired:
+    """Verify admin endpoints reject unauthenticated requests."""
+
+    def _make_auth_app(self) -> tuple[FastAPI, TestClient]:
+        """Create an app with real auth (api_key set, so open-access is off)."""
+        app = FastAPI()
+        app.include_router(health_router)
+        app.include_router(router)
+        app.dependency_overrides[_get_lifecycle_manager] = _override_manager
+        # Set api_key so open-access mode is off (triggers real auth)
+        app.state.api_key = "test-secret-key"
+        app.state.auth_provider = None
+        return app, TestClient(app)
+
+    def test_unauthenticated_returns_401(self) -> None:
+        """Admin endpoints without auth should return 401."""
+        _, c = self._make_auth_app()
+
+        # Admin endpoints should return 401
+        assert c.get("/api/v2/bricks/test_brick").status_code == 401
+        assert c.post("/api/v2/bricks/test_brick/mount").status_code == 401
+        assert c.post("/api/v2/bricks/test_brick/unmount").status_code == 401
+
+    def test_health_endpoint_remains_public(self) -> None:
+        """Health endpoint does not require auth (K8s probes)."""
+        _, c = self._make_auth_app()
+
+        resp = c.get("/api/v2/bricks/health")
+        assert resp.status_code == 200

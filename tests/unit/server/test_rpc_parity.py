@@ -373,6 +373,17 @@ def test_all_public_methods_are_exposed_or_excluded():
     print("  - 0 missing (enforcement passed!)")
 
 
+def test_no_exposed_method_starts_with_underscore():
+    """Issue #2136: No exposed method name should start with '_'.
+
+    This ensures that even if a method has _rpc_name set to something
+    starting with '_', it won't bypass the discovery filter.
+    """
+    exposed_methods = get_rpc_exposed_methods(NexusFS)
+    private_methods = [name for name in exposed_methods if name.startswith("_")]
+    assert not private_methods, f"Exposed methods must not start with '_': {private_methods}"
+
+
 def test_list_all_exposed_methods():
     """List all @rpc_expose methods for documentation purposes."""
     exposed_methods = get_rpc_exposed_methods(NexusFS)

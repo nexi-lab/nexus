@@ -209,6 +209,11 @@ async def dispatch_method(
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
 
+    # Issue #2136: Block private/malformed method names at dispatch time
+    if not method or method.startswith("_") or "." in method:
+        logger.warning("[RPC-SECURITY] Blocked method call: %r", method)
+        raise ValueError("Method not found")
+
     # Lazy-init on first call
     if not _DISPATCH_TABLE:
         _DISPATCH_TABLE = build_dispatch_table()
@@ -266,7 +271,8 @@ async def dispatch_method(
     if method in exposed_methods:
         return await _auto_dispatch(method, params, context, exposed_methods=exposed_methods)
 
-    raise ValueError(f"Unknown method: {method}")
+    logger.warning("[RPC] Unknown method requested: %r", method)
+    raise ValueError("Method not found")
 
 
 async def _auto_dispatch(

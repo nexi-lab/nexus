@@ -1616,6 +1616,12 @@ def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
             attr = getattr(nexus_fs, name)
             if callable(attr) and hasattr(attr, "_rpc_exposed"):
                 method_name = getattr(attr, "_rpc_name", name)
+                # Issue #2136: Block rpc_name bypass — skip private method names
+                if method_name.startswith("_"):
+                    logger.warning(
+                        "Skipping RPC method with private rpc_name: %s -> %s", name, method_name
+                    )
+                    continue
                 exposed[method_name] = attr
                 logger.debug(f"Discovered RPC method: {method_name}")
         except Exception:

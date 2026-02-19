@@ -20,8 +20,8 @@ from concurrent.futures import as_completed
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.types import Permission
-from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.rpc_decorator import rpc_expose
 
 # Constants duplicated from search_service to avoid circular import

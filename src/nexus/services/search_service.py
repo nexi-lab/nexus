@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING, Any, cast
 from cachetools import TTLCache
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.types import Permission
 from nexus.core import glob_fast, grep_fast, trigram_fast
-from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.search.strategies import (
     GLOB_RUST_THRESHOLD,

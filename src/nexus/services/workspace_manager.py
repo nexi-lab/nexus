@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import desc, select
 
-from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.workspace_manifest import WorkspaceManifest
 from nexus.services.workspace_permissions import check_workspace_permission
 from nexus.storage.models import WorkspaceSnapshotModel

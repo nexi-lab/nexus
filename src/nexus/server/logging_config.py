@@ -189,3 +189,17 @@ def configure_logging(
     uvicorn_access.handlers.clear()
     uvicorn_access.propagate = True
     uvicorn_access.setLevel(logging.WARNING)
+
+
+def shutdown_logging() -> None:
+    """Reset structlog and clear root logger handlers.
+
+    Issue #2072: Proper logging shutdown for clean process exit.
+    """
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        structlog.reset_defaults()
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()

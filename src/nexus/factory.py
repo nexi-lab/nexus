@@ -661,22 +661,37 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         raise BootError(str(exc), tier="kernel") from exc
 
 
-def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str, Any]:
+def _boot_system_services(
+    ctx: _BootContext,
+    kernel: dict[str, Any],
+    brick_on: Callable[[str], bool] | None = None,
+) -> dict[str, Any]:
     """Boot Tier 1 (SYSTEM) — degraded-mode on failure.
 
     Creates AgentRegistry, NamespaceManager, AsyncVFSRouter,
     EventDeliveryWorker, ObservabilitySubsystem, ResiliencyManager.
     On failure: logs WARNING, sets that service to None.
 
+    Args:
+        ctx: Boot context with shared dependencies.
+        kernel: Kernel services dict from Tier 0.
+        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+            When None, all services are enabled (backward-compatible default).
+
     Returns:
-        Dict with 8 system service entries (some may be None).
+        Dict with 11 system service entries (some may be None).
     """
     t0 = time.perf_counter()
+
+    def _on(name: str) -> bool:
+        if brick_on is None:
+            return True
+        return brick_on(name)
 
     # --- Agent Registry (Issue #1502) ---
     agent_registry: Any = None
     async_agent_registry: Any = None
-    if ctx.session_factory is not None:
+    if _on("agent_registry") and ctx.session_factory is not None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
             from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
@@ -691,23 +706,29 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] AgentRegistry unavailable: %s", exc)
 
+    if not _on("agent_registry"):
+        logger.debug("[BOOT:SYSTEM] AgentRegistry disabled by profile")
+
     # --- Namespace Manager (Issue #1502) ---
     namespace_manager: Any = None
     async_namespace_manager: Any = None
-    try:
-        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
-        from nexus.rebac.namespace_factory import (
-            create_namespace_manager as _create_ns_manager,
-        )
+    if not _on("namespace"):
+        logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
+    else:
+        try:
+            from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
+            from nexus.rebac.namespace_factory import (
+                create_namespace_manager as _create_ns_manager,
+            )
 
-        namespace_manager = _create_ns_manager(
-            rebac_manager=kernel["rebac_manager"],
-            record_store=ctx.record_store,
-        )
-        async_namespace_manager = AsyncNamespaceManager(namespace_manager)
-        logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
+            namespace_manager = _create_ns_manager(
+                rebac_manager=kernel["rebac_manager"],
+                record_store=ctx.record_store,
+            )
+            async_namespace_manager = AsyncNamespaceManager(namespace_manager)
+            logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
 
     # --- Async VFS Router (Issue #1502) ---
     async_vfs_router: Any = None
@@ -721,7 +742,9 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     # --- Event Delivery Worker (Issue #1241, constructed, NOT started) ---
     delivery_worker = None
-    if ctx.db_url.startswith(("postgres", "postgresql")):
+    if not _on("eventlog"):
+        logger.debug("[BOOT:SYSTEM] EventDeliveryWorker disabled by profile")
+    elif ctx.db_url.startswith(("postgres", "postgresql")):
         try:
             from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
@@ -736,31 +759,37 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     # --- Observability Subsystem (Issue #1301) ---
     observability_subsystem: Any = None
-    try:
-        from nexus.core.config import ObservabilityConfig
-        from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+    if not _on("observability"):
+        logger.debug("[BOOT:SYSTEM] ObservabilitySubsystem disabled by profile")
+    else:
+        try:
+            from nexus.core.config import ObservabilityConfig
+            from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
 
-        # Instrument both primary and replica pools (Issue #725)
-        obs_engines = [ctx.engine]
-        if ctx.record_store.has_read_replica:
-            obs_engines.append(ctx.read_engine)
-        observability_subsystem = ObservabilitySubsystem(
-            config=ObservabilityConfig(),
-            engines=obs_engines,
-        )
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
+            # Instrument both primary and replica pools (Issue #725)
+            obs_engines = [ctx.engine]
+            if ctx.record_store.has_read_replica:
+                obs_engines.append(ctx.read_engine)
+            observability_subsystem = ObservabilitySubsystem(
+                config=ObservabilityConfig(),
+                engines=obs_engines,
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
 
     # --- Resiliency Subsystem (Issue #1366) ---
     resiliency_manager: Any = None
-    try:
-        from nexus.core.resiliency import ResiliencyManager, set_default_manager
+    if not _on("resiliency"):
+        logger.debug("[BOOT:SYSTEM] ResiliencyManager disabled by profile")
+    else:
+        try:
+            from nexus.core.resiliency import ResiliencyManager, set_default_manager
 
-        resiliency_config = _parse_resiliency_config(ctx.resiliency_raw)
-        resiliency_manager = ResiliencyManager(config=resiliency_config)
-        set_default_manager(resiliency_manager)
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
+            resiliency_config = _parse_resiliency_config(ctx.resiliency_raw)
+            resiliency_manager = ResiliencyManager(config=resiliency_config)
+            set_default_manager(resiliency_manager)
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
     # --- Context Branch Service (Issue #1315) ---
     context_branch_service: Any = None
@@ -823,7 +852,13 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     elapsed = time.perf_counter() - t0
     active = sum(1 for v in result.values() if v is not None)
-    logger.info("[BOOT:SYSTEM] %d/%d services ready (%.3fs)", active, len(result), elapsed)
+    logger.info(
+        "[BOOT:SYSTEM] %d/%d services ready (%.3fs, profile gating=%s)",
+        active,
+        len(result),
+        elapsed,
+        "active" if brick_on is not None else "off",
+    )
     return result
 
 
@@ -913,7 +948,7 @@ def _boot_brick_services(
     # --- Manifest Resolver (Issue #1427, #1428) ---
     manifest_resolver: Any = None
     manifest_metrics: Any = None
-    if _on("mcp"):
+    if _on("skills"):
         try:
             from nexus.bricks.context_manifest import ManifestResolver
             from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
@@ -1026,7 +1061,9 @@ def _boot_brick_services(
     # --- Infrastructure: event bus + lock manager ---
     event_bus: Any = None
     lock_manager: Any = None
-    if ctx.dist.enable_locks or ctx.dist.enable_events:
+    if not _on("ipc"):
+        logger.debug("[BOOT:BRICK] IPC/EventBus brick disabled by profile")
+    elif ctx.dist.enable_locks or ctx.dist.enable_events:
         event_bus, lock_manager = _create_distributed_infra(
             ctx.dist,
             ctx.metadata_store,
@@ -1073,14 +1110,17 @@ def _boot_brick_services(
 
     # --- TaskQueueService (Issue #655) ---
     task_queue_service: Any = None
-    try:
-        from nexus.services.task_queue_service import TaskQueueService
+    if not _on("scheduler"):
+        logger.debug("[BOOT:BRICK] Scheduler/TaskQueue brick disabled by profile")
+    else:
+        try:
+            from nexus.services.task_queue_service import TaskQueueService
 
-        task_queue_service = TaskQueueService(
-            db_path=_resolve_tasks_db_path(ctx.backend),
-        )
-    except Exception as _tq_exc:
-        logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
+            task_queue_service = TaskQueueService(
+                db_path=_resolve_tasks_db_path(ctx.backend),
+            )
+        except Exception as _tq_exc:
+            logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
     # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
     ipc_storage_driver: Any = None
@@ -1303,8 +1343,8 @@ def create_nexus_services(
     # --- Tier 0: KERNEL (fatal on failure) ---
     kernel_dict = _boot_kernel_services(ctx)
 
-    # --- Tier 1: SYSTEM (degraded on failure) ---
-    system_dict = _boot_system_services(ctx, kernel_dict)
+    # --- Tier 1: SYSTEM (degraded on failure, gated by profile) ---
+    system_dict = _boot_system_services(ctx, kernel_dict, _brick_on)
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
     brick_dict = _boot_brick_services(ctx, kernel_dict, _brick_on)

@@ -219,7 +219,7 @@ class WorkspaceRegistry:
             ... )
 
             >>> # v0.5.0: Session-scoped workspace (temporary)
-            >>> from nexus.core.permissions import OperationContext
+            >>> from nexus.contracts.types import OperationContext
             >>> from datetime import timedelta
             >>> ctx = OperationContext(user_id="alice", groups=[])
             >>> registry.register_workspace(
@@ -497,7 +497,7 @@ class WorkspaceRegistry:
             ... )
 
             >>> # v0.5.0: Session-scoped memory (temporary)
-            >>> from nexus.core.permissions import OperationContext
+            >>> from nexus.contracts.types import OperationContext
             >>> from datetime import timedelta
             >>> ctx = OperationContext(user_id="alice", groups=[])
             >>> registry.register_memory(

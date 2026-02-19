@@ -35,7 +35,7 @@ from nexus.services.permission_utils import check_permission
 
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
@@ -1132,7 +1132,7 @@ class SyncService:
         """
         try:
             if hasattr(backend, "get_content_size"):
-                from nexus.core.permissions import OperationContext
+                from nexus.contracts.types import OperationContext
 
                 size_context = OperationContext(
                     user_id="system",

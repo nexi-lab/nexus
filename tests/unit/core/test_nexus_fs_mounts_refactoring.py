@@ -17,8 +17,8 @@ from typing import Any, NamedTuple
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore

@@ -1127,7 +1127,7 @@ def create_mcp_server(
     # =========================================================================
 
     # Lazy import and create tool index for discovery
-    from nexus.discovery.tool_index import ToolIndex, ToolInfo
+    from nexus.bricks.discovery.tool_index import ToolIndex, ToolInfo
 
     tool_index = ToolIndex()
 

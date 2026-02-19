@@ -12,13 +12,13 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from nexus.a2a.agent_card import (
+from nexus.bricks.a2a.agent_card import (
     AgentCardCache,
     _detect_auth_schemes,
     _map_skills,
     build_agent_card,
 )
-from nexus.a2a.models import AgentCard
+from nexus.bricks.a2a.models import AgentCard
 
 # ------------------------------------------------------------------
 # Fixtures

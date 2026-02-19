@@ -873,9 +873,9 @@ async def lifespan(_app: FastAPI) -> Any:
         )
     if _app.state.nexus_fs and _app.state.agent_registry:
         try:
-            from nexus.sandbox.auth_service import SandboxAuthService
-            from nexus.sandbox.events import AgentEventLog
-            from nexus.sandbox.sandbox_manager import SandboxManager
+            from nexus.bricks.sandbox.auth_service import SandboxAuthService
+            from nexus.bricks.sandbox.events import AgentEventLog
+            from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
             session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
@@ -935,9 +935,9 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             import asyncpg
 
-            from nexus.pay.credits import CreditsService
-            from nexus.scheduler.queue import TaskQueue
-            from nexus.scheduler.service import SchedulerService
+            from nexus.bricks.pay.credits import CreditsService
+            from nexus.bricks.scheduler.queue import TaskQueue
+            from nexus.bricks.scheduler.service import SchedulerService
 
             # Convert SQLAlchemy URL to asyncpg DSN
             pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
@@ -1701,7 +1701,7 @@ def _register_routes(app: FastAPI) -> None:
 
     # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
     try:
-        from nexus.a2a import create_a2a_router
+        from nexus.bricks.a2a import create_a2a_router
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(

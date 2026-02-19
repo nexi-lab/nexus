@@ -9,7 +9,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from nexus.scheduler.policies.hrrn import compute_hrrn_score, rank_by_hrrn
+from nexus.bricks.scheduler.policies.hrrn import compute_hrrn_score, rank_by_hrrn
 
 
 class TestComputeHrrnScore:

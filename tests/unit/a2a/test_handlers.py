@@ -10,17 +10,17 @@ from typing import Any
 
 import pytest
 
-from nexus.a2a.exceptions import (
+from nexus.bricks.a2a.exceptions import (
     InvalidParamsError,
     MethodNotFoundError,
     PushNotificationNotSupportedError,
     TaskNotCancelableError,
     TaskNotFoundError,
 )
-from nexus.a2a.handlers import dispatch, handle_cancel, handle_get, handle_send
-from nexus.a2a.models import Message, TaskState, TextPart
-from nexus.a2a.stores.in_memory import InMemoryTaskStore
-from nexus.a2a.task_manager import TaskManager
+from nexus.bricks.a2a.handlers import dispatch, handle_cancel, handle_get, handle_send
+from nexus.bricks.a2a.models import Message, TaskState, TextPart
+from nexus.bricks.a2a.stores.in_memory import InMemoryTaskStore
+from nexus.bricks.a2a.task_manager import TaskManager
 
 
 @pytest.fixture

@@ -27,18 +27,18 @@ pytestmark = [
     pytest.mark.integration,
 ]
 
-from nexus.sandbox.egress_proxy import (  # noqa: E402
+from nexus.bricks.sandbox.egress_proxy import (  # noqa: E402
     EgressProxyManager,
     build_squid_config,
     validate_domain,
 )
-from nexus.sandbox.sandbox_audit import SandboxAuditLogger  # noqa: E402
-from nexus.sandbox.sandbox_provider import (  # noqa: E402
+from nexus.bricks.sandbox.sandbox_audit import SandboxAuditLogger  # noqa: E402
+from nexus.bricks.sandbox.sandbox_provider import (  # noqa: E402
     validate_agent_id,
     validate_mount_path,
     validate_nexus_url,
 )
-from nexus.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
+from nexus.bricks.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
 
 ALPINE_IMAGE = "alpine:3.19"
 N_ITERATIONS = 1000

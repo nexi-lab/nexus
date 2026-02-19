@@ -29,7 +29,7 @@ async def startup_a2a_grpc(app: FastAPI) -> list[asyncio.Task]:
         logger.warning("A2A gRPC disabled: no task manager on app.state")
         return []
 
-    from nexus.a2a.grpc_server import create_grpc_server, start_grpc_server
+    from nexus.bricks.a2a.grpc_server import create_grpc_server, start_grpc_server
 
     server = await create_grpc_server(task_manager, port=port)
     await start_grpc_server(server)
@@ -42,6 +42,6 @@ async def shutdown_a2a_grpc(app: FastAPI) -> None:
     """Stop the A2A gRPC server if running."""
     server = getattr(app.state, "a2a_grpc_server", None)
     if server is not None:
-        from nexus.a2a.grpc_server import stop_grpc_server
+        from nexus.bricks.a2a.grpc_server import stop_grpc_server
 
         await stop_grpc_server(server)

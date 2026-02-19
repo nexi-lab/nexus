@@ -25,7 +25,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_service_initialization(self):
         """CreditsService should initialize without TigerBeetle in disabled mode."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
         assert service._enabled is False
@@ -33,7 +33,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_full_transfer_workflow(self):
         """Complete transfer workflow should work in disabled mode."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
 
@@ -58,7 +58,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_reservation_workflow(self):
         """Two-phase transfer workflow should work in disabled mode."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
 
@@ -88,7 +88,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_fast_metering(self):
         """Fast deduction for API metering should work."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
 
@@ -103,7 +103,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_batch_transfer(self):
         """Batch transfers should work atomically."""
-        from nexus.pay import CreditsService, TransferRequest
+        from nexus.bricks.pay import CreditsService, TransferRequest
 
         service = CreditsService(enabled=False)
 
@@ -120,7 +120,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_wallet_provisioning(self):
         """Wallet provisioning should be idempotent."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
 
@@ -133,7 +133,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_budget_check(self):
         """Budget check should always pass in disabled mode."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
 
@@ -143,7 +143,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_concurrent_operations(self):
         """Concurrent operations should not interfere with each other."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
 
@@ -166,7 +166,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_idempotency_across_calls(self):
         """Same idempotency key should produce same transfer ID."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
 
@@ -188,7 +188,7 @@ class TestCreditsServiceE2E:
     @pytest.mark.asyncio
     async def test_topup_from_treasury(self):
         """Top-up should work (treasury to agent)."""
-        from nexus.pay import CreditsService
+        from nexus.bricks.pay import CreditsService
 
         service = CreditsService(enabled=False)
 
@@ -207,7 +207,7 @@ class TestModuleExports:
 
     def test_service_exports(self):
         """CreditsService and related classes should be importable."""
-        from nexus.pay import (
+        from nexus.bricks.pay import (
             CreditsError,
             CreditsService,
             InsufficientCreditsError,
@@ -225,7 +225,7 @@ class TestModuleExports:
 
     def test_constant_exports(self):
         """All constants should be importable."""
-        from nexus.pay import (
+        from nexus.bricks.pay import (
             ACCOUNT_CODE_WALLET,
             LEDGER_CREDITS,
             MICRO_UNIT_SCALE,
@@ -237,7 +237,7 @@ class TestModuleExports:
 
     def test_utility_exports(self):
         """Utility functions should be importable and work."""
-        from nexus.pay import (
+        from nexus.bricks.pay import (
             agent_id_to_tb_id,
             credits_to_micro,
             make_tb_account_id,

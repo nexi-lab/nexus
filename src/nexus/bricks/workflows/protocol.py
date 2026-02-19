@@ -1,0 +1,100 @@
+"""Workflow brick protocols — zero-dependency interfaces.
+
+All protocols are @runtime_checkable for duck-typed conformance.
+No imports from nexus.core, nexus.storage, or nexus.server.
+
+Note: ``MetadataStoreProtocol`` and ``NexusOperationsProtocol`` now live
+in ``nexus.services.protocols.workflow`` (they are service-tier contracts,
+not brick-specific).  Re-exported here for backward compatibility.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
+
+from nexus.services.protocols.workflow import (
+    MetadataStoreProtocol,
+    NexusOperationsProtocol,
+)
+
+# Re-export so existing callers keep working.
+__all__ = ["MetadataStoreProtocol", "NexusOperationsProtocol"]
+
+# ---------------------------------------------------------------------------
+# Dependency-injection callables
+# ---------------------------------------------------------------------------
+
+
+class GlobMatchFn(Protocol):
+    """Callable that checks whether *path* matches any of *patterns*."""
+
+    def __call__(self, path: str, patterns: list[str]) -> bool: ...
+
+
+@runtime_checkable
+class WorkflowLLMProtocol(Protocol):
+    """Narrow LLM provider surface used by LLMAction.
+
+    This is intentionally minimal — only the ``generate`` helper that
+    workflow actions need.  For the full brick-level LLM provider
+    contract see ``nexus.services.protocols.llm_provider.LLMProviderProtocol``.
+    """
+
+    async def generate(self, *, model: str, prompt: str, system: str) -> str: ...
+
+
+# ---------------------------------------------------------------------------
+# Main brick protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class WorkflowProtocol(Protocol):
+    """Public contract for the workflow engine brick."""
+
+    async def fire_event(
+        self,
+        trigger_type: str,
+        event_context: dict[str, Any],
+    ) -> int: ...
+
+    async def trigger_workflow(
+        self,
+        workflow_name: str,
+        event_context: dict[str, Any],
+    ) -> Any: ...
+
+    def load_workflow(
+        self,
+        definition: Any,
+        *,
+        enabled: bool = True,
+    ) -> bool: ...
+
+    def unload_workflow(self, name: str) -> bool: ...
+
+    def enable_workflow(self, name: str) -> None: ...
+
+    def disable_workflow(self, name: str) -> None: ...
+
+    def list_workflows(self) -> list[dict[str, Any]]: ...
+
+
+# ---------------------------------------------------------------------------
+# Services bundle injected into WorkflowContext
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class WorkflowServices:
+    """Services injected into workflow context for action execution.
+
+    All fields are optional — actions that need a missing service
+    return ``ActionResult(success=False, error="… service not injected")``.
+    """
+
+    nexus_ops: NexusOperationsProtocol | None = None
+    metadata_store: MetadataStoreProtocol | None = None
+    llm_provider: WorkflowLLMProtocol | None = None
+    glob_match: GlobMatchFn | None = None

@@ -62,7 +62,7 @@ def transfer_request():
     """Create a minimal ProtocolTransferRequest-like object."""
     from decimal import Decimal
 
-    from nexus.pay.protocol import ProtocolTransferRequest
+    from nexus.bricks.pay.protocol import ProtocolTransferRequest
 
     return ProtocolTransferRequest(
         from_agent="agent-1",
@@ -207,7 +207,7 @@ class TestPostAnalysis:
         """Zone defaults to 'default' when metadata is empty."""
         from decimal import Decimal
 
-        from nexus.pay.protocol import ProtocolTransferRequest
+        from nexus.bricks.pay.protocol import ProtocolTransferRequest
 
         request = ProtocolTransferRequest(
             from_agent="agent-1",

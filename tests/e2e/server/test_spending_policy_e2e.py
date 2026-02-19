@@ -23,7 +23,7 @@ import pytest
 from fastapi import FastAPI, Header
 from httpx import ASGITransport, AsyncClient
 
-from nexus.pay.spending_policy import PolicyDeniedError, PolicyEvaluation, SpendingPolicy
+from nexus.bricks.pay.spending_policy import PolicyDeniedError, PolicyEvaluation, SpendingPolicy
 from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers, router
 
 # =============================================================================
@@ -417,7 +417,7 @@ async def async_session_factory():
 @pytest.fixture
 def real_policy_service(async_session_factory):
     """Create a real SpendingPolicyService backed by SQLite."""
-    from nexus.pay.spending_policy_service import SpendingPolicyService
+    from nexus.bricks.pay.spending_policy_service import SpendingPolicyService
 
     return SpendingPolicyService(session_factory=async_session_factory)
 

@@ -16,13 +16,6 @@ from nexus.connectors.base import ConfirmLevel, ErrorDef, OpTraits
 
 logger = logging.getLogger(__name__)
 
-# Default nested examples — configurable via constructor (#8-A).
-DEFAULT_NESTED_EXAMPLES: dict[str, list[str]] = {
-    "start": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
-    "end": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
-    "attendees": ["- email: attendee@example.com"],
-}
-
 
 class SkillDocGenerator:
     """Generate SKILL.md documentation from connector metadata.
@@ -54,6 +47,7 @@ class SkillDocGenerator:
         examples: dict[str, str],
         skill_dir: str = ".skill",
         nested_examples: dict[str, list[str]] | None = None,
+        field_examples: dict[str, str] | None = None,
     ) -> None:
         self._skill_name = skill_name
         self._schemas = schemas
@@ -61,7 +55,8 @@ class SkillDocGenerator:
         self._error_registry = error_registry
         self._examples = examples
         self._skill_dir = skill_dir
-        self._nested_examples = nested_examples or DEFAULT_NESTED_EXAMPLES
+        self._nested_examples = nested_examples or {}
+        self._field_examples = field_examples or {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -302,19 +297,13 @@ class SkillDocGenerator:
     def _get_field_example(
         self, field_name: str, _field_info: Any, annotation: Any, required: bool
     ) -> str:
-        """Get example value for a field."""
-        examples = {
-            "summary": '"Meeting Title"',
-            "description": '"Event description"',
-            "location": '"Conference Room A"',
-            "visibility": "default  # default, public, private, confidential",
-            "colorId": '"1"  # 1-11',
-            "recurrence": '["RRULE:FREQ=WEEKLY;BYDAY=MO"]',
-            "send_notifications": "true",
-        }
+        """Get example value for a field.
 
-        if field_name in examples:
-            return examples[field_name]
+        Checks connector-provided ``field_examples`` first, then falls
+        back to generic type-based placeholders.
+        """
+        if field_name in self._field_examples:
+            return self._field_examples[field_name]
 
         type_hint = self._format_type_hint(annotation)
         suffix = ", required" if required else ", optional"

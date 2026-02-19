@@ -15,6 +15,7 @@ enum DirEntryType {
   DT_REG = 0;     // Regular file (proto3 default)
   DT_DIR = 1;     // Directory
   DT_MOUNT = 2;   // Mount point to another zone
+  DT_PIPE = 3;    // Kernel IPC ring buffer (same-node, SPSC)
 }
 
 // FileMetadata represents the metadata for a single file or directory in Nexus.

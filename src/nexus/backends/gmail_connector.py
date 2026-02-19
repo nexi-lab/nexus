@@ -223,6 +223,7 @@ class GmailConnectorBackend(
             For multi-user production, leave user_email=None to auto-detect from context.
             This ensures each user accesses their own Gmail.
         """
+        super().__init__()
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
         # Store session factory for caching (CacheConnectorMixin)
@@ -233,6 +234,9 @@ class GmailConnectorBackend(
 
         # Store metadata store for file_paths table (enables metadata-based listing)
         self.metadata_store = metadata_store
+
+        # Initialize CheckpointMixin state (MRO doesn't call CheckpointMixin.__init__)
+        self._checkpoints: dict[str, Any] = {}
 
         # Register OAuth provider using factory (loads from config)
         self._register_oauth_provider()
@@ -312,6 +316,41 @@ class GmailConnectorBackend(
         except Exception as e:
             logger.warning(f"Failed to load static SKILL.md: {e}, using auto-generated")
             return super().generate_skill_doc(mount_path)
+
+    def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
+        """Write SKILL.md to filesystem using static template.
+
+        Overrides SkillDocMixin.write_skill_docs to use the static SKILL.md
+        loaded by generate_skill_doc() instead of auto-generating from schemas.
+
+        Args:
+            mount_path: The mount path for this connector
+            filesystem: NexusFS instance to write to (optional)
+
+        Returns:
+            Dict of written paths: {"skill_md": path, "examples": [paths...]}
+        """
+        import posixpath
+
+        result: dict[str, Any] = {"skill_md": None, "examples": []}
+
+        if filesystem is None:
+            return result
+
+        skill_dir = posixpath.join(mount_path.rstrip("/"), self.SKILL_DIR)
+
+        try:
+            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+
+            skill_md_path = posixpath.join(skill_dir, "SKILL.md")
+            content = self.generate_skill_doc(mount_path)
+            filesystem.write(skill_md_path, content.encode("utf-8"))
+            result["skill_md"] = skill_md_path
+
+            return result
+        except Exception as e:
+            logger.warning("Failed to write skill docs to %s: %s", skill_dir, e)
+            return result
 
     def _get_gmail_service(self, context: "OperationContext | None" = None) -> "Resource":
         """Get Gmail service with user's OAuth credentials.

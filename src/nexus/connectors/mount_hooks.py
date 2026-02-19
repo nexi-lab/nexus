@@ -129,7 +129,7 @@ def generate_all_skill_docs(
                 filesystem=filesystem,
                 skill_registry=skill_registry,
             )
-            if result["skill_doc_path"]:
+            if result["skill_md"]:
                 results.append(result)
 
     return results

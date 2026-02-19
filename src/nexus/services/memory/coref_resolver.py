@@ -20,7 +20,26 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+
+@runtime_checkable
+class LLMProviderProtocol(Protocol):
+    """Protocol for LLM providers used by coreference resolution.
+
+    Providers must implement at least one of:
+    - complete_async(messages) -> response with .content attribute
+    - complete(messages) -> response with .content attribute
+
+    TODO(#2124): Extract to nexus.llm.protocols when LLM module is brick-extracted.
+    """
+
+    def complete(self, messages: Sequence[Any]) -> Any:
+        """Synchronous completion. Returns response with .content attribute."""
+        ...
 
 
 @dataclass
@@ -125,12 +144,13 @@ Return ONLY the resolved text with pronouns replaced by names. If a pronoun cann
 
 Resolved text:"""
 
-    def __init__(self, llm_provider: Any = None):
+    def __init__(self, llm_provider: LLMProviderProtocol | Any | None = None):
         """Initialize LLM resolver.
 
         Args:
-            llm_provider: LLM provider instance with complete() or acomplete() method.
-                         If None, will attempt to use default provider.
+            llm_provider: LLM provider satisfying LLMProviderProtocol,
+                         or any object with complete()/complete_async() method.
+                         If None, falls back to heuristic resolution.
         """
         self.llm_provider = llm_provider
 
@@ -152,7 +172,8 @@ Resolved text:"""
         """
         from nexus.core.sync_bridge import run_sync
 
-        return run_sync(self.resolve_async(text, context, entity_hints))
+        result: CorefResult = run_sync(self.resolve_async(text, context, entity_hints))
+        return result
 
     async def resolve_async(
         self,
@@ -204,28 +225,23 @@ Resolved text:"""
             )
 
         try:
-            # Call LLM - handle different provider interfaces
-            # Some providers accept raw string prompts, others require Message objects
-            if hasattr(provider, "complete_async"):
-                # LiteLLMProvider from nexus.llm - requires Message objects
-                from nexus.llm import Message, MessageRole
+            # Build message list for providers that expect structured messages
+            from nexus.llm import Message, MessageRole
 
-                messages = [Message(role=MessageRole.USER, content=prompt)]
+            messages = [Message(role=MessageRole.USER, content=prompt)]
+
+            # Dispatch to provider: prefer async, fall back to sync
+            if hasattr(provider, "complete_async"):
                 response = await provider.complete_async(messages)
             elif hasattr(provider, "acomplete"):
-                # Generic async provider - try with raw prompt
-                response = await provider.acomplete(prompt)
+                response = await provider.acomplete(messages)
             elif hasattr(provider, "complete"):
-                # Check if it's a LiteLLMProvider
-                if hasattr(provider, "config"):
-                    from nexus.llm import Message, MessageRole
-
-                    messages = [Message(role=MessageRole.USER, content=prompt)]
-                    response = provider.complete(messages)
-                else:
-                    response = provider.complete(prompt)
+                response = provider.complete(messages)
             else:
-                raise ValueError("LLM provider must have complete() or complete_async() method")
+                raise TypeError(
+                    f"LLM provider {type(provider).__name__} must implement "
+                    "complete() or complete_async(). See LLMProviderProtocol."
+                )
 
             # Extract resolved text from response
             resolved_text = self._extract_resolved_text(response, text)
@@ -551,36 +567,11 @@ class HeuristicCorefResolver(CorefResolver):
         return None
 
 
-# Convenience functions
-
-_default_resolver: CorefResolver | None = None
-
-
-def get_resolver(llm_provider: Any = None) -> CorefResolver:
-    """Get a coreference resolver.
-
-    Args:
-        llm_provider: Optional LLM provider. If provided, returns LLM resolver.
-                     If None, returns cached default resolver.
-
-    Returns:
-        CorefResolver instance.
-    """
-    if llm_provider is not None:
-        return LLMCorefResolver(llm_provider)
-
-    global _default_resolver
-    if _default_resolver is None:
-        # Try to create LLM resolver with default provider
-        _default_resolver = LLMCorefResolver()
-    return _default_resolver
-
-
 def resolve_coreferences(
     text: str,
     context: str | None = None,
     entity_hints: dict[str, str] | None = None,
-    llm_provider: Any = None,
+    llm_provider: LLMProviderProtocol | Any | None = None,
 ) -> str:
     """Resolve coreferences in text.
 
@@ -588,11 +579,11 @@ def resolve_coreferences(
         text: Text with pronouns to resolve.
         context: Optional prior context (2-3 turns recommended).
         entity_hints: Optional entity hints.
-        llm_provider: Optional LLM provider.
+        llm_provider: LLM provider for resolution. Falls back to heuristic if None.
 
     Returns:
         Text with pronouns replaced by entity names.
     """
-    resolver = get_resolver(llm_provider)
+    resolver = LLMCorefResolver(llm_provider)
     result = resolver.resolve(text, context, entity_hints)
     return result.resolved_text

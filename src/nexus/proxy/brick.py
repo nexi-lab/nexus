@@ -131,6 +131,7 @@ class ProxyBrick:
         allowed = await self._circuit.allow_request()
         if not allowed:
             queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+            self._wake_replay()
             logger.warning("Circuit open — operation '%s' queued (id=%d)", method, queue_id)
             raise CircuitOpenError(
                 self._config.remote_url,
@@ -148,6 +149,7 @@ class ProxyBrick:
             if is_connection_error(exc):
                 await self._circuit.record_failure()
                 queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+                self._wake_replay()
                 logger.warning("Operation '%s' queued for offline replay (id=%d)", method, queue_id)
                 raise OfflineQueuedError(method, queue_id) from exc
             raise
@@ -159,6 +161,11 @@ class ProxyBrick:
     async def _forward_stream(self, method: str, data: bytes, **kwargs: Any) -> Any:
         """Forward a large-payload call via streaming upload."""
         return await self._do_forward(method, data=data, **kwargs)
+
+    def _wake_replay(self) -> None:
+        """Signal the replay engine to process the queue immediately."""
+        if self._replay_engine is not None:
+            self._replay_engine.wake()
 
     # ------------------------------------------------------------------
     # Properties

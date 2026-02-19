@@ -98,24 +98,23 @@ class SkillErrorFormatter:
         fix: str,
         error_registry: dict[str, ErrorDef] | None = None,
     ) -> ValidationError:
-        """Alias for ``format_error`` (backward compat).
+        """Format a trait validation error.
 
-        Unlike ``format_error``, the *section* and *fix* params here are
-        **fallback defaults** — the registry takes priority when present.
+        Unlike ``format_error``, the registry takes priority here because
+        the *section* and *fix* values are generic defaults from
+        ``validate_traits()``, while the registry contains domain-specific
+        values.
         """
         registry = error_registry or {}
         error_def = registry.get(code)
-        if error_def:
-            section = error_def.skill_section or section
-            fix = error_def.fix_example or fix
-            message = message or error_def.message
-
-        return ValidationError(
+        resolved_section = (error_def.skill_section if error_def else None) or section
+        resolved_fix = (error_def.fix_example if error_def else None) or fix
+        resolved_message = message or (error_def.message if error_def else message)
+        return self.format_error(
             code=code,
-            message=message,
-            skill_path=self.skill_md_path,
-            skill_section=section,
-            fix_example=fix,
+            message=resolved_message,
+            section=resolved_section,
+            fix_example=resolved_fix,
         )
 
     def format_validation_error(

@@ -88,6 +88,29 @@ def _compute_features_info(app: FastAPI) -> None:
     )
 
 
+def _wire_query_observer(app: FastAPI) -> None:
+    """Register QueryObserverComponent into the observability registry.
+
+    Called after startup_services so NexusFS._service_extras is available.
+    """
+    registry = getattr(app.state, "observability_registry", None)
+    nexus_fs = getattr(app.state, "nexus_fs", None)
+    if registry is None or nexus_fs is None:
+        return
+
+    obs_subsystem = getattr(nexus_fs, "_service_extras", {}).get("observability_subsystem")
+    if obs_subsystem is None:
+        return
+
+    try:
+        from nexus.server.observability.components import QueryObserverComponent
+
+        registry.register("query-observer", QueryObserverComponent(obs_subsystem), required=False)
+        logger.info("QueryObserverComponent registered in observability registry")
+    except Exception as exc:
+        logger.info("QueryObserverComponent registration skipped: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager.
@@ -112,7 +135,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # --- Startup (order matters: observability first, then core, then services) ---
 
-    startup_observability(app)
+    await startup_observability(app)
     _compute_features_info(app)
     bg_tasks.extend(await startup_permissions(app))
     bg_tasks.extend(await startup_realtime(app))
@@ -121,6 +144,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bg_tasks.extend(await startup_uploads(app))
     bg_tasks.extend(await startup_ipc(app))
     bg_tasks.extend(await startup_a2a_grpc(app))
+
+    # Wire QueryObserverComponent into registry after services start (Issue #2072)
+    _wire_query_observer(app)
 
     yield
 
@@ -163,4 +189,4 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.warning(f"Error shutting down cache factory: {e}")
 
-    shutdown_observability()
+    await shutdown_observability()

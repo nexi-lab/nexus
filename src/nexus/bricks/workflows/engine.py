@@ -11,6 +11,7 @@ from typing import Any
 
 from cachetools import LRUCache
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.bricks.workflows.actions import BUILTIN_ACTIONS
 from nexus.bricks.workflows.protocol import WorkflowServices
 from nexus.bricks.workflows.triggers import BUILTIN_TRIGGERS, TriggerFactory, TriggerManager
@@ -21,7 +22,6 @@ from nexus.bricks.workflows.types import (
     WorkflowExecution,
     WorkflowStatus,
 )
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

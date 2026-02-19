@@ -16,9 +16,9 @@ from typing import Any
 import yaml
 from sqlalchemy import select
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.bricks.workflows.loader import WorkflowLoader
 from nexus.bricks.workflows.types import WorkflowDefinition, WorkflowExecution
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

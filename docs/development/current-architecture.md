@@ -234,7 +234,7 @@ def other_function() -> 'ClassA':
 ```python
 # search_service.py
 if TYPE_CHECKING:
-    from nexus.core.permissions import PermissionService
+    from nexus.contracts.types import PermissionService
 
 # permission_service.py
 if TYPE_CHECKING:

@@ -29,7 +29,7 @@ nx.mkdir("/workspace/deep/nested/dir", parents=True)
 nx.mkdir("/workspace/data", exist_ok=True)
 
 # Create with specific user context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.mkdir("/workspace/alice/projects", parents=True, context=ctx)
 ```
@@ -66,7 +66,7 @@ nx.rmdir("/temp/empty")
 nx.rmdir("/temp/cache", recursive=True)
 
 # Remove with specific user context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.rmdir("/workspace/alice/temp", recursive=True, context=ctx)
 ```
@@ -117,7 +117,7 @@ for entry in entries:
 entries = nx.list("/workspace", recursive=True)
 
 # Time-travel list
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(at_operation="op_abc123")
 entries = nx.list("/workspace", context=ctx)
 ```

@@ -25,7 +25,7 @@ from nexus.core.exceptions import ValidationError as CoreValidationError
 if TYPE_CHECKING:
     from nexus.connectors.error_formatter import SkillErrorFormatter
     from nexus.connectors.schema_generator import SkillDocGenerator
-    from nexus.skills.registry import SkillRegistry
+    from nexus.skills.protocols import SkillRegistryProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +216,7 @@ class SkillDocMixin:
     ERROR_REGISTRY: dict[str, ErrorDef] = {}
     EXAMPLES: dict[str, str] = {}  # Example files: {"create_meeting.yaml": "content..."}
 
-    _skill_registry: SkillRegistry | None = None
+    _skill_registry: SkillRegistryProtocol | None = None
     _mount_path: str | None = None  # Set during mount
 
     @property
@@ -226,7 +226,7 @@ class SkillDocMixin:
             return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
         return "/.skill/SKILL.md"  # Default fallback
 
-    def set_skill_registry(self, registry: SkillRegistry) -> None:
+    def set_skill_registry(self, registry: SkillRegistryProtocol) -> None:
         """Set the skill registry for this connector."""
         self._skill_registry = registry
 

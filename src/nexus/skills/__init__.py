@@ -80,6 +80,8 @@ _LAZY_IMPORTS: dict[str, str] = {
     "SkillExportError": "nexus.skills.exporter",
     # Protocols
     "NexusFilesystem": "nexus.skills.protocols",
+    "SkillRegistryProtocol": "nexus.skills.protocols",
+    "SkillManagerProtocol": "nexus.skills.protocols",
     # Templates
     "get_template": "nexus.skills.templates",
     "list_templates": "nexus.skills.templates",
@@ -104,7 +106,11 @@ if TYPE_CHECKING:
         SkillApproval,
         SkillGovernance,
     )
-    from nexus.skills.protocols import NexusFilesystem
+    from nexus.skills.protocols import (
+        NexusFilesystem,
+        SkillManagerProtocol,
+        SkillRegistryProtocol,
+    )
     from nexus.skills.templates import (
         TemplateError,
         get_template,
@@ -158,4 +164,6 @@ __all__ = [
     "AuditAction",
     # Protocols
     "NexusFilesystem",
+    "SkillRegistryProtocol",
+    "SkillManagerProtocol",
 ]

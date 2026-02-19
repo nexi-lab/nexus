@@ -419,7 +419,7 @@ memory_id = nx.memory.store("User prefers Python", scope="user")
 
 ```python
 # Only use this if building custom integrations
-from nexus.core.memory_api import Memory
+from nexus.services.memory.memory_api import Memory
 
 memory = Memory(
     session=db_session,          # SQLAlchemy session

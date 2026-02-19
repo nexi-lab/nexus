@@ -72,7 +72,7 @@ A **trajectory** is a complete execution trace of a task:
 ### Recording Trajectories
 
 ```python
-from nexus.core.memory_api import Memory
+from nexus.services.memory.memory_api import Memory
 
 memory = Memory(
     session=db_session,

@@ -388,6 +388,7 @@ class TestBrickServices:
             "event_bus",
             "lock_manager",
             "workflow_engine",
+            "workflow_dispatch",
             "rebac_circuit_breaker",
             "wallet_provisioner",
             "chunked_upload_service",

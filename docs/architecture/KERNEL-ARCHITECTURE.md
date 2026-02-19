@@ -53,8 +53,9 @@ system (like systemd): creates selected services and injects them via
 `KernelServices` dataclass. Different distros select different service sets at
 startup — `nexus-server` loads all 22+, `nexus-embedded` loads zero.
 
-> *Gap:* `factory.py` hardcodes all service creation; `_wire_services()` loads
-> everything unconditionally. No selective loading per distro yet.
+> *Implemented:* `factory.py` gates services via `DeploymentProfile` + `enabled_bricks`
+> frozenset. See §5.1 for profile details. Remaining gap: `_wire_services()` in
+> kernel still loads unconditionally (#643).
 
 **Phase 2 — Runtime hot-swap (Linux LKM model).** A `ServiceRegistry` manages
 in-process service modules following the Loadable Kernel Module pattern:
@@ -206,12 +207,42 @@ See `federation-memo.md` §5–§6 for implementation details.
 
 ## 5. Deployment Modes
 
+### 5.1 Deployment Profiles (Distro)
+
+Like Linux distros (Ubuntu, Alpine, BusyBox) select which packages to include from
+the same kernel, Nexus **deployment profiles** select which bricks to enable from
+the same codebase. Two orthogonal axes:
+
+- **Mode** = network topology (standalone, client-server, federation)
+- **Profile** = feature set (which bricks are enabled)
+
+| Profile | Target | Bricks | Linux Analogue |
+|---------|--------|--------|----------------|
+| **embedded** | MCU, WASM (<1 MB) | 2 (storage + eventlog) | BusyBox |
+| **lite** | Pi, Jetson, mobile (512 MB-4 GB) | 8 (+namespace, agent, permissions, cache, ipc, scheduler) | Alpine |
+| **full** | Desktop, laptop (4-32 GB) | 21 (all except federation) | Ubuntu Desktop |
+| **cloud** | k8s, serverless (unlimited) | 22 (all) | Ubuntu Server |
+
+Profile hierarchy: `embedded ⊂ lite ⊂ full ⊆ cloud`
+
+**Mechanism:** `factory.py` (the init system) resolves the active profile via
+`NEXUS_PROFILE` env var -> `DeploymentProfile` enum -> `resolve_enabled_bricks()`
+-> `frozenset[str]`. Each service in the 3-tier boot (`_boot_kernel_services`,
+`_boot_system_services`, `_boot_brick_services`) checks brick membership before
+construction. Individual brick overrides via `FeaturesConfig` YAML always win over
+profile defaults.
+
+**Source of truth:** `src/nexus/core/deployment_profile.py` (22 canonical brick names,
+4 profile-to-brick mappings, `resolve_enabled_bricks()` merge function).
+
+### 5.2 Network Modes
+
 | Mode | Description | Metastore | Services |
 |------|-------------|-----------|----------|
 | **Standalone** | Single process, local storage | redb (local) | Optional |
 | **Client-Server** | RemoteNexusFS connects to a NexusFS server | redb (local) on server | On server |
 | **Federation** | Multiple nodes sharing zones via Raft | redb (Raft) | Per-node |
-| **Embedded** | Minimal kernel on constrained devices | redb (local) | None (planned) |
+| **Embedded** | Minimal kernel on constrained devices | redb (local) | None (profile: embedded) |
 
 Driver selection is config-time: same binary, different `NEXUS_METASTORE`, `NEXUS_RECORD_STORE`, etc.
 

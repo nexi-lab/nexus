@@ -87,6 +87,7 @@ def _make_mock_ctx(**overrides: Any) -> Any:
         "resiliency_raw": None,
         "db_url": "sqlite:///:memory:",
         "profile_tuning": DeploymentProfile.FULL.tuning(),
+        "enabled_bricks": DeploymentProfile.FULL.default_bricks(),
     }
     defaults.update(overrides)
     return _BootContext(**defaults)

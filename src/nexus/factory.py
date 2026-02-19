@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -96,6 +95,7 @@ class _BootContext:
     resiliency_raw: dict[str, Any] | None
     db_url: str
     profile_tuning: Any  # ProfileTuning (Issue #2071)
+    enabled_bricks: frozenset[str]  # DeploymentProfile brick gating (Issue #1389)
 
 
 # =========================================================================
@@ -676,7 +676,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     # --- Agent Registry (Issue #1502) ---
     agent_registry: Any = None
     async_agent_registry: Any = None
-    if ctx.session_factory is not None:
+    if "agent_registry" in ctx.enabled_bricks and ctx.session_factory is not None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
             from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
@@ -694,20 +694,21 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     # --- Namespace Manager (Issue #1502) ---
     namespace_manager: Any = None
     async_namespace_manager: Any = None
-    try:
-        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
-        from nexus.rebac.namespace_factory import (
-            create_namespace_manager as _create_ns_manager,
-        )
+    if "namespace" in ctx.enabled_bricks:
+        try:
+            from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
+            from nexus.rebac.namespace_factory import (
+                create_namespace_manager as _create_ns_manager,
+            )
 
-        namespace_manager = _create_ns_manager(
-            rebac_manager=kernel["rebac_manager"],
-            record_store=ctx.record_store,
-        )
-        async_namespace_manager = AsyncNamespaceManager(namespace_manager)
-        logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
+            namespace_manager = _create_ns_manager(
+                rebac_manager=kernel["rebac_manager"],
+                record_store=ctx.record_store,
+            )
+            async_namespace_manager = AsyncNamespaceManager(namespace_manager)
+            logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
 
     # --- Async VFS Router (Issue #1502) ---
     async_vfs_router: Any = None
@@ -721,7 +722,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     # --- Event Delivery Worker (Issue #1241, constructed, NOT started) ---
     delivery_worker = None
-    if ctx.db_url.startswith(("postgres", "postgresql")):
+    if "eventlog" in ctx.enabled_bricks and ctx.db_url.startswith(("postgres", "postgresql")):
         try:
             from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
@@ -736,31 +737,33 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     # --- Observability Subsystem (Issue #1301) ---
     observability_subsystem: Any = None
-    try:
-        from nexus.core.config import ObservabilityConfig
-        from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+    if "observability" in ctx.enabled_bricks:
+        try:
+            from nexus.core.config import ObservabilityConfig
+            from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
 
-        # Instrument both primary and replica pools (Issue #725)
-        obs_engines = [ctx.engine]
-        if ctx.record_store.has_read_replica:
-            obs_engines.append(ctx.read_engine)
-        observability_subsystem = ObservabilitySubsystem(
-            config=ObservabilityConfig(),
-            engines=obs_engines,
-        )
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
+            # Instrument both primary and replica pools (Issue #725)
+            obs_engines = [ctx.engine]
+            if ctx.record_store.has_read_replica:
+                obs_engines.append(ctx.read_engine)
+            observability_subsystem = ObservabilitySubsystem(
+                config=ObservabilityConfig(),
+                engines=obs_engines,
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
 
     # --- Resiliency Subsystem (Issue #1366) ---
     resiliency_manager: Any = None
-    try:
-        from nexus.core.resiliency import ResiliencyManager, set_default_manager
+    if "resiliency" in ctx.enabled_bricks:
+        try:
+            from nexus.core.resiliency import ResiliencyManager, set_default_manager
 
-        resiliency_config = _parse_resiliency_config(ctx.resiliency_raw)
-        resiliency_manager = ResiliencyManager(config=resiliency_config)
-        set_default_manager(resiliency_manager)
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
+            resiliency_config = _parse_resiliency_config(ctx.resiliency_raw)
+            resiliency_manager = ResiliencyManager(config=resiliency_config)
+            set_default_manager(resiliency_manager)
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
     # --- Context Branch Service (Issue #1315) ---
     context_branch_service: Any = None
@@ -823,7 +826,13 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     elapsed = time.perf_counter() - t0
     active = sum(1 for v in result.values() if v is not None)
-    logger.info("[BOOT:SYSTEM] %d/%d services ready (%.3fs)", active, len(result), elapsed)
+    logger.info(
+        "[BOOT:SYSTEM] %d/%d services ready (%.3fs, profile bricks=%d)",
+        active,
+        len(result),
+        elapsed,
+        len(ctx.enabled_bricks),
+    )
     return result
 
 
@@ -856,7 +865,6 @@ def _resolve_tasks_db_path(backend: Any) -> str:
 def _boot_brick_services(
     ctx: _BootContext,
     kernel: dict[str, Any],
-    brick_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     """Boot Tier 2 (BRICK) — optional, silent on failure.
 
@@ -867,21 +875,14 @@ def _boot_brick_services(
     Args:
         ctx: Boot context with shared dependencies.
         kernel: Kernel services dict from Tier 0.
-        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
-            When None, all bricks are enabled (backward-compatible default).
 
     Returns:
         Dict with brick service entries (some may be None).
     """
     t0 = time.perf_counter()
 
-    def _on(name: str) -> bool:
-        if brick_on is None:
-            return True
-        return brick_on(name)
-
     # --- Search Brick Import Validation (Issue #1520) ---
-    if _on("search"):
+    if "search" in ctx.enabled_bricks:
         try:
             from nexus.search.manifest import verify_imports as _verify_search
 
@@ -892,7 +893,10 @@ def _boot_brick_services(
 
         # Wire zoekt callbacks into backends (Issue #1520)
         try:
-            from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
+            from nexus.search.zoekt_client import (
+                notify_zoekt_sync_complete,
+                notify_zoekt_write,
+            )
 
             if hasattr(ctx.backend, "on_write_callback") and ctx.backend.on_write_callback is None:
                 ctx.backend.on_write_callback = notify_zoekt_write
@@ -900,20 +904,16 @@ def _boot_brick_services(
                 ctx.backend.on_sync_callback = notify_zoekt_sync_complete
         except ImportError:
             logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
-    else:
-        logger.debug("[BOOT:BRICK] Search brick disabled by profile")
 
     # --- Wallet Provisioner (Issue #1210) ---
-    if _on("pay"):
+    wallet_provisioner = None
+    if "pay" in ctx.enabled_bricks:
         wallet_provisioner = _create_wallet_provisioner()
-    else:
-        wallet_provisioner = None
-        logger.debug("[BOOT:BRICK] Pay brick disabled by profile")
 
     # --- Manifest Resolver (Issue #1427, #1428) ---
     manifest_resolver: Any = None
     manifest_metrics: Any = None
-    if _on("mcp"):
+    if "skills" in ctx.enabled_bricks:
         try:
             from nexus.bricks.context_manifest import ManifestResolver
             from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
@@ -968,12 +968,10 @@ def _boot_brick_services(
             logger.debug("[BOOT:BRICK] ManifestResolver created with %d executors", len(executors))
         except ImportError as _e:
             logger.debug("[BOOT:BRICK] ManifestResolver unavailable: %s", _e)
-    else:
-        logger.debug("[BOOT:BRICK] MCP/Manifest brick disabled by profile")
 
     # --- Tool Namespace Middleware (Issue #1272) ---
     tool_namespace_middleware = None
-    if _on("mcp"):
+    if "mcp" in ctx.enabled_bricks:
         try:
             from nexus.mcp.middleware import ToolNamespaceMiddleware
 
@@ -988,7 +986,7 @@ def _boot_brick_services(
 
     # --- Chunked Upload Service (Issue #788) ---
     chunked_upload_service: Any = None
-    if _on("uploads"):
+    if "uploads" in ctx.enabled_bricks:
         try:
             import os as _os
 
@@ -1020,13 +1018,11 @@ def _boot_brick_services(
             )
         except Exception as exc:
             logger.debug("[BOOT:BRICK] ChunkedUploadService unavailable: %s", exc)
-    else:
-        logger.debug("[BOOT:BRICK] Uploads brick disabled by profile")
 
     # --- Infrastructure: event bus + lock manager ---
     event_bus: Any = None
     lock_manager: Any = None
-    if ctx.dist.enable_locks or ctx.dist.enable_events:
+    if "ipc" in ctx.enabled_bricks and (ctx.dist.enable_locks or ctx.dist.enable_events):
         event_bus, lock_manager = _create_distributed_infra(
             ctx.dist,
             ctx.metadata_store,
@@ -1036,7 +1032,7 @@ def _boot_brick_services(
 
     # --- Workflow engine ---
     workflow_engine: WorkflowProtocol | None = None
-    if _on("workflows") and ctx.dist.enable_workflows:
+    if "workflows" in ctx.enabled_bricks and ctx.dist.enable_workflows:
         # Try to get Rust glob_match for performance (falls back to fnmatch)
         _glob_match_fn: Any = None
         try:
@@ -1046,8 +1042,6 @@ def _boot_brick_services(
         except ImportError:
             pass
         workflow_engine = _create_workflow_engine(ctx.record_store, _glob_match_fn)
-    elif not _on("workflows"):
-        logger.debug("[BOOT:BRICK] Workflows brick disabled by profile")
 
     # --- API key creator (Issue #1519, 3A: inject server auth into kernel) ---
     api_key_creator: Any = None
@@ -1073,22 +1067,21 @@ def _boot_brick_services(
 
     # --- TaskQueueService (Issue #655) ---
     task_queue_service: Any = None
-    try:
-        from nexus.services.task_queue_service import TaskQueueService
+    if "scheduler" in ctx.enabled_bricks:
+        try:
+            from nexus.services.task_queue_service import TaskQueueService
 
-        task_queue_service = TaskQueueService(
-            db_path=_resolve_tasks_db_path(ctx.backend),
-        )
-    except Exception as _tq_exc:
-        logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
+            task_queue_service = TaskQueueService(
+                db_path=_resolve_tasks_db_path(ctx.backend),
+            )
+        except Exception as _tq_exc:
+            logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
     # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
     ipc_storage_driver: Any = None
     ipc_vfs_driver: Any = None
     ipc_provisioner: Any = None
-    if not _on("ipc"):
-        logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
-    elif ctx.session_factory is not None:
+    if "ipc" in ctx.enabled_bricks and ctx.session_factory is not None:
         try:
             from nexus.ipc.driver import IPCVFSDriver
             from nexus.ipc.provisioning import AgentProvisioner
@@ -1150,7 +1143,13 @@ def _boot_brick_services(
 
     elapsed = time.perf_counter() - t0
     active = sum(1 for v in result.values() if v is not None)
-    logger.info("[BOOT:BRICK] %d/%d services ready (%.3fs)", active, len(result), elapsed)
+    logger.info(
+        "[BOOT:BRICK] %d/%d services ready (%.3fs, profile bricks=%d)",
+        active,
+        len(result),
+        elapsed,
+        len(ctx.enabled_bricks),
+    )
     return result
 
 
@@ -1249,15 +1248,10 @@ def create_nexus_services(
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
 
-    def _brick_on(name: str) -> bool:
-        return name in enabled_bricks
-
-    from nexus.core.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
-
     _factory_log.info(
         "Factory: enabled_bricks=%d/%d %s",
         len(enabled_bricks),
-        len(_ALL_BRICKS),
+        len(enabled_bricks),
         sorted(enabled_bricks),
     )
 
@@ -1298,6 +1292,7 @@ def create_nexus_services(
         resiliency_raw=resiliency_raw,
         db_url=getattr(record_store, "database_url", ""),
         profile_tuning=_profile_tuning,
+        enabled_bricks=enabled_bricks,
     )
 
     # --- Tier 0: KERNEL (fatal on failure) ---
@@ -1307,7 +1302,7 @@ def create_nexus_services(
     system_dict = _boot_system_services(ctx, kernel_dict)
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
-    brick_dict = _boot_brick_services(ctx, kernel_dict, _brick_on)
+    brick_dict = _boot_brick_services(ctx, kernel_dict)
 
     # --- Start background threads post-construction ---
     _start_background_services(kernel_dict, system_dict)

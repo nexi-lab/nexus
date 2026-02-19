@@ -928,7 +928,7 @@ class NexusFSCoreMixin:
             )
 
         # Fix #332: Handle virtual parsed views (e.g., report_parsed.pdf.md)
-        from nexus.core.virtual_views import get_parsed_content, parse_virtual_path
+        from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
             return self.metadata.exists(check_path)

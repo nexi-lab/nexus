@@ -260,11 +260,11 @@ class TestTigerCacheRenameHook:
     def test_no_resource_map_skips(self):
         tc = MagicMock()
         tc.get_directory_grants_for_path = MagicMock(
-            side_effect=lambda path, zone: [
-                {"subject_type": "user", "subject_id": "x", "permission": "r"}
-            ]
-            if "old" in path
-            else []
+            side_effect=lambda path, zone: (
+                [{"subject_type": "user", "subject_id": "x", "permission": "r"}]
+                if "old" in path
+                else []
+            )
         )
         tc._resource_map = None  # no resource map
 

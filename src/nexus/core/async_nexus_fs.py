@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.async_local import AsyncLocalBackend
+from nexus.contracts.types import OperationContext, Permission
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -31,7 +32,6 @@ from nexus.core.metadata import (
     FileMetadata,
 )
 from nexus.core.metastore import AsyncMetastoreWrapper
-from nexus.core.permissions import OperationContext, Permission
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:

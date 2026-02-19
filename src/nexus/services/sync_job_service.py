@@ -93,8 +93,8 @@ class SyncJobService:
         Args:
             job_id: Job ID to start
         """
+        from nexus.contracts.types import SyncContext
         from nexus.services.sync_job_manager import SyncCancelled
-        from nexus.services.sync_service import SyncContext
 
         manager = self._get_manager()
 

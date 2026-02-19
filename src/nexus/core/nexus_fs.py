@@ -3302,7 +3302,7 @@ class NexusFS(  # type: ignore[misc]
             raise RuntimeError("Transactional snapshot service not available")
         import asyncio
 
-        from nexus.services.protocols.transactional_snapshot import SnapshotId
+        from nexus.contracts.types import SnapshotId
 
         asyncio.get_event_loop().run_until_complete(
             self._snapshot_service.commit(SnapshotId(id=snapshot_id), context=context)
@@ -3327,7 +3327,7 @@ class NexusFS(  # type: ignore[misc]
             raise RuntimeError("Transactional snapshot service not available")
         import asyncio
 
-        from nexus.services.protocols.transactional_snapshot import SnapshotId
+        from nexus.contracts.types import SnapshotId
 
         result = asyncio.get_event_loop().run_until_complete(
             self._snapshot_service.rollback(SnapshotId(id=snapshot_id), context=context)
@@ -4822,7 +4822,7 @@ class NexusFS(  # type: ignore[misc]
         if not hasattr(self, "_agent_registry") or not self._agent_registry:
             raise ValueError("AgentRegistry not available")
 
-        from nexus.services.agents.agent_record import AgentState
+        from nexus.contracts.agent_types import AgentState
 
         try:
             target = AgentState(target_state)
@@ -4885,7 +4885,7 @@ class NexusFS(  # type: ignore[misc]
 
         state_enum = None
         if state:
-            from nexus.services.agents.agent_record import AgentState
+            from nexus.contracts.agent_types import AgentState
 
             try:
                 state_enum = AgentState(state)
@@ -7565,7 +7565,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             True if user has READ on any descendant, False otherwise
         """
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.lib.zone import normalize_zone_id
 
         # Normalize path prefix for matching
         prefix = path if path.endswith("/") else path + "/"
@@ -9361,7 +9361,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.lib.zone import normalize_zone_id
 
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
@@ -9478,7 +9478,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.lib.zone import normalize_zone_id
 
         if not hasattr(self, "_rebac_manager"):
             return 0
@@ -10187,7 +10187,7 @@ class NexusFS(  # type: ignore[misc]
         full_sync: bool = False,
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s)."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
 
         ctx = SyncContext(
             mount_point=mount_point,
@@ -10345,7 +10345,7 @@ class NexusFS(  # type: ignore[misc]
         exclude_patterns: list[str] | None,
     ) -> bool:
         """Check if file path matches include/exclude patterns (backward compat)."""
-        from nexus.services.sync_service import SyncContext
+        from nexus.contracts.types import SyncContext
 
         ctx = SyncContext(
             mount_point=None,

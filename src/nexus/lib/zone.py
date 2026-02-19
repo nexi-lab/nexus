@@ -1,7 +1,7 @@
-"""Zone ID normalization utility.
+"""Zone ID normalization — tier-neutral utility.
 
-Replaces the 48+ inline ``zone_id or "root"`` occurrences with a single
-canonical function so the default zone sentinel is defined in one place.
+Moved from ``nexus.services.permissions.utils.zone`` (Issue #194) so that
+kernel code can call ``normalize_zone_id`` without importing from services/.
 """
 
 from __future__ import annotations

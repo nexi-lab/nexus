@@ -22,7 +22,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
-from nexus.rebac.utils.zone import normalize_zone_id
+from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from nexus.rebac.async_manager import AsyncReBACManager

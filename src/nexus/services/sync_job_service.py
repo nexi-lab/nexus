@@ -58,13 +58,13 @@ class SyncJobService:
         if self._manager is None:
             from nexus.services.sync_job_manager import SyncJobManager
 
-            session_factory = self._gw.session_factory
-            if not session_factory:
+            record_store = self._gw.record_store
+            if not record_store:
                 raise RuntimeError(
-                    "SyncJobService requires session_factory. "
+                    "SyncJobService requires record_store. "
                     "Ensure NexusFS is initialized with a database."
                 )
-            self._manager = SyncJobManager(session_factory)
+            self._manager = SyncJobManager(record_store)
         return self._manager
 
     def create_job(

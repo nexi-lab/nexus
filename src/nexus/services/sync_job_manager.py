@@ -10,7 +10,7 @@ Manages the lifecycle of async sync_mount jobs:
 Example:
     >>> from nexus.services.sync_job_manager import SyncJobManager
     >>>
-    >>> manager = SyncJobManager(session_factory)
+    >>> manager = SyncJobManager(record_store)
     >>>
     >>> # Start an async sync
     >>> job_id = manager.create_job("/mnt/gmail", {"path": "/inbox"}, user_id="alice")
@@ -42,6 +42,7 @@ from nexus.storage.models import SyncJobModel
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +92,13 @@ class SyncJobManager:
         the database status.
     """
 
-    def __init__(self, session_factory: Any) -> None:
+    def __init__(self, record_store: RecordStoreABC) -> None:
         """Initialize sync job manager.
 
         Args:
-            session_factory: SQLAlchemy sessionmaker instance
+            record_store: RecordStoreABC for database access.
         """
-        self.SessionLocal = session_factory
+        self.SessionLocal = record_store.session_factory
         self._active_jobs: dict[str, asyncio.Task[Any]] = {}
         self._cancellation_flags: dict[str, bool] = {}
 

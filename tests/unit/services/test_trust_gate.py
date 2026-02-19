@@ -57,19 +57,19 @@ def mock_reputation_service():
 
 @pytest.fixture()
 def mock_deps():
-    """Mock dependencies for DelegationService (session_factory, rebac_manager)."""
-    session_factory = MagicMock()
+    """Mock dependencies for DelegationService (record_store, rebac_manager)."""
+    record_store = MagicMock()
     rebac_manager = MagicMock()
     entity_registry = MagicMock()
     agent_registry = MagicMock()
-    return session_factory, rebac_manager, entity_registry, agent_registry
+    return record_store, rebac_manager, entity_registry, agent_registry
 
 
 def _make_service(mock_deps, reputation_service=None):
     """Create DelegationService with mock dependencies."""
-    sf, rebac, entity_reg, agent_reg = mock_deps
+    rs, rebac, entity_reg, agent_reg = mock_deps
     return DelegationService(
-        session_factory=sf,
+        record_store=rs,
         rebac_manager=rebac,
         entity_registry=entity_reg,
         agent_registry=agent_reg,

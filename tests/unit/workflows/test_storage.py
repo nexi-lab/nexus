@@ -34,10 +34,18 @@ def async_session_factory(async_engine):
 
 
 @pytest.fixture
-def workflow_store(async_session_factory):
+def record_store(async_session_factory):
+    """Wrap async_session_factory in a SimpleNamespace to mimic RecordStoreABC."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(async_session_factory=async_session_factory)
+
+
+@pytest.fixture
+def workflow_store(record_store):
     """Create workflow store with injected models."""
     return WorkflowStore(
-        async_session_factory,
+        record_store,
         workflow_model=WorkflowModel,
         execution_model=WorkflowExecutionModel,
         zone_id="test-zone",
@@ -459,8 +467,10 @@ class TestWorkflowStore:
 
     def test_default_zone_id(self, async_session_factory):
         """Test default zone ID (uses ROOT_ZONE_ID = 'root')."""
+        from types import SimpleNamespace
+
         store = WorkflowStore(
-            async_session_factory,
+            SimpleNamespace(async_session_factory=async_session_factory),
             workflow_model=WorkflowModel,
             execution_model=WorkflowExecutionModel,
         )

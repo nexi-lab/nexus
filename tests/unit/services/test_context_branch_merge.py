@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -85,7 +86,7 @@ def _make_service(session_factory, manifest_store: dict[str, bytes]) -> ContextB
 
     return ContextBranchService(
         workspace_manager=wm,
-        session_factory=session_factory,
+        record_store=SimpleNamespace(session_factory=session_factory),
         rebac_manager=None,
         default_zone_id="z1",
     )

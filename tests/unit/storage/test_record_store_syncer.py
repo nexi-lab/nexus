@@ -37,7 +37,7 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 @pytest.fixture
 def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreWriteObserver:
-    return RecordStoreWriteObserver(record_store.session_factory)
+    return RecordStoreWriteObserver(record_store)
 
 
 def _make_metadata(
@@ -251,7 +251,9 @@ class TestSQLFailure:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
 
-        syncer = RecordStoreWriteObserver(failing_session_factory)
+        mock_record_store = MagicMock()
+        mock_record_store.session_factory = failing_session_factory
+        syncer = RecordStoreWriteObserver(mock_record_store)
         metadata = _make_metadata()
 
         with pytest.raises(AuditLogError):
@@ -263,7 +265,9 @@ class TestSQLFailure:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
 
-        syncer = RecordStoreWriteObserver(lambda: mock_session)
+        mock_record_store = MagicMock()
+        mock_record_store.session_factory = lambda: mock_session
+        syncer = RecordStoreWriteObserver(mock_record_store)
 
         with pytest.raises(AuditLogError):
             syncer.on_delete(path="/test.txt")
@@ -276,7 +280,7 @@ class TestPartialFailure:
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         """If VersionRecorder raises, the entire transaction should fail."""
-        syncer = RecordStoreWriteObserver(record_store.session_factory)
+        syncer = RecordStoreWriteObserver(record_store)
         metadata = _make_metadata()
 
         with (
@@ -300,7 +304,7 @@ class TestPartialFailure:
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         """If OperationLogger raises, nothing should be committed."""
-        syncer = RecordStoreWriteObserver(record_store.session_factory)
+        syncer = RecordStoreWriteObserver(record_store)
         metadata = _make_metadata()
 
         with (
@@ -329,7 +333,9 @@ class TestSessionFactoryFailure:
         def failing_factory():
             raise ConnectionError("database unavailable")
 
-        syncer = RecordStoreWriteObserver(failing_factory)
+        mock_record_store = MagicMock()
+        mock_record_store.session_factory = failing_factory
+        syncer = RecordStoreWriteObserver(mock_record_store)
         metadata = _make_metadata()
 
         with pytest.raises(AuditLogError):
@@ -341,7 +347,7 @@ class TestBatchPartialFailure:
 
     def test_batch_failure_rolls_back_all(self, record_store: SQLAlchemyRecordStore) -> None:
         """If batch write fails partway through, no items should be committed."""
-        syncer = RecordStoreWriteObserver(record_store.session_factory)
+        syncer = RecordStoreWriteObserver(record_store)
 
         items = [
             (_make_metadata("/a.txt", etag="ha"), True),

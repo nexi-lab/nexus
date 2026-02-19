@@ -86,7 +86,6 @@ class _BootContext:
     router: Any
     engine: Any
     read_engine: Any  # Read replica engine (Issue #725); same as engine when no replica
-    session_factory: Any
     perm: Any  # PermissionConfig
     cache_ttl_seconds: int | None
     dist: Any  # DistributedConfig
@@ -526,7 +525,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         # --- Entity Registry ---
         from nexus.rebac.entity_registry import EntityRegistry
 
-        entity_registry = EntityRegistry(ctx.session_factory)
+        entity_registry = EntityRegistry(ctx.record_store)
 
         # --- Permission Enforcer ---
         from nexus.rebac.enforcer import PermissionEnforcer
@@ -567,7 +566,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         workspace_registry = WorkspaceRegistry(
             metadata=ctx.metadata_store,
             rebac_manager=rebac_manager,
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
         )
 
         # --- Mount Manager ---
@@ -584,7 +583,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             rebac_manager=rebac_manager,
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
         )
 
         # --- RecordStore Syncer (constructed, NOT started) ---
@@ -606,7 +605,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
 
             _st = ctx.profile_tuning.storage
             write_observer = BufferedRecordStoreWriteObserver(
-                ctx.session_factory,
+                ctx.record_store,
                 strict_mode=ctx.perm.audit_strict_mode,
                 flush_interval_ms=_st.write_buffer_flush_ms,
                 max_buffer_size=_st.write_buffer_max_size,
@@ -615,9 +614,20 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
             write_observer = RecordStoreWriteObserver(
-                ctx.session_factory,
+                ctx.record_store,
                 strict_mode=ctx.perm.audit_strict_mode,
             )
+
+        # --- VersionService (Task #45) ---
+        from nexus.services.version_service import VersionService
+
+        version_service = VersionService(
+            metadata_store=ctx.metadata_store,
+            cas_store=ctx.backend,
+            router=ctx.router,
+            enforce_permissions=False,
+            record_store=ctx.record_store,
+        )
 
         result = {
             "rebac_manager": rebac_manager,
@@ -631,6 +641,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             "mount_manager": mount_manager,
             "workspace_manager": workspace_manager,
             "write_observer": write_observer,
+            "version_service": version_service,
         }
 
         elapsed = time.perf_counter() - t0
@@ -672,13 +683,13 @@ def _boot_system_services(
     # --- Agent Registry (Issue #1502) ---
     agent_registry: Any = None
     async_agent_registry: Any = None
-    if _on("agent_registry") and ctx.session_factory is not None:
+    if _on("agent_registry") and ctx.record_store is not None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
             from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
             agent_registry = AgentRegistry(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
                 entity_registry=kernel["entity_registry"],
                 flush_interval=ctx.profile_tuning.background_task.heartbeat_flush_interval,
             )
@@ -751,7 +762,7 @@ def _boot_system_services(
             from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
             delivery_worker = EventDeliveryWorker(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
                 poll_interval_ms=200,
                 batch_size=50,
                 use_row_locking=True,
@@ -800,7 +811,7 @@ def _boot_system_services(
 
         context_branch_service = ContextBranchService(
             workspace_manager=kernel["workspace_manager"],
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
             rebac_manager=kernel["rebac_manager"],
             default_zone_id=ctx.zone_id,
             default_agent_id=ctx.agent_id,
@@ -992,7 +1003,7 @@ def _boot_brick_services(
                 )
                 from nexus.storage.repositories.snapshot_lookup import DatabaseSnapshotLookup
 
-                snapshot_lookup = DatabaseSnapshotLookup(session_factory=ctx.session_factory)
+                snapshot_lookup = DatabaseSnapshotLookup(record_store=ctx.record_store)
                 cas_reader = CASManifestReader(backend=ctx.backend)
                 executors["workspace_snapshot"] = WorkspaceSnapshotExecutor(
                     snapshot_lookup=snapshot_lookup,
@@ -1063,7 +1074,7 @@ def _boot_brick_services(
                     _upload_config_kwargs[_config_key] = int(_val)
 
             chunked_upload_service = ChunkedUploadService(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
                 backend=ctx.backend,
                 metadata_store=ctx.metadata_store,
                 config=ChunkedUploadConfig(**_upload_config_kwargs),
@@ -1082,7 +1093,7 @@ def _boot_brick_services(
         event_bus, lock_manager = _create_distributed_infra(
             ctx.dist,
             ctx.metadata_store,
-            ctx.session_factory,
+            ctx.record_store,
             ctx.dist.coordination_url,
         )
 
@@ -1117,7 +1128,7 @@ def _boot_brick_services(
         from nexus.core.metadata import FileMetadata
 
         snapshot_service = TransactionalSnapshotService(
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
             cas_store=ctx.backend,
             metadata_store=ctx.metadata_store,
             metadata_factory=FileMetadata,
@@ -1127,12 +1138,12 @@ def _boot_brick_services(
 
     # --- ReputationService (Issue #2131: extracted to bricks) ---
     reputation_service: Any = None
-    if ctx.session_factory is not None:
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.reputation.reputation_service import ReputationService
 
             reputation_service = ReputationService(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
             )
             logger.debug("[BOOT:BRICK] ReputationService created")
         except Exception as _rep_exc:
@@ -1140,12 +1151,12 @@ def _boot_brick_services(
 
     # --- DelegationService (Issue #2131: extracted to bricks) ---
     delegation_service: Any = None
-    if ctx.session_factory is not None:
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.delegation.service import DelegationService
 
             delegation_service = DelegationService(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
                 rebac_manager=kernel["rebac_manager"],
                 entity_registry=kernel.get("entity_registry"),
                 reputation_service=reputation_service,
@@ -1176,14 +1187,14 @@ def _boot_brick_services(
     ipc_provisioner: Any = None
     if not _on("ipc"):
         logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
-    elif ctx.session_factory is not None:
+    elif ctx.record_store is not None:
         try:
             from nexus.ipc.driver import IPCVFSDriver
             from nexus.ipc.provisioning import AgentProvisioner
             from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
             ipc_storage_driver = RecordStoreStorageDriver(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
             )
 
             _ipc_zone = ctx.zone_id or "root"
@@ -1208,11 +1219,11 @@ def _boot_brick_services(
 
     # --- Sandbox Brick: AgentEventLog (Issue #1307) ---
     agent_event_log: Any = None
-    if ctx.session_factory is not None:
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.sandbox.events import AgentEventLog
 
-            agent_event_log = AgentEventLog(session_factory=ctx.session_factory)
+            agent_event_log = AgentEventLog(record_store=ctx.record_store)
             logger.debug("[BOOT:BRICK] AgentEventLog created")
         except Exception as _ael_exc:
             logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
@@ -1238,7 +1249,7 @@ def _boot_brick_services(
             cas_store=ctx.backend,
             router=ctx.router,
             enforce_permissions=False,
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
         )
         logger.debug("[BOOT:BRICK] VersionService created")
     except Exception as _vs_exc:
@@ -1724,7 +1735,6 @@ def create_nexus_services(
         router=router,
         engine=record_store.engine,
         read_engine=record_store.read_engine,
-        session_factory=record_store.session_factory,
         perm=perm,
         cache_ttl_seconds=cache_cfg.ttl_seconds,
         dist=dist,
@@ -1818,7 +1828,7 @@ def create_nexus_services(
 def _create_distributed_infra(
     dist: DistributedConfig,
     metadata_store: MetastoreABC,
-    session_factory: Any,
+    record_store: RecordStoreABC,
     coordination_url: str | None,
 ) -> tuple[Any, Any]:
     """Create event bus and lock manager (was NexusFS.__init__ lines 439-521).
@@ -1856,7 +1866,7 @@ def _create_distributed_infra(
             event_bus = create_event_bus(
                 backend="nats",
                 nats_url=dist.nats_url,
-                session_factory=session_factory,
+                record_store=record_store,
             )
             logger.info(
                 "Distributed event bus initialized (NATS JetStream: %s, SSOT: PostgreSQL)",
@@ -1874,7 +1884,7 @@ def _create_distributed_infra(
                 event_client = DragonflyClient(url=event_url_resolved)
                 event_bus = RedisEventBus(
                     event_client,
-                    session_factory=session_factory,
+                    record_store=record_store,
                 )
                 logger.info(
                     "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",
@@ -1908,7 +1918,7 @@ def _create_workflow_engine(
         from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
 
         workflow_store = WorkflowStore(
-            session_factory=record_store.async_session_factory,
+            record_store=record_store,
             workflow_model=WorkflowModel,
             execution_model=WorkflowExecutionModel,
             zone_id=ROOT_ZONE_ID,

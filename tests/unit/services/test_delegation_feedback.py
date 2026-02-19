@@ -54,7 +54,7 @@ def mock_reputation_service():
 def delegation_service(mock_reputation_service):
     """DelegationService with mocked internals."""
     service = DelegationService(
-        session_factory=MagicMock(),
+        record_store=MagicMock(),
         rebac_manager=MagicMock(),
         reputation_service=mock_reputation_service,
     )
@@ -179,7 +179,7 @@ class TestCompleteDelegation:
     def test_complete_delegation_no_reputation_service_skips_feedback(self):
         """No reputation_service -> feedback skipped, completion still succeeds."""
         service = DelegationService(
-            session_factory=MagicMock(),
+            record_store=MagicMock(),
             rebac_manager=MagicMock(),
             reputation_service=None,
         )

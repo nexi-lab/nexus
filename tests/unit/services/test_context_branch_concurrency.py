@@ -9,6 +9,7 @@ Tests:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -38,13 +39,18 @@ def session_factory(engine):
 
 
 @pytest.fixture
-def service(session_factory):
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def service(record_store):
     wm = MagicMock()
     wm.metadata = MagicMock()
     wm.backend = MagicMock()
     return ContextBranchService(
         workspace_manager=wm,
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=None,
         default_zone_id="z1",
     )

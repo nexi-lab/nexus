@@ -30,11 +30,10 @@ from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.core.operation_types import OperationType
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from sqlalchemy.orm import Session
 
     from nexus.services.event_log.exporter_registry import ExporterRegistry
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +87,7 @@ class EventDeliveryWorker:
 
     def __init__(
         self,
-        session_factory: Callable[..., Any],
+        record_store: RecordStoreABC,
         event_bus: Any | None = None,
         exporter_registry: ExporterRegistry | None = None,
         *,
@@ -99,7 +98,7 @@ class EventDeliveryWorker:
         max_backoff_ms: int = 5000,
         use_row_locking: bool = False,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._event_bus = event_bus
         self._exporter_registry = exporter_registry
         self._event_loop = event_loop

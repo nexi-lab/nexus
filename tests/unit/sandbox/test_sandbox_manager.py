@@ -7,6 +7,7 @@ parallel verify in list_sandboxes, and disconnect_sandbox.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -138,8 +139,9 @@ def _make_manager(
         for attr, value in repo_overrides.items():
             setattr(repo, attr, value)
 
+    record_store = SimpleNamespace(session_factory=MagicMock())
     return SandboxManager(
-        session_factory=MagicMock(),
+        record_store=record_store,
         repository=repo,
         registry=registry,
     )

@@ -22,8 +22,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from nexus.core.router import PathNotMountedError, PathRouter
 from nexus.plugins.async_hooks import AsyncHookEngine
@@ -40,7 +38,7 @@ from nexus.services.protocols.hook_engine import (
 )
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.services.routing.async_router import AsyncVFSRouter
-from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures: real implementations, not mocks
@@ -51,15 +49,12 @@ from nexus.storage.models import Base
 def sqlite_registry(tmp_path: Path) -> Iterator[AgentRegistry]:
     """Real AgentRegistry backed by SQLite."""
     db_path = tmp_path / f"test_{uuid.uuid4().hex[:8]}.db"
-    engine = create_engine(f"sqlite:///{db_path}", echo=False)
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}", create_tables=True)
     yield AgentRegistry(
-        session_factory=session_factory,
+        record_store=record_store,
         flush_interval=1,
-        cache_ttl=1,
     )
-    engine.dispose()
+    record_store.close()
 
 
 @pytest.fixture()
@@ -424,12 +419,10 @@ class TestServerLifespanWiring:
 
         # Create real SQLite-backed AgentRegistry (same as server lifespan does)
         db_path = tmp_path / f"lifespan_{uuid.uuid4().hex[:8]}.db"
-        engine = create_engine(f"sqlite:///{db_path}", echo=False)
-        Base.metadata.create_all(engine)
-        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+        record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}", create_tables=True)
 
         agent_registry = AgentRegistry(
-            session_factory=session_factory,
+            record_store=record_store,
             flush_interval=60,
         )
 
@@ -467,7 +460,7 @@ class TestServerLifespanWiring:
             # Cleanup
             await state.async_agent_registry.unregister("lifespan-agent")
         finally:
-            engine.dispose()
+            record_store.close()
 
     @pytest.mark.asyncio()
     async def test_all_four_wrappers_wired_together(self, tmp_path: Path) -> None:
@@ -492,10 +485,8 @@ class TestServerLifespanWiring:
 
         # 1. AgentRegistry + AsyncAgentRegistry (SQLite)
         db_path = tmp_path / f"all4_{uuid.uuid4().hex[:8]}.db"
-        engine = create_engine(f"sqlite:///{db_path}", echo=False)
-        Base.metadata.create_all(engine)
-        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
-        sync_registry = AgentRegistry(session_factory=session_factory, flush_interval=1)
+        record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}", create_tables=True)
+        sync_registry = AgentRegistry(record_store=record_store, flush_interval=1)
         async_registry = AsyncAgentRegistry(sync_registry)
 
         # 2. NamespaceManager + AsyncNamespaceManager
@@ -550,7 +541,7 @@ class TestServerLifespanWiring:
             # Cleanup
             await async_registry.unregister("cross-agent")
         finally:
-            engine.dispose()
+            record_store.close()
 
     @pytest.mark.asyncio()
     async def test_permission_enforcer_can_use_async_registry(self, tmp_path: Path) -> None:
@@ -564,11 +555,9 @@ class TestServerLifespanWiring:
         from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
         db_path = tmp_path / f"perm_{uuid.uuid4().hex[:8]}.db"
-        engine = create_engine(f"sqlite:///{db_path}", echo=False)
-        Base.metadata.create_all(engine)
-        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+        record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}", create_tables=True)
 
-        sync_reg = AgentRegistry(session_factory=session_factory, flush_interval=1)
+        sync_reg = AgentRegistry(record_store=record_store, flush_interval=1)
         async_reg = AsyncAgentRegistry(sync_reg)
 
         try:
@@ -605,4 +594,4 @@ class TestServerLifespanWiring:
 
             await async_reg.unregister("perm-agent")
         finally:
-            engine.dispose()
+            record_store.close()

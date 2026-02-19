@@ -185,7 +185,11 @@ def app_with_db_auth(tmp_path, db_session_factory, api_keys):
 
     # Match production wiring: DiscriminatingAuthProvider routes sk-* tokens
     # to DatabaseAPIKeyAuth (same as `nexus serve --auth-type database`)
-    db_key_provider = DatabaseAPIKeyAuth(session_factory=db_session_factory)
+    from types import SimpleNamespace
+
+    db_key_provider = DatabaseAPIKeyAuth(
+        record_store=SimpleNamespace(session_factory=db_session_factory)
+    )
     auth_provider = DiscriminatingAuthProvider(
         api_key_provider=db_key_provider,
         jwt_provider=None,  # No JWT in this test

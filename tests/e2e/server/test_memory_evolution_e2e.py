@@ -183,7 +183,11 @@ def app_with_auth(tmp_path, db_session_factory, api_keys):
         permissions=PermissionConfig(enforce=False),
     )
 
-    db_key_provider = DatabaseAPIKeyAuth(session_factory=db_session_factory)
+    from types import SimpleNamespace
+
+    db_key_provider = DatabaseAPIKeyAuth(
+        record_store=SimpleNamespace(session_factory=db_session_factory)
+    )
     auth_provider = DiscriminatingAuthProvider(
         api_key_provider=db_key_provider,
         jwt_provider=None,

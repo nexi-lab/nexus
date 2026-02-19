@@ -25,6 +25,8 @@ from sqlalchemy import bindparam, text
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from nexus.storage.record_store import RecordStoreABC
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,19 +127,19 @@ class VersionHistoryGC:
     Always preserves the latest version for each resource.
 
     Example:
-        >>> gc = VersionHistoryGC(session_factory)
+        >>> gc = VersionHistoryGC(record_store)
         >>> stats = gc.run_gc(VersionGCSettings())
         >>> print(f"Deleted {stats.total_deleted} versions")
     """
 
-    def __init__(self, session_factory: Any, *, is_postgresql: bool = False) -> None:
+    def __init__(self, record_store: RecordStoreABC, *, is_postgresql: bool = False) -> None:
         """Initialize garbage collector.
 
         Args:
-            session_factory: SQLAlchemy session factory
+            record_store: RecordStoreABC instance providing session factory.
             is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._is_postgresql = is_postgresql
 
     def run_gc(

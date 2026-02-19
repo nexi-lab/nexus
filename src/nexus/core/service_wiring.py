@@ -23,10 +23,11 @@ def wire_services(fs: Any) -> None:
     Args:
         fs: NexusFS instance to wire services onto.
     """
-    svc = fs._services
+    ksvc = fs._kernel_services
+    brk_svc = fs._brick_services
 
     # VersionService: injected by factory (Task #45)
-    fs.version_service = svc.version_service
+    fs.version_service = ksvc.version_service
 
     # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
     from nexus.services.llm_service import LLMService
@@ -38,8 +39,10 @@ def wire_services(fs: Any) -> None:
     # ReBACService: Permission and access control operations
     # Must be created before AgentRPCService and UserProvisioningService
     # which depend on rebac_service sync methods for DI.
-    if svc.rebac_service is not None:
-        fs.rebac_service = svc.rebac_service
+    # ReBACService: check pre-built first, then build from kernel + brick services
+    _pre_rebac = getattr(fs, "_pre_rebac_service", None)
+    if _pre_rebac is not None:
+        fs.rebac_service = _pre_rebac
     else:
         from nexus.services.rebac_service import ReBACService
 
@@ -47,7 +50,7 @@ def wire_services(fs: Any) -> None:
             rebac_manager=fs._rebac_manager,
             enforce_permissions=fs._enforce_permissions,
             enable_audit_logging=True,
-            circuit_breaker=fs._services.rebac_circuit_breaker,
+            circuit_breaker=brk_svc.rebac_circuit_breaker,
         )
 
     # WorkspaceRPCService: Replaces NexusFS workspace/memory/snapshot facades
@@ -160,51 +163,40 @@ def wire_services(fs: Any) -> None:
 
     fs._gateway = NexusFSGateway(fs)
 
-    # Mount/sync services: accept pre-built or create (Issue #655)
-    if svc.mount_core_service is not None:
-        fs._mount_core_service = svc.mount_core_service
-    else:
-        from nexus.services.mount_core_service import MountCoreService
+    # Mount/sync services: always built at wire time (Issue #2034)
+    from nexus.services.mount_core_service import MountCoreService
 
-        fs._mount_core_service = MountCoreService(fs._gateway)
+    fs._mount_core_service = MountCoreService(fs._gateway)
 
-    if svc.sync_service is not None:
-        fs._sync_service = svc.sync_service
-    else:
-        from nexus.services.sync_service import SyncService
+    from nexus.services.sync_service import SyncService
 
-        fs._sync_service = SyncService(fs._gateway)
+    fs._sync_service = SyncService(fs._gateway)
 
-    if svc.sync_job_service is not None:
-        fs._sync_job_service = svc.sync_job_service
-    else:
-        from nexus.services.sync_job_service import SyncJobService
+    from nexus.services.sync_job_service import SyncJobService
 
-        fs._sync_job_service = SyncJobService(fs._gateway, fs._sync_service)
+    fs._sync_job_service = SyncJobService(fs._gateway, fs._sync_service)
 
-    if svc.mount_persist_service is not None:
-        fs._mount_persist_service = svc.mount_persist_service
-    else:
-        from nexus.services.mount_persist_service import MountPersistService
+    from nexus.services.mount_persist_service import MountPersistService
 
-        fs._mount_persist_service = MountPersistService(
-            mount_manager=getattr(fs, "mount_manager", None),
-            mount_service=fs._mount_core_service,
-            sync_service=fs._sync_service,
-        )
+    fs._mount_persist_service = MountPersistService(
+        mount_manager=getattr(fs, "mount_manager", None),
+        mount_service=fs._mount_core_service,
+        sync_service=fs._sync_service,
+    )
 
-    # TaskQueueService: accept pre-built (Issue #655)
-    if svc.task_queue_service is not None:
-        fs.task_queue_service = svc.task_queue_service
+    # TaskQueueService: from BrickServices (Issue #655)
+    if brk_svc.task_queue_service is not None:
+        fs.task_queue_service = brk_svc.task_queue_service
 
     # SkillService: Skill management
     from nexus.services.skill_service import SkillService as _SkillService
 
     fs.skill_service = _SkillService(gateway=fs._gateway)
 
-    # SearchService: Search operations
-    if svc.search_service is not None:
-        fs.search_service = svc.search_service
+    # SearchService: always built at wire time (Issue #2034)
+    _pre_search = getattr(fs, "_pre_search_service", None)
+    if _pre_search is not None:
+        fs.search_service = _pre_search
     else:
         fs.search_service = SearchService(
             metadata_store=fs.metadata,
@@ -226,8 +218,9 @@ def wire_services(fs: Any) -> None:
     )
 
     # EventsService: File watching + advisory locking
-    if svc.events_service is not None:
-        fs.events_service = svc.events_service
+    _pre_events = getattr(fs, "_pre_events_service", None)
+    if _pre_events is not None:
+        fs.events_service = _pre_events
     else:
         from nexus.services.events_service import EventsService
 

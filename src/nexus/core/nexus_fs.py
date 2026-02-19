@@ -22,12 +22,14 @@ if TYPE_CHECKING:
     from nexus.services.memory.memory_api import Memory
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
+    BrickServices,
     CacheConfig,
     DistributedConfig,
     KernelServices,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
+    SystemServices,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
@@ -81,6 +83,8 @@ class NexusFS(  # type: ignore[misc]
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
         kernel_services: KernelServices | None = None,
+        system_services: SystemServices | None = None,
+        brick_services: BrickServices | None = None,
         parse_fn: Any | None = None,
         content_cache: Any | None = None,
         parser_registry: ParserRegistry | None = None,
@@ -94,14 +98,18 @@ class NexusFS(  # type: ignore[misc]
         distributed = distributed or DistributedConfig()
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
-        svc = kernel_services or KernelServices()
+        ksvc = kernel_services or KernelServices()
+        sys_svc = system_services or SystemServices()
+        brk_svc = brick_services or BrickServices()
 
         self._cache_config = cache
         self._perm_config = permissions
         self._distributed_config = distributed
         self._memory_config_obj = memory
         self._parse_config = parsing
-        self._services = svc
+        self._kernel_services = ksvc
+        self._system_services = sys_svc
+        self._brick_services = brk_svc
         self._config: Any | None = None
 
         # Map config fields to flat attributes
@@ -138,8 +146,8 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Path router
-        if svc.router is not None:
-            self.router = svc.router
+        if ksvc.router is not None:
+            self.router = ksvc.router
         else:
             self.router = PathRouter()
             if custom_namespaces:
@@ -179,31 +187,41 @@ class NexusFS(  # type: ignore[misc]
             admin_capabilities=set(),
         )
 
-        # Injected services (KernelServices)
-        self._rebac_manager = svc.rebac_manager
-        self._dir_visibility_cache = svc.dir_visibility_cache
-        self._audit_store = svc.audit_store
-        self._entity_registry = svc.entity_registry
-        self._permission_enforcer = svc.permission_enforcer
-        self._hierarchy_manager = svc.hierarchy_manager
-        self._deferred_permission_buffer = svc.deferred_permission_buffer
-        self._workspace_registry = svc.workspace_registry
-        self.mount_manager = svc.mount_manager
-        self._workspace_manager = svc.workspace_manager
-        self._write_observer = svc.write_observer
-        self._overlay_resolver = svc.overlay_resolver
-        self._wallet_provisioner = svc.wallet_provisioner
-        self._snapshot_service = getattr(svc, "snapshot_service", None)
-        self._agent_registry = svc.agent_registry
-        self._namespace_manager = svc.namespace_manager
-        self._async_agent_registry = svc.async_agent_registry
-        self._async_namespace_manager = svc.async_namespace_manager
-        self._async_vfs_router = svc.async_vfs_router
-        self._event_bus = svc.event_bus
-        self._lock_manager = svc.lock_manager
+        # =====================================================================
+        # Tier 0: KERNEL services (Issue #2034: from KernelServices)
+        # =====================================================================
+        self._rebac_manager = ksvc.rebac_manager
+        self._dir_visibility_cache = ksvc.dir_visibility_cache
+        self._audit_store = ksvc.audit_store
+        self._entity_registry = ksvc.entity_registry
+        self._permission_enforcer = ksvc.permission_enforcer
+        self._hierarchy_manager = ksvc.hierarchy_manager
+        self._deferred_permission_buffer = ksvc.deferred_permission_buffer
+        self._workspace_registry = ksvc.workspace_registry
+        self.mount_manager = ksvc.mount_manager
+        self._workspace_manager = ksvc.workspace_manager
+        self._write_observer = ksvc.write_observer
+        self._overlay_resolver = ksvc.overlay_resolver
+
+        # =====================================================================
+        # Tier 1: SYSTEM services (Issue #2034: from SystemServices)
+        # =====================================================================
+        self._agent_registry = sys_svc.agent_registry
+        self._namespace_manager = sys_svc.namespace_manager
+        self._async_agent_registry = sys_svc.async_agent_registry
+        self._async_namespace_manager = sys_svc.async_namespace_manager
+        self._context_branch_service = sys_svc.context_branch_service
+
+        # =====================================================================
+        # Tier 2: BRICK services (Issue #2034: from BrickServices)
+        # =====================================================================
+        self._event_bus = brk_svc.event_bus
+        self._lock_manager = brk_svc.lock_manager
         self.enable_workflows = distributed.enable_workflows
-        self.workflow_engine = svc.workflow_engine
-        self._api_key_creator = svc.api_key_creator
+        self.workflow_engine = brk_svc.workflow_engine
+        self._wallet_provisioner = brk_svc.wallet_provisioner
+        self._snapshot_service = brk_svc.snapshot_service
+        self._api_key_creator = brk_svc.api_key_creator
 
         # Lazy-init sentinels
         self._token_manager = None
@@ -231,7 +249,7 @@ class NexusFS(  # type: ignore[misc]
         # VFS Hook Pipeline
         from nexus.core.vfs_hooks import VFSHookPipeline
 
-        self._hook_pipeline: VFSHookPipeline = svc.hook_pipeline or VFSHookPipeline()
+        self._hook_pipeline: VFSHookPipeline = VFSHookPipeline()
 
         # Wire self-dependent services, then register hooks
         self._wire_services()
@@ -252,7 +270,7 @@ class NexusFS(  # type: ignore[misc]
             self._read_tracking_enabled = True
 
         # Cache observer
-        self._cache_observer = svc.cache_observer
+        self._cache_observer = ksvc.cache_observer
         if self._cache_observer is None and self._read_set_cache is not None:
             from nexus.core.cache_invalidation import ReadSetCacheObserver
 
@@ -337,19 +355,23 @@ class NexusFS(  # type: ignore[misc]
     @property
     def _service_extras(self) -> dict[str, Any]:
         """Server layer reads typed service fields as a dict interface."""
-        _fields = (
-            "observability_subsystem",
+        result: dict[str, Any] = {}
+        # System tier fields
+        for k in ("observability_subsystem", "resiliency_manager", "delivery_worker"):
+            v = getattr(self._system_services, k, None)
+            if v is not None:
+                result[k] = v
+        # Brick tier fields
+        for k in (
             "chunked_upload_service",
             "manifest_resolver",
-            "manifest_metrics",
             "rebac_circuit_breaker",
             "tool_namespace_middleware",
-            "resiliency_manager",
-            "delivery_worker",
-        )
-        return {
-            k: getattr(self._services, k) for k in _fields if getattr(self._services, k) is not None
-        }
+        ):
+            v = getattr(self._brick_services, k, None)
+            if v is not None:
+                result[k] = v
+        return result
 
     @property
     def read_set_cache(self) -> Any | None:

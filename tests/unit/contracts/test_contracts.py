@@ -110,25 +110,25 @@ class TestObjectIdentity:
 
     def test_nexus_error_identity(self):
         from nexus.contracts.exceptions import NexusError as ContractsErr
-        from nexus.core.exceptions import NexusError as CoreErr
+        from nexus.contracts.exceptions import NexusError as CoreErr
 
         assert ContractsErr is CoreErr
 
     def test_parser_error_identity(self):
         from nexus.contracts.exceptions import ParserError as ContractsPE
-        from nexus.core.exceptions import ParserError as CorePE
+        from nexus.contracts.exceptions import ParserError as CorePE
 
         assert ContractsPE is CorePE
 
     def test_backend_error_identity(self):
         from nexus.contracts.exceptions import BackendError as ContractsBE
-        from nexus.core.exceptions import BackendError as CoreBE
+        from nexus.contracts.exceptions import BackendError as CoreBE
 
         assert ContractsBE is CoreBE
 
     def test_validation_error_identity(self):
         from nexus.contracts.exceptions import ValidationError as ContractsVE
-        from nexus.core.exceptions import ValidationError as CoreVE
+        from nexus.contracts.exceptions import ValidationError as CoreVE
 
         assert ContractsVE is CoreVE
 

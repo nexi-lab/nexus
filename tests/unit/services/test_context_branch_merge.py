@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import BranchConflictError, BranchStateError
+from nexus.contracts.exceptions import BranchConflictError, BranchStateError
 from nexus.core.response import HandlerResponse
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.services.context_branch import ContextBranchService

@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from sqlalchemy.exc import OperationalError as SAOperationalError
 from sqlalchemy.exc import SQLAlchemyError
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     DatabaseConnectionError,
     DatabaseError,
     DatabaseIntegrityError,

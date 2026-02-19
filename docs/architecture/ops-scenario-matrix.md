@@ -764,7 +764,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | S21 Agent Memory | Yes — `services/memory/` (5 modules, 15+ API routes) | **MISSING PROTOCOL** — `MemoryAPI` exists as concrete class, no Protocol ABC |
 | S22 ACE | Yes — `services/ace/` (9 modules, 10+ RPC methods) | **MISSING PROTOCOL** — ACE operations go through NexusFS directly |
 | S23 Agent Delegation | Yes — `services/delegation/` (5 modules) | **MISSING PROTOCOL** — `DelegationService` is concrete, no Protocol ABC |
-| S24 Operations Undo | Yes — `storage/operation_logger.py` | **MISSING PROTOCOL** — `OperationLogger` is concrete, no Protocol ABC |
+| S24 Operations Undo | Yes — `storage/operation_logger.py`, `services/operation_undo_service.py` | `OperationLogProtocol` exists (`services/protocols/operation_log.py`). `OperationUndoService` extracted from CLI — handles undo orchestration via router + kernel primitives. |
 | S25 Governance | Partial — `AnomalyDetectorProtocol` (1 method) covers anomaly only | **INCOMPLETE** — Collusion, trust, suspension, approval workflow have no protocol |
 | S26 Reputation | Yes — `services/reputation/` (4 modules) | **MISSING PROTOCOL** — `ReputationService` is concrete, no Protocol ABC |
 | S27 Plugins | Yes — `plugins/` (7 modules) | **MISSING PROTOCOL** — `PluginRegistry` is concrete, no Protocol ABC |
@@ -793,7 +793,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | MED | S23 Agent Delegation | `DelegationProtocol` |
 | MED | S25 Governance (full) | `GovernanceProtocol` (extend beyond AnomalyDetector) |
 | MED | S26 Reputation | `ReputationProtocol` |
-| LOW | S24 Operations Undo | `OperationLogProtocol` |
+| ~~LOW~~ | ~~S24 Operations Undo~~ | ~~`OperationLogProtocol`~~ ✓ Done — `OperationLogProtocol` + `OperationUndoService` |
 | LOW | S27 Plugins | `PluginProtocol` |
 | LOW | S28 Workflows | `WorkflowProtocol` |
 
@@ -835,7 +835,7 @@ Map each surviving scenario (S1-S28) to its canonical Ops ABC (existing or propo
 | **S21** Agent Memory | *(new)* **MemoryProtocol** | MISSING | Service | — | Needs: store/get/edit/delete/search/invalidate/revalidate/history/lineage |
 | **S22** ACE | *(new)* **TrajectoryProtocol** | MISSING | Service | — | Needs: start/log_step/complete/feedback/score/playbook CRUD/reflect/curate |
 | **S23** Agent Delegation | *(new)* **DelegationProtocol** | MISSING | Service | — | Needs: delegate/revoke/list |
-| **S24** Operations Undo | *(new)* **OperationLogProtocol** | MISSING | Service | — | Needs: log/list/undo |
+| **S24** Operations Undo | **OperationLogProtocol** + **OperationUndoService** | EXISTS | Service | EXACT | `OperationLogProtocol` (`services/protocols/operation_log.py`) covers log/list/query. `OperationUndoService` (`services/operation_undo_service.py`) covers undo orchestration. |
 | **S25** Governance | *(extend P20)* **GovernanceProtocol** | INCOMPLETE | Service | — | Extend AnomalyDetector → add collusion/trust/suspension/approval |
 | **S26** Reputation | *(new)* **ReputationProtocol** | MISSING | Service | — | Needs: get_score/leaderboard/feedback/dispute/resolve |
 | **S27** Plugins | *(new)* **PluginProtocol** | MISSING | Service | — | Needs: install/uninstall/list/scaffold |
@@ -847,17 +847,17 @@ Map each surviving scenario (S1-S28) to its canonical Ops ABC (existing or propo
                     Existing Protocol?
                     YES (exact)     NEEDS WORK      MISSING
 Kernel tier:       S1,S19,S20      —               —
-Service tier:      S2,S4-S7,       S8,S9 (split)   S3,S14,S21-S28
-                   S10-S13,        S25 (extend)
-                   S15-S18
+Service tier:      S2,S4-S7,       S8,S9 (split)   S3,S14,S21-S23,
+                   S10-S13,        S25 (extend)    S26-S28
+                   S15-S18,S24
 ```
 
 | Status | Count | Scenarios |
 |--------|-------|-----------|
-| **EXACT match** | 17 | S1, S2, S4, S5, S6, S7, S10, S11, S12, S13, S15, S16, S17, S18, S19, S20 |
+| **EXACT match** | 18 | S1, S2, S4, S5, S6, S7, S10, S11, S12, S13, S15, S16, S17, S18, S19, S20, S24 |
 | **Needs split** | 2 | S8 (Watch), S9 (Lock) — from P9 EventsProtocol |
 | **Needs extension** | 1 | S25 (Governance) — extend P20 AnomalyDetector |
-| **Missing Protocol** | 8 | S3, S14, S21, S22, S23, S24, S26, S27, S28 |
+| **Missing Protocol** | 7 | S3, S14, S21, S22, S23, S26, S27, S28 |
 | **TOTAL** | 28 | |
 
 ### 3.3 Tier Assignment
@@ -897,8 +897,9 @@ Tier assignment per KERNEL-ARCHITECTURE.md (three swap tiers):
    - Rationale: 1-method Protocol is insufficient for 13 API routes spanning 6 sub-domains
    - Priority: MED
 
-6. **Create remaining Protocols** (S23 Delegation, S24 Undo, S26 Reputation, S27 Plugins, S28 Workflows)
+6. **Create remaining Protocols** (S23 Delegation, S26 Reputation, S27 Plugins, S28 Workflows)
    - Priority: LOW-MED — these can be extracted incrementally as concrete classes stabilize
+   - S24 Undo: ✓ Done — `OperationLogProtocol` + `OperationUndoService` (`services/operation_undo_service.py`)
 
 **Non-Actions:**
 - P22 (ContextManifestProtocol): keep as convenience interface but do NOT count as Ops ABC — it's orchestration

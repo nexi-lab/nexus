@@ -15,8 +15,7 @@ from nexus.skills.exceptions import (
     SkillPermissionDeniedError,
 )
 from nexus.skills.parser import SkillParseError, SkillParser
-from nexus.skills.protocols import NexusFilesystem
-from nexus.skills.registry import SkillRegistry
+from nexus.skills.protocols import NexusFilesystem, SkillRegistryProtocol
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -58,7 +57,7 @@ class SkillImporter:
     def __init__(
         self,
         filesystem: NexusFilesystem,
-        registry: SkillRegistry | None = None,
+        registry: SkillRegistryProtocol | None = None,
     ):
         """Initialize skill importer.
 
@@ -67,7 +66,12 @@ class SkillImporter:
             registry: Optional skill registry for conflict checking
         """
         self._filesystem = filesystem
-        self._registry = registry or SkillRegistry(filesystem)
+        if registry is not None:
+            self._registry = registry
+        else:
+            from nexus.skills.registry import SkillRegistry
+
+            self._registry = SkillRegistry(filesystem)
         self._parser = SkillParser()
 
     async def import_from_zip(

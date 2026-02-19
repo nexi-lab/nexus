@@ -14,7 +14,7 @@ from nexus.skills.exceptions import (
 )
 from nexus.skills.models import SkillMetadata
 from nexus.skills.parser import SkillParser
-from nexus.skills.protocols import NexusFilesystem
+from nexus.skills.protocols import NexusFilesystem, SkillRegistryProtocol
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ class SkillManager:
     def __init__(
         self,
         filesystem: NexusFilesystem | None = None,
-        registry: SkillRegistry | None = None,
+        registry: SkillRegistryProtocol | None = None,
         rebac_manager: ReBACManager | None = None,
         governance: SkillGovernance | None = None,
     ):
@@ -77,7 +77,7 @@ class SkillManager:
             governance: Optional governance system for approval checks
         """
         self._filesystem = filesystem
-        self._registry = registry or SkillRegistry(filesystem)
+        self._registry: SkillRegistryProtocol = registry or SkillRegistry(filesystem)
         self._parser = SkillParser()
         self._rebac = rebac_manager
         self._governance = governance
@@ -851,7 +851,7 @@ class SkillManager:
             >>> results = await manager.search_skills("data processing", tier="zone")
         """
         # Ensure registry has discovered skills
-        if not self._registry._metadata_index:
+        if not self._registry.list_skills():
             await self._registry.discover()
 
         query_lower = query.lower()

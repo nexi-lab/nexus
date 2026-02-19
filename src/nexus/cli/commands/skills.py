@@ -784,7 +784,7 @@ def skills_export(
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
-        exporter = SkillExporter(registry)
+        exporter = SkillExporter(registry, filesystem=nx)
 
         async def export_skill_async() -> None:
             await registry.discover()
@@ -841,7 +841,7 @@ def skills_validate(
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
-        exporter = SkillExporter(registry)
+        exporter = SkillExporter(registry, filesystem=nx)
 
         async def validate_skill_async() -> None:
             await registry.discover()
@@ -903,7 +903,7 @@ def skills_size(
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
-        exporter = SkillExporter(registry)
+        exporter = SkillExporter(registry, filesystem=nx)
 
         async def calculate_size_async() -> None:
             await registry.discover()
@@ -1307,7 +1307,7 @@ def skills_diff(
             # Reconstruct SKILL.md content for both
             from nexus.skills.exporter import SkillExporter
 
-            exporter = SkillExporter(registry)
+            exporter = SkillExporter(registry, filesystem=nx)
 
             content1 = exporter._reconstruct_skill_md(skill_obj1)
             content2 = exporter._reconstruct_skill_md(skill_obj2)

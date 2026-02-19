@@ -432,7 +432,7 @@ class NamespaceManager:
     def get_grants_hash(
         self,
         subject: tuple[str, str],
-        zone_id: str | None = None,  # noqa: ARG002
+        zone_id: str | None = None,
     ) -> str | None:
         """Get the grants_hash for a subject's cached mount table.
 
@@ -443,10 +443,11 @@ class NamespaceManager:
 
         Args:
             subject: (subject_type, subject_id) tuple
-            zone_id: Zone ID (unused, for future multi-zone hash partitioning)
+            zone_id: Zone ID — if provided, validates against cached zone
 
         Returns:
-            16-char hex string if cached, None if subject is not in cache.
+            16-char hex string if cached, None if subject is not in cache
+            or if the cached zone doesn't match zone_id.
         """
         with self._lock:
             cached = self._cache.get(subject)
@@ -454,7 +455,9 @@ class NamespaceManager:
         if cached is None:
             return None
 
-        _mount_entries, _mount_paths, _revision, _zone, grants_hash = cached
+        _mount_entries, _mount_paths, _revision, cached_zone, grants_hash = cached
+        if zone_id is not None and cached_zone != zone_id:
+            return None
         return grants_hash
 
     @property

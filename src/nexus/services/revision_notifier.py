@@ -3,17 +3,40 @@
 Provides a thread-safe notification mechanism for zone revisions (zookies).
 Writers call notify_revision() after a successful write, and readers call
 wait_for_revision() to block until the desired revision is available.
+
+Moved from core/ to services/ per KERNEL-ARCHITECTURE.md: cross-zone
+infrastructure does not belong in core/.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
+from abc import ABC, abstractmethod
+
+from typing_extensions import override
 
 logger = logging.getLogger(__name__)
 
 
-class RevisionNotifier:
+class RevisionNotifierBase(ABC):
+    """Abstract base for revision notification implementations.
+
+    Provides a common interface so ruff auto-exempts ARG002 on overrides
+    and isinstance() checks work at runtime.
+    """
+
+    @abstractmethod
+    def notify_revision(self, zone_id: str, revision: int) -> None: ...
+
+    @abstractmethod
+    def get_latest_revision(self, zone_id: str) -> int: ...
+
+    @abstractmethod
+    def wait_for_revision(self, zone_id: str, min_revision: int, timeout_ms: int) -> bool: ...
+
+
+class RevisionNotifier(RevisionNotifierBase):
     """Thread-safe revision notification using per-zone Condition variables.
 
     Each zone gets its own Condition so that notifications for zone A
@@ -65,19 +88,17 @@ class RevisionNotifier:
             )
 
 
-class NullRevisionNotifier:
+class NullRevisionNotifier(RevisionNotifierBase):
     """No-op fallback used when RevisionNotifier construction fails."""
 
-    def notify_revision(self, zone_id: str, revision: int) -> None:  # noqa: ARG002
+    @override
+    def notify_revision(self, zone_id: str, revision: int) -> None:
         pass
 
-    def get_latest_revision(self, zone_id: str) -> int:  # noqa: ARG002
+    @override
+    def get_latest_revision(self, zone_id: str) -> int:
         return 0
 
-    def wait_for_revision(
-        self,
-        zone_id: str,  # noqa: ARG002
-        min_revision: int,  # noqa: ARG002
-        timeout_ms: int,  # noqa: ARG002
-    ) -> bool:
+    @override
+    def wait_for_revision(self, zone_id: str, min_revision: int, timeout_ms: int) -> bool:
         return False

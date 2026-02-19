@@ -62,6 +62,7 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
+from nexus.remote.negative_cache import NegativeCache
 from nexus.remote.rpc_proxy import RPCProxyBase
 from nexus.server.protocol import RPCRequest, RPCResponse
 
@@ -130,6 +131,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         pool_maxsize: int = 10,
         negative_cache_capacity: int = 100_000,
         negative_cache_fp_rate: float = 0.01,
+        negative_cache: NegativeCache | None = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.api_key = api_key
@@ -165,10 +167,11 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
 
         self._initialized = False
 
-        self._negative_cache_capacity = negative_cache_capacity
-        self._negative_cache_fp_rate = negative_cache_fp_rate
-        self._negative_bloom: Any = None
-        self._init_negative_cache()
+        self._init_negative_cache(
+            negative_cache=negative_cache,
+            capacity=negative_cache_capacity,
+            fp_rate=negative_cache_fp_rate,
+        )
 
     async def __aenter__(self) -> AsyncRemoteNexusFS:
         await self._ensure_initialized()
@@ -455,7 +458,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     async def read(
         self,
         path: str,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
         return_metadata: bool = False,
         parsed: bool = False,
     ) -> bytes | dict[str, Any]:
@@ -473,7 +476,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             raise
         return self._parse_read_response(result, return_metadata)
 
-    async def stat(self, path: str, context: Any = None) -> dict[str, Any]:  # noqa: ARG002
+    async def stat(self, path: str, _context: Any = None) -> dict[str, Any]:
         if self._negative_cache_check(path):
             raise NexusFileNotFoundError(path)
         try:
@@ -483,7 +486,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             raise
         return result  # type: ignore[no-any-return]
 
-    async def exists(self, path: str, context: Any = None) -> bool:  # noqa: ARG002
+    async def exists(self, path: str, _context: Any = None) -> bool:
         if self._negative_cache_check(path):
             return False
         result = await self._call_rpc("exists", {"path": path})
@@ -511,7 +514,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         content: bytes | str,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
@@ -539,7 +542,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         chunks: Any,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> dict[str, Any]:
         # Collect chunks (sync or async iterator)
         if hasattr(chunks, "__aiter__"):
@@ -553,7 +556,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     async def write_batch(
         self,
         files: builtins.list[tuple[str, bytes]],
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
         result = await self._call_rpc("write_batch", {"files": files})
         if files:
@@ -564,7 +567,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         content: bytes | str,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
         if_match: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
@@ -581,7 +584,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
         if_match: str | None = None,
         fuzzy_threshold: float = 0.85,
         preview: bool = False,
@@ -624,7 +627,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         client_content: bytes | None = None,
         client_hash: str | None = None,
         max_delta_ratio: float = 0.8,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"path": path, "max_delta_ratio": max_delta_ratio}
         if client_hash is not None:
@@ -640,7 +643,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         delta: bytes,
         base_hash: str,
         if_match: str | None = None,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> dict[str, Any]:
         result = await self._call_rpc(
             "delta_write",
@@ -649,7 +652,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self._negative_cache_invalidate(path)
         return result  # type: ignore[no-any-return]
 
-    async def delete(self, path: str, context: Any = None) -> bool:  # noqa: ARG002
+    async def delete(self, path: str, _context: Any = None) -> bool:
         await self._call_rpc("delete", {"path": path})
         self._negative_cache_invalidate(path)
         return True
@@ -664,7 +667,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             self._negative_cache_invalidate_bulk(paths)
         return result  # type: ignore[no-any-return]
 
-    async def rename(self, old_path: str, new_path: str, context: Any = None) -> dict[str, Any]:  # noqa: ARG002
+    async def rename(self, old_path: str, new_path: str, _context: Any = None) -> dict[str, Any]:
         result = await self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
         self._negative_cache_invalidate(old_path)
         return result if isinstance(result, dict) else {}
@@ -683,7 +686,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         path: str,
         start: int,
         end: int,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> bytes:
         result = await self._call_rpc("read_range", {"path": path, "start": start, "end": end})
         return self._decode_bytes_field(result)
@@ -692,7 +695,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         chunk_size: int = 8192,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> AsyncIterator[bytes]:
         info = await self.stat(path)
         file_size = info.get("size") or 0
@@ -711,7 +714,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         start: int,
         end: int,
         chunk_size: int = 8192,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> AsyncIterator[bytes]:
         offset = start
         while offset <= end:
@@ -732,7 +735,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         recursive: bool = True,
         details: bool = False,
         show_parsed: bool = True,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         result = await self._call_rpc(
             "list",
@@ -749,7 +752,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         pattern: str,
         path: str = "/",
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> builtins.list[str]:
         result = await self._call_rpc("glob", {"pattern": pattern, "path": path})
         return result["matches"]  # type: ignore[no-any-return]
@@ -762,7 +765,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         ignore_case: bool = False,
         max_results: int = 1000,
         search_mode: str = "auto",
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
         result = await self._call_rpc(
             "grep",

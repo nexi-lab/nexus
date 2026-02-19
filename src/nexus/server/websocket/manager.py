@@ -26,8 +26,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 if TYPE_CHECKING:
     from nexus.core.event_bus import FileEvent
-    from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
     from nexus.services.event_bus.protocol import EventBusProtocol
+    from nexus.services.reactive_subscriptions import ReactiveSubscriptionManager
 
 logger = logging.getLogger(__name__)
 

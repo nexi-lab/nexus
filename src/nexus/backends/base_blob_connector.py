@@ -25,7 +25,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from nexus.backends.backend import Backend
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.response import HandlerResponse
 

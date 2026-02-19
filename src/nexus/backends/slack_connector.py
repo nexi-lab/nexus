@@ -51,7 +51,7 @@ from nexus.backends.slack_connector_utils import (
     list_channels,
     list_messages_from_channel,
 )
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:

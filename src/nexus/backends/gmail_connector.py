@@ -55,7 +55,7 @@ from nexus.connectors.base import (
     ValidatedMixin,
 )
 from nexus.connectors.gmail.errors import ERROR_REGISTRY
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 from nexus.core.response import HandlerResponse, timed_response
 
 try:

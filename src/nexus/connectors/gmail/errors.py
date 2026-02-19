@@ -1,31 +1,16 @@
 """Error definitions for Gmail connector.
 
-These errors are used by TraitBasedMixin to provide helpful
-error messages that reference the SKILL.md documentation.
+Shared trait/checkpoint errors are inherited from ``base_errors``.
+Domain-specific errors are defined here.
 """
 
 from __future__ import annotations
 
 from nexus.connectors.base import ErrorDef
+from nexus.connectors.base_errors import CHECKPOINT_ERRORS, TRAIT_ERRORS
 
-# Error registry for Gmail operations
-# Each error has a message, skill_section (SKILL.md anchor), and optional fix_example
-ERROR_REGISTRY: dict[str, ErrorDef] = {
-    "MISSING_AGENT_INTENT": ErrorDef(
-        message="Missing required 'agent_intent' comment explaining why this action is needed",
-        skill_section="required-format",
-        fix_example="# agent_intent: User requested to send project update to the team",
-    ),
-    "AGENT_INTENT_TOO_SHORT": ErrorDef(
-        message="agent_intent must be at least 10 characters - provide meaningful context",
-        skill_section="required-format",
-        fix_example="# agent_intent: Sending weekly status report as requested by user",
-    ),
-    "MISSING_CONFIRM": ErrorDef(
-        message="Sending emails requires explicit confirmation with 'confirm: true'",
-        skill_section="send-email",
-        fix_example="confirm: true  # Add this to confirm email should be sent",
-    ),
+# Domain-specific errors for Gmail operations
+_DOMAIN_ERRORS: dict[str, ErrorDef] = {
     "MISSING_RECIPIENTS": ErrorDef(
         message="Email must have at least one recipient in 'to' field",
         skill_section="send-email",
@@ -81,4 +66,11 @@ ERROR_REGISTRY: dict[str, ErrorDef] = {
         skill_section="security",
         fix_example="# This is a warning - ensure external sharing is intended",
     ),
+}
+
+# Merged registry: shared trait + checkpoint + domain-specific
+ERROR_REGISTRY: dict[str, ErrorDef] = {
+    **TRAIT_ERRORS,
+    **CHECKPOINT_ERRORS,
+    **_DOMAIN_ERRORS,
 }

@@ -14,14 +14,13 @@ import logging
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, cast
 
-import httpx
-
 from nexus.proxy.circuit_breaker import AsyncCircuitBreaker, CircuitState
 from nexus.proxy.config import ProxyBrickConfig
 from nexus.proxy.errors import (
     CircuitOpenError,
     OfflineQueuedError,
     RemoteCallError,
+    is_connection_error,
 )
 from nexus.proxy.offline_queue import OfflineQueue
 from nexus.proxy.replay_engine import ReplayEngine
@@ -146,7 +145,7 @@ class ProxyBrick:
             await self._circuit.record_success()
             return result
         except RemoteCallError as exc:
-            if _is_connection_error(exc):
+            if is_connection_error(exc):
                 await self._circuit.record_failure()
                 queue_id = await self._queue.enqueue(method, kwargs=kwargs)
                 logger.warning("Operation '%s' queued for offline replay (id=%d)", method, queue_id)
@@ -318,16 +317,3 @@ class ProxyAgentRegistryBrick(ProxyBrick):
 
     async def unregister(self, agent_id: str) -> bool:
         return await self._forward("agent_registry.unregister", agent_id=agent_id)  # type: ignore[no-any-return]
-
-
-# ======================================================================
-# Helpers
-# ======================================================================
-
-
-def _is_connection_error(exc: RemoteCallError) -> bool:
-    """Return True if the underlying cause is a connectivity failure."""
-    cause = exc.cause
-    if cause is None:
-        return False
-    return isinstance(cause, (httpx.ConnectError, httpx.TimeoutException, ConnectionError, OSError))

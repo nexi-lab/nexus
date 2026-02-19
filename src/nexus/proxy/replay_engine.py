@@ -11,7 +11,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.proxy.errors import RemoteCallError
+from nexus.proxy.errors import RemoteCallError, is_connection_error
 
 if TYPE_CHECKING:
     from nexus.proxy.circuit_breaker import AsyncCircuitBreaker
@@ -19,16 +19,6 @@ if TYPE_CHECKING:
     from nexus.proxy.transport import HttpTransport
 
 logger = logging.getLogger(__name__)
-
-
-def _is_connection_error(exc: RemoteCallError) -> bool:
-    """Return True if the underlying cause is a connectivity failure."""
-    import httpx
-
-    cause = exc.cause
-    if cause is None:
-        return False
-    return isinstance(cause, (httpx.ConnectError, httpx.TimeoutException, ConnectionError, OSError))
 
 
 class ReplayEngine:
@@ -53,8 +43,8 @@ class ReplayEngine:
         queue: OfflineQueueProtocol,
         transport: HttpTransport,
         circuit: AsyncCircuitBreaker,
-        batch_size: int = 10,
-        poll_interval: float = 5.0,
+        batch_size: int,
+        poll_interval: float,
     ) -> None:
         self._queue = queue
         self._transport = transport
@@ -90,7 +80,7 @@ class ReplayEngine:
                         logger.error("Failed to decode op %d: %s", op.id, jexc)
                         await self._queue.mark_dead_letter(op.id)
                     except RemoteCallError as exc:
-                        if _is_connection_error(exc):
+                        if is_connection_error(exc):
                             await self._circuit.record_failure()
                             await self._queue.mark_failed(op.id)
                             logger.warning(

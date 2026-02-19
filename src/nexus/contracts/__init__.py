@@ -61,8 +61,19 @@ from nexus.contracts.types import (
     Permission,
     extract_context_identity,
 )
+from nexus.contracts.validators import (
+    EmailAddress,
+    EmailList,
+    EmailListRequired,
+    ISODateTimeStr,
+)
 
 __all__ = [
+    # Validators
+    "EmailAddress",
+    "EmailList",
+    "EmailListRequired",
+    "ISODateTimeStr",
     # RPC codec
     "RPCEncoder",
     "decode_rpc_message",

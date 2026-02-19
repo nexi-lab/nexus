@@ -327,6 +327,7 @@ class TestSystemServices:
             "context_branch_service",
             "scoped_hook_engine",
             "brick_lifecycle_manager",
+            "brick_reconciler",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",

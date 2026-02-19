@@ -175,7 +175,7 @@ class TestRoundtripConsistency:
         assert values["physical_path"] == "/test/file.txt"  # fallback to path
         assert values["content_hash"] is None
         assert values["file_type"] is None
-        assert values["zone_id"] == "root"  # default
+        assert values["zone_id"] == "default"  # default
         assert values["posix_uid"] is None
 
     def test_fields_not_yet_in_sql_are_documented(self) -> None:

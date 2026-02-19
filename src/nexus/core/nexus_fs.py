@@ -464,40 +464,9 @@ class NexusFS(  # type: ignore[misc]
         return self._memory_api
 
     def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
-        """Get the created_by value for version history tracking.
-
-        Args:
-            context: Operation context with per-request values
-
-        Returns:
-            Combined user and agent info when both are available.
-            Format: 'user:alice,agent:data_analyst' or just 'user:alice' or 'agent:data_analyst'
-        """
-        # Extract user and agent from context
-        user = None
-        agent = None
-
-        if context is None:
-            user = getattr(self._default_context, "user_id", None)
-            agent = self._default_context.agent_id
-        elif hasattr(context, "agent_id"):
-            user = getattr(context, "user_id", None)
-            agent = context.agent_id
-        elif isinstance(context, dict):
-            user = context.get("user_id")
-            agent = context.get("agent_id")
-        else:
-            user = getattr(self._default_context, "user_id", None)
-            agent = self._default_context.agent_id
-
-        # Build combined string showing both user and agent
-        parts = []
-        if user:
-            parts.append(f"user:{user}")
-        if agent:
-            parts.append(f"agent:{agent}")
-
-        return ",".join(parts) if parts else None
+        """Get the created_by value for version history tracking."""
+        from nexus.core.context_utils import get_created_by
+        return get_created_by(context, self._default_context)
 
     def _get_routing_params(
         self, context: OperationContext | dict | None = None
@@ -585,29 +554,9 @@ class NexusFS(  # type: ignore[misc]
         )
 
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
-        """Parse context dict or OperationContext into OperationContext.
-
-        Args:
-            context: Optional context dict or OperationContext with user_id, groups, zone_id, etc.
-
-        Returns:
-            OperationContext instance
-        """
-        # If already an OperationContext, return as-is
-        if isinstance(context, OperationContext):
-            return context
-
-        if context is None:
-            context = {}
-
-        return OperationContext(
-            user_id=context.get("user_id", "system"),
-            groups=context.get("groups", []),
-            zone_id=context.get("zone_id"),
-            agent_id=context.get("agent_id"),
-            is_admin=context.get("is_admin", False),
-            is_system=context.get("is_system", False),
-        )
+        """Parse context dict or OperationContext into OperationContext."""
+        from nexus.core.context_utils import parse_context
+        return parse_context(context)
 
     def _ensure_entity_registry(self) -> EntityRegistry:
         """Lazily create and cache an EntityRegistry instance.
@@ -1701,59 +1650,9 @@ class NexusFS(  # type: ignore[misc]
     # -------------------------------------------------------------------------
 
     def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
-        """Extract subject from operation context.
-
-        Args:
-            context: Operation context (OperationContext or dict)
-
-        Returns:
-            Subject tuple (type, id) or None if not found
-
-        Examples:
-            >>> context = {"subject": ("user", "alice")}
-            >>> self._get_subject_from_context(context)
-            ('user', 'alice')
-
-            >>> context = OperationContext(user_id="alice", groups=[])
-            >>> self._get_subject_from_context(context)
-            ('user', 'alice')
-        """
-        if not context:
-            return None
-
-        # Handle dict format (used by RPC server and tests)
-        if isinstance(context, dict):
-            subject = context.get("subject")
-            if subject and isinstance(subject, tuple) and len(subject) == 2:
-                return (str(subject[0]), str(subject[1]))
-
-            # Construct from subject_type + subject_id
-            subject_type = context.get("subject_type", "user")
-            subject_id = context.get("subject_id") or context.get("user_id")
-            if subject_id:
-                return (subject_type, subject_id)
-
-            return None
-
-        # Handle OperationContext format - use get_subject() method
-        if hasattr(context, "get_subject") and callable(context.get_subject):
-            result = context.get_subject()
-            if result is not None:
-                return (str(result[0]), str(result[1]))
-            return None
-
-        # Fallback: construct from attributes
-        if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
-            subject_type = getattr(context, "subject_type", "user")
-            subject_id = getattr(context, "subject_id", None) or getattr(context, "user_id", None)
-            if subject_id:
-                return (subject_type, subject_id)
-
-        # Last resort: use user field
-        if hasattr(context, "user_id") and context.user_id:
-            return ("user", context.user_id)
-
-        return None
+        """Extract subject from operation context."""
+        from nexus.core.context_utils import get_subject_from_context
+        return get_subject_from_context(context)
 
     # MCP/Skill/LLM/OAuth facades removed —
     # served via register_service(mcp_service, skill_service, llm_service, oauth_service).

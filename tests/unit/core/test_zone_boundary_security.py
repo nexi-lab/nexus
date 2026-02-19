@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.rebac.permissions_enhanced import AdminCapability
 from nexus.server.auth.user_helpers import add_user_to_zone

@@ -114,6 +114,7 @@ from nexus.backends.gcs import GCSBackend
 from nexus.backends.local import LocalBackend
 from nexus.config import NexusConfig as Config
 from nexus.config import load_config
+from nexus.contracts.types import OperationContext
 from nexus.core.exceptions import (
     BackendError,
     InvalidPathError,
@@ -129,9 +130,9 @@ from nexus.core.exceptions import (
 )
 from nexus.core.filesystem import NexusFilesystem as Filesystem
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.permissions import OperationContext, PermissionEnforcer
 from nexus.core.router import NamespaceConfig
 from nexus.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
+from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.rebac.manager import (
     CheckResult,
     ConsistencyLevel,

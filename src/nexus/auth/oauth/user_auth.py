@@ -354,7 +354,7 @@ class OAuthUserAuth:
         email: str,
         display_name: str | None,
     ) -> None:
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
         from nexus.server.auth.auth_routes import get_nexus_instance
 
         nx = get_nexus_instance()

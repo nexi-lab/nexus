@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.core.response import HandlerResponse
 
 

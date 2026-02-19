@@ -16,11 +16,13 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.permissions import OperationContext, Permission, check_stale_session
+from nexus.contracts.types import OperationContext, Permission
+from nexus.rebac.enforcer import check_stale_session
 from nexus.rebac.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
@@ -248,12 +250,19 @@ class AsyncPermissionEnforcer:
 
     async def _get_agent_owner(
         self,
-        agent_id: str,  # noqa: ARG002
-        zone_id: str,  # noqa: ARG002
+        agent_id: str,
+        _zone_id: str,
     ) -> tuple[str, str] | None:
-        """Get the owner of an agent (async)."""
-        # Check ReBAC for agent ownership relation
-        # This is a simplified version - full implementation would query rebac_tuples
+        """Get the owner of an agent via agent_registry lookup (async).
+
+        Returns (subject_type, subject_id) of the agent's owner, or None.
+        ``_zone_id`` is accepted for future cross-zone agent resolution.
+        """
+        if not self.agent_registry:
+            return None
+        record = await asyncio.to_thread(self.agent_registry.get, agent_id)
+        if record and getattr(record, "owner_id", None):
+            return ("user", record.owner_id)
         return None
 
     def _get_object_type(self, path: str) -> str:

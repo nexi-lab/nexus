@@ -364,6 +364,12 @@ def test_all_public_methods_are_exposed_or_excluded():
         "list",  # ABC stub → overrides NexusFSCoreMixin.list()
         "glob",  # ABC stub → search_service.glob()
         "grep",  # ABC stub → search_service.grep()
+        # ReBAC sync delegation stubs (Issue #2033) — delegates to rebac_service
+        "rebac_create",  # ABC stub → rebac_service.rebac_create_sync()
+        "rebac_check",  # ABC stub → rebac_service.rebac_check_sync()
+        "rebac_check_batch",  # ABC stub → rebac_service.rebac_check_batch_sync()
+        "rebac_delete",  # ABC stub → rebac_service.rebac_delete_sync()
+        "rebac_list_tuples",  # ABC stub → rebac_service.rebac_list_tuples_sync()
     }
 
     # Get all public methods

@@ -27,7 +27,6 @@ References:
 from __future__ import annotations
 
 import logging
-import platform
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -440,58 +439,29 @@ TIER_PRESETS: dict[DeviceTier, MobileSearchConfig] = {
 def get_system_memory_gb() -> float:
     """Get total system memory in gigabytes.
 
+    Delegates to ``nexus.core.device_capabilities.get_system_memory_mb()``
+    (Issue #1708: DRY extraction).
+
     Returns:
         Total RAM in GB, or 4.0 as fallback if detection fails
     """
-    try:
-        import psutil
+    from nexus.core.device_capabilities import get_system_memory_mb
 
-        return psutil.virtual_memory().total / (1024**3)  # type: ignore[no-any-return]
-    except ImportError:
-        logger.warning("psutil not available, using fallback memory detection")
-
-    # Fallback: try platform-specific methods
-    try:
-        system = platform.system()
-        if system == "Darwin":  # macOS
-            import subprocess
-
-            result = subprocess.run(
-                ["sysctl", "-n", "hw.memsize"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return int(result.stdout.strip()) / (1024**3)
-        elif system == "Linux":
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        # Value is in KB
-                        kb = int(line.split()[1])
-                        return kb / (1024**2)
-    except Exception as e:
-        logger.warning(f"Failed to detect system memory: {e}")
-
-    # Conservative fallback
-    return 4.0
+    return get_system_memory_mb() / 1024
 
 
 def get_available_memory_gb() -> float:
     """Get available (free) system memory in gigabytes.
 
+    Delegates to ``nexus.core.device_capabilities.get_available_memory_mb()``
+    (Issue #1708: DRY extraction).
+
     Returns:
         Available RAM in GB, or 2.0 as fallback if detection fails
     """
-    try:
-        import psutil
+    from nexus.core.device_capabilities import get_available_memory_mb
 
-        return psutil.virtual_memory().available / (1024**3)  # type: ignore[no-any-return]
-    except ImportError:
-        pass
-
-    # Conservative fallback
-    return 2.0
+    return get_available_memory_mb() / 1024
 
 
 def detect_device_tier(

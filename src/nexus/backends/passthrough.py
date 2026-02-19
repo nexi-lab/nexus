@@ -37,7 +37,7 @@ from nexus.core.hash_fast import hash_content
 from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

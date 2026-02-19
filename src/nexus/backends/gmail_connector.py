@@ -69,7 +69,7 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

@@ -39,6 +39,11 @@ class LRUEvictionPolicy:
 
     The candidates are already sorted by the DB query (last_heartbeat ASC
     NULLS FIRST), so this policy simply slices the first batch_size agents.
+
+    TODO(#2170): Add QoS-based eviction ordering. Agents should declare a
+    priority tier (e.g. via metadata["qos"] = "best_effort" | "standard" |
+    "critical"), and eviction should prefer lower-priority agents first.
+    Requires AgentRecord.qos property + policy sorting by (qos ASC, heartbeat ASC).
     """
 
     def select_candidates(self, agents: list[AgentRecord], batch_size: int) -> list[AgentRecord]:

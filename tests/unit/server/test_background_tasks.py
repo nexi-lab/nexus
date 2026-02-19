@@ -143,6 +143,7 @@ class TestAgentEvictionTask:
         result.evicted = 5
         result.reason = "pressure_critical"
         result.post_pressure = "warning"
+        result.skipped = 0
 
         call_count = 0
 
@@ -160,3 +161,32 @@ class TestAgentEvictionTask:
             await agent_eviction_task(manager, interval_seconds=0)
 
         assert "Evicted 5 agents" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_eviction_task_continues_after_exception(self, caplog):
+        """agent_eviction_task continues running after run_cycle() raises."""
+        call_count = 0
+
+        async def exception_then_success():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("DB connection lost")
+            if call_count >= 3:
+                raise asyncio.CancelledError
+            result = MagicMock()
+            result.evicted = 0
+            result.reason = "normal_pressure"
+            result.post_pressure = "normal"
+            result.skipped = 0
+            return result
+
+        manager = MagicMock()
+        manager.run_cycle = exception_then_success
+
+        with caplog.at_level(logging.ERROR), pytest.raises(asyncio.CancelledError):
+            await agent_eviction_task(manager, interval_seconds=0)
+
+        # Verify loop continued past the exception (reached call 3)
+        assert call_count >= 3
+        assert "Eviction cycle failed" in caplog.text

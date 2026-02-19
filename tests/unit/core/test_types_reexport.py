@@ -26,12 +26,12 @@ class TestOperationContextReExport:
         assert OperationContext is not None
 
     def test_importable_from_permissions(self) -> None:
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         assert OperationContext is not None
 
     def test_same_class_identity(self) -> None:
-        from nexus.core.permissions import OperationContext as OC_permissions
+        from nexus.contracts.types import OperationContext as OC_permissions
         from nexus.core.types import OperationContext as OC_types
 
         assert OC_permissions is OC_types
@@ -46,12 +46,12 @@ class TestPermissionReExport:
         assert Permission is not None
 
     def test_importable_from_permissions(self) -> None:
-        from nexus.core.permissions import Permission
+        from nexus.contracts.types import Permission
 
         assert Permission is not None
 
     def test_same_class_identity(self) -> None:
-        from nexus.core.permissions import Permission as P_permissions
+        from nexus.contracts.types import Permission as P_permissions
         from nexus.core.types import Permission as P_types
 
         assert P_permissions is P_types

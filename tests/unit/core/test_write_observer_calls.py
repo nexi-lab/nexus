@@ -162,7 +162,7 @@ class TestWriteBatchCallsObserver:
 
 
 class TestWriteStreamCallsObserver:
-    """write_stream() now calls on_write() via _notify_observer (gap closed)."""
+    """write_stream() calls _write_observer.on_write() directly (gap closed)."""
 
     def test_write_stream_calls_on_write(self, nx: NexusFS, observer: MagicMock) -> None:
         if not hasattr(nx, "write_stream"):

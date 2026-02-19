@@ -365,17 +365,33 @@ class NexusFS(  # type: ignore[misc]
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
-        # Issue #625: Assemble post-mutation hooks list
-        # Hooks are called in order after each write/delete/rename mutation.
-        # Fire-and-forget: failures are logged but never abort the mutation.
+        # Issue #625: Post-mutation hooks list (fire-and-forget).
+        # Kernel-internal hooks (cache observer) are added here.
+        # Userspace hooks are registered post-construction via register_mutation_hook().
         self._post_mutation_hooks: list = []
         if self._cache_observer is not None:
             self._post_mutation_hooks.append(self._cache_observer)
-        if self._workflow_dispatch is not None:
-            self._post_mutation_hooks.append(self._workflow_dispatch)
 
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
         self._init_performance_optimizations()
+
+    # ------------------------------------------------------------------
+    # Public kernel API: mutation hook registration
+    # ------------------------------------------------------------------
+
+    def register_mutation_hook(self, hook: Any) -> None:
+        """Register a post-mutation hook (fire-and-forget).
+
+        Userspace services (e.g. WorkflowDispatchService) call this after
+        construction to receive mutation notifications.  The kernel does
+        not know or care what concrete hook is registered — it just calls
+        ``hook.on_mutation(event)`` after every write/delete/rename.
+
+        This is the *hook* subsystem (notifier-chain style).  The separate
+        *observer* subsystem (``_write_observer``) is audit-critical and
+        can abort — they are independent (cf. Linux LSM vs notifier chains).
+        """
+        self._post_mutation_hooks.append(hook)
 
     def _wire_services(self) -> None:
         """Wire services that require a reference to self (NexusFS).
@@ -524,9 +540,9 @@ class NexusFS(  # type: ignore[misc]
                 metadata_cache=metadata_cache,
             )
 
-        # WorkflowDispatchService: accept DI, graceful degrade to None (#625 partial)
-        # Workflow dispatch is optional userspace — kernel does not self-build.
-        self._workflow_dispatch = brk_svc.workflow_dispatch
+        # _workflow_dispatch REMOVED (#625 infra cleanup)
+        # Kernel no longer references BrickServices.workflow_dispatch.
+        # Userspace hooks register via register_mutation_hook() post-construction.
 
     @property
     def read_set_cache(self) -> Any | None:

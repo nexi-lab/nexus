@@ -128,6 +128,8 @@ dependencies = [
     "structlog>=24.4.0",
     # Governance graphs: collusion detection, ring detection (Issue #1359)
     "networkx>=3.2",
+    # Governance: sparse matrices for EigenTrust (Issue #2129)
+    "scipy>=1.11.0",
 ]
 
 [project.optional-dependencies]

@@ -119,7 +119,7 @@ async def list_alerts(
     """List anomaly alerts with optional filters."""
     service = _get_anomaly_service(request)
 
-    from nexus.services.governance.models import AnomalySeverity
+    from nexus.bricks.governance.models import AnomalySeverity
 
     sev = AnomalySeverity(severity) if severity else None
     alerts = await service.get_alerts(zone_id=zone_id, severity=sev, resolved=resolved)
@@ -266,7 +266,7 @@ async def add_constraint(
     logger.info("add_constraint by subject=%s", auth_result.get("subject_id"))
     service = _get_graph_service(request)
 
-    from nexus.services.governance.models import ConstraintType
+    from nexus.bricks.governance.models import ConstraintType
 
     try:
         ct = ConstraintType(body.constraint_type)
@@ -378,7 +378,7 @@ async def suspend_agent(
     logger.info("suspend_agent by subject=%s", auth_result.get("subject_id"))
     service = _get_response_service(request)
 
-    from nexus.services.governance.models import AnomalySeverity
+    from nexus.bricks.governance.models import AnomalySeverity
 
     try:
         sev = AnomalySeverity(body.severity)

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.services.governance.governance_wrapper import (
+from nexus.bricks.governance.governance_wrapper import (
     GovernanceApprovalRequired,
     GovernanceBlockedError,
     GovernanceEnforcedPayment,
@@ -119,7 +119,7 @@ class TestTransferPreCheck:
     async def test_transfer_blocked_raises_governance_blocked_error(
         self, wrapper, graph_service, transfer_request
     ):
-        from nexus.services.governance.models import ConstraintType
+        from nexus.bricks.governance.models import ConstraintType
 
         graph_service.check_constraint.return_value = _FakeConstraintCheck(
             allowed=False,
@@ -137,7 +137,7 @@ class TestTransferPreCheck:
     async def test_transfer_approval_required_raises(
         self, wrapper, graph_service, transfer_request
     ):
-        from nexus.services.governance.models import ConstraintType
+        from nexus.bricks.governance.models import ConstraintType
 
         graph_service.check_constraint.return_value = _FakeConstraintCheck(
             allowed=False,
@@ -153,7 +153,7 @@ class TestTransferPreCheck:
     async def test_transfer_rate_limit_blocks_by_default(
         self, wrapper, graph_service, transfer_request
     ):
-        from nexus.services.governance.models import ConstraintType
+        from nexus.bricks.governance.models import ConstraintType
 
         graph_service.check_constraint.return_value = _FakeConstraintCheck(
             allowed=False,

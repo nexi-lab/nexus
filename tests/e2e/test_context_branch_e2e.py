@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BranchConflictError,
     BranchProtectedError,
     BranchStateError,

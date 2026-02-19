@@ -137,7 +137,7 @@ class TestBatchSelfContainedE2E:
 
     def test_stop_on_error_cascading(self, client: TestClient, mock_fs: AsyncMock) -> None:
         """stop_on_error cascades 424 to all remaining operations."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         mock_fs.read.side_effect = NexusFileNotFoundError(path="/missing.txt")
 
@@ -162,7 +162,7 @@ class TestBatchSelfContainedE2E:
 
     def test_partial_failure_continues(self, client: TestClient, mock_fs: AsyncMock) -> None:
         """Partial failure without stop_on_error continues processing."""
-        from nexus.core.exceptions import NexusPermissionError
+        from nexus.contracts.exceptions import NexusPermissionError
 
         call_count = 0
 

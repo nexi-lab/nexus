@@ -1,9 +1,9 @@
 """Local exception types for the Skills module.
 
-These exceptions decouple the skills module from nexus.core.exceptions,
+These exceptions decouple the skills module from nexus.contracts.exceptions,
 allowing the skills module to be tested and used independently.
 
-Each exception mirrors the semantics of its nexus.core counterpart
+Each exception mirrors the semantics of its nexus.contracts counterpart
 but lives locally within the skills module boundary.
 """
 

@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.rpc_decorator import rpc_expose
+
 if TYPE_CHECKING:
     from _nexus_tasks import TaskEngine
 
@@ -112,6 +114,7 @@ class TaskQueueService:
         """
         self._runner = runner
 
+    @rpc_expose(description="Submit a task to the durable task queue")
     def submit_task(
         self,
         task_type: str,
@@ -154,6 +157,7 @@ class TaskQueueService:
             "task_type": task_type,
         }
 
+    @rpc_expose(description="Get task status and result")
     def get_task(self, task_id: int) -> dict[str, Any] | None:
         """Get task status and details.
 
@@ -169,6 +173,7 @@ class TaskQueueService:
             return None
         return _task_record_to_dict(record)
 
+    @rpc_expose(description="Cancel a pending or running task")
     def cancel_task(self, task_id: int) -> dict[str, Any]:
         """Cancel a pending or running task.
 
@@ -193,7 +198,8 @@ class TaskQueueService:
                 "message": str(e),
             }
 
-    def list_tasks(
+    @rpc_expose(description="List tasks with optional filters")
+    def list_queue_tasks(
         self,
         task_type: str | None = None,
         status: int | None = None,
@@ -229,6 +235,7 @@ class TaskQueueService:
         )
         return [_task_record_to_dict(r) for r in records]
 
+    @rpc_expose(description="Get task queue statistics")
     def get_task_stats(self) -> dict[str, Any]:
         """Get queue statistics.
 

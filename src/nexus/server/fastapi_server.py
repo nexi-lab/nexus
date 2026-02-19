@@ -1377,10 +1377,20 @@ def create_app(
 
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
     _brick_sources: list[Any] = []
-    for _attr_name in ("skill_service", "skill_package_service"):
+    for _attr_name in ("skill_service", "skill_package_service", "task_queue_service"):
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:
             _brick_sources.append(_brick_svc)
+    # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
+    try:
+        from nexus.factory import create_memory_service
+
+        _memory_svc = create_memory_service(nexus_fs)
+        if _memory_svc is not None:
+            _brick_sources.append(_memory_svc)
+            app.state.memory_service = _memory_svc  # for cleanup in lifespan
+    except Exception as _exc:
+        logger.debug("MemoryService unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)

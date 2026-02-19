@@ -7984,61 +7984,12 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        # Build query
-        conn = self._require_rebac._get_connection()
-        try:
-            query = "SELECT * FROM rebac_tuples WHERE 1=1"
-            params: list = []
-
-            if subject:
-                query += " AND subject_type = ? AND subject_id = ?"
-                params.extend([subject[0], subject[1]])
-
-            if relation:
-                query += " AND relation = ?"
-                params.append(relation)
-            elif relation_in:
-                # N+1 FIX: Support multiple relations in a single query
-                placeholders = ", ".join("?" * len(relation_in))
-                query += f" AND relation IN ({placeholders})"
-                params.extend(relation_in)
-
-            if object:
-                query += " AND object_type = ? AND object_id = ?"
-                params.extend([object[0], object[1]])
-
-            # Fix SQL placeholders for PostgreSQL
-            query = self._require_rebac._fix_sql_placeholders(query)
-
-            cursor = self._require_rebac._create_cursor(conn)
-            cursor.execute(query, params)
-
-            results = []
-            for row in cursor.fetchall():
-                # Both SQLite and PostgreSQL now return dict-like rows
-                # Note: sqlite3.Row doesn't have .get() method, so use try/except for optional fields
-                try:
-                    zone_id = row["zone_id"]
-                except (KeyError, IndexError):
-                    zone_id = None
-
-                results.append(
-                    {
-                        "tuple_id": row["tuple_id"],
-                        "subject_type": row["subject_type"],
-                        "subject_id": row["subject_id"],
-                        "relation": row["relation"],
-                        "object_type": row["object_type"],
-                        "object_id": row["object_id"],
-                        "created_at": row["created_at"],
-                        "expires_at": row["expires_at"],
-                        "zone_id": zone_id,
-                    }
-                )
-
-            return results
-        finally:
-            self._require_rebac._close_connection(conn)
+        return self._require_rebac.list_tuples(
+            subject=subject,
+            relation=relation,
+            relation_in=relation_in,
+            object=object,
+        )
 
     # =========================================================================
     # Public API Wrappers for Configuration (P1 - Should Do)
@@ -8279,34 +8230,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        # Get all namespaces by querying the database
-        conn = self._require_rebac._get_connection()
-        try:
-            cursor = self._require_rebac._create_cursor(conn)
-
-            cursor.execute(
-                self._require_rebac._fix_sql_placeholders(
-                    "SELECT namespace_id, object_type, config, created_at, updated_at FROM rebac_namespaces ORDER BY object_type"
-                )
-            )
-
-            namespaces = []
-            for row in cursor.fetchall():
-                import json
-
-                namespaces.append(
-                    {
-                        "namespace_id": row["namespace_id"],
-                        "object_type": row["object_type"],
-                        "config": json.loads(row["config"]),
-                        "created_at": row["created_at"],
-                        "updated_at": row["updated_at"],
-                    }
-                )
-
-            return namespaces
-        finally:
-            self._require_rebac._close_connection(conn)
+        return self._require_rebac.list_namespaces()
 
     @rpc_expose(description="Delete ReBAC namespace")
     def namespace_delete(self, object_type: str) -> bool:
@@ -8331,39 +8255,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        conn = self._require_rebac._get_connection()
-        try:
-            cursor = self._require_rebac._create_cursor(conn)
-
-            # Check if exists
-            cursor.execute(
-                self._require_rebac._fix_sql_placeholders(
-                    "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
-                ),
-                (object_type,),
-            )
-
-            if cursor.fetchone() is None:
-                return False
-
-            # Delete
-            cursor.execute(
-                self._require_rebac._fix_sql_placeholders(
-                    "DELETE FROM rebac_namespaces WHERE object_type = ?"
-                ),
-                (object_type,),
-            )
-
-            conn.commit()
-
-            # Invalidate cache if available
-            cache = getattr(self._require_rebac, "_cache", None)
-            if cache is not None:
-                cache.clear()
-
-            return True
-        finally:
-            self._require_rebac._close_connection(conn)
+        return self._require_rebac.delete_namespace(object_type)
 
     # =========================================================================
     # Consent & Privacy Controls (Advanced Feature)
@@ -9166,27 +9058,9 @@ class NexusFS(  # type: ignore[misc]
         # Get the most recent tuple (in case there are multiple)
         tuple_data = tuples[0]
 
-        # Parse conditions from the tuple
-        import json
-
-        conn = self._require_rebac._get_connection()
-        try:
-            cursor = self._require_rebac._create_cursor(conn)
-            cursor.execute(
-                self._require_rebac._fix_sql_placeholders(
-                    "SELECT conditions FROM rebac_tuples WHERE tuple_id = ?"
-                ),
-                (tuple_data["tuple_id"],),
-            )
-            row = cursor.fetchone()
-            if row and row["conditions"]:
-                conditions = json.loads(row["conditions"])
-                if conditions.get("type") == "dynamic_viewer":
-                    column_config = conditions.get("column_config")
-                    return column_config if column_config is not None else None
-        finally:
-            self._require_rebac._close_connection(conn)
-
+        conditions = self._require_rebac.get_tuple_conditions(tuple_data["tuple_id"])
+        if conditions and conditions.get("type") == "dynamic_viewer":
+            return conditions.get("column_config")
         return None
 
     @rpc_expose(description="Apply dynamic viewer filter to CSV data")

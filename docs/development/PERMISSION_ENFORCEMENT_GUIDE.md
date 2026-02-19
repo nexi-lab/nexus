@@ -10,7 +10,7 @@ Nexus now supports multi-layer permission enforcement for file operations. This 
 
 ```python
 from nexus import connect
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Option 1: Enable permissions globally (recommended for production)
 nx = connect(
@@ -78,7 +78,7 @@ The enforcer short-circuits on first match:
 Carries user/agent authentication context through all filesystem operations:
 
 ```python
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Regular user
 ctx = OperationContext(
@@ -110,7 +110,7 @@ system_ctx = OperationContext(
 Multi-layer permission enforcement engine:
 
 ```python
-from nexus.core.permissions import Permission
+from nexus.contracts.types import Permission
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
 enforcer = PermissionEnforcer(
@@ -157,7 +157,7 @@ Enable enforcement only for specific operations:
 
 ```python
 from nexus import connect
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Default: no enforcement
 nx = connect(backend_type="local", agent_id="alice")
@@ -179,7 +179,7 @@ Override context per-operation (useful for service accounts):
 
 ```python
 from nexus import connect
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 nx = connect(backend_type="local", enforce_permissions=True)
 
@@ -277,7 +277,7 @@ assert meta.mode == 0o644  # rwx becomes rw-
 ```python
 import pytest
 from nexus import connect
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 def test_permission_enforcement():
     nx = connect(backend_type="local", enforce_permissions=True)
@@ -334,7 +334,7 @@ For existing files without permissions, set defaults:
 
 ```python
 from nexus import connect
-from nexus.core.permissions import FilePermissions, FileMode
+from nexus.contracts.types import FilePermissions, FileMode
 
 nx = connect(backend_type="local")
 

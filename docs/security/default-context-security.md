@@ -318,7 +318,7 @@ self._default_context = OperationContext(
 # Test script
 from nexus import NexusFS
 from nexus.backends.local import LocalBackend
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Setup
 nx = NexusFS(

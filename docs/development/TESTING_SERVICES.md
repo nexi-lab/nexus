@@ -61,7 +61,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from nexus.services.service_name import ServiceName
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 
 class TestServiceName:

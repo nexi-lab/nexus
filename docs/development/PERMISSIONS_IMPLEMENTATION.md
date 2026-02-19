@@ -37,7 +37,7 @@ UNIX-style permission implementation:
 
 **Example Usage:**
 ```python
-from nexus.core.permissions import FileMode, FilePermissions
+from nexus.contracts.types import FileMode, FilePermissions
 
 # Create permissions
 perms = FilePermissions.default("alice", "developers")  # rw-r--r--
@@ -247,7 +247,7 @@ nexus setfacl user:alice:rwx /workspace/file.txt --remove
 pytest tests/unit/test_permissions.py tests/unit/test_acl.py -v
 
 # Run with coverage
-pytest tests/unit/test_permissions.py tests/unit/test_acl.py --cov=nexus.core.permissions --cov=nexus.core.acl
+pytest tests/unit/test_permissions.py tests/unit/test_acl.py --cov=nexus.contracts.types --cov=nexus.core.acl
 ```
 
 **Test Coverage:**
@@ -316,7 +316,7 @@ The current implementation provides the foundation for:
 3. **Set Default Permissions** (optional)
    ```python
    from nexus import connect
-   from nexus.core.permissions import FilePermissions, FileMode
+   from nexus.contracts.types import FilePermissions, FileMode
 
    nx = connect()
 

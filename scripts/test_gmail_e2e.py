@@ -606,7 +606,7 @@ def main():
 
     # Import after path setup
     from nexus.backends.gmail_connector import GmailConnectorBackend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     # Create backend
     backend = GmailConnectorBackend(

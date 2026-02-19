@@ -23,7 +23,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from nexus.core.exceptions import CircuitOpenError
+from nexus.contracts.exceptions import CircuitOpenError
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.services.rebac_share_mixin import ReBACShareMixin
 

@@ -8,19 +8,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.skills.exceptions import (
+from nexus.bricks.skills.exceptions import (
     SkillManagerError,
     SkillPermissionDeniedError,
 )
-from nexus.skills.models import SkillMetadata
-from nexus.skills.parser import SkillParser
-from nexus.skills.protocols import NexusFilesystem, SkillRegistryProtocol
-from nexus.skills.registry import SkillNotFoundError, SkillRegistry
+from nexus.bricks.skills.models import SkillMetadata
+from nexus.bricks.skills.parser import SkillParser
+from nexus.bricks.skills.protocols import NexusFilesystem
+from nexus.bricks.skills.registry import SkillNotFoundError, SkillRegistry
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.bricks.skills.governance import SkillGovernance
+    from nexus.bricks.skills.types import SkillOperationContext as OperationContext
     from nexus.rebac.manager import ReBACManager
-    from nexus.skills.governance import SkillGovernance
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class SkillManager:
     def __init__(
         self,
         filesystem: NexusFilesystem | None = None,
-        registry: SkillRegistryProtocol | None = None,
+        registry: SkillRegistry | None = None,
         rebac_manager: ReBACManager | None = None,
         governance: SkillGovernance | None = None,
     ):
@@ -77,7 +77,7 @@ class SkillManager:
             governance: Optional governance system for approval checks
         """
         self._filesystem = filesystem
-        self._registry: SkillRegistryProtocol = registry or SkillRegistry(filesystem)
+        self._registry = registry or SkillRegistry(filesystem)
         self._parser = SkillParser()
         self._rebac = rebac_manager
         self._governance = governance
@@ -272,7 +272,7 @@ class SkillManager:
                 raise SkillManagerError(f"Skill '{name}' already exists at {skill_file}")
 
         # Load template
-        from nexus.skills.templates import get_template
+        from nexus.bricks.skills.templates import get_template
 
         template_content = get_template(template, name=name, description=description, **kwargs)
 
@@ -723,7 +723,7 @@ class SkillManager:
         if self._governance:
             is_approved = await self._governance.is_approved(name)
             if not is_approved:
-                from nexus.skills.governance import GovernanceError
+                from nexus.bricks.skills.governance import GovernanceError
 
                 raise GovernanceError(
                     f"Skill '{name}' must be approved before publication. "
@@ -851,7 +851,7 @@ class SkillManager:
             >>> results = await manager.search_skills("data processing", tier="zone")
         """
         # Ensure registry has discovered skills
-        if not self._registry.list_skills():
+        if not self._registry._metadata_index:
             await self._registry.discover()
 
         query_lower = query.lower()

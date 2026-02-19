@@ -399,6 +399,8 @@ class TestBrickServices:
             "ipc_storage_driver",
             "ipc_vfs_driver",
             "ipc_provisioner",
+            "skill_service",
+            "skill_package_service",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

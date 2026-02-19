@@ -775,7 +775,7 @@ class OAuthService:
         from nexus.backends.service_map import ServiceMap
         from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
         from nexus.mcp.oauth_mappings import OAuthKlavisMappings
-        from nexus.skills.skill_generator import generate_skill_md
+        from nexus.services.protocols.skill_doc import generate_skill_md
 
         klavis_api_key = os.environ.get("KLAVIS_API_KEY")
         if not klavis_api_key:

@@ -992,6 +992,17 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         except Exception as _ipc_exc:
             logger.warning("[BOOT:BRICK] IPC brick unavailable: %s", _ipc_exc)
 
+    # --- Skills Brick (Issue #2035) ---
+    skill_service: Any = None
+    skill_package_service: Any = None
+    try:
+        # NexusFSGateway is not available during brick boot — skills brick
+        # will be wired later in NexusFS._wire_services() via the gateway
+        # adapters. Here we just flag availability.
+        logger.debug("[BOOT:BRICK] Skills brick modules available")
+    except Exception as _skills_exc:
+        logger.debug("[BOOT:BRICK] Skills brick not available: %s", _skills_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -1007,6 +1018,8 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "ipc_storage_driver": ipc_storage_driver,
         "ipc_vfs_driver": ipc_vfs_driver,
         "ipc_provisioner": ipc_provisioner,
+        "skill_service": skill_service,
+        "skill_package_service": skill_package_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1213,6 +1226,9 @@ def create_nexus_services(
         ipc_storage_driver=brick_dict["ipc_storage_driver"],
         ipc_vfs_driver=brick_dict["ipc_vfs_driver"],
         ipc_provisioner=brick_dict["ipc_provisioner"],
+        # Skills Brick (Issue #2035)
+        skill_service=brick_dict["skill_service"],
+        skill_package_service=brick_dict["skill_package_service"],
     )
 
     return kernel_services, system_services, brick_services

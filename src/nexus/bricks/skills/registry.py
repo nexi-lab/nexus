@@ -7,17 +7,17 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nexus.skills.exceptions import (
+from nexus.bricks.skills.exceptions import (
     SkillDependencyError,
     SkillNotFoundError,
     SkillPermissionDeniedError,
 )
-from nexus.skills.models import Skill, SkillMetadata
-from nexus.skills.parser import SkillParseError, SkillParser
-from nexus.skills.protocols import NexusFilesystem
+from nexus.bricks.skills.models import Skill, SkillMetadata
+from nexus.bricks.skills.parser import SkillParseError, SkillParser
+from nexus.bricks.skills.protocols import NexusFilesystem
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.bricks.skills.types import SkillOperationContext as OperationContext
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from nexus.skills.exceptions import SkillValidationError
+from nexus.bricks.skills.exceptions import SkillValidationError
 
 logger = logging.getLogger(__name__)
 

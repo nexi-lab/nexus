@@ -8,10 +8,9 @@ import zipfile
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from nexus.skills.exceptions import SkillExportError
-from nexus.skills.models import Skill
-from nexus.skills.protocols import NexusFilesystem, SkillRegistryProtocol
-from nexus.skills.registry import SkillNotFoundError
+from nexus.bricks.skills.exceptions import SkillExportError
+from nexus.bricks.skills.models import Skill
+from nexus.bricks.skills.registry import SkillNotFoundError, SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -30,22 +29,13 @@ class SkillExporter:
         ... )
     """
 
-    def __init__(
-        self,
-        registry: SkillRegistryProtocol,
-        filesystem: NexusFilesystem | None = None,
-    ):
+    def __init__(self, registry: SkillRegistry):
         """Initialize skill exporter.
 
         Args:
-            registry: Skill registry (any SkillRegistryProtocol implementation).
-            filesystem: Optional filesystem for reading skill files.
-                        If not provided, falls back to registry._filesystem (if available).
+            registry: SkillRegistry instance
         """
         self._registry = registry
-        self._filesystem: NexusFilesystem | None = filesystem or getattr(
-            registry, "_filesystem", None
-        )
 
     async def export_skill(
         self,
@@ -181,10 +171,10 @@ class SkillExporter:
         logger.debug(f"Exporting skill '{skill_name}' from directory: {skill_dir_path}")
 
         # Get filesystem from registry
-        if not self._filesystem:
+        if not self._registry._filesystem:
             raise SkillExportError(f"Cannot export skill '{skill_name}': filesystem not available")
 
-        filesystem = self._filesystem
+        filesystem = self._registry._filesystem
 
         # List all files in skill directory recursively
         try:
@@ -470,12 +460,12 @@ class SkillExporter:
         skill_dir_path = str(Path(skill.metadata.file_path).parent)
 
         # Get filesystem from registry
-        if not self._filesystem:
+        if not self._registry._filesystem:
             # Fallback to SKILL.md only if filesystem not available
             content = self._reconstruct_skill_md(skill)
             return len(content.encode("utf-8"))
 
-        filesystem = self._filesystem
+        filesystem = self._registry._filesystem
 
         # List all files in skill directory recursively
         try:
@@ -534,7 +524,7 @@ class SkillExporter:
         """
         # Determine output directory
         if output_dir is None:
-            from nexus.skills.registry import SkillRegistry
+            from nexus.bricks.skills.registry import SkillRegistry
 
             tier_path = SkillRegistry.TIER_PATHS.get(tier)
             if not tier_path:

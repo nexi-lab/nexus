@@ -145,6 +145,11 @@ def nexus_server(isolated_db, tmp_path):
     # Issue #788: Lower min chunk size for e2e tests (default 5MB too large for test payloads)
     env["NEXUS_UPLOAD_MIN_CHUNK_SIZE"] = "1"
 
+    # Issue #2035: Enable RecordStore + ReBAC so skills subscribe/share/unshare
+    # and share-link operations have a working EnhancedReBACManager.
+    # Without this, the server starts in "bare kernel" mode (no ReBAC).
+    env["NEXUS_RECORD_STORE_PATH"] = str(tmp_path / "record_store.db")
+
     # Issue #1186: Enable lock manager if Dragonfly/Redis is available
     dragonfly_url = env.get("NEXUS_DRAGONFLY_URL") or env.get("REDIS_URL")
     if dragonfly_url:

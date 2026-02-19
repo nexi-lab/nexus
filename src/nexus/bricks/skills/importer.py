@@ -10,15 +10,16 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.skills.exceptions import (
+from nexus.bricks.skills.exceptions import (
     SkillImportError,
     SkillPermissionDeniedError,
 )
-from nexus.skills.parser import SkillParseError, SkillParser
-from nexus.skills.protocols import NexusFilesystem, SkillRegistryProtocol
+from nexus.bricks.skills.parser import SkillParseError, SkillParser
+from nexus.bricks.skills.protocols import NexusFilesystem
+from nexus.bricks.skills.registry import SkillRegistry
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.bricks.skills.types import SkillOperationContext as OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class SkillImporter:
     def __init__(
         self,
         filesystem: NexusFilesystem,
-        registry: SkillRegistryProtocol | None = None,
+        registry: SkillRegistry | None = None,
     ):
         """Initialize skill importer.
 
@@ -66,12 +67,7 @@ class SkillImporter:
             registry: Optional skill registry for conflict checking
         """
         self._filesystem = filesystem
-        if registry is not None:
-            self._registry = registry
-        else:
-            from nexus.skills.registry import SkillRegistry
-
-            self._registry = SkillRegistry(filesystem)
+        self._registry = registry or SkillRegistry(filesystem)
         self._parser = SkillParser()
 
     async def import_from_zip(

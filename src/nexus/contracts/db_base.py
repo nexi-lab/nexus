@@ -17,7 +17,6 @@ Backward compatibility:
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import UTC, datetime
 
@@ -42,7 +41,9 @@ def _get_uuid_server_default() -> TextClause | None:
 
     Only checks the database URL string — no engine creation or DB probing at import time.
     """
-    db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+    from nexus.lib.env import get_database_url
+
+    db_url = get_database_url() or ""
     if db_url.startswith(("postgres", "postgresql")):
         return text("gen_random_uuid()::text")
     return None

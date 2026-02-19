@@ -223,6 +223,7 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "ipc_provisioner",  # provisioning helper, not a brick
         "skill_service",  # wired later via NexusFS gateway adapters
         "skill_package_service",  # wired later via NexusFS gateway adapters
+        "agent_event_log",  # event log, not a lifecycle brick
     }
 )
 

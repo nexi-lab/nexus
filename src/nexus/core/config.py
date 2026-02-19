@@ -254,6 +254,10 @@ class BrickServices:
     skill_service: Any = None  # SkillService (protocol-based)
     skill_package_service: Any = None  # SkillPackageService
 
+    # --- Delegation & Reputation Bricks (Issue #2131) ---
+    delegation_service: Any = None  # DELEGATION brick
+    reputation_service: Any = None  # REPUTATION brick
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

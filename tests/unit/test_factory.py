@@ -264,6 +264,8 @@ class TestBootBrickServices:
             "ipc_provisioner",
             "skill_service",
             "skill_package_service",
+            "delegation_service",
+            "reputation_service",
         }
         assert expected_keys == set(result.keys())
 

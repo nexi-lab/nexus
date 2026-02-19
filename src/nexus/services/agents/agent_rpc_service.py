@@ -205,7 +205,7 @@ class AgentRPCService:
             _logger.info(
                 "[KYA] Provisioned identity for agent %s (did=%s)", agent_id, key_record.did
             )
-            return key_record.did
+            return str(key_record.did)
         except Exception as e:
             _logger.warning("[KYA] Failed to provision identity for agent %s: %s", agent_id, e)
             return None
@@ -272,7 +272,7 @@ class AgentRPCService:
                 expires_at=expires_at,
             )
             session.commit()
-            return raw_key
+            return str(raw_key)
         finally:
             session.close()
 
@@ -320,6 +320,7 @@ class AgentRPCService:
         try:
             from nexus.identity.did import create_did_document
 
+            assert self._key_service is not None
             key_record = self._key_service.get_active_keys(agent_id)[0]
             public_key = self._key_service._crypto.public_key_from_bytes(
                 key_record.public_key_bytes
@@ -392,6 +393,7 @@ class AgentRPCService:
 
         self._check_agent_not_exists(agent_id, user_id, zone_id)
         self._ensure_agent_registry()
+        assert self._agent_registry is not None
 
         record = self._agent_registry.register(
             agent_id=agent_id,
@@ -442,7 +444,7 @@ class AgentRPCService:
 
         if capabilities:
             agent["capabilities"] = list(capabilities)
-        return agent
+        return dict(agent)
 
     @rpc_expose(description="Update agent configuration")
     def update_agent(
@@ -531,6 +533,7 @@ class AgentRPCService:
     def list_agents(self, _context: dict | None = None) -> list[dict]:
         """List all registered agents."""
         self._ensure_entity_registry()
+        assert self._entity_registry is not None
         entities = self._entity_registry.get_entities_by_type("agent")
 
         from sqlalchemy import select
@@ -586,6 +589,7 @@ class AgentRPCService:
     def get_agent(self, agent_id: str, _context: dict | None = None) -> dict | None:
         """Get information about a registered agent."""
         self._ensure_entity_registry()
+        assert self._entity_registry is not None
         entity = self._entity_registry.get_entity("agent", agent_id)
         if not entity:
             return None
@@ -722,7 +726,8 @@ class AgentRPCService:
                 logger.warning("[WALLET] Failed to cleanup wallet for agent %s: %s", agent_id, e)
 
         self._ensure_agent_registry()
-        return self._agent_registry.unregister(agent_id)
+        assert self._agent_registry is not None
+        return bool(self._agent_registry.unregister(agent_id))
 
     # ------------------------------------------------------------------
     # Public RPC Methods — Agent Lifecycle

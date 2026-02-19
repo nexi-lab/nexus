@@ -76,7 +76,7 @@ class MemoryProvider:
 
             engine = None
             if self._session_factory is not None:
-                engine = getattr(self._session_factory, "kw", {}).get("bind")  # type: ignore[union-attr]
+                engine = getattr(self._session_factory, "kw", {}).get("bind")
 
             self._memory_api = MemoryWithPaging(
                 session=session,
@@ -140,5 +140,5 @@ class MemoryProvider:
         if self._entity_registry is None:
             from nexus.rebac.entity_registry import EntityRegistry
 
-            self._entity_registry = EntityRegistry(self._session_factory)
+            self._entity_registry = EntityRegistry(self._session_factory)  # type: ignore[arg-type]
         return self._entity_registry

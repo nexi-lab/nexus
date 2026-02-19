@@ -84,9 +84,9 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     manifest_resolver: Any = None
     manifest_metrics: Any = None
     try:
-        from nexus.services.context_manifest import ManifestResolver
-        from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
-        from nexus.services.context_manifest.metrics import (
+        from nexus.bricks.context_manifest import ManifestResolver
+        from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
+        from nexus.bricks.context_manifest.metrics import (
             ManifestMetricsConfig,
             ManifestMetricsObserver,
         )

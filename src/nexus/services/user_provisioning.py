@@ -146,6 +146,7 @@ class UserProvisioningService:
                 created_resources["zone"] = True
 
             # 2. Register zone in entity registry
+            assert self._entity_registry is not None
             if not self._entity_registry.get_entity("zone", zone_id):
                 self._entity_registry.register_entity("zone", zone_id)
 
@@ -179,6 +180,7 @@ class UserProvisioningService:
                 created_resources["user"] = True
 
             # 4. Register user in entity registry
+            assert self._entity_registry is not None
             if not self._entity_registry.get_entity("user", user_id):
                 self._entity_registry.register_entity(
                     "user",

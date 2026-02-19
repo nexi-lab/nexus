@@ -190,9 +190,9 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
     # Write Observer — only BufferedRecordStoreSyncer needs .start()
     wo = kernel.get("write_observer")
     if wo is not None and hasattr(wo, "start"):
-        from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
 
-        if isinstance(wo, BufferedRecordStoreSyncer):
+        if isinstance(wo, BufferedRecordStoreWriteObserver):
             wo.start()
             logger.debug("[BOOT:BG] BufferedRecordStoreSyncer started")
 

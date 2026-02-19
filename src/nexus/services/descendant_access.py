@@ -97,7 +97,7 @@ class DescendantAccessChecker:
         if not has_rebac:
             # Fallback to permission enforcer if no ReBAC
             assert isinstance(context, OperationContext), "Context must be OperationContext"
-            return self._permission_enforcer.check(path, permission, context)
+            return bool(self._permission_enforcer.check(path, permission, context))
 
         # Validate subject_id (required for ReBAC checks)
         if context.subject_id is None:
@@ -129,7 +129,7 @@ class DescendantAccessChecker:
             )
             if cached_visible is not None:
                 logger.debug(f"has_access: DirVisCache HIT for {path} = {cached_visible}")
-                return cached_visible
+                return bool(cached_visible)
 
         # =============================================================
         # OPTIMIZATION 2: Try Tiger Cache direct access (O(1) lookup)
@@ -188,7 +188,7 @@ class DescendantAccessChecker:
             )
             if bitmap_result is not None:
                 logger.debug(f"has_access: Tiger bitmap compute for {path} = {bitmap_result}")
-                return bitmap_result
+                return bool(bitmap_result)
 
         # =============================================================
         # SLOW PATH FALLBACK: Only reached if Tiger Cache unavailable

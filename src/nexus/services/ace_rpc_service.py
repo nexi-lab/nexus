@@ -131,7 +131,8 @@ class ACERPCService:
     ) -> list[dict[str, Any]]:
         """Get all feedback for a trajectory."""
         memory_api = self._get_memory_api(context)
-        return memory_api.get_trajectory_feedback(trajectory_id)
+        result: list[dict[str, Any]] = memory_api.get_trajectory_feedback(trajectory_id)
+        return result
 
     @rpc_expose(description="Get effective score for a trajectory")
     def ace_get_effective_score(

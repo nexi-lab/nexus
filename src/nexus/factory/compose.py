@@ -165,7 +165,7 @@ def create_nexus_services(
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
 
     def _brick_on(name: str) -> bool:
-        return name in enabled_bricks  # type: ignore[operator]
+        return name in enabled_bricks
 
     _factory_log.info(
         "Factory: enabled_bricks=%d/%d %s",

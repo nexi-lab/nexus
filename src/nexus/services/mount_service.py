@@ -473,7 +473,7 @@ class MountService:
                             )
                         elif subject_id:
                             # Check if user has read permission (includes owner, editor, viewer)
-                            has_permission = self.nexus_fs.rebac_service.rebac_check_sync(
+                            has_permission = self.nexus_fs.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
                                 subject=(subject_type, subject_id),
                                 permission="read",
                                 object=("file", mount_point),

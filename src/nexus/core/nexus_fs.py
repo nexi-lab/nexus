@@ -300,7 +300,7 @@ class NexusFS(  # type: ignore[misc]
         if has_viewer:
             pipeline.register_read_hook(
                 DynamicViewerReadHook(
-                    get_subject=self._get_subject_from_context,
+                    get_subject=self._get_subject_from_context,  # type: ignore[arg-type]
                     get_viewer_config=self.get_dynamic_viewer_config,  # type: ignore[attr-defined]
                     apply_filter=self.apply_dynamic_viewer_filter,  # type: ignore[attr-defined]
                 )
@@ -1433,6 +1433,7 @@ class NexusFS(  # type: ignore[misc]
         priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
+        context: Any = None,
     ) -> str:
         return self._mount_core_service.add_mount(
             mount_point=mount_point,
@@ -1594,10 +1595,10 @@ class NexusFS(  # type: ignore[misc]
     @rpc_expose(description="List file versions")
     def list_versions(
         self, path: str, context: OperationContext | None = None
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         """List all versions of a file."""
         return cast(
-            list[dict[str, Any]],
+            builtins.list[dict[str, Any]],
             NexusFS._run_async(self.version_service.list_versions(path, context)),
         )
 
@@ -1721,3 +1722,126 @@ class NexusFS(  # type: ignore[misc]
                         mount.backend.token_manager.close()
                 except Exception as e:
                     logger.debug("Failed to close backend token manager: %s", e)
+
+    # ------------------------------------------------------------------
+    # ReBAC delegation stubs (Issue #2033)
+    # These delegate to rebac_service which now owns the business logic.
+    # Kept on NexusFS for backward-compatibility with tests and CLI.
+    # ------------------------------------------------------------------
+
+    def rebac_create(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: Any = None,
+        zone_id: str | None = None,
+        context: Any = None,
+        column_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a relationship tuple — delegates to rebac_service."""
+        return self.rebac_service.rebac_create_sync(
+            subject=subject,
+            relation=relation,
+            object=object,
+            expires_at=expires_at,
+            zone_id=zone_id,
+            context=context,
+            column_config=column_config,
+        )
+
+    def rebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+        context: Any = None,
+    ) -> bool:
+        """Check a permission — delegates to rebac_service."""
+        return self.rebac_service.rebac_check_sync(
+            subject=subject,
+            permission=permission,
+            object=object,
+            zone_id=zone_id,
+            context=context,
+        )
+
+    def rebac_check_batch(
+        self,
+        checks: builtins.list[dict[str, Any]],
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Batch check permissions — delegates to rebac_service."""
+        return self.rebac_service.rebac_check_batch_sync(
+            checks=checks,
+            context=context,
+        )
+
+    def rebac_delete(self, tuple_id: str) -> bool:
+        """Delete a relationship tuple — delegates to rebac_service."""
+        return self.rebac_service.rebac_delete_sync(tuple_id)
+
+    def rebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        zone_id: str | None = None,
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """List relationship tuples — delegates to rebac_service."""
+        return self.rebac_service.rebac_list_tuples_sync(
+            subject=subject,
+            relation=relation,
+            object=object,
+            zone_id=zone_id,
+            context=context,
+        )
+
+    # ------------------------------------------------------------------
+    # Agent management helper delegation stubs (Issue #2033)
+    # These delegate to _agent_rpc_service which now owns the logic.
+    # Kept for backward-compatibility with existing unit tests.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_zone_id(context: dict | Any | None) -> str | None:
+        """Extract zone_id from context — delegates to AgentRPCService."""
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
+
+        return AgentRPCService._extract_zone_id(context)
+
+    @staticmethod
+    def _extract_user_id(context: dict | Any | None) -> str | None:
+        """Extract user_id from context — delegates to AgentRPCService."""
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
+
+        return AgentRPCService._extract_user_id(context)
+
+    @staticmethod
+    def _create_agent_config_data(
+        agent_id: str,
+        name: str,
+        user_id: str,
+        description: str | None,
+        created_at: str | None,
+        metadata: dict | None = None,
+        api_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Create agent config data — delegates to AgentRPCService."""
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
+
+        return AgentRPCService._create_agent_config_data(
+            agent_id=agent_id,
+            name=name,
+            user_id=user_id,
+            description=description,
+            created_at=created_at,
+            metadata=metadata,
+            api_key=api_key,
+        )
+
+    def _determine_agent_key_expiration(self, user_id: str, session: Any) -> Any:
+        """Determine agent key expiration — delegates to _agent_rpc_service."""
+        return self._agent_rpc_service._determine_agent_key_expiration(user_id, session)

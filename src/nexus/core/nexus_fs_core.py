@@ -1053,7 +1053,7 @@ class NexusFSCoreMixin:
                 content_hash=meta.etag,
             )
             _pipeline.run_post_read(_read_ctx)
-            content = _read_ctx.content  # hooks may have filtered content
+            content = _read_ctx.content or content  # hooks may have filtered content
 
         # Handle parsed=True flag - return parsed content instead of raw bytes
         if parsed:

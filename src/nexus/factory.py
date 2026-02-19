@@ -628,6 +628,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
                 session_factory=ctx.session_factory,
                 poll_interval_ms=200,
                 batch_size=50,
+                use_row_locking=True,
             )
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] EventDeliveryWorker unavailable: %s", exc)

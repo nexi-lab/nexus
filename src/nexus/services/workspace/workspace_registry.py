@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
+    from nexus.storage.record_store import RecordStoreABC
 
 
 @dataclass
@@ -123,20 +124,20 @@ class WorkspaceRegistry:
         self,
         metadata: MetastoreABC,
         rebac_manager: Any | None = None,  # v0.5.0: For auto-granting ownership
-        session_factory: Any | None = None,  # SQLAlchemy session factory
+        record_store: RecordStoreABC | None = None,
     ):
         """Initialize workspace registry.
 
         Args:
             metadata: Metadata store for database persistence
             rebac_manager: ReBAC manager for auto-granting ownership (v0.5.0)
-            session_factory: SQLAlchemy session factory for database operations
+            record_store: RecordStoreABC instance providing session_factory
         """
         self.metadata = metadata
         self.rebac_manager = rebac_manager  # v0.5.0
-        if session_factory is None:
-            raise ValueError("session_factory is required — use factory.py for DI wiring")
-        self.metadata_session_factory = session_factory
+        if record_store is None:
+            raise ValueError("record_store is required — use factory.py for DI wiring")
+        self.metadata_session_factory = record_store.session_factory
         self._workspaces: dict[str, WorkspaceConfig] = {}
         self._memories: dict[str, MemoryConfig] = {}
         self._load_from_db()

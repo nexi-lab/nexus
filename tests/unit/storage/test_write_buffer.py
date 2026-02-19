@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -61,6 +62,12 @@ def session_factory(engine):
     return factory
 
 
+@pytest.fixture
+def record_store(session_factory):
+    """Wrap session_factory in a SimpleNamespace to mimic RecordStoreABC."""
+    return SimpleNamespace(session_factory=session_factory)
+
+
 # ---------------------------------------------------------------------------
 # WriteEvent tests
 # ---------------------------------------------------------------------------
@@ -90,15 +97,15 @@ class TestWriteEvent:
 class TestBufferLifecycle:
     """Tests for start/stop and basic buffering."""
 
-    def test_enqueue_increments_count(self, session_factory) -> None:
+    def test_enqueue_increments_count(self, record_store) -> None:
         """Enqueuing events should increase pending count."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.enqueue_write(_make_metadata(), is_new=True, path="/test/file.txt")
         assert buf.pending_count == 1
 
-    def test_enqueue_multiple(self, session_factory) -> None:
+    def test_enqueue_multiple(self, record_store) -> None:
         """Multiple enqueues should accumulate."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         for i in range(5):
             buf.enqueue_write(
                 _make_metadata(path=f"/test/file{i}.txt"),
@@ -107,9 +114,9 @@ class TestBufferLifecycle:
             )
         assert buf.pending_count == 5
 
-    def test_stop_drains_buffer(self, session_factory) -> None:
+    def test_stop_drains_buffer(self, record_store) -> None:
         """Stopping the buffer should flush all remaining events."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         for i in range(3):
@@ -124,9 +131,9 @@ class TestBufferLifecycle:
         assert buf.pending_count == 0
         assert buf.metrics["total_flushed"] == 3
 
-    def test_metrics_tracking(self, session_factory) -> None:
+    def test_metrics_tracking(self, record_store) -> None:
         """Metrics should accurately track enqueue/flush counts."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         buf.enqueue_write(_make_metadata(), is_new=True, path="/test/file.txt")
@@ -147,10 +154,10 @@ class TestBufferLifecycle:
 class TestFlushBehavior:
     """Tests for periodic and threshold-based flushing."""
 
-    def test_flush_on_threshold(self, session_factory) -> None:
+    def test_flush_on_threshold(self, record_store) -> None:
         """Buffer should auto-flush when max_buffer_size is reached."""
         buf = WriteBuffer(
-            session_factory,
+            record_store,
             flush_interval_ms=10000,  # Long interval
             max_buffer_size=3,  # Low threshold
         )
@@ -169,9 +176,9 @@ class TestFlushBehavior:
 
         assert buf.metrics["total_flushed"] == 3
 
-    def test_flush_creates_db_records(self, session_factory) -> None:
+    def test_flush_creates_db_records(self, record_store, session_factory) -> None:
         """Flushed events should create actual DB records."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         buf.enqueue_write(
@@ -204,9 +211,9 @@ class TestFlushBehavior:
             )
             assert len(ops) == 1
 
-    def test_flush_handles_delete_events(self, session_factory) -> None:
+    def test_flush_handles_delete_events(self, record_store, session_factory) -> None:
         """Delete events should create audit log and soft-delete."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         # First create
@@ -218,7 +225,7 @@ class TestFlushBehavior:
         buf.stop(timeout=5.0)
 
         # Then delete
-        buf2 = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf2 = WriteBuffer(record_store, flush_interval_ms=10000)
         buf2.start()
         buf2.enqueue_delete(path="/test/to_delete.txt", zone_id="root")
         buf2.stop(timeout=5.0)
@@ -229,9 +236,9 @@ class TestFlushBehavior:
             ).scalar_one()
             assert fp.deleted_at is not None
 
-    def test_flush_handles_rename_events(self, session_factory) -> None:
+    def test_flush_handles_rename_events(self, record_store, session_factory) -> None:
         """Rename events should create audit log."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         buf.enqueue_rename(
@@ -262,10 +269,10 @@ class TestFlushBehavior:
 class TestRetryBehavior:
     """Tests for retry on flush failure."""
 
-    def test_retry_on_transient_failure(self, session_factory) -> None:
+    def test_retry_on_transient_failure(self, record_store) -> None:
         """Buffer should retry on transient failures."""
         buf = WriteBuffer(
-            session_factory,
+            record_store,
             flush_interval_ms=10000,
             max_retries=3,
         )
@@ -279,10 +286,10 @@ class TestRetryBehavior:
         # Should have flushed successfully
         assert buf.metrics["total_failed"] == 0
 
-    def test_events_dropped_after_max_retries(self, session_factory) -> None:
+    def test_events_dropped_after_max_retries(self, record_store) -> None:
         """After max_retries, events should be dropped and counted."""
         buf = WriteBuffer(
-            session_factory,
+            record_store,
             flush_interval_ms=10000,
             max_retries=2,
         )
@@ -312,9 +319,9 @@ class TestRetryBehavior:
 class TestEnhancedMetrics:
     """Tests for the new timing, retry, and per-type metrics."""
 
-    def test_metrics_includes_timing_fields(self, session_factory) -> None:
+    def test_metrics_includes_timing_fields(self, record_store) -> None:
         """Metrics dict should include all new timing/batch fields."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         buf.enqueue_write(_make_metadata(), is_new=True, path="/test/file.txt")
@@ -330,9 +337,9 @@ class TestEnhancedMetrics:
         assert metrics["flush_duration_sum"] > 0
         assert metrics["flush_batch_size_sum"] == 1
 
-    def test_enqueued_by_type_tracking(self, session_factory) -> None:
+    def test_enqueued_by_type_tracking(self, record_store) -> None:
         """Per-type counters should track write, delete, and rename separately."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
 
         buf.enqueue_write(_make_metadata(path="/a.txt"), is_new=True, path="/a.txt")
         buf.enqueue_write(_make_metadata(path="/b.txt"), is_new=True, path="/b.txt")
@@ -354,7 +361,8 @@ class TestEnhancedMetrics:
                 raise RuntimeError("Transient failure")
             return real_factory()
 
-        buf = WriteBuffer(flaky_factory, flush_interval_ms=10000, max_retries=3)
+        flaky_record_store = SimpleNamespace(session_factory=flaky_factory)
+        buf = WriteBuffer(flaky_record_store, flush_interval_ms=10000, max_retries=3)
         buf.enqueue_write(_make_metadata(), is_new=True, path="/retry.txt")
         buf._flush_buffer()
 

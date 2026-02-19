@@ -29,7 +29,12 @@ class MemoryViewRouter:
             entity_registry: Entity registry instance (creates new if None).
         """
         self.session = session
-        self.entity_registry = entity_registry or EntityRegistry(session)
+        if entity_registry is not None:
+            self.entity_registry = entity_registry
+        else:
+            from types import SimpleNamespace
+
+            self.entity_registry = EntityRegistry(SimpleNamespace(session_factory=lambda: session))  # type: ignore[arg-type]
 
     @staticmethod
     def is_memory_path(path: str) -> bool:

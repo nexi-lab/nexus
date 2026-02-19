@@ -5,33 +5,38 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
 
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.storage.models import APIKeyModel, Base
+from nexus.storage.models import APIKeyModel
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
 @pytest.fixture
-def engine():
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session_factory(engine):
-    return sessionmaker(bind=engine)
+def engine(record_store):
+    return record_store.engine
 
 
 @pytest.fixture
-def auth_provider(session_factory):
-    return DatabaseAPIKeyAuth(session_factory, require_expiry=False)
+def session_factory(record_store):
+    return record_store.session_factory
 
 
 @pytest.fixture
-def auth_provider_require_expiry(session_factory):
-    return DatabaseAPIKeyAuth(session_factory, require_expiry=True)
+def auth_provider(record_store):
+    return DatabaseAPIKeyAuth(record_store, require_expiry=False)
+
+
+@pytest.fixture
+def auth_provider_require_expiry(record_store):
+    return DatabaseAPIKeyAuth(record_store, require_expiry=True)
 
 
 def test_create_key_basic(session_factory):

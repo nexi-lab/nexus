@@ -120,7 +120,12 @@ class Memory:
         self.llm_provider = llm_provider
 
         # Initialize components
-        self.entity_registry = entity_registry or EntityRegistry(session)
+        if entity_registry is not None:
+            self.entity_registry = entity_registry
+        else:
+            from types import SimpleNamespace
+
+            self.entity_registry = EntityRegistry(SimpleNamespace(session_factory=lambda: session))  # type: ignore[arg-type]
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
 
         # Initialize ReBAC manager for permission checks

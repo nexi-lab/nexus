@@ -194,7 +194,9 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
         parsing=ParseConfig(auto_parse=False),
     )
 
-    db_key_auth = DatabaseAPIKeyAuth(session_factory=session_factory)
+    from types import SimpleNamespace
+
+    db_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))
     from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 
     auth_provider = DiscriminatingAuthProvider(api_key_provider=db_key_auth, jwt_provider=None)

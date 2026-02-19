@@ -13,13 +13,16 @@ import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.exc import PendingRollbackError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.bricks.sandbox.sandbox_provider import SandboxNotFoundError
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +36,11 @@ class SQLAlchemySandboxRepository:
     All methods are synchronous and use the session-per-operation pattern.
 
     Args:
-        session_factory: Callable that creates fresh SQLAlchemy sessions.
+        record_store: RecordStoreABC providing database access.
     """
 
-    def __init__(self, session_factory: Callable[[], Session]) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: RecordStoreABC) -> None:
+        self._session_factory = record_store.session_factory
 
     @contextmanager
     def _get_session(self) -> Generator[Session, None, None]:

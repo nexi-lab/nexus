@@ -25,9 +25,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from nexus.core.metadata import FileMetadata
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +44,11 @@ class RecordStoreWriteObserver:
 
     def __init__(
         self,
-        session_factory: Callable[..., Any],
+        record_store: RecordStoreABC,
         *,
         strict_mode: bool = True,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
 
     def _handle_error(self, operation: str, path: str, error: Exception) -> None:
@@ -268,7 +267,7 @@ class BufferedRecordStoreWriteObserver:
 
     def __init__(
         self,
-        session_factory: Callable[..., Any],
+        record_store: RecordStoreABC,
         *,
         strict_mode: bool = True,
         flush_interval_ms: int = 100,
@@ -279,7 +278,7 @@ class BufferedRecordStoreWriteObserver:
 
         self._strict_mode = strict_mode
         self._buffer = WriteBuffer(
-            session_factory,
+            record_store,
             flush_interval_ms=flush_interval_ms,
             max_buffer_size=max_buffer_size,
             max_retries=max_retries,

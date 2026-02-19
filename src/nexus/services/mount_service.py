@@ -194,12 +194,12 @@ class MountService:
             # Create backend via centralized factory
             from nexus.backends.factory import BackendFactory
 
-            # Get session factory for caching support if available
-            session_factory = None
-            if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                session_factory = self.nexus_fs.SessionLocal
+            # Get record store for caching support if available
+            record_store = None
+            if self.nexus_fs and hasattr(self.nexus_fs, "_record_store"):
+                record_store = self.nexus_fs._record_store
 
-            backend = BackendFactory.create(backend_type, config, session_factory=session_factory)
+            backend = BackendFactory.create(backend_type, config, record_store=record_store)
 
             # Add mount to router
             self.router.add_mount(

@@ -21,7 +21,7 @@ def create_event_bus(
         backend: Backend type ("redis" or "nats")
         redis_client: DragonflyClient for Redis backend
         nats_url: NATS server URL for NATS backend
-        **kwargs: Additional backend-specific arguments (session_factory, node_id, etc.)
+        **kwargs: Additional backend-specific arguments (record_store, node_id, etc.)
 
     Returns:
         EventBusBase implementation

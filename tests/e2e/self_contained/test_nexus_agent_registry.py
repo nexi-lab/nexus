@@ -8,45 +8,38 @@ consolidation after deleting agents.py.
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from nexus.contracts.agent_types import AgentState
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.storage.models import Base
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
 @pytest.fixture()
-def engine():
-    """Create in-memory SQLite database with all tables."""
-    eng = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(eng)
-    return eng
+def record_store():
+    """Shared in-memory RecordStore for all components."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture()
-def session_factory(engine):
+def session_factory(record_store):
     """Create a session factory."""
-    return sessionmaker(bind=engine, expire_on_commit=False)
+    return record_store.session_factory
 
 
 @pytest.fixture()
-def entity_registry(session_factory):
+def entity_registry(record_store):
     """Create EntityRegistry backed by SQLite."""
-    return EntityRegistry(session_factory)
+    return EntityRegistry(record_store)
 
 
 @pytest.fixture()
-def agent_registry(session_factory, entity_registry):
+def agent_registry(record_store, entity_registry):
     """Create AgentRegistry with entity_registry bridge."""
     return AgentRegistry(
-        session_factory=session_factory,
+        record_store=record_store,
         entity_registry=entity_registry,
     )
 

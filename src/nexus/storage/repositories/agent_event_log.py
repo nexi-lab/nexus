@@ -20,7 +20,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import Session
+
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +34,11 @@ class SQLAlchemyAgentEventLog:
     Thread-safe via session-per-operation pattern.
 
     Args:
-        session_factory: SQLAlchemy sessionmaker for database access.
+        record_store: RecordStoreABC providing database access.
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: RecordStoreABC) -> None:
+        self._session_factory = record_store.session_factory
 
     @contextmanager
     def _get_session(self) -> Generator[Session, None, None]:

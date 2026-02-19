@@ -14,11 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import func, select, update
+from sqlalchemy.engine import CursorResult
 
 from nexus.storage.models.ipc_message import IPCMessageModel
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +65,11 @@ class RecordStoreStorageDriver:
     interface non-blocking.
 
     Args:
-        session_factory: Sync SQLAlchemy session factory from RecordStoreABC.
+        record_store: RecordStoreABC for database access.
     """
 
-    def __init__(self, session_factory: Any) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: RecordStoreABC) -> None:
+        self._session_factory = record_store.session_factory
 
     async def read(self, path: str, zone_id: str) -> bytes:
         def _read() -> bytes:
@@ -171,7 +175,7 @@ class RecordStoreStorageDriver:
                     )
                     .values(path=dst, dir_path=dst_dir, filename=dst_name)
                 )
-                result = session.execute(stmt)
+                result = cast(CursorResult[Any], session.execute(stmt))
                 session.commit()
                 return int(result.rowcount)
 

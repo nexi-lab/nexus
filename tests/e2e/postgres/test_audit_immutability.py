@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -19,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 from nexus.storage.models._base import Base
+from nexus.storage.record_store import RecordStoreABC
 
 # Skip entire module if no PostgreSQL URL
 PG_URL = os.environ.get("NEXUS_DATABASE_URL", "")
@@ -80,8 +82,15 @@ def pg_session_factory(pg_engine):
 
 
 @pytest.fixture
-def pg_audit_logger(pg_session_factory):
-    return ExchangeAuditLogger(session_factory=pg_session_factory)
+def pg_record_store(pg_session_factory):
+    mock_rs = MagicMock(spec=RecordStoreABC)
+    mock_rs.session_factory = pg_session_factory
+    return mock_rs
+
+
+@pytest.fixture
+def pg_audit_logger(pg_record_store):
+    return ExchangeAuditLogger(record_store=pg_record_store)
 
 
 def _create_record(logger: ExchangeAuditLogger) -> str:

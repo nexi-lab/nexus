@@ -79,7 +79,7 @@ class TestBuildFileEvent:
     def test_write_maps_to_file_write(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="write")
 
         with record_store.session_factory() as session:
@@ -93,7 +93,7 @@ class TestBuildFileEvent:
     def test_delete_maps_to_file_delete(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="delete")
 
         with record_store.session_factory() as session:
@@ -107,7 +107,7 @@ class TestBuildFileEvent:
     ) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(
             record_store.session_factory,
             operation_type="rename",
@@ -126,7 +126,7 @@ class TestBuildFileEvent:
     def test_mkdir_maps_to_dir_create(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="mkdir")
 
         with record_store.session_factory() as session:
@@ -138,7 +138,7 @@ class TestBuildFileEvent:
     def test_chmod_maps_to_metadata_change(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="chmod")
 
         with record_store.session_factory() as session:
@@ -164,7 +164,7 @@ class TestPollAndDispatch:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
-        worker = EventDeliveryWorker(record_store.session_factory, event_bus=mock_bus)
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
         count = worker._poll_and_dispatch()
 
         assert count == 1
@@ -178,7 +178,7 @@ class TestPollAndDispatch:
     def test_empty_outbox_returns_zero(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         count = worker._poll_and_dispatch()
 
         assert count == 0
@@ -199,9 +199,7 @@ class TestPollAndDispatch:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
-        worker = EventDeliveryWorker(
-            record_store.session_factory, event_bus=mock_bus, batch_size=10
-        )
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=10)
         count = worker._poll_and_dispatch()
 
         assert count == 5
@@ -223,7 +221,7 @@ class TestPollAndDispatch:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
-        worker = EventDeliveryWorker(record_store.session_factory, event_bus=mock_bus, batch_size=3)
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=3)
         count = worker._poll_and_dispatch()
 
         assert count == 3  # Only 3 dispatched in first poll
@@ -249,7 +247,7 @@ class TestDispatchFailure:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock(side_effect=ConnectionError("Redis down"))
 
-        worker = EventDeliveryWorker(record_store.session_factory, event_bus=mock_bus)
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
         count = worker._poll_and_dispatch()
 
         assert count == 0
@@ -282,9 +280,7 @@ class TestDispatchFailure:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock(side_effect=failing_second)
 
-        worker = EventDeliveryWorker(
-            record_store.session_factory, event_bus=mock_bus, batch_size=10
-        )
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=10)
         count = worker._poll_and_dispatch()
 
         assert count == 2  # 2 succeeded, 1 failed
@@ -300,7 +296,7 @@ class TestDispatchFailure:
         # First poll: fail
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock(side_effect=ConnectionError("down"))
-        worker = EventDeliveryWorker(record_store.session_factory, event_bus=mock_bus)
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
         worker._poll_and_dispatch()
 
         # Second poll: succeed
@@ -330,7 +326,7 @@ class TestBackoff:
     ) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
 
         # Simulate what _run_loop does: poll → check result → update counter
         count = worker._poll_and_dispatch()
@@ -349,7 +345,7 @@ class TestBackoff:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
-        worker = EventDeliveryWorker(record_store.session_factory, event_bus=mock_bus)
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
 
         # Simulate empty polls
         worker._consecutive_empty = 5
@@ -376,7 +372,7 @@ class TestLifecycle:
     def test_start_creates_daemon_thread(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory, poll_interval_ms=50)
+        worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
         worker.start()
 
         try:
@@ -389,7 +385,7 @@ class TestLifecycle:
     def test_stop_joins_thread(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory, poll_interval_ms=50)
+        worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
         worker.start()
         worker.stop(timeout=2.0)
 
@@ -398,7 +394,7 @@ class TestLifecycle:
     def test_double_start_is_noop(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
-        worker = EventDeliveryWorker(record_store.session_factory, poll_interval_ms=50)
+        worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
         worker.start()
         thread1 = worker._thread
 
@@ -417,7 +413,7 @@ class TestLifecycle:
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             poll_interval_ms=50,
         )
@@ -455,7 +451,7 @@ class TestNoBus:
         op_id = _insert_undelivered(record_store.session_factory)
 
         # No event_bus provided — worker should still mark delivered
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         count = worker._poll_and_dispatch()
 
         assert count == 1

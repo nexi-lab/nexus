@@ -7,10 +7,13 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.services.event_bus.protocol import AckableEvent
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +41,10 @@ class EventBusBase(ABC):
 
     def __init__(
         self,
-        session_factory: Any | None = None,
+        record_store: RecordStoreABC | None = None,
         node_id: str | None = None,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory if record_store else None
         self._node_id = node_id or self._generate_node_id()
 
     @staticmethod

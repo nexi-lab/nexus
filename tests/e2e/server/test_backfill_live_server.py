@@ -41,6 +41,8 @@ def live_server(tmp_path, monkeypatch):
     Yields:
         tuple: (TestClient, admin_key, user_key)
     """
+    from types import SimpleNamespace
+
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -76,7 +78,7 @@ def live_server(tmp_path, monkeypatch):
     logger.info("Created user key: %s...", user_key[:12])
 
     # --- Create auth provider ---
-    auth_provider = DatabaseAPIKeyAuth(session_factory)
+    auth_provider = DatabaseAPIKeyAuth(SimpleNamespace(session_factory=session_factory))
 
     # --- Create real NexusFS via standalone connect ---
     import nexus

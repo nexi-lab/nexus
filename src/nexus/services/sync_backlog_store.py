@@ -7,7 +7,6 @@ Inherits shared session/dialect logic from SyncStoreBase.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -17,6 +16,7 @@ from nexus.storage.sync_store_base import SyncStoreBase
 
 if TYPE_CHECKING:
     from nexus.storage.models import SyncBacklogModel
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +50,11 @@ class SyncBacklogStore(SyncStoreBase):
 
     def __init__(
         self,
-        session_factory: Callable[..., Any] | None,
+        record_store: RecordStoreABC | None,
         *,
         is_postgresql: bool = False,
     ) -> None:
-        super().__init__(session_factory, is_postgresql=is_postgresql)
+        super().__init__(record_store, is_postgresql=is_postgresql)
 
     def enqueue(
         self,

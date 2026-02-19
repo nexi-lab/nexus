@@ -482,15 +482,16 @@ async def lifespan(_app: FastAPI) -> Any:
             # ConflictLogStore is always available for the REST API,
             # even if the full write-back pipeline can't start (no event bus).
             _is_pg = gw.is_postgresql
-            conflict_log_store = ConflictLogStore(gw.session_factory, is_postgresql=_is_pg)
+            _rs = getattr(_app.state.nexus_fs, "_record_store", None)
+            conflict_log_store = ConflictLogStore(record_store=_rs, is_postgresql=_is_pg)
             _app.state.conflict_log_store = conflict_log_store
 
             wb_event_bus = None
             if hasattr(_app.state.nexus_fs, "_event_bus"):
                 wb_event_bus = _app.state.nexus_fs._event_bus
             if wb_event_bus:
-                backlog_store = SyncBacklogStore(gw.session_factory, is_postgresql=_is_pg)
-                change_log_store = ChangeLogStore(gw.session_factory, is_postgresql=_is_pg)
+                backlog_store = SyncBacklogStore(record_store=_rs, is_postgresql=_is_pg)
+                change_log_store = ChangeLogStore(record_store=_rs, is_postgresql=_is_pg)
 
                 # Map env var to ConflictStrategy (backward compat)
                 _policy_map = {
@@ -732,7 +733,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
             _bg_t = getattr(getattr(_app.state, "profile_tuning", None), "background_task", None)
             _app.state.agent_registry = AgentRegistry(
-                session_factory=_app.state.nexus_fs.SessionLocal,
+                record_store=_app.state.record_store,
                 entity_registry=getattr(_app.state.nexus_fs, "_entity_registry", None),
                 flush_interval=_bg_t.heartbeat_flush_interval if _bg_t else 60,
             )
@@ -815,8 +816,8 @@ async def lifespan(_app: FastAPI) -> Any:
             )
 
             _backend = getattr(_app.state.nexus_fs, "backend", None)
-            _session_factory = _app.state.nexus_fs.SessionLocal
-            if _backend and _session_factory:
+            _upload_rs = _app.state.record_store
+            if _backend and _upload_rs:
                 # Build config from env vars for fallback path
                 import os as _os
 
@@ -834,7 +835,7 @@ async def lifespan(_app: FastAPI) -> Any:
                         _upload_kwargs[_key] = int(_v)
 
                 _app.state.chunked_upload_service = ChunkedUploadService(
-                    session_factory=_session_factory,
+                    record_store=_upload_rs,
                     backend=_backend,
                     metadata_store=getattr(_app.state.nexus_fs, "metadata", None),
                     config=ChunkedUploadConfig(**_upload_kwargs),
@@ -893,6 +894,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 SQLAlchemyAgentEventLog as AgentEventLog,
             )
 
+            _sandbox_rs = _app.state.record_store
             session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
                 # Get AgentEventLog from factory (preferred) or create fallback
@@ -901,15 +903,13 @@ async def lifespan(_app: FastAPI) -> Any:
                 if _factory_event_log is not None:
                     _app.state.agent_event_log = _factory_event_log
                 else:
-                    from nexus.bricks.sandbox.events import AgentEventLog
-
-                    _app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
+                    _app.state.agent_event_log = AgentEventLog(record_store=_sandbox_rs)
 
                 # Create SandboxManager for SandboxAuthService
                 # (separate from NexusFS's lazy sandbox manager — different layers)
                 sandbox_config = getattr(_app.state.nexus_fs, "_config", None)
                 sandbox_mgr = SandboxManager(
-                    session_factory=session_factory,
+                    record_store=_sandbox_rs,
                     e2b_api_key=os.getenv("E2B_API_KEY"),
                     e2b_team_id=os.getenv("E2B_TEAM_ID"),
                     e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
@@ -1341,9 +1341,12 @@ def create_app(
     else:
         app.state.async_session_factory = None
 
+    # Expose RecordStoreABC on app.state (Issue #2200).
+    # This is the canonical way for endpoints to access the storage pillar.
+    app.state.record_store = _record_store
+
     # Expose sync session_factory from RecordStoreABC (Issue #1519).
-    # This is the canonical way for sync endpoints to get database sessions
-    # without reaching into NexusFS.SessionLocal internals.
+    # Kept for backward compatibility with handlers not yet migrated.
     if _record_store is not None:
         app.state.session_factory = _record_store.session_factory
     elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
@@ -1656,7 +1659,8 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
         from nexus.server.auth.auth_routes import set_oauth_provider
 
         _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
-        oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, session_factory=session_factory)
+        _oauth_record_store = getattr(nexus_fs, "_record_store", None)
+        oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, record_store=_oauth_record_store)
 
         # Build provider-agnostic providers dict
         google_provider = GoogleOAuthProvider(
@@ -1878,10 +1882,10 @@ def _register_routes(app: FastAPI) -> None:
                     detail="Secrets audit log access requires admin privileges",
                 )
             if _secrets_audit_logger_instance is None:
-                session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
-                if session_factory is None:
+                _sa_rs = getattr(app.state, "record_store", None)
+                if _sa_rs is None:
                     raise HTTPException(status_code=500, detail="Secrets audit not configured")
-                _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
+                _secrets_audit_logger_instance = SecretsAuditLogger(record_store=_sa_rs)
             zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
             return _secrets_audit_logger_instance, zone_id
 
@@ -3400,7 +3404,7 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
 
     # Register user in entity registry (for agent permission inheritance)
     if params.subject_type == "user" or not params.subject_type:
-        entity_registry = EntityRegistry(auth_provider.session_factory)
+        entity_registry = EntityRegistry(_fastapi_app.state.record_store)
         entity_registry.register_entity(
             entity_type="user",
             entity_id=user_id,

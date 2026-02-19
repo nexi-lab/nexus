@@ -49,7 +49,9 @@ from nexus.services.agents.heartbeat_buffer import HeartbeatBuffer
 from nexus.storage.models import AgentRecordModel
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import Session
+
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +105,7 @@ class AgentRegistry:
     Database operations use session-per-operation pattern (no held sessions).
 
     Args:
-        session_factory: SQLAlchemy sessionmaker for database access.
+        record_store: RecordStoreABC providing database access.
         entity_registry: Optional EntityRegistry for backward compatibility bridge.
         flush_interval: Seconds between heartbeat buffer flushes (default: 60).
         max_buffer_size: Hard cap on heartbeat buffer entries (default: 50_000).
@@ -111,12 +113,12 @@ class AgentRegistry:
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        record_store: RecordStoreABC,
         entity_registry: Any = None,
         flush_interval: int = 60,
         max_buffer_size: int = 50_000,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._entity_registry = entity_registry
         # Heartbeat buffer composed via DI (Issue #1589)
         self._heartbeat_buffer = HeartbeatBuffer(

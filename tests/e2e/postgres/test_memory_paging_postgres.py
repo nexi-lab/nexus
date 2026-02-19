@@ -185,7 +185,11 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     )
 
     # Production wiring: DiscriminatingAuthProvider wrapping DatabaseAPIKeyAuth
-    db_key_auth = DatabaseAPIKeyAuth(session_factory=pg_session_factory)
+    from types import SimpleNamespace
+
+    db_key_auth = DatabaseAPIKeyAuth(
+        record_store=SimpleNamespace(session_factory=pg_session_factory)
+    )
     auth_provider = DiscriminatingAuthProvider(
         api_key_provider=db_key_auth,
         jwt_provider=None,

@@ -10,6 +10,7 @@ Tests cover:
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -58,6 +59,11 @@ def session_factory(engine):
 
 
 @pytest.fixture
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
 def monty_provider() -> MontySandboxProvider:
     return MontySandboxProvider(resource_profile="standard", enable_type_checking=False)
 
@@ -98,13 +104,13 @@ def mock_e2b_provider() -> SandboxProvider:
 
 @pytest.fixture
 def manager_with_router(
-    session_factory,
+    record_store,
     monty_provider: MontySandboxProvider,
     mock_docker_provider: SandboxProvider,
     mock_e2b_provider: SandboxProvider,
 ) -> SandboxManager:
     """SandboxManager with router and all three providers."""
-    mgr = SandboxManager(session_factory=session_factory)
+    mgr = SandboxManager(record_store=record_store)
     mgr.providers["monty"] = monty_provider
     mgr.providers["docker"] = mock_docker_provider
     mgr.providers["e2b"] = mock_e2b_provider
@@ -219,14 +225,14 @@ class TestBackwardCompatibility:
         assert sandbox["provider"] == "docker"
 
     @pytest.mark.asyncio
-    async def test_no_router_uses_old_fallback(self, session_factory) -> None:
+    async def test_no_router_uses_old_fallback(self, record_store) -> None:
         """SandboxManager without router uses docker -> e2b chain."""
         mock_docker = AsyncMock(spec=SandboxProvider)
         mock_docker.create.return_value = "docker-old-123"
         mock_docker.get_info.return_value = AsyncMock(status="active")
         mock_docker.is_available.return_value = True
 
-        mgr = SandboxManager(session_factory=session_factory)
+        mgr = SandboxManager(record_store=record_store)
         mgr.providers["docker"] = mock_docker
 
         # No router set — should use old auto-select (docker -> e2b)
@@ -238,10 +244,10 @@ class TestBackwardCompatibility:
         assert sandbox["provider"] == "docker"
 
     @pytest.mark.asyncio
-    async def test_monty_excluded_from_old_auto_select(self, session_factory) -> None:
+    async def test_monty_excluded_from_old_auto_select(self, record_store) -> None:
         """Old auto-select chain (docker->e2b) still works, monty excluded."""
         monty = MontySandboxProvider(resource_profile="standard", enable_type_checking=False)
-        mgr = SandboxManager(session_factory=session_factory)
+        mgr = SandboxManager(record_store=record_store)
         mgr.providers["monty"] = monty
 
         # Old auto-select should NOT pick monty

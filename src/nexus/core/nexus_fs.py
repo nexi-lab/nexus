@@ -172,14 +172,13 @@ class NexusFS(  # type: ignore[misc]
 
         # Initialize record store (Task #14: Four Pillars)
         self._record_store = record_store
+        self._sql_engine: Any = None
+        self._db_session_factory: Any = None
+        self.SessionLocal: Any = None
         if record_store is not None:
             self._sql_engine = record_store.engine
             self._db_session_factory = record_store.session_factory
             self.SessionLocal = self._db_session_factory
-        else:
-            self._sql_engine = None
-            self._db_session_factory = None
-            self.SessionLocal = None
 
         # Initialize cache store (Task #22: Fourth Pillar)
         self.cache_store: CacheStoreABC = (
@@ -833,7 +832,9 @@ class NexusFS(  # type: ignore[misc]
         if self._entity_registry is None:
             from nexus.rebac.entity_registry import EntityRegistry
 
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+            if self._record_store is None:
+                raise RuntimeError("EntityRegistry requires record_store")
+            self._entity_registry = EntityRegistry(self._record_store)
         return self._entity_registry
 
     def _validate_path(self, path: str, allow_root: bool = False) -> str:
@@ -3694,16 +3695,16 @@ class NexusFS(  # type: ignore[misc]
         if self._agent_registry is not None:
             return
 
-        if self.SessionLocal is None:
+        if self._record_store is None:
             raise RuntimeError(
-                "AgentRegistry not initialized and no SessionLocal available "
+                "AgentRegistry not initialized and no record_store available "
                 "to create one. Provide a record_store when constructing NexusFS."
             )
 
         from nexus.services.agents.agent_registry import AgentRegistry
 
         self._agent_registry = AgentRegistry(
-            session_factory=self.SessionLocal,
+            record_store=self._record_store,
             entity_registry=self._entity_registry,
         )
 
@@ -5631,11 +5632,14 @@ class NexusFS(  # type: ignore[misc]
 
             from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
+            if self._record_store is None:
+                raise RuntimeError("SandboxManager requires record_store")
+
             # Initialize sandbox manager with E2B credentials and config for Docker provider
             # Pass config if available (needed for Docker provider initialization)
             config = getattr(self, "_config", None)
             self._sandbox_manager = SandboxManager(
-                session_factory=self.SessionLocal,
+                record_store=self._record_store,
                 e2b_api_key=os.getenv("E2B_API_KEY"),
                 e2b_team_id=os.getenv("E2B_TEAM_ID"),
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),

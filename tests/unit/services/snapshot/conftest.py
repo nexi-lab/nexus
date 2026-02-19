@@ -90,6 +90,14 @@ def mock_session_factory() -> MagicMock:
 
 
 @pytest.fixture
+def mock_record_store(mock_session_factory: MagicMock) -> MagicMock:
+    """Mock RecordStoreABC wrapping the session factory."""
+    rs = MagicMock()
+    rs.session_factory = mock_session_factory
+    return rs
+
+
+@pytest.fixture
 def registry() -> TransactionRegistry:
     """Fresh TransactionRegistry instance."""
     return TransactionRegistry()
@@ -97,13 +105,13 @@ def registry() -> TransactionRegistry:
 
 @pytest.fixture
 def snapshot_service(
-    mock_session_factory: MagicMock,
+    mock_record_store: MagicMock,
     mock_cas_store: MagicMock,
     mock_metadata_store: MagicMock,
 ) -> TransactionalSnapshotService:
     """TransactionalSnapshotService with mocked dependencies."""
     return TransactionalSnapshotService(
-        session_factory=mock_session_factory,
+        record_store=mock_record_store,
         cas_store=mock_cas_store,
         metadata_store=mock_metadata_store,
     )

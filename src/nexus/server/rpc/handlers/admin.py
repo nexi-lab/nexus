@@ -79,7 +79,7 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
     if params.subject_type == "user" or not params.subject_type:
-        entity_registry = EntityRegistry(auth_provider.session_factory)
+        entity_registry = EntityRegistry(auth_provider._record_store)
         entity_registry.register_entity(
             entity_type="user",
             entity_id=user_id,

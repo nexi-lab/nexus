@@ -280,8 +280,8 @@ context_b = OperationContext(user_id="alice@other.com", zone_id="org_other")
 ### Common Errors
 
 ```python
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.exceptions import AuthenticationError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError
 
 try:
     content = await nx.read("/file.txt", context=context)

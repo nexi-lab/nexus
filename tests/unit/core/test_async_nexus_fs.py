@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from nexus.contracts.exceptions import ConflictError, NexusFileNotFoundError
 from nexus.core.async_nexus_fs import AsyncNexusFS
-from nexus.core.exceptions import ConflictError, NexusFileNotFoundError
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 pytestmark = [
@@ -698,7 +698,7 @@ async def test_batch_read_permissions_disabled(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_path_must_be_absolute(async_fs: AsyncNexusFS) -> None:
     """Test that paths must be absolute."""
-    from nexus.core.exceptions import InvalidPathError
+    from nexus.contracts.exceptions import InvalidPathError
 
     with pytest.raises(InvalidPathError):
         await async_fs.write("relative/path.txt", b"Content")

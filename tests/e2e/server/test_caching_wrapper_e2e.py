@@ -466,7 +466,7 @@ class TestCachingPermissions:
         nx.delete("/test/delete_me.txt", context=admin)
 
         # Should raise FileNotFoundError — NOT serve stale cached data
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises((NexusFileNotFoundError, FileNotFoundError)):
             nx.read("/test/delete_me.txt", context=admin)

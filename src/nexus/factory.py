@@ -475,7 +475,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
     Returns:
         Dict with 13 kernel service entries.
     """
-    from nexus.core.exceptions import BootError
+    from nexus.contracts.exceptions import BootError
 
     t0 = time.perf_counter()
     try:

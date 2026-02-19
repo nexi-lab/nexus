@@ -410,7 +410,7 @@ class TestCheckVersion:
         assert cache_service.check_version("/test.txt", "v1") is True
 
     def test_version_mismatch_raises_conflict(self, connector, cache_service):
-        from nexus.core.exceptions import ConflictError
+        from nexus.contracts.exceptions import ConflictError
 
         connector.get_version = lambda path, ctx=None: "v2"
         with pytest.raises(ConflictError):

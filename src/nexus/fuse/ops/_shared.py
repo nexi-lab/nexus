@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from cachetools import TTLCache as _TTLCache
 from fuse import FuseOSError
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
     RemoteConnectionError,

@@ -55,7 +55,7 @@ class TestCircuitBreakerResilience:
 
     async def test_circuit_breaker_opens_during_outage(self):
         """Circuit breaker opens after repeated failures via call()."""
-        from nexus.core.exceptions import CircuitOpenError
+        from nexus.contracts.exceptions import CircuitOpenError
         from nexus.rebac.circuit_breaker import (
             AsyncCircuitBreaker,
             CircuitBreakerConfig,

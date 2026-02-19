@@ -290,15 +290,21 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
 
     try:
         from nexus.bricks.sandbox.auth_service import SandboxAuthService
-        from nexus.bricks.sandbox.events import AgentEventLog
         from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
         session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
         if not (session_factory and callable(session_factory)):
             return
 
-        # Create AgentEventLog for sandbox lifecycle audit
-        app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
+        # Get AgentEventLog from factory (preferred) or create fallback
+        _brk = getattr(app.state.nexus_fs, "_brick_services", None)
+        _factory_event_log = getattr(_brk, "agent_event_log", None) if _brk else None
+        if _factory_event_log is not None:
+            app.state.agent_event_log = _factory_event_log
+        else:
+            from nexus.bricks.sandbox.events import AgentEventLog
+
+            app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
         # Create SandboxManager
         sandbox_config = getattr(app.state.nexus_fs, "config", None)

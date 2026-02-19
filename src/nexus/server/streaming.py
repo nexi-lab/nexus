@@ -11,6 +11,8 @@ import os
 import secrets
 import time
 
+from nexus.constants import ROOT_ZONE_ID
+
 # Secret key for signing stream tokens (persistent across restarts if set via env)
 _STREAM_SECRET: bytes | None = None
 
@@ -25,7 +27,7 @@ def _get_stream_secret() -> bytes:
     return _STREAM_SECRET
 
 
-def _sign_stream_token(path: str, expires_in: int, zone_id: str = "root") -> str:
+def _sign_stream_token(path: str, expires_in: int, zone_id: str = ROOT_ZONE_ID) -> str:
     """Generate a signed token for streaming access to a file.
 
     Token format: {expires_at}.{signature}
@@ -45,7 +47,7 @@ def _sign_stream_token(path: str, expires_in: int, zone_id: str = "root") -> str
     return f"{expires_at}.{signature}"
 
 
-def _verify_stream_token(token: str, path: str, zone_id: str = "root") -> bool:
+def _verify_stream_token(token: str, path: str, zone_id: str = ROOT_ZONE_ID) -> bool:
     """Verify a stream token is valid and not expired.
 
     Args:

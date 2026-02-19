@@ -9,6 +9,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
@@ -45,7 +47,7 @@ async def startup_ipc(app: FastAPI) -> list[asyncio.Task]:
     app.state.ipc_storage_driver = ipc_storage
     app.state.ipc_provisioner = ipc_provisioner
 
-    zone_id = getattr(app.state, "zone_id", None) or "root"
+    zone_id = getattr(app.state, "zone_id", None) or ROOT_ZONE_ID
 
     # Start TTLSweeper background task
     try:

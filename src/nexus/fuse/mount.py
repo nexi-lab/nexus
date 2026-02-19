@@ -152,7 +152,7 @@ class NexusFUSE:
         context = None
         namespace_manager = None
         if self._agent_id is not None:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             # A4-B: Use sentinel default — only override to "agent" when caller
             # left subject_type at its default value (None sentinel).

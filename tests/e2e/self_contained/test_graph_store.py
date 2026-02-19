@@ -26,7 +26,7 @@ import logging
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from nexus.search.graph_store import GraphStore
+from nexus.bricks.search.graph_store import GraphStore
 from nexus.storage.models import Base
 
 # Configure logging

@@ -22,8 +22,8 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.search.indexing_service import IndexingService
-    from nexus.search.query_service import QueryService
+    from nexus.bricks.search.indexing_service import IndexingService
+    from nexus.bricks.search.query_service import QueryService
 
 
 class SemanticSearchMixin:
@@ -109,16 +109,16 @@ class SemanticSearchMixin:
         """
         import os
 
-        from nexus.search.chunking import ChunkStrategy, DocumentChunker
-        from nexus.search.indexing import IndexingPipeline
-        from nexus.search.indexing_service import IndexingService
-        from nexus.search.query_service import QueryService
-        from nexus.search.vector_db import VectorDatabase
+        from nexus.bricks.search.chunking import ChunkStrategy, DocumentChunker
+        from nexus.bricks.search.indexing import IndexingPipeline
+        from nexus.bricks.search.indexing_service import IndexingService
+        from nexus.bricks.search.query_service import QueryService
+        from nexus.bricks.search.vector_db import VectorDatabase
 
         # --- Embedding provider ---
         emb_provider = None
         if embedding_provider:
-            from nexus.search.embeddings import create_cached_embedding_provider
+            from nexus.bricks.search.embeddings import create_cached_embedding_provider
 
             effective_cache_url = cache_url or os.environ.get("NEXUS_DRAGONFLY_URL")
             emb_provider = await create_cached_embedding_provider(
@@ -348,14 +348,14 @@ class SemanticSearchMixin:
         """
         import os
 
-        from nexus.search.chunking import ChunkStrategy, DocumentChunker
-        from nexus.search.indexing import IndexingPipeline
-        from nexus.search.query_service import QueryService
-        from nexus.search.vector_db import VectorDatabase
+        from nexus.bricks.search.chunking import ChunkStrategy, DocumentChunker
+        from nexus.bricks.search.indexing import IndexingPipeline
+        from nexus.bricks.search.query_service import QueryService
+        from nexus.bricks.search.vector_db import VectorDatabase
 
         emb_provider = None
         if embedding_provider:
-            from nexus.search.embeddings import create_cached_embedding_provider
+            from nexus.bricks.search.embeddings import create_cached_embedding_provider
 
             effective_cache_url = cache_url or os.environ.get("NEXUS_DRAGONFLY_URL")
             emb_provider = await create_cached_embedding_provider(

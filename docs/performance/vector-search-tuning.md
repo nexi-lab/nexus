@@ -49,7 +49,7 @@ SET LOCAL hnsw.ef_search = 100;
 Nexus automatically configures HNSW parameters based on your dataset size:
 
 ```python
-from nexus.search.hnsw_config import HNSWConfig
+from nexus.bricks.search.hnsw_config import HNSWConfig
 
 # Get optimal config for your vector count
 config = HNSWConfig.for_dataset_size(vector_count=500_000)

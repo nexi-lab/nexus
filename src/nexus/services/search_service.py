@@ -28,7 +28,7 @@ from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
-from nexus.search.strategies import (
+from nexus.bricks.search.strategies import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
     GREP_PARALLEL_THRESHOLD,
@@ -1855,7 +1855,7 @@ class SearchService(SemanticSearchMixin):
     ) -> builtins.list[dict[str, Any]] | None:
         """Try Zoekt for accelerated grep. Returns None if not available."""
         try:
-            from nexus.search.zoekt_client import get_zoekt_client
+            from nexus.bricks.search.zoekt_client import get_zoekt_client
         except ImportError:
             return None
 
@@ -2147,7 +2147,7 @@ class SearchService(SemanticSearchMixin):
     def _is_zoekt_available(self) -> bool:
         """Check if Zoekt indexing service is available."""
         try:
-            from nexus.search.zoekt_client import get_zoekt_client
+            from nexus.bricks.search.zoekt_client import get_zoekt_client
 
             client = get_zoekt_client()
             try:

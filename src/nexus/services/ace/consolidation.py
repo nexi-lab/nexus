@@ -33,7 +33,7 @@ from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
-    from nexus.search.embeddings import EmbeddingProvider
+    from nexus.bricks.search.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -741,7 +741,7 @@ Provide only the consolidated summary, no additional commentary.
         # Create embedding provider if not provided
         if embedding_provider is None:
             try:
-                from nexus.search.embeddings import create_embedding_provider
+                from nexus.bricks.search.embeddings import create_embedding_provider
 
                 embedding_provider = create_embedding_provider("openai", "text-embedding-3-small")
             except Exception as e:

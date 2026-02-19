@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.llm.provider import LLMProvider
-    from nexus.search.protocols import SearchableProtocol as SemanticSearch
+    from nexus.bricks.search.protocols import SearchableProtocol as SemanticSearch
 
 
 @dataclass

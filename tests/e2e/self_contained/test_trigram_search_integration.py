@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus.core import trigram_fast
-from nexus.search.strategies import (
+from nexus.bricks.search.strategies import (
     GREP_TRIGRAM_THRESHOLD,
     SearchStrategy,
 )

@@ -189,7 +189,7 @@ class EnrichmentPipeline:
         provider = embedding_provider
         if provider is None:
             try:
-                from nexus.search.embeddings import create_embedding_provider
+                from nexus.bricks.search.embeddings import create_embedding_provider
 
                 try:
                     provider = create_embedding_provider(provider="openrouter")

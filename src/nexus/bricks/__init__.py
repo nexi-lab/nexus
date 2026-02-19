@@ -18,5 +18,6 @@ Current bricks:
   - pay              — NexusPay credits + X402 payments
   - sandbox          — Sandboxed code execution (Docker / E2B / Monty)
   - scheduler        — Fair-share priority scheduler (Astraea)
+  - search           — Hot search daemon (semantic, BM25, Zoekt, hybrid fusion)
   - workflows        — Event-driven workflow engine
 """

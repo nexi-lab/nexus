@@ -774,7 +774,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
 
     # --- Search Brick Import Validation (Issue #1520) ---
     try:
-        from nexus.search.manifest import verify_imports as _verify_search
+        from nexus.bricks.search.manifest import verify_imports as _verify_search
 
         _search_status = _verify_search()
         logger.debug("[BOOT:BRICK] Search brick imports: %s", _search_status)
@@ -783,7 +783,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
 
     # Wire zoekt callbacks into backends (Issue #1520)
     try:
-        from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
+        from nexus.bricks.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
 
         if hasattr(ctx.backend, "on_write_callback") and ctx.backend.on_write_callback is None:
             ctx.backend.on_write_callback = notify_zoekt_write

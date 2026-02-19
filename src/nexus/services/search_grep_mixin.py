@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.rpc_decorator import rpc_expose
-from nexus.search.strategies import (
+from nexus.bricks.search.strategies import (
     GREP_PARALLEL_WORKERS,
     SearchStrategy,
 )
@@ -304,7 +304,7 @@ class SearchGrepMixin:
     ) -> builtins.list[dict[str, Any]] | None:
         """Try Zoekt for accelerated grep. Returns None if not available."""
         try:
-            from nexus.search.zoekt_client import get_zoekt_client
+            from nexus.bricks.search.zoekt_client import get_zoekt_client
         except ImportError:
             return None
 

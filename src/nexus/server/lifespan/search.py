@@ -34,7 +34,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
         return []
 
     try:
-        from nexus.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
+        from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
 
         config = DaemonConfig(
             database_url=app.state.database_url,

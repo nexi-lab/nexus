@@ -319,7 +319,7 @@ Contextual chunk:
 Enable contextual chunking when initializing semantic search:
 
 ```python
-from nexus.search.contextual_chunking import (
+from nexus.bricks.search.contextual_chunking import (
     ContextualChunkingConfig,
     create_context_generator,
     create_heuristic_generator,

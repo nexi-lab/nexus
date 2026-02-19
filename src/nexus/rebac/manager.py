@@ -126,6 +126,7 @@ class ReBACManager:
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
         read_engine: Engine | None = None,
+        is_postgresql: bool = False,
     ):
         """Initialize ReBAC manager.
 
@@ -139,9 +140,11 @@ class ReBACManager:
             enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True)
             read_engine: Optional separate engine for read-only operations (Issue #725).
                         Defaults to ``engine`` when not provided.
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
+        self._is_postgresql = is_postgresql
         self.cache_ttl_seconds = cache_ttl_seconds
         self.max_depth = max_depth
         self._last_cleanup_time: datetime | None = None
@@ -207,7 +210,7 @@ class ReBACManager:
         # Only enable on PostgreSQL - SQLite has lock contention issues
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
-        if enable_tiger_cache and engine.dialect.name == "postgresql":
+        if enable_tiger_cache and is_postgresql:
             from nexus.rebac.cache.tiger import (
                 TigerCache,
                 TigerCacheUpdater,
@@ -2481,9 +2484,8 @@ class ReBACManager:
         visited: set[tuple[str, str]] = set()
         queue: list[tuple[str, str]] = [(subject_type, subject_id)]
 
-        # Determine SQL NOW function based on database type
-        is_postgresql = "postgresql" in str(self.engine.url)
-        now_sql = "NOW()" if is_postgresql else "datetime('now')"
+        # Determine SQL NOW function based on database type (config-time flag)
+        now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
 
         with self.engine.connect() as conn:
             while queue:
@@ -3526,7 +3528,7 @@ class ReBACManager:
             cursor = self._create_cursor(conn)
 
             # Check if rebac_namespaces table exists
-            if self.engine.dialect.name == "sqlite":
+            if not self._is_postgresql:
                 cursor.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='rebac_namespaces'"
                 )
@@ -4226,7 +4228,7 @@ class ReBACManager:
             # PostgreSQL: Use DELETE...RETURNING to get deleted row in single query
             # This eliminates the SELECT+DELETE round-trip for better performance
             # Note: DELETE only has one row version, so no need for OLD prefix
-            if self.engine.dialect.name == "postgresql":
+            if self._is_postgresql:
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """

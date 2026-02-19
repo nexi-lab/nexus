@@ -1174,9 +1174,9 @@ class TestLockIsolation:
         """
         from nexus.backends.passthrough import PassthroughBackend
         from nexus.cache.dragonfly import DragonflyClient
+        from nexus.contracts.types import OperationContext
         from nexus.core.distributed_lock import RedisLockManager
         from nexus.core.nexus_fs import NexusFS
-        from nexus.core.permissions import OperationContext
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",

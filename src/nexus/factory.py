@@ -1246,7 +1246,7 @@ def _create_workflow_engine(
         logger.warning("Workflows require record_store, skipping")
         return None
     try:
-        from nexus.raft.zone_manager import ROOT_ZONE_ID
+        from nexus.constants import ROOT_ZONE_ID
         from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
         from nexus.workflows.engine import WorkflowEngine
         from nexus.workflows.protocol import WorkflowServices

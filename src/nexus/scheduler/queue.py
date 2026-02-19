@@ -17,7 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 from nexus.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     DEFAULT_EST_SERVICE_TIME_SECS,

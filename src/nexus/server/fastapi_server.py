@@ -1357,6 +1357,10 @@ def create_app(
             app.state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
             nexus_fs.subscription_manager = app.state.subscription_manager
             set_subscription_manager(app.state.subscription_manager)
+            # Issue #625: Forward subscription_manager to workflow dispatch service
+            wds = getattr(nexus_fs, "_workflow_dispatch", None)
+            if wds is not None and hasattr(wds, "set_subscription_manager"):
+                wds.set_subscription_manager(app.state.subscription_manager)
             logger.info("Subscription manager initialized and injected into NexusFS")
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")

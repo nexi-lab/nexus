@@ -22,6 +22,7 @@ from nexus.constants import DEFAULT_NATS_URL
 if TYPE_CHECKING:
     from nexus.core.cache_invalidation import CacheInvalidationObserver
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+    from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
     from nexus.workflows.protocol import WorkflowProtocol
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ class KernelServices:
     event_bus: Any = None
     lock_manager: Any = None
     workflow_engine: WorkflowProtocol | None = None
+    workflow_dispatch: WorkflowDispatchProtocol | None = None
 
     # Auth services — injected from server layer (Issue #1519, 3A)
     api_key_creator: Any = None  # APIKeyCreatorProtocol

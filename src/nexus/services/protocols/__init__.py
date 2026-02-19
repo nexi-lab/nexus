@@ -73,6 +73,7 @@ from nexus.services.protocols.task_queue import TaskQueueProtocol
 from nexus.services.protocols.trajectory import TrajectoryProtocol
 from nexus.services.protocols.version import VersionProtocol
 from nexus.services.protocols.watch import WatchProtocol
+from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.services.protocols.write_back import WriteBackProtocol
 from nexus.workflows.protocol import (
     MetadataStoreProtocol,
@@ -135,5 +136,6 @@ __all__ = [
     "TrajectoryProtocol",
     "VersionProtocol",
     "WatchProtocol",
+    "WorkflowDispatchProtocol",
     "WriteBackProtocol",
 ]

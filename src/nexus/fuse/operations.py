@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from fuse import FuseOSError, Operations
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.core.filters import is_os_metadata_file
 from nexus.core.virtual_views import (
@@ -55,7 +56,6 @@ from nexus.core.virtual_views import (
     should_add_virtual_views,
 )
 from nexus.fuse.cache import FUSECacheManager
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # Import readahead for sequential read optimization (Issue #1073)
 try:

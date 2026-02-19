@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from nexus.backends.backend import Backend
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
@@ -326,6 +326,15 @@ class NexusFS(  # type: ignore[misc]
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
+        # Issue #625: Assemble post-mutation hooks list
+        # Hooks are called in order after each write/delete/rename mutation.
+        # Fire-and-forget: failures are logged but never abort the mutation.
+        self._post_mutation_hooks: list = []
+        if self._cache_observer is not None:
+            self._post_mutation_hooks.append(self._cache_observer)
+        if self._workflow_dispatch is not None:
+            self._post_mutation_hooks.append(self._workflow_dispatch)
+
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
         self._init_performance_optimizations()
 
@@ -472,6 +481,10 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=None,
                 metadata_cache=metadata_cache,
             )
+
+        # WorkflowDispatchService: accept DI, graceful degrade to None (#625 partial)
+        # Workflow dispatch is optional userspace — kernel does not self-build.
+        self._workflow_dispatch = svc.workflow_dispatch
 
     @property
     def _service_extras(self) -> dict[str, Any]:

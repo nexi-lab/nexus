@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.rebac.domain import Entity
+from nexus.contracts.rebac_types import Entity
 
 if TYPE_CHECKING:
     from collections.abc import Callable

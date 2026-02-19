@@ -26,10 +26,7 @@ from cachetools import TTLCache
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
-from nexus.contracts.types import Permission
-from nexus.core import glob_fast, grep_fast, trigram_fast
-from nexus.core.rpc_decorator import rpc_expose
-from nexus.search.strategies import (
+from nexus.contracts.search_types import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
     GREP_PARALLEL_THRESHOLD,
@@ -40,6 +37,9 @@ from nexus.search.strategies import (
     GlobStrategy,
     SearchStrategy,
 )
+from nexus.contracts.types import Permission
+from nexus.core import glob_fast, grep_fast, trigram_fast
+from nexus.core.rpc_decorator import rpc_expose
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.search_semantic import SemanticSearchMixin
 

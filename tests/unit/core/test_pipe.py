@@ -16,10 +16,10 @@ from nexus.core.pipe import (
     PipeEmptyError,
     PipeError,
     PipeFullError,
-    PipeManager,
     PipeNotFoundError,
     RingBuffer,
 )
+from nexus.core.pipe_manager import PipeManager
 
 # ======================================================================
 # RingBuffer — basic operations
@@ -442,6 +442,251 @@ class TestPipeManager:
         mgr, _ = self._make_manager()
         with pytest.raises(PipeNotFoundError):
             await mgr.pipe_read("/nexus/pipes/ghost")
+
+    def test_pipe_write_nowait_basic(self) -> None:
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/sync", capacity=1024)
+        written = mgr.pipe_write_nowait("/nexus/pipes/sync", b"hello")
+        assert written == 5
+
+    def test_pipe_write_nowait_nonexistent_raises(self) -> None:
+        mgr, _ = self._make_manager()
+        with pytest.raises(PipeNotFoundError):
+            mgr.pipe_write_nowait("/nexus/pipes/ghost", b"data")
+
+    @pytest.mark.asyncio
+    async def test_pipe_write_nowait_then_async_read(self) -> None:
+        """Sync write + async read roundtrip (workflow queue pattern)."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/mixed", capacity=1024)
+        mgr.pipe_write_nowait("/nexus/pipes/mixed", b"event-1")
+        mgr.pipe_write_nowait("/nexus/pipes/mixed", b"event-2")
+        assert await mgr.pipe_read("/nexus/pipes/mixed") == b"event-1"
+        assert await mgr.pipe_read("/nexus/pipes/mixed") == b"event-2"
+
+    def test_close_all_clears_locks(self) -> None:
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/a")
+        mgr._get_lock("/nexus/pipes/a")  # force lock creation
+        assert len(mgr._locks) == 1
+        mgr.close_all()
+        assert len(mgr._locks) == 0
+
+    def test_close_clears_lock(self) -> None:
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/a")
+        mgr._get_lock("/nexus/pipes/a")
+        mgr.close("/nexus/pipes/a")
+        assert "/nexus/pipes/a" not in mgr._locks
+
+    def test_destroy_clears_lock(self) -> None:
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/a")
+        mgr._get_lock("/nexus/pipes/a")
+        mgr.destroy("/nexus/pipes/a")
+        assert "/nexus/pipes/a" not in mgr._locks
+
+
+# ======================================================================
+# RingBuffer — write_nowait / read_nowait
+# ======================================================================
+
+
+class TestRingBufferSyncOps:
+    def test_write_nowait_basic(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        written = buf.write_nowait(b"hello")
+        assert written == 5
+        assert buf.stats["size"] == 5
+        assert buf.stats["msg_count"] == 1
+
+    def test_write_nowait_empty_is_noop(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        assert buf.write_nowait(b"") == 0
+        assert buf.stats["msg_count"] == 0
+
+    def test_write_nowait_full_raises(self) -> None:
+        buf = RingBuffer(capacity=10)
+        buf.write_nowait(b"x" * 10)
+        with pytest.raises(PipeFullError, match="buffer full"):
+            buf.write_nowait(b"y")
+
+    def test_write_nowait_oversized_raises(self) -> None:
+        buf = RingBuffer(capacity=10)
+        with pytest.raises(ValueError, match="exceeds buffer capacity"):
+            buf.write_nowait(b"x" * 11)
+
+    def test_write_nowait_closed_raises(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.close()
+        with pytest.raises(PipeClosedError, match="write to closed pipe"):
+            buf.write_nowait(b"data")
+
+    def test_read_nowait_basic(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.write_nowait(b"msg")
+        assert buf.read_nowait() == b"msg"
+        assert buf.stats["size"] == 0
+
+    def test_read_nowait_empty_raises(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        with pytest.raises(PipeEmptyError, match="buffer empty"):
+            buf.read_nowait()
+
+    def test_read_nowait_closed_empty_raises(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.close()
+        with pytest.raises(PipeClosedError, match="read from closed empty pipe"):
+            buf.read_nowait()
+
+    def test_read_nowait_drains_before_closed_error(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.write_nowait(b"last")
+        buf.close()
+        assert buf.read_nowait() == b"last"
+        with pytest.raises(PipeClosedError):
+            buf.read_nowait()
+
+    @pytest.mark.asyncio
+    async def test_write_nowait_wakes_async_reader(self) -> None:
+        """Sync write should wake a blocked async reader."""
+        buf = RingBuffer(capacity=1024)
+        result = None
+
+        async def reader() -> None:
+            nonlocal result
+            result = await buf.read()
+
+        async def writer() -> None:
+            await asyncio.sleep(0.01)
+            buf.write_nowait(b"wakeup")
+
+        await asyncio.gather(reader(), writer())
+        assert result == b"wakeup"
+
+    @pytest.mark.asyncio
+    async def test_wait_writable(self) -> None:
+        buf = RingBuffer(capacity=10)
+        buf.write_nowait(b"x" * 10)
+
+        unblocked = False
+
+        async def waiter() -> None:
+            nonlocal unblocked
+            await buf.wait_writable()
+            unblocked = True
+
+        async def reader() -> None:
+            await asyncio.sleep(0.01)
+            await buf.read()
+
+        await asyncio.gather(waiter(), reader())
+        assert unblocked is True
+
+    @pytest.mark.asyncio
+    async def test_wait_readable(self) -> None:
+        buf = RingBuffer(capacity=1024)
+
+        unblocked = False
+
+        async def waiter() -> None:
+            nonlocal unblocked
+            await buf.wait_readable()
+            unblocked = True
+
+        async def writer() -> None:
+            await asyncio.sleep(0.01)
+            buf.write_nowait(b"data")
+
+        await asyncio.gather(waiter(), writer())
+        assert unblocked is True
+
+
+# ======================================================================
+# PipeManager — MPMC locking
+# ======================================================================
+
+
+class TestPipeManagerMPMC:
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms, zone_id="test-zone"), ms
+
+    @pytest.mark.asyncio
+    async def test_concurrent_writers(self) -> None:
+        """Multiple async writers should not lose messages."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/mpmc", capacity=65_536)
+        n_writers = 5
+        msgs_per_writer = 20
+
+        async def writer(writer_id: int) -> None:
+            for i in range(msgs_per_writer):
+                await mgr.pipe_write("/nexus/pipes/mpmc", f"w{writer_id}-{i}".encode())
+
+        await asyncio.gather(*(writer(w) for w in range(n_writers)))
+
+        received: list[bytes] = []
+        for _ in range(n_writers * msgs_per_writer):
+            msg = await mgr.pipe_read("/nexus/pipes/mpmc", blocking=False)
+            received.append(msg)
+
+        assert len(received) == n_writers * msgs_per_writer
+
+    @pytest.mark.asyncio
+    async def test_blocking_write_waits_for_space(self) -> None:
+        """Blocking pipe_write should wait (release lock) then succeed."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/block", capacity=10)
+        await mgr.pipe_write("/nexus/pipes/block", b"x" * 10)
+
+        written = False
+
+        async def writer() -> None:
+            nonlocal written
+            await mgr.pipe_write("/nexus/pipes/block", b"y" * 5)
+            written = True
+
+        async def reader() -> None:
+            await asyncio.sleep(0.01)
+            await mgr.pipe_read("/nexus/pipes/block")
+
+        await asyncio.gather(writer(), reader())
+        assert written is True
+
+    @pytest.mark.asyncio
+    async def test_blocking_read_waits_for_data(self) -> None:
+        """Blocking pipe_read should wait then succeed when data arrives."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/block-read", capacity=1024)
+
+        result = None
+
+        async def reader() -> None:
+            nonlocal result
+            result = await mgr.pipe_read("/nexus/pipes/block-read")
+
+        async def writer() -> None:
+            await asyncio.sleep(0.01)
+            await mgr.pipe_write("/nexus/pipes/block-read", b"hello")
+
+        await asyncio.gather(reader(), writer())
+        assert result == b"hello"
+
+    @pytest.mark.asyncio
+    async def test_nonblocking_write_full_raises(self) -> None:
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/nb", capacity=10)
+        await mgr.pipe_write("/nexus/pipes/nb", b"x" * 10)
+        with pytest.raises(PipeFullError):
+            await mgr.pipe_write("/nexus/pipes/nb", b"y", blocking=False)
+
+    @pytest.mark.asyncio
+    async def test_nonblocking_read_empty_raises(self) -> None:
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/nb-read", capacity=1024)
+        with pytest.raises(PipeEmptyError):
+            await mgr.pipe_read("/nexus/pipes/nb-read", blocking=False)
 
 
 # ======================================================================

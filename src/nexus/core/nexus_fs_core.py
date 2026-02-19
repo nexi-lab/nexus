@@ -70,6 +70,9 @@ class NexusFSCoreMixin:
         _workspace_registry: Any  # Workspace registry for overlay config lookup
         _write_observer: Any  # Duck-typed: on_write()/on_delete()
         _audit_strict_mode: bool
+        _pipe_manager: Any  # PipeManager (set by NexusFS.__init__)
+        _workflow_pipe_ready: bool
+        _workflow_consumer_task: asyncio.Task[None] | None
 
         @property
         def zone_id(self) -> str | None: ...
@@ -226,6 +229,10 @@ class NexusFSCoreMixin:
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
 
+    # DT_PIPE workflow event pipe path and capacity (Task #808)
+    _WORKFLOW_PIPE_PATH = "/nexus/pipes/workflow-events"
+    _WORKFLOW_PIPE_CAPACITY = 65_536  # 64KB
+
     def _fire_workflow_event(
         self,
         trigger_type: str,
@@ -237,6 +244,9 @@ class NexusFSCoreMixin:
         Consolidates the repeated async-or-thread pattern from write/delete/rename.
         Does nothing if workflows are not enabled.
 
+        DT_PIPE path (Task #808): writes to PipeManager by VFS path.
+        User-space code never touches the RingBuffer directly.
+
         Args:
             trigger_type: String trigger type (e.g. "file_write", "file_delete").
             event_context: Event payload dict.
@@ -245,15 +255,20 @@ class NexusFSCoreMixin:
         if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
             return
 
-        # Bounded queue: try to enqueue, drop on overflow
-        queue = getattr(self, "_workflow_queue", None)
-        if queue is not None:
+        # DT_PIPE: write workflow event to kernel pipe via PipeManager (#808)
+        import json
+
+        from nexus.core.pipe import PipeFullError
+
+        pipe_mgr = getattr(self, "_pipe_manager", None)
+        if pipe_mgr is not None and getattr(self, "_workflow_pipe_ready", False):
             try:
-                queue.put_nowait((trigger_type, event_context))
-            except Exception:
-                logger.warning("Workflow event queue full, dropping event: %s", label)
+                data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
+                pipe_mgr.pipe_write_nowait(self._WORKFLOW_PIPE_PATH, data)
+            except PipeFullError:
+                logger.warning("Workflow pipe full, dropping event: %s", label)
         else:
-            # Fallback: fire-and-forget (no queue — CLI or pre-startup)
+            # Fallback: fire-and-forget (CLI mode or pre-startup, no pipe yet)
             from nexus.core.sync_bridge import fire_and_forget
 
             fire_and_forget(
@@ -273,25 +288,54 @@ class NexusFSCoreMixin:
             )
 
     async def _start_workflow_consumer(self) -> None:
-        """Background consumer for bounded workflow event queue (#1522)."""
-        queue = self._workflow_queue  # type: ignore[attr-defined]
+        """Background consumer for workflow events via DT_PIPE (#808).
+
+        Reads from PipeManager by VFS path (user-space API).
+        Deserializes JSON messages and fires workflow engine events.
+        """
+        import json
+
+        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
+
+        pipe_mgr = self._pipe_manager
         engine = self.workflow_engine  # type: ignore[attr-defined]
         while True:
-            trigger_type, event_context = await queue.get()
             try:
-                await engine.fire_event(trigger_type, event_context)
+                data = await pipe_mgr.pipe_read(self._WORKFLOW_PIPE_PATH)
+            except (PipeClosedError, PipeNotFoundError):
+                # PipeClosedError: buffer exists but closed (concurrent shutdown)
+                # PipeNotFoundError: buffer removed (close_all during shutdown)
+                logger.debug("Workflow pipe closed, consumer exiting")
+                break
+            try:
+                msg = json.loads(data)
+                await engine.fire_event(msg["type"], msg["ctx"])
             except Exception as e:
                 logger.error("Workflow event processing failed: %s", e)
-            finally:
-                queue.task_done()
 
     def ensure_workflow_consumer(self) -> None:
-        """Start the workflow consumer task if not already running."""
-        if (
-            getattr(self, "_workflow_queue", None) is None
-            or getattr(self, "_workflow_consumer_task", None) is not None
-        ):
+        """Create workflow pipe via PipeManager and start consumer task (#808)."""
+        if getattr(self, "_workflow_pipe_ready", False):
             return
+
+        pipe_mgr = getattr(self, "_pipe_manager", None)
+        if pipe_mgr is None:
+            return  # CLI mode — no pipe manager
+
+        from nexus.core.pipe import PipeError
+
+        try:
+            pipe_mgr.create(
+                self._WORKFLOW_PIPE_PATH,
+                capacity=self._WORKFLOW_PIPE_CAPACITY,
+                owner_id="kernel",
+            )
+        except PipeError:
+            # Pipe already exists (e.g., restart recovery) — open it
+            pipe_mgr.open(self._WORKFLOW_PIPE_PATH, capacity=self._WORKFLOW_PIPE_CAPACITY)
+
+        self._workflow_pipe_ready = True
+
         try:
             loop = asyncio.get_running_loop()
             self._workflow_consumer_task = loop.create_task(  # type: ignore[attr-defined]

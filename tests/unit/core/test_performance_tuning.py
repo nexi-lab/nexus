@@ -1,7 +1,7 @@
 """Tests for per-profile performance tuning (Issue #2071).
 
 Tests cover:
-- All 4 profiles produce correct frozen ProfileTuning with 9 slices
+- All 4 profiles produce correct frozen ProfileTuning with 10 slices
 - Hierarchy monotonicity (embedded ≤ lite ≤ full ≤ cloud for resource fields)
 - Frozen immutability (cannot mutate at runtime)
 - DeploymentProfile.tuning() integration
@@ -20,6 +20,7 @@ from nexus.core.performance_tuning import (
     CacheTuning,
     ConcurrencyTuning,
     ConnectorTuning,
+    EvictionTuning,
     NetworkTuning,
     PoolTuning,
     ProfileTuning,
@@ -50,6 +51,7 @@ class TestAllProfilesHaveTuning:
         assert isinstance(tuning.resiliency, ResiliencyTuning)
         assert isinstance(tuning.connector, ConnectorTuning)
         assert isinstance(tuning.pool, PoolTuning)
+        assert isinstance(tuning.eviction, EvictionTuning)
 
     @pytest.mark.parametrize("profile", list(DeploymentProfile))
     def test_tuning_via_enum_method(self, profile: DeploymentProfile) -> None:
@@ -505,3 +507,45 @@ class TestErrorHandling:
     def test_invalid_profile_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown deployment profile"):
             resolve_profile_tuning("nonexistent")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Eviction tuning tests (Issue #2170)
+# ---------------------------------------------------------------------------
+
+
+class TestEvictionTuning:
+    """Tests for EvictionTuning across profiles."""
+
+    @pytest.mark.parametrize("profile", list(DeploymentProfile))
+    def test_eviction_tuning_all_profiles_valid(self, profile: DeploymentProfile) -> None:
+        """All profiles must have valid eviction tuning with positive values."""
+        e = profile.tuning().eviction
+        assert isinstance(e, EvictionTuning)
+        assert 0 < e.memory_low_watermark_pct < e.memory_high_watermark_pct <= 100
+        assert e.max_active_agents > 0
+        assert e.eviction_batch_size > 0
+        assert e.checkpoint_timeout_seconds > 0
+        assert e.eviction_cooldown_seconds > 0
+
+    def test_eviction_tuning_embedded_conservative(self) -> None:
+        """Embedded profile should have conservative eviction settings."""
+        e = DeploymentProfile.EMBEDDED.tuning().eviction
+        assert e.memory_high_watermark_pct == 90
+        assert e.max_active_agents == 50
+        assert e.eviction_batch_size == 5
+        assert e.eviction_cooldown_seconds == 120
+
+    def test_eviction_tuning_cloud_aggressive(self) -> None:
+        """Cloud profile should have aggressive eviction settings."""
+        e = DeploymentProfile.CLOUD.tuning().eviction
+        assert e.memory_high_watermark_pct == 80
+        assert e.max_active_agents == 10000
+        assert e.eviction_batch_size == 50
+        assert e.eviction_cooldown_seconds == 30
+
+    def test_eviction_tuning_frozen(self) -> None:
+        """EvictionTuning should be frozen (immutable)."""
+        e = DeploymentProfile.FULL.tuning().eviction
+        with pytest.raises(AttributeError):
+            e.memory_high_watermark_pct = 999  # type: ignore[misc]

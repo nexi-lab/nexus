@@ -30,8 +30,8 @@ from nexus.core.exceptions import (
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.core.virtual_views import parse_virtual_path
 from nexus.fuse.cache import FUSECacheManager
+from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -323,7 +323,7 @@ def get_file_content(
 
     # In text mode, try to parse
     if ctx.mode.value == "text" or (ctx.mode.value == "smart" and view_type):
-        from nexus.core.virtual_views import get_parsed_content
+        from nexus.lib.virtual_views import get_parsed_content
         from nexus.parsers import create_default_parse_fn
 
         if not hasattr(ctx, "_parse_fn"):

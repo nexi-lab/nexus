@@ -1124,7 +1124,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Fix #332: Virtual parsed views (e.g., report_parsed.pdf.md) should inherit
         # permissions from their original files (e.g., report.pdf)
-        from nexus.core.virtual_views import parse_virtual_path
+        from nexus.lib.virtual_views import parse_virtual_path
 
         # Use metadata.exists to avoid circular dependency with self.exists()
         def metadata_exists(check_path: str) -> bool:

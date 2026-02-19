@@ -133,6 +133,22 @@ Map **data requiring properties** ↔ **storage providing properties**.
 
 ---
 
+## PART 4b: KNOWLEDGE GRAPH (GraphRAG)
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **EntityModel** | Med | Med | EC | Relational + Vector (embedding similarity, name lookup, batch fetch) | Medium | High | Persistent | Zone | Knowledge graph entities with embeddings for entity resolution (pgvector HNSW) | SQLAlchemy with vector index | **Keep RecordStore** (relational + vector) | ✅ KEEP |
+| **RelationshipModel** | Med | Med | EC | Relational (FK to entities, recursive CTE for N-hop traversal) | Small | Very High | Persistent | Zone | Directed typed relationships between entities for graph traversal | SQLAlchemy with composite indexes | **Keep RecordStore** (relational FK + recursive CTE) | ✅ KEEP |
+| **EntityMentionModel** | Low | Med | EC | Relational (FK to entity + memory, JOIN for provenance) | Tiny | High | Persistent | Zone | Links entities to source memories for provenance tracking | SQLAlchemy | **Keep RecordStore** (relational FK) | ✅ KEEP |
+
+**Analysis:**
+- **EntityModel**: ✅ KEEP RecordStore — uses pgvector for embedding similarity search (same pattern as MemoryModel). Composite indexes on `(zone_id, canonical_name)`.
+- **RelationshipModel**: ✅ KEEP RecordStore — recursive CTEs for N-hop neighbor traversal require SQL. FK to EntityModel.
+- **EntityMentionModel**: ✅ KEEP RecordStore — FK to both EntityModel and MemoryModel for provenance tracking.
+- **GraphStore** is a RecordStore consumer (receives `RecordStoreABC` + session). Dialect selection is config-time via `RecordStoreABC._is_postgresql`.
+
+---
+
 ## PART 5: ACCESS CONTROL (ReBAC)
 
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
@@ -495,7 +511,7 @@ Data classes (`FileMetadata`, `PaginatedResult`) live in `core/metadata.py`. Iss
 | ReBACNamespaceModel | SQLAlchemy | Part 5 | Permission config, KV by namespace_id |
 | SystemSettingsModel | SQLAlchemy | Part 13 | System config, KV by key |
 
-**RecordStore** (Relational — PostgreSQL/SQLite) — 22 types:
+**RecordStore** (Relational — PostgreSQL/SQLite) — 49 types:
 | Category | Data Types | From Part | Rationale |
 |----------|-----------|-----------|-----------|
 | **Users & Auth** | UserModel, UserOAuthAccountModel, OAuthCredentialModel | Part 6 | FK, unique constraints, encryption |
@@ -508,6 +524,16 @@ Data classes (`FileMetadata`, `PaginatedResult`) live in `core/metadata.py`. Iss
 | **Audit** | OperationLogModel | Part 11 | Append-only BRIN |
 | **Sandboxes** | SandboxMetadataModel | Part 12 | Relational queries |
 | **Path Registration** | **PathRegistrationModel** (NEW: WorkspaceConfig + MemoryConfig merged) | Part 15 | Co-exists with SnapshotModel/MemoryModel (cross-pillar principle) |
+| **Governance** | AnomalyAlert, AgentBaseline, FraudRing, FraudScore, GovernanceNode, GovernanceEdge, SuspensionRecord, ThrottleConfig | Part 7 (Gov) | Composite PKs, zone-scoped filtering, time-range queries |
+| **IPC** | IPCMessageModel | Part 16 | Binary payload + transactional upsert + unique constraint |
+| **Agent Economy** | SpendingPolicyModel, SpendingLedgerModel, SpendingApprovalModel | Part 17 | ACID counters, workflow state machine, unique constraints |
+| **Sharing** | ShareLinkModel, ShareLinkAccessLogModel | Part 18 | Partial index, FK cascade, mutable counters, audit |
+| **Disputes** | DisputeModel | Part 19 | State machine, unique constraint, evidence hash |
+| **Reputation** | ReputationEventModel, ReputationScoreModel | Part 19 | Immutable tamper-detected events, materialized leaderboard queries |
+| **Token Security** | RefreshTokenHistoryModel, SecretsAuditLogModel | Part 20 | Security-critical ACID, tamper detection, replay prevention |
+| **Sync** | SyncJobModel, SyncBacklogModel, BackendChangeLogModel, ConflictLogModel | Part 21 | Outbox pattern, delta sync state, conflict audit |
+| **Upload** | UploadSessionModel | Part 22 | Atomic offset updates, restart-survivable session state |
+| **Agent Lifecycle** | AgentRecordModel, AgentEventModel, DelegationRecordModel | Part 23 | Optimistic locking, append-only events, hierarchical delegation chain |
 
 **ObjectStore** (= existing `Backend` ABC — S3/Local Disk) — 1 type:
 | Data Type | From Part | Rationale |
@@ -565,6 +591,134 @@ Data classes (`FileMetadata`, `PaginatedResult`) live in `core/metadata.py`. Iss
 | **ThrottleConfig** | High | Low | SC | Relational (zone+agent lookup) | Tiny | Low | Persistent | Zone | Per-agent rate limiting configs (requests/window, triggered by anomaly threshold) | **RecordStore** ✅ |
 
 **Affinity rationale:** All governance data types require relational queries (composite PKs, zone-scoped filtering, time-range queries, JOINs between alerts↔baselines). RecordStore (PostgreSQL) is the correct pillar. Process-local TTL caches in `GovernanceGraphService` and `AnomalyService` are optimization caches, not storage-tier — same pattern as `CompactFileMetadata`.
+
+---
+
+## PART 16: IPC DATA
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **IPCMessageModel** | Med | Med | SC | KV-like (UPSERT by zone_id + path, dir listing by dir_path) | Medium (LargeBinary payload) | High | Persistent | Zone | IPC message persistence with VFS-style path semantics | SQLAlchemy | **Keep RecordStore** (binary payload + transactional upsert + unique constraint) | ✅ KEEP |
+
+**Analysis:**
+- Path-keyed with zone_id isolation, LargeBinary `data` column, UNIQUE constraint on `(zone_id, path)`
+- Access patterns: upsert by zone+path, list/count by zone+dir_path
+- Despite KV-like access, the binary payload and transactional upsert semantics justify RecordStore
+- If payloads grow large, consider splitting: Metastore (path index) + ObjectStore (payload)
+
+---
+
+## PART 17: AGENT ECONOMY
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **SpendingPolicyModel** | Med | Low | SC | Relational (UNIQUE agent_id+zone_id, priority index) | Small | Low | Persistent | Zone | Agent spending limits and policy rules (daily/weekly/monthly) | SQLAlchemy | **Keep RecordStore** (unique constraint, priority ordering) | ✅ KEEP |
+| **SpendingLedgerModel** | Med | High | SC | Relational (UPSERT by agent+zone+period+start, atomic counter) | Tiny | Med | Persistent | Zone | Period-based spending counters, atomically updated on each transfer | SQLAlchemy | **Keep RecordStore** (ACID required for accurate spend tracking) | ✅ KEEP |
+| **SpendingApprovalModel** | Med | Med | SC | Relational (status filter, agent+zone index) | Small | Med | Persistent | Zone | Approval workflow state machine (pending→approved/rejected/expired) | SQLAlchemy | **Keep RecordStore** (workflow state machine, mutable status) | ✅ KEEP |
+
+**Analysis:**
+- All three form a cohesive agent economy subsystem: Policy (config) → Ledger (counters) → Approval (workflow)
+- SpendingLedgerModel is the most critical: atomic UPSERT prevents double-counting credits
+- **Action**: Keep all in RecordStore — ACID transactions required for financial correctness
+
+---
+
+## PART 18: SHARING & CAPABILITY LINKS
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **ShareLinkModel** | Med | Low | SC | Relational (resource index, partial index on active links, Argon2 password hash) | Small | Med | Persistent | Zone | Capability URL share links with optional password, TTL, and access limits | SQLAlchemy | **Keep RecordStore** (partial index, mutable counters, revocation state) | ✅ KEEP |
+| **ShareLinkAccessLogModel** | Low | Med | EC | Relational (FK to share_links CASCADE, time-series by link_id+accessed_at) | Tiny | High | Archive | Zone | Append-only access audit log for share links | SQLAlchemy | **Keep RecordStore** (FK cascade, append-only audit) | ✅ KEEP |
+
+**Analysis:**
+- ShareLinkModel has mutable state (access_count, revoked_at) and partial index for active links
+- AccessLog is append-only audit with FK cascade — deletion of parent link cascades to access records
+- **Action**: Keep both in RecordStore
+
+---
+
+## PART 19: DISPUTES & REPUTATION
+
+### 19.1 Disputes
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **DisputeModel** | Med | Low | SC | Relational (UNIQUE exchange_id, status+zone index, parties index) | Small | Low | Persistent | Zone | Agent dispute resolution workflow (filed→auto_mediating→resolved/dismissed) | SQLAlchemy | **Keep RecordStore** (state machine, unique constraint, evidence hash) | ✅ KEEP |
+
+### 19.2 Reputation
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **ReputationEventModel** | Low | Med | EC | Relational (composite PK for partitioning, BRIN on zone+created_at, UNIQUE exchange+rater) | Small | Very High | Archive | Zone | Immutable reputation events with tamper-detection hash (SHA-256 record_hash) | SQLAlchemy | **Keep RecordStore** (immutable append-only, tamper-detected, partition-ready composite PK) | ✅ KEEP |
+| **ReputationScoreModel** | High | Med | EC | Relational (composite PK agent+context+window, leaderboard index on zone+context+score) | Tiny | Med | Persistent | Zone | Materialized aggregate of reputation events (Bayesian beta distribution scores) | SQLAlchemy | **Keep RecordStore** (leaderboard composite queries, zone-scoped ordered reads) | ✅ KEEP |
+
+**Analysis:**
+- **DisputeModel**: State machine with SHA-256 evidence hash — requires durable, transactional storage
+- **ReputationEventModel**: Immutable, append-only with tamper detection — partition-ready composite PK `(id, created_at)`
+- **ReputationScoreModel**: While derived from events (could theoretically be CacheStore), it has complex composite PK, zone-scoped leaderboard queries requiring composite indexes, and Bayesian alpha/beta parameters that are incrementally updated. RecordStore is correct — the leaderboard query pattern is relational, not KV
+- **No merges needed** — different lifecycles (events are immutable, scores are mutable materialized views)
+
+---
+
+## PART 20: TOKEN SECURITY & AUDIT
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **RefreshTokenHistoryModel** | Med | Med | SC | Relational (family+hash lookup, family+rotated_at for pruning) | Tiny | High | Persistent | Zone | Retired refresh token hashes for replay detection per RFC 9700 | SQLAlchemy | **Keep RecordStore** (ACID required for security-critical replay detection) | ✅ KEEP |
+| **SecretsAuditLogModel** | Low | Med | SC | Relational (composite PK for partitioning, BRIN-like time queries, tamper-detection hash) | Small | Very High | Archive | Zone | Immutable secrets access audit trail with SHA-256 tamper detection | SQLAlchemy | **Keep RecordStore** (immutable, tamper-detected, ORM rejects UPDATE/DELETE) | ✅ KEEP |
+
+**Analysis:**
+- Both are security-critical with ACID requirements
+- **RefreshTokenHistoryModel**: Used for token theft detection — if a retired hash is reused, the entire token family is revoked. Rows are pruned by age (not TTL auto-eviction). ACID required.
+- **SecretsAuditLogModel**: Partition-ready composite PK `(id, created_at)`, SHA-256 `record_hash` for tamper detection, ORM-level guards reject UPDATE/DELETE. Same pattern as ReputationEventModel.
+- **Action**: Keep both in RecordStore — security guarantees require ACID persistence
+
+---
+
+## PART 21: SYNC & CHANGE TRACKING
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **SyncJobModel** | Med | Med | EC | Relational (status index, mount_point index, BRIN on created_at) | Small | Med | Persistent | Zone | Long-running sync job state tracking with progress percentage | SQLAlchemy | **Keep RecordStore** (mutable job state, progress updates) | ✅ KEEP |
+| **SyncBacklogModel** | Med | High | SC | Relational (status+created_at index, UNIQUE path+backend+zone+status, BRIN) | Small | High | Persistent | Zone | Work queue / outbox for write-back sync operations with retry logic | SQLAlchemy | **Keep RecordStore** (outbox pattern, retry+status state machine, ACID required) | ✅ KEEP |
+| **BackendChangeLogModel** | Med | Med | EC | Relational (UNIQUE path+backend+zone, BRIN on synced_at) | Small | High | Persistent | Zone | Delta sync state: one row per (path, backend, zone), upserted on each sync | SQLAlchemy | **Keep RecordStore** (upsert state tracking, composite unique constraint) | ✅ KEEP |
+| **ConflictLogModel** | Low | Med | EC | Relational (status+created_at index, BRIN on created_at) | Small | Med | Archive | Zone | Append-only conflict resolution audit log | SQLAlchemy | **Keep RecordStore** (append-only audit, BRIN optimized) | ✅ KEEP |
+
+**Analysis:**
+- Cohesive sync subsystem: Job (orchestration) → Backlog (outbox) → ChangeLog (state) → ConflictLog (audit)
+- **SyncBacklogModel** is essentially a transactional outbox/work-queue: ACID required to prevent duplicate processing
+- All use BRIN indexes for append-biased time-series queries
+- **Action**: Keep all in RecordStore
+
+---
+
+## PART 22: UPLOAD SESSIONS
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **UploadSessionModel** | Med | Med | SC | Relational (status index, expires_at index, zone+user index) | Small | Med | Session | Zone | Chunked upload session state (tus protocol) with atomic offset tracking | SQLAlchemy | **Keep RecordStore** (ACID required for atomic offset updates, restart-survivable) | ✅ KEEP |
+
+**Analysis:**
+- Has `expires_at` (TTL-like) and is session-scoped — superficially CacheStore-like
+- However: must survive server restarts (upload can resume after crash), requires atomic `upload_offset` updates to prevent data corruption, and tracks multi-part state
+- GC of expired sessions is handled by periodic cleanup, not TTL auto-eviction
+- **Action**: Keep in RecordStore — restart survival + atomic offset updates outweigh TTL convenience
+
+---
+
+## PART 23: AGENT LIFECYCLE
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
+| **AgentRecordModel** | High | Med | SC | Relational (zone+state index, state+heartbeat index, owner index) | Small | Med | Persistent | Zone | Agent lifecycle state with optimistic locking (generation counter) and heartbeat | SQLAlchemy | **Keep RecordStore** (optimistic locking, mutable lifecycle state, heartbeat) | ✅ KEEP |
+| **AgentEventModel** | Low | High | EC | Relational (agent+created_at index, event_type index) | Tiny | Very High | Archive | Zone | Append-only agent lifecycle event log | SQLAlchemy | **Keep RecordStore** (append-only event log, agent traceability) | ✅ KEEP |
+| **DelegationRecordModel** | Med | Low | SC | Relational (agent/parent indexes, status index, parent_delegation chain, lease TTL) | Small | Med | Persistent | Zone | Hierarchical delegation chain with lease TTL and sub-delegation tracking | SQLAlchemy | **Keep RecordStore** (hierarchical chain, mutable status, lease management) | ✅ KEEP |
+
+**Analysis:**
+- **AgentRecordModel**: Natural string PK (`agent_id`), optimistic locking via `generation` counter, frequent heartbeat updates. RecordStore for transactional state machine.
+- **AgentEventModel**: High-volume append-only log. Could potentially move to a dedicated event store at scale, but RecordStore with BRIN-style indexes is adequate.
+- **DelegationRecordModel**: Hierarchical chain (`parent_delegation_id`, `depth`, `can_sub_delegate`). Has TTL semantics (`lease_expires_at`) but requires transactional chain integrity — not CacheStore.
+- **No merges needed** — distinct lifecycles (state vs events vs delegations)
 
 ---
 

@@ -24,9 +24,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import PermissionDeniedError
+from nexus.contracts.types import Permission
 from nexus.core import glob_fast, grep_fast, trigram_fast
-from nexus.core.exceptions import PermissionDeniedError
-from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.search.strategies import (
     GLOB_RUST_THRESHOLD,
@@ -116,8 +117,8 @@ def _filter_ignored_paths(
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
-    from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.rebac.enforcer import PermissionEnforcer
     from nexus.rebac.manager import EnhancedReBACManager
@@ -145,6 +146,9 @@ class SearchService(SemanticSearchMixin):
         record_store: Any | None = None,
         # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
         gateway: NexusFSGateway | None = None,
+        list_parallel_workers: int = LIST_PARALLEL_WORKERS,
+        grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
+        file_cache: Any | None = None,
     ):
         """Initialize search service.
 
@@ -169,15 +173,20 @@ class SearchService(SemanticSearchMixin):
         # Gateway for NexusFS operations (Issue #1287)
         self._gw = gateway
 
+        # Injected file cache (Issue #690 — replaces global singleton)
+        self._file_cache = file_cache
+
         # Semantic search (initialized later, types declared in SemanticSearchMixin)
         self._semantic_search = None
         self._async_search = None
 
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
+        self._grep_parallel_workers = grep_parallel_workers
 
         # Shared thread pool for parallel directory listing (Issue #899)
         self._list_thread_pool: ThreadPoolExecutor | None = None
+        self._list_parallel_workers = list_parallel_workers
 
         # Lock for lazy thread pool initialization (prevents TOCTOU race)
         self._pool_lock = threading.Lock()
@@ -195,7 +204,7 @@ class SearchService(SemanticSearchMixin):
             with self._pool_lock:
                 if self._thread_pool is None:
                     self._thread_pool = ThreadPoolExecutor(
-                        max_workers=GREP_PARALLEL_WORKERS,
+                        max_workers=self._grep_parallel_workers,
                         thread_name_prefix="nexus-search",
                     )
         return self._thread_pool
@@ -206,7 +215,7 @@ class SearchService(SemanticSearchMixin):
             with self._pool_lock:
                 if self._list_thread_pool is None:
                     self._list_thread_pool = ThreadPoolExecutor(
-                        max_workers=LIST_PARALLEL_WORKERS,
+                        max_workers=self._list_parallel_workers,
                         thread_name_prefix="nexus-list",
                     )
         return self._list_thread_pool
@@ -531,7 +540,7 @@ class SearchService(SemanticSearchMixin):
 
         zone_id always returns a non-None value (defaults to "root").
         """
-        list_zone_id: str = "root"
+        list_zone_id: str = ROOT_ZONE_ID
         subject_type: str | None = None
         subject_id: str | None = None
         if self._enforce_permissions and context:
@@ -679,7 +688,7 @@ class SearchService(SemanticSearchMixin):
         if context:
             list_context = replace(context, backend_path=route.backend_path)
         else:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             list_context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path
@@ -696,7 +705,7 @@ class SearchService(SemanticSearchMixin):
 
         # Permission filtering
         if self._enforce_permissions and context:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             filter_ctx = context if isinstance(context, OperationContext) else self._default_context
             assert filter_ctx is not None  # guaranteed by isinstance or _default_context
@@ -973,7 +982,7 @@ class SearchService(SemanticSearchMixin):
 
         import time
 
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         perm_start = time.time()
         ctx_raw = context or self._default_context
@@ -1020,7 +1029,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         backend_dirs: set[str],
         context: Any,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> set[str]:
         """Infer directory entries from file paths and backend."""
         import time as _time
@@ -1070,7 +1079,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         directories: set[str],
         context: Any,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         """Check backend directories for access using bulk TRAVERSE check."""
         import time as _time
@@ -1763,11 +1772,9 @@ class SearchService(SemanticSearchMixin):
         # Try mmap-accelerated grep first (Issue #893)
         if grep_fast.is_mmap_available():
             try:
-                from nexus.storage.file_cache import get_file_cache
-
                 zone_id, _, _ = self._extract_zone_info(context)
-                if zone_id:
-                    file_cache = get_file_cache()
+                if zone_id and self._file_cache is not None:
+                    file_cache = self._file_cache
                     disk_paths = file_cache.get_disk_paths_bulk(zone_id, files_needing_raw)
                     if disk_paths:
                         disk_to_virtual = {dp: vp for vp, dp in disk_paths.items()}
@@ -2089,7 +2096,7 @@ class SearchService(SemanticSearchMixin):
         timer = Timer()
         timer.__enter__()
 
-        chunk_size = max(1, len(files) // GREP_PARALLEL_WORKERS)
+        chunk_size = max(1, len(files) // self._grep_parallel_workers)
         file_chunks = [files[i : i + chunk_size] for i in range(0, len(files), chunk_size)]
 
         def search_chunk(chunk_files: builtins.list[str]) -> builtins.list[dict[str, Any]]:
@@ -2216,7 +2223,7 @@ class SearchService(SemanticSearchMixin):
         Raises:
             PermissionDeniedError: If permission denied
         """
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         if not self._enforce_permissions or not self._permission_enforcer:
             return

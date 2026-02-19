@@ -1,58 +1,20 @@
-"""Nexus Cache Layer — Tier 2 BRICK for pluggable caching backends.
+"""Backward-compatibility shim — cache module moved to nexus.bricks.cache.
 
-All domain caches are driver-agnostic, built on CacheStoreABC primitives.
-CacheBrick is the single entry point for all cache domain services.
-
-Configuration:
-    Set NEXUS_DRAGONFLY_URL to enable Dragonfly backend:
-
-    NEXUS_DRAGONFLY_URL=redis://localhost:6379
-
-    If not set, NullCacheStore provides graceful degradation (Tier 2 = silent).
-
-Usage:
-    from nexus.cache import CacheBrick
-
-    brick = CacheBrick(cache_store=my_store)
-    await brick.start()
-
-    perm_cache = brick.permission_cache
-    tiger_cache = brick.tiger_cache
+.. deprecated:: Issue #1524
+    Import from ``nexus.bricks.cache`` instead of ``nexus.cache``.
 """
 
-from nexus.cache.backend_wrapper import (
-    CacheStrategy,
-    CacheWrapperConfig,
-    CachingBackendWrapper,
-)
-from nexus.cache.base import (
-    EmbeddingCacheProtocol,
-    PermissionCacheProtocol,
-    ResourceMapCacheProtocol,
-    TigerCacheProtocol,
-)
-from nexus.cache.brick import CacheBrick
-from nexus.cache.dragonfly import DragonflyCacheStore
-from nexus.cache.factory import CacheFactory
-from nexus.cache.inmemory import InMemoryCacheStore
-from nexus.cache.settings import CacheSettings
+from nexus.bricks.cache import *  # noqa: F401, F403
+from nexus.bricks.cache import __all__ as _upstream_all  # noqa: F811
 
-__all__ = [
-    # Brick facade (Issue #1524)
-    "CacheBrick",
-    # Factory + config (kept temporarily, will be absorbed by CacheBrick)
-    "CacheFactory",
-    "CacheSettings",
-    # CachingBackendWrapper — transparent caching decorator for any Backend (#1392)
-    "CachingBackendWrapper",
-    "CacheStrategy",
-    "CacheWrapperConfig",
-    # Consumer-facing protocols (what you program against)
-    "EmbeddingCacheProtocol",
-    "PermissionCacheProtocol",
-    "ResourceMapCacheProtocol",
-    "TigerCacheProtocol",
-    # CacheStoreABC drivers (for DI into CacheBrick/NexusFS)
-    "DragonflyCacheStore",
-    "InMemoryCacheStore",
-]
+__all__ = list(_upstream_all)
+
+
+def __getattr__(name: str) -> object:
+    """Lazy import for DragonflyCacheStore (mirrors nexus.bricks.cache)."""
+    if name == "DragonflyCacheStore":
+        from nexus.bricks.cache.dragonfly import DragonflyCacheStore
+
+        globals()["DragonflyCacheStore"] = DragonflyCacheStore
+        return DragonflyCacheStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

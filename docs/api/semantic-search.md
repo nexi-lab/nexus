@@ -103,7 +103,7 @@ results = await nx.semantic_search(
 )
 
 # Search with permission filtering
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["engineering"])
 results = await nx.semantic_search(
     "authentication",
@@ -165,7 +165,7 @@ result = await nx.semantic_search_index("/docs/README.md")
 print(f"Created {result['/docs/README.md']} chunks")
 
 # Index with specific context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["engineering"])
 result = await nx.semantic_search_index("/workspace", context=ctx)
 ```

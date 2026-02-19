@@ -20,7 +20,7 @@ from nexus.bricks.scheduler.constants import (
     PriorityTier,
     RequestState,
 )
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 
 
 @dataclass(frozen=True)

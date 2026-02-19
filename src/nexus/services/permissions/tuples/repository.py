@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity
+from nexus.constants import ROOT_ZONE_ID
+from nexus.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.storage.models.permissions import (
     ReBACTupleModel as RT,
 )
@@ -57,9 +58,12 @@ class TupleRepository:
                     Defaults to ``engine`` when not provided.
     """
 
-    def __init__(self, engine: Engine, read_engine: Engine | None = None) -> None:
+    def __init__(
+        self, engine: Engine, read_engine: Engine | None = None, *, is_postgresql: bool = False
+    ) -> None:
         self.engine = engine
         self.read_engine = read_engine or engine
+        self._is_postgresql = is_postgresql
 
         # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
         # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
@@ -184,7 +188,7 @@ class TupleRepository:
         Returns:
             SQL query with appropriate placeholders for the database dialect
         """
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             return sql.replace("?", "%s")
         return sql
 
@@ -197,7 +201,7 @@ class TupleRepository:
         Returns:
             True if PostgreSQL 18+, False otherwise
         """
-        if self.engine.dialect.name != "postgresql":
+        if not self._is_postgresql:
             return False
 
         if self._pg_version is None:
@@ -220,7 +224,11 @@ class TupleRepository:
     # Zone revision tracking (Issue #909)
     # ------------------------------------------------------------------
 
-    def get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:  # noqa: ARG002
+    def get_zone_revision(
+        self,
+        zone_id: str | None,
+        conn: Any | None = None,  # noqa: ARG002 — kept for API compat
+    ) -> int:
         """Get current revision for a zone (read-only, no increment).
 
         Used for revision-based cache key generation (Issue #909).
@@ -233,7 +241,7 @@ class TupleRepository:
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         stmt = select(RVS.current_version).where(RVS.zone_id == effective_zone)
         with self.read_engine.connect() as sa_conn:
             row = sa_conn.execute(stmt).first()
@@ -252,10 +260,10 @@ class TupleRepository:
         Returns:
             New revision number after increment
         """
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         cursor = self.create_cursor(conn)
 
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             cursor.execute(
                 "INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at) "
                 "VALUES (%(zone_id)s, 1, NOW()) "
@@ -327,7 +335,7 @@ class TupleRepository:
         cursor = self.create_cursor(conn)
         max_depth = 50
 
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             query = (
                 "WITH RECURSIVE ancestors AS ("
                 "  SELECT object_type as ancestor_type, object_id as ancestor_id, 1 as depth"
@@ -599,7 +607,7 @@ class TupleRepository:
 
         CHUNK_SIZE = 100
         existing: set[tuple[Any, ...]] = set()
-        is_pg = self.engine.dialect.name == "postgresql"
+        is_pg = self._is_postgresql
 
         for chunk_start in range(0, len(parsed_tuples), CHUNK_SIZE):
             chunk = parsed_tuples[chunk_start : chunk_start + CHUNK_SIZE]

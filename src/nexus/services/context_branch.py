@@ -25,7 +25,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from nexus.core.exceptions import (
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import (
     BranchConflictError,
     BranchExistsError,
     BranchNotFoundError,
@@ -34,7 +35,7 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     StalePointerError,
 )
-from nexus.core.workspace_manifest import WorkspaceManifest
+from nexus.contracts.workspace_manifest import WorkspaceManifest
 from nexus.services.workspace_permissions import check_workspace_permission
 from nexus.storage.models import ContextBranchModel, WorkspaceSnapshotModel
 
@@ -153,7 +154,7 @@ class ContextBranchService:
         self._wm = workspace_manager
         self._session_factory = session_factory
         self._rebac_manager = rebac_manager
-        self._default_zone_id = default_zone_id or "root"
+        self._default_zone_id = default_zone_id or ROOT_ZONE_ID
         self._default_agent_id = default_agent_id
 
     def _check_permission(
@@ -1020,7 +1021,7 @@ class ContextBranchService:
 
     def _fast_forward_merge(
         self,
-        session: Any,  # noqa: ARG002
+        _session: Any,
         source: ContextBranchModel,
         target: ContextBranchModel,
         workspace_path: str,

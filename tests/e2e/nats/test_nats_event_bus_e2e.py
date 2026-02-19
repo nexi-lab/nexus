@@ -163,10 +163,6 @@ def server_app():
 
     assert isinstance(nexus_fs, NexusFS)
 
-    # Disable audit strict mode — SQLite embedded mode lacks operation_log table.
-    # We're testing the NATS event bus, not audit logging.
-    nexus_fs._audit_strict_mode = False
-
     # Verify event bus is NATS
     from nexus.services.event_bus.nats import NatsEventBus
 

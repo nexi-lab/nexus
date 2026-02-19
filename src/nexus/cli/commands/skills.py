@@ -27,7 +27,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 
 
 class SQLAlchemyDatabaseConnection:
@@ -70,9 +70,9 @@ def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
 
     Delegates to SQLAlchemyRecordStore for engine/session creation (Issue #622).
     """
-    import os
+    from nexus.lib.env import get_database_url
 
-    db_url = os.getenv("NEXUS_DATABASE_URL")
+    db_url = get_database_url()
     if not db_url:
         return None
 
@@ -1307,7 +1307,7 @@ def skills_diff(
             # Reconstruct SKILL.md content for both
             from nexus.skills.exporter import SkillExporter
 
-            exporter = SkillExporter(registry)
+            exporter = SkillExporter(registry, filesystem=nx)
 
             content1 = exporter._reconstruct_skill_md(skill_obj1)
             content2 = exporter._reconstruct_skill_md(skill_obj2)
@@ -1638,10 +1638,11 @@ def skills_mcp_mount(
             try:
                 import os
 
+                # Get TokenManager (same logic as oauth CLI)
+                from nexus.lib.env import get_database_url
                 from nexus.server.auth import TokenManager
 
-                # Get TokenManager (same logic as oauth CLI)
-                db_url = os.getenv("NEXUS_DATABASE_URL")
+                db_url = get_database_url()
                 if db_url:
                     token_manager = TokenManager(db_url=db_url)
                 else:

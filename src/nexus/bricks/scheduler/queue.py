@@ -25,7 +25,7 @@ from nexus.bricks.scheduler.constants import (
     PriorityTier,
 )
 from nexus.bricks.scheduler.models import ScheduledTask
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 
 # =============================================================================
 # SQL Statements

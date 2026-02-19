@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.core.exceptions import NexusPermissionError
+from nexus.contracts.exceptions import NexusPermissionError
 
 if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager

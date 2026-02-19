@@ -28,6 +28,7 @@ from nexus.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
+    from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.cache_invalidation import CacheInvalidationObserver
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
@@ -175,7 +176,7 @@ class KernelServices:
     workspace_manager: Any = None
 
     # Sync / versioning
-    write_observer: Any = None
+    write_observer: WriteObserverProtocol | None = None
     version_service: Any = None
     overlay_resolver: Any = None
 
@@ -227,6 +228,9 @@ class SystemServices:
     # Resiliency policies (Issue #1366)
     resiliency_manager: Any = None
 
+    # Agent eviction under resource pressure (Issue #2170)
+    eviction_manager: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure
@@ -260,10 +264,24 @@ class BrickServices:
     snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
     task_queue_service: Any = None  # TASK_QUEUE brick (Issue #655)
 
+    # --- Cache Brick (Issue #1524) ---
+    cache_brick: Any = None  # CacheBrick — owns all cache domain services
+
     # --- IPC Brick (Issue #1727, LEGO §8) ---
     ipc_storage_driver: Any = None  # IPCStorageDriver (RecordStore or VFS)
     ipc_vfs_driver: Any = None  # IPCVFSDriver (Backend mounted at /agents)
     ipc_provisioner: Any = None  # AgentProvisioner
+
+    # --- Sandbox Brick (Issue #1307) ---
+    agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
+
+    # --- Skills Brick (Issue #2035) ---
+    skill_service: Any = None  # SkillService (protocol-based)
+    skill_package_service: Any = None  # SkillPackageService
+
+    # --- Delegation & Reputation Bricks (Issue #2131) ---
+    delegation_service: Any = None  # DELEGATION brick
+    reputation_service: Any = None  # REPUTATION brick
 
 
 # ---------------------------------------------------------------------------

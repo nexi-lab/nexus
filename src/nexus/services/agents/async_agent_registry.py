@@ -20,12 +20,12 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.agents.agent_record import AgentState
+from nexus.contracts.agent_types import AgentState
 from nexus.services.protocols.agent_registry import AgentInfo
 
 if TYPE_CHECKING:
     from nexus.bricks.scheduler.events import AgentStateEmitter
-    from nexus.services.agents.agent_record import AgentRecord
+    from nexus.contracts.agent_types import AgentRecord
     from nexus.services.agents.agent_registry import AgentRegistry
 
 

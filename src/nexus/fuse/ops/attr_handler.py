@@ -126,6 +126,6 @@ class AttrHandler:
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.FILE_WRITE, original_path, size=length)
 
-    def utimens(self, path: str, times: tuple[float, float] | None = None) -> None:  # noqa: ARG002
+    def utimens(self, _path: str, _times: tuple[float, float] | None = None) -> None:
         """Update file access and modification times (no-op)."""
         pass

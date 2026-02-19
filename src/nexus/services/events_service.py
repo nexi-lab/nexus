@@ -21,6 +21,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
 from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.core.rpc_decorator import rpc_expose
@@ -29,8 +30,8 @@ from nexus.services.dedup_work_queue import DedupWorkQueue, ShutdownError
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.distributed_lock import LockManagerBase
-    from nexus.core.permissions import OperationContext
     from nexus.core.protocols.connector import ConnectorProtocol
     from nexus.services.event_bus.base import EventBusBase
     from nexus.services.watch.file_watcher import FileWatcher
@@ -115,7 +116,7 @@ class EventsService:
             return context.zone_id
         if self._zone_id:
             return self._zone_id
-        return "root"
+        return ROOT_ZONE_ID
 
     # =========================================================================
     # System Readiness
@@ -439,7 +440,7 @@ class EventsService:
         Raises:
             LockTimeout: If lock cannot be acquired within timeout
         """
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         lock_id = await self.lock(path, timeout=timeout, ttl=ttl, _context=_context)
         if lock_id is None:

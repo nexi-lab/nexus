@@ -23,8 +23,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from nexus.core.rebac import Entity
+from nexus.constants import ROOT_ZONE_ID
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.domain import Entity
 from nexus.rebac.types import ConsistencyLevel
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Engine
 
-    from nexus.core.rebac import NamespaceConfig
+    from nexus.rebac.domain import NamespaceConfig
     from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,8 @@ class BulkPermissionChecker:
         rebac_check_single: Callable[..., bool],
         cache_result: Callable[..., None],
         tuple_version: int,
+        *,
+        is_postgresql: bool = False,
     ) -> None:
         self._engine = engine
         self._get_namespace = get_namespace
@@ -80,6 +83,7 @@ class BulkPermissionChecker:
         self._rebac_check_single = rebac_check_single
         self._cache_result = cache_result
         self._tuple_version = tuple_version
+        self._is_postgresql = is_postgresql
 
     def update_refs(
         self,
@@ -147,7 +151,7 @@ class BulkPermissionChecker:
                 raise ValueError("zone_id is required for bulk permission checks in production")
             else:
                 logger.warning("rebac_check_bulk called without zone_id, defaulting to 'root'")
-                zone_id = "root"
+                zone_id = ROOT_ZONE_ID
 
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool] = {}
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
@@ -410,7 +414,7 @@ class BulkPermissionChecker:
         entity_types = [e[0] for e in entities]
         entity_ids = [e[1] for e in entities]
 
-        is_postgresql = self._engine.dialect.name == "postgresql"
+        is_postgresql = self._is_postgresql
 
         if is_postgresql:
             if self._enforce_zone_isolation:
@@ -525,7 +529,7 @@ class BulkPermissionChecker:
     ) -> int:
         """Fetch cross-zone share tuples and append to tuples_graph. Returns count added."""
         cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
-        is_postgresql = self._engine.dialect.name == "postgresql"
+        is_postgresql = self._is_postgresql
 
         subject_types = [s[0] for s in all_subjects_list]
         subject_ids = [s[1] for s in all_subjects_list]

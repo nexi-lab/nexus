@@ -47,7 +47,7 @@ for file in files_with_metadata:
 docs = nx.list("/documents")
 
 # List with specific user context (permission filtering)
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 user_files = nx.list("/workspace", context=ctx)  # Only shows files alice can read
 ```
@@ -96,7 +96,7 @@ test_files = nx.glob("test_*.py")
 logs = nx.glob("2025-01-*.log", "/logs")
 
 # Find files with permission filtering
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="bob", groups=["project-alpha"])
 visible_files = nx.glob("**/*.txt", context=ctx)  # Only returns files bob can read
 ```
@@ -157,7 +157,7 @@ matches = nx.grep("revenue", file_pattern="**/*.pdf", search_mode="parsed")
 matches = nx.grep("error", ignore_case=True)
 
 # Search with permission filtering
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="charlie", groups=["team-data"])
 matches = nx.grep("SELECT", file_pattern="**/*.sql", context=ctx)  # Only searches files charlie can read
 ```

@@ -6,6 +6,7 @@ per-call retry via ``tenacity``.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -20,7 +21,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from nexus.contracts.rpc_codec import decode_rpc_message
+from nexus.lib.rpc_codec import decode_rpc_message
 from nexus.proxy.config import ProxyBrickConfig
 from nexus.proxy.errors import RemoteCallError
 
@@ -184,6 +185,4 @@ class HttpTransport:
 
 def _safe_json(params: dict[str, Any] | None) -> str:
     """Encode params to a JSON string safe for use in a header."""
-    import json
-
     return json.dumps(params or {})

@@ -24,12 +24,14 @@ from typing import TYPE_CHECKING, Any
 
 from pyroaring import BitMap as RoaringBitmap
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
     from nexus.cache.base import TigerCacheProtocol
     from nexus.rebac.cache.tiger.resource_map import TigerResourceMap
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,18 +40,15 @@ logger = logging.getLogger(__name__)
 class CacheKey:
     """Key for Tiger Cache lookup.
 
-    Note: zone_id is intentionally excluded from the cache key.
-    Zone isolation is enforced during permission computation, not caching.
-    This allows shared resources (e.g., /skills in 'root' zone) to be
-    accessible across zones without cache misses.
-
-    See: Issue #979 - Tiger Cache persistence and cross-zone optimization
+    zone_id is included for multi-zone federation isolation — each zone
+    gets its own cache partition to prevent cross-zone cache pollution.
     """
 
     subject_type: str
     subject_id: str
     permission: str
     resource_type: str
+    zone_id: str = ""
 
     def __hash__(self) -> int:
         return hash(
@@ -58,6 +57,7 @@ class CacheKey:
                 self.subject_id,
                 self.permission,
                 self.resource_type,
+                self.zone_id,
             )
         )
 
@@ -83,6 +83,9 @@ class TigerCache:
         resource_map: TigerResourceMap | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         dragonfly_cache: TigerCacheProtocol | None = None,
+        l2_max_workers: int = 4,
+        *,
+        is_postgresql: bool = False,
     ):
         """Initialize Tiger Cache.
 
@@ -91,13 +94,15 @@ class TigerCache:
             resource_map: Resource mapping service (created if not provided)
             rebac_manager: ReBAC manager for permission computation
             dragonfly_cache: Optional Dragonfly cache for L2 distributed caching
+            l2_max_workers: Thread pool size for L2 dragonfly operations.
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         from nexus.rebac.cache.tiger.resource_map import TigerResourceMap as _TRM
 
         self._engine = engine
-        self._resource_map = resource_map or _TRM(engine)
+        self._resource_map = resource_map or _TRM(engine, is_postgresql=is_postgresql)
         self._rebac_manager = rebac_manager
-        self._is_postgresql = "postgresql" in str(engine.url)
+        self._is_postgresql = is_postgresql
 
         # L2: Dragonfly distributed cache (optional)
         self._dragonfly: TigerCacheProtocol | None = dragonfly_cache
@@ -112,6 +117,7 @@ class TigerCache:
         self._lock = threading.RLock()
 
         # Persistent thread pool for L2 operations (avoid per-operation creation)
+        self._l2_max_workers = l2_max_workers
         self._l2_executor: Any | None = None
 
     def set_dragonfly_cache(self, dragonfly_cache: TigerCacheProtocol | None) -> None:
@@ -128,12 +134,12 @@ class TigerCache:
             # Cache URL for sync Redis operations
             _client = getattr(dragonfly_cache, "_client", None)
             self._dragonfly_url = getattr(_client, "_url", None) if _client else None
-            # Create persistent thread pool (max 4 workers for L2 ops)
+            # Create persistent thread pool for L2 ops
             import concurrent.futures
 
             if self._l2_executor is None:
                 self._l2_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=4, thread_name_prefix="tiger-l2"
+                    max_workers=self._l2_max_workers, thread_name_prefix="tiger-l2"
                 )
             logger.info("[TIGER] Dragonfly L2 cache enabled")
         else:
@@ -263,7 +269,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         conn: Connection | None = None,
     ) -> set[int]:
         """Get all resource integer IDs that subject can access.
@@ -273,13 +279,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             conn: Optional database connection
 
         Returns:
             Set of integer resource IDs
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         # Check in-memory cache first
         with self._lock:
@@ -365,7 +371,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         conn: Connection | None = None,
     ) -> bytes | None:
         """Get serialized bitmap bytes for Rust interop (Issue #896).
@@ -378,13 +384,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             conn: Optional database connection
 
         Returns:
             Serialized bitmap bytes if found, None if not in cache
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         # Check in-memory cache first
         with self._lock:
@@ -491,7 +497,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str = "",  # noqa: ARG002 - Kept for API compatibility, not used in cache key
+        zone_id: str = "",
     ) -> float | None:
         """Get cache age in seconds for a specific entry (Issue #921).
 
@@ -503,12 +509,12 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Deprecated, kept for API compatibility
+            zone_id: Zone ID for cache partitioning
 
         Returns:
             Age in seconds if entry is in memory cache, None if not cached
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         with self._lock:
             if key in self._cache:
@@ -726,9 +732,7 @@ class TigerCache:
             return results
 
         # Bulk fetch from database (zone_id removed from cache key per Issue #979)
-        is_postgresql = "postgresql" in str(self._engine.url)
-
-        if is_postgresql:
+        if self._is_postgresql:
             query = text("""
                 SELECT subject_type, subject_id, permission, resource_type,
                        bitmap_data, revision
@@ -884,7 +888,7 @@ class TigerCache:
         bitmap = RoaringBitmap(resource_int_ids)
 
         bitmap_data = bitmap.serialize()
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         # Upsert to database (zone_id removed from unique constraint per Issue #979)
         # Note: zone_id still included in INSERT for backward compatibility (NOT NULL column)
@@ -1104,7 +1108,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         resource_int_id: int,
     ) -> bool:
         """Add a single resource to subject's permission bitmap (in-memory only).
@@ -1117,13 +1121,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             resource_int_id: Integer ID of the resource to add
 
         Returns:
             True if added successfully, False otherwise
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         with self._lock:
             if key in self._cache:
@@ -1183,7 +1187,7 @@ class TigerCache:
         """
         from sqlalchemy import text
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         try:
             # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
@@ -1310,7 +1314,7 @@ class TigerCache:
         """
         from sqlalchemy import text
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         try:
             with self._engine.begin() as conn:
@@ -1441,7 +1445,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         resource_int_id: int,
     ) -> bool:
         """Remove a resource from subject's permission bitmap (write-through).
@@ -1454,7 +1458,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             resource_int_id: Integer ID of the resource to remove
 
         Returns:
@@ -1464,7 +1468,7 @@ class TigerCache:
             This is a write-through operation. For security, revocations
             should also invalidate L1 cache entries.
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         with self._lock:
             if key in self._cache:
@@ -1490,7 +1494,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,
         resource_int_ids: set[int],
     ) -> int:
         """Add multiple resources to subject's permission bitmap in bulk.
@@ -1503,7 +1507,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type
             resource_type: Type of resource
-            zone_id: Zone ID (kept for API compatibility)
+            zone_id: Zone ID for cache partitioning
             resource_int_ids: Set of integer resource IDs to add
 
         Returns:
@@ -1512,7 +1516,7 @@ class TigerCache:
         if not resource_int_ids:
             return 0
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         with self._lock:
             if key in self._cache:
@@ -1541,7 +1545,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_int_ids: set[int],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> bool:
         """Persist bitmap to database after bulk read operations (Issue #979).
 
@@ -1574,7 +1578,7 @@ class TigerCache:
         if not resource_int_ids:
             return True
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         try:
             # Get current bitmap from memory (may have more entries than resource_int_ids)

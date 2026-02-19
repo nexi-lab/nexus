@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity
+from nexus.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.rebac.types import (
     GraphLimitExceeded,
     GraphLimits,
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Engine
 
-    from nexus.core.rebac import NamespaceConfig
+    from nexus.rebac.domain import NamespaceConfig
     from nexus.services.permissions.consistency.zone_manager import ZoneManager
 
 logger = logging.getLogger(__name__)

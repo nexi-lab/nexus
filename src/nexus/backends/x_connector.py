@@ -49,12 +49,13 @@ from cachetools import LRUCache
 from nexus.backends.backend import Backend
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import BackendError
 from nexus.core import glob_fast
-from nexus.core.exceptions import BackendError
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +219,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
 
         # Get OAuth token
         zone_id: str = (
-            context.zone_id if context and hasattr(context, "zone_id") else "root"
-        ) or "root"
+            context.zone_id if context and hasattr(context, "zone_id") else ROOT_ZONE_ID
+        ) or ROOT_ZONE_ID
 
         try:
             access_token = await self.token_manager.get_valid_token(

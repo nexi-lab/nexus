@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, ResponseType, timed_response
 
 # === Fixtures ===

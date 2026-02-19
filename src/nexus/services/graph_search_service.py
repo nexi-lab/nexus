@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +65,7 @@ async def graph_enhanced_search(
     alpha: float,
     graph_mode: str,
     *,
+    record_store: Any,
     async_session_factory: Any,
     search_daemon: Any,
 ) -> list[Any]:
@@ -78,6 +81,7 @@ async def graph_enhanced_search(
         path_filter: Optional path prefix filter
         alpha: Semantic vs keyword weight
         graph_mode: Graph enhancement mode (low, high, dual)
+        record_store: RecordStoreABC instance (injected via app.state)
         async_session_factory: Async session factory from RecordStoreABC (injected via app.state)
         search_daemon: SearchDaemon instance (injected)
 
@@ -91,7 +95,7 @@ async def graph_enhanced_search(
     from nexus.search.graph_store import GraphStore
 
     async with async_session_factory() as session:
-        graph_store = GraphStore(session, zone_id="root")
+        graph_store = GraphStore(record_store, session, zone_id=ROOT_ZONE_ID)
 
         semantic_wrapper = DaemonSemanticSearchWrapper(search_daemon)
         embedding_provider = getattr(search_daemon, "_embedding_provider", None)

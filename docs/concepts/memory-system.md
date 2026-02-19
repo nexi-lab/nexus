@@ -419,7 +419,7 @@ memory_id = nx.memory.store("User prefers Python", scope="user")
 
 ```python
 # Only use this if building custom integrations
-from nexus.core.memory_api import Memory
+from nexus.services.memory.memory_api import Memory
 
 memory = Memory(
     session=db_session,          # SQLAlchemy session
@@ -1022,7 +1022,7 @@ nx3 = connect(config={"user_id": "bob", "agent_id": "agent3"})
 mem = nx3.memory.get(mem_id)  # None - no permission
 
 # Admin override - ✅ ALLOWED
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 admin_ctx = OperationContext(user="admin", groups=[], is_admin=True)
 mem = nx1.memory.get(mem_id, context=admin_ctx)  # SUCCESS - admin bypass
 ```

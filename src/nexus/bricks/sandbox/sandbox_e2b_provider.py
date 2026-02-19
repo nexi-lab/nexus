@@ -34,6 +34,18 @@ logger = logging.getLogger(__name__)
 # Built from e2b-template/e2b.Dockerfile
 NEXUS_FUSE_TEMPLATE = "nexus-fuse"
 
+# Sandbox operation timeouts (seconds)
+E2B_RECONNECT_TIMEOUT = 60
+E2B_COMMAND_TIMEOUT = 30
+E2B_FUSE_CHECK_TIMEOUT = 5
+E2B_DEPENDENCY_CHECK_TIMEOUT = 10
+E2B_LIBFUSE_INSTALL_TIMEOUT = 120
+E2B_PIP_INSTALL_TIMEOUT = 180
+E2B_FUSEPY_INSTALL_TIMEOUT = 60
+E2B_API_KEY_WRITE_TIMEOUT = 10
+E2B_MOUNT_VERIFY_TIMEOUT = 10
+E2B_LS_VERIFY_TIMEOUT = 10
+
 # Lazy import e2b_code_interpreter to avoid import errors if not installed
 # We use e2b_code_interpreter instead of base e2b for stateful Python execution
 # via Jupyter kernel (variables persist between run_code calls)
@@ -337,7 +349,7 @@ class E2BSandboxProvider(SandboxProvider):
             logger.error(f"Code execution failed in sandbox {sandbox_id}: {e}")
             raise
 
-    async def pause(self, sandbox_id: str) -> None:  # noqa: ARG002
+    async def pause(self, _sandbox_id: str) -> None:
         """Pause E2B sandbox.
 
         Note: E2B doesn't support pause/resume. This is a no-op.
@@ -352,7 +364,7 @@ class E2BSandboxProvider(SandboxProvider):
             "E2B doesn't support pause/resume. Use stop to destroy the sandbox."
         )
 
-    async def resume(self, sandbox_id: str) -> None:  # noqa: ARG002
+    async def resume(self, _sandbox_id: str) -> None:
         """Resume E2B sandbox.
 
         Note: E2B doesn't support pause/resume. This is a no-op.
@@ -379,7 +391,7 @@ class E2BSandboxProvider(SandboxProvider):
         # Reconnect to sandbox before destroying (no caching to avoid event loop issues)
         try:
             sandbox = await AsyncSandbox.connect(
-                sandbox_id, api_key=self.api_key, request_timeout=60
+                sandbox_id, api_key=self.api_key, request_timeout=E2B_RECONNECT_TIMEOUT
             )
         except Exception as e:
             logger.error(f"Failed to connect to sandbox {sandbox_id} for destruction: {e}")
@@ -489,7 +501,9 @@ class E2BSandboxProvider(SandboxProvider):
         logger.info(f"Mounting Nexus at {mount_path} in sandbox {sandbox_id}")
 
         # Create mount directory
-        mkdir_result = await sandbox.commands.run(f"sudo mkdir -p {mount_path}", timeout=30)
+        mkdir_result = await sandbox.commands.run(
+            f"sudo mkdir -p {mount_path}", timeout=E2B_COMMAND_TIMEOUT
+        )
         if mkdir_result.exit_code != 0:
             error_msg = f"Failed to create mount directory: {mkdir_result.stderr}"
             logger.error(error_msg)
@@ -506,7 +520,9 @@ class E2BSandboxProvider(SandboxProvider):
         # Check for Rust FUSE binary first (fastest option)
         rust_fuse_available = False
         try:
-            check_result = await sandbox.commands.run("which nexus-fuse", timeout=5)
+            check_result = await sandbox.commands.run(
+                "which nexus-fuse", timeout=E2B_FUSE_CHECK_TIMEOUT
+            )
             if check_result.exit_code == 0:
                 rust_fuse_available = True
                 logger.info("nexus-fuse (Rust) binary found - using fast native FUSE")
@@ -521,7 +537,8 @@ class E2BSandboxProvider(SandboxProvider):
             python_nexus_installed = False
             try:
                 check_result = await sandbox.commands.run(
-                    "python3 -c 'from nexus.remote import RemoteNexusFS; print(\"ok\")'", timeout=10
+                    "python3 -c 'from nexus.remote import RemoteNexusFS; print(\"ok\")'",
+                    timeout=E2B_DEPENDENCY_CHECK_TIMEOUT,
                 )
                 if check_result.exit_code == 0:
                     python_nexus_installed = True
@@ -534,7 +551,7 @@ class E2BSandboxProvider(SandboxProvider):
             try:
                 check_libfuse = await sandbox.commands.run(
                     "dpkg -l | grep -q fuse || ls /lib/*/libfuse* >/dev/null 2>&1",
-                    timeout=10,
+                    timeout=E2B_DEPENDENCY_CHECK_TIMEOUT,
                 )
                 if check_libfuse.exit_code == 0:
                     libfuse_installed = True
@@ -548,7 +565,7 @@ class E2BSandboxProvider(SandboxProvider):
                     # Install libfuse via apt (Ubuntu/Debian)
                     install_result = await sandbox.commands.run(
                         "sudo apt-get update -qq && sudo apt-get install -y -qq fuse libfuse-dev",
-                        timeout=120,
+                        timeout=E2B_LIBFUSE_INSTALL_TIMEOUT,
                     )
                     logger.info("Successfully installed libfuse")
                 except CommandExitException as e:
@@ -562,7 +579,7 @@ class E2BSandboxProvider(SandboxProvider):
                 try:
                     install_result = await sandbox.commands.run(
                         "pip install -q 'nexus-ai-fs[fuse]'",
-                        timeout=180,  # 3 minutes for installation
+                        timeout=E2B_PIP_INSTALL_TIMEOUT,  # 3 minutes for installation
                     )
                     if install_result.exit_code != 0:
                         error_msg = f"Failed to install nexus-ai-fs: {install_result.stderr}"
@@ -588,7 +605,8 @@ class E2BSandboxProvider(SandboxProvider):
                 fusepy_installed = False
                 try:
                     check_fuse = await sandbox.commands.run(
-                        "python3 -c 'import fuse; print(\"ok\")'", timeout=10
+                        "python3 -c 'import fuse; print(\"ok\")'",
+                        timeout=E2B_DEPENDENCY_CHECK_TIMEOUT,
                     )
                     if check_fuse.exit_code == 0:
                         fusepy_installed = True
@@ -601,7 +619,7 @@ class E2BSandboxProvider(SandboxProvider):
                     try:
                         install_result = await sandbox.commands.run(
                             "pip install -q fusepy",
-                            timeout=60,
+                            timeout=E2B_FUSEPY_INSTALL_TIMEOUT,
                         )
                         logger.info("Successfully installed fusepy")
                     except CommandExitException as e:
@@ -618,7 +636,7 @@ class E2BSandboxProvider(SandboxProvider):
         api_key_file = "/tmp/.nexus_api_key"
         write_key_result = await sandbox.commands.run(
             f"printf '%s' '{api_key}' > {api_key_file} && chmod 600 {api_key_file}",
-            timeout=10,
+            timeout=E2B_API_KEY_WRITE_TIMEOUT,
         )
         if write_key_result.exit_code != 0:
             logger.warning("Failed to write API key file, falling back to env var")
@@ -671,7 +689,7 @@ except Exception as e:
             script_path = "/tmp/nexus_mount_script.py"
             await sandbox.commands.run(
                 f"cat > {script_path} << 'NEXUS_MOUNT_EOF'\n{mount_script}\nNEXUS_MOUNT_EOF",
-                timeout=30,
+                timeout=E2B_COMMAND_TIMEOUT,
             )
             mount_cmd = (
                 f"nohup {api_key_source}sudo -E python3 {script_path} > /tmp/nexus-mount.log 2>&1 &"
@@ -680,7 +698,7 @@ except Exception as e:
             max_wait = 10  # Python mount is slower due to imports
 
         # Run mount in background
-        mount_result = await sandbox.commands.run(mount_cmd, timeout=30)
+        mount_result = await sandbox.commands.run(mount_cmd, timeout=E2B_COMMAND_TIMEOUT)
         if mount_result.exit_code != 0:
             error_msg = f"Failed to start mount: {mount_result.stderr}"
             logger.error(error_msg)
@@ -716,14 +734,16 @@ except Exception as e:
             log_stdout = ""
             ps_stdout = ""
             try:
-                log_result = await sandbox.commands.run("cat /tmp/nexus-mount.log 2>&1", timeout=10)
+                log_result = await sandbox.commands.run(
+                    "cat /tmp/nexus-mount.log 2>&1", timeout=E2B_MOUNT_VERIFY_TIMEOUT
+                )
                 log_stdout = log_result.stdout
             except CommandExitException as e:
                 log_stdout = e.stdout or ""
             try:
                 ps_result = await sandbox.commands.run(
                     "ps aux | grep -E 'nexus|fuse|python' | grep -v grep",
-                    timeout=10,
+                    timeout=E2B_MOUNT_VERIFY_TIMEOUT,
                 )
                 ps_stdout = ps_result.stdout
             except CommandExitException as e:
@@ -746,7 +766,9 @@ except Exception as e:
 
         # Verify files are accessible
         try:
-            ls_result = await sandbox.commands.run(f"ls {mount_path}/ 2>&1", timeout=10)
+            ls_result = await sandbox.commands.run(
+                f"ls {mount_path}/ 2>&1", timeout=E2B_LS_VERIFY_TIMEOUT
+            )
             logger.info(f"Successfully mounted Nexus at {mount_path} (verified with mount + ls)")
             return {
                 "success": True,
@@ -787,7 +809,7 @@ except Exception as e:
             sandbox = await AsyncSandbox.connect(
                 sandbox_id,
                 api_key=self.api_key,
-                request_timeout=60,  # 60s for reconnection
+                request_timeout=E2B_RECONNECT_TIMEOUT,  # 60s for reconnection
             )
             return sandbox
         except Exception as e:

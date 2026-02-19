@@ -47,13 +47,13 @@ from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import CacheConnectorMixin, SyncResult
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import SkillDocMixin
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

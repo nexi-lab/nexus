@@ -13,9 +13,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.rebac.consistency.zone_manager import ZoneIsolationError
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.manager import ReBACManager
+from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
 from nexus.storage.models import Base
 
 
@@ -371,7 +371,7 @@ class TestCrossZoneRustPathFix:
 
     def test_fetch_tuples_for_rust_includes_cross_zone(self, enhanced_manager):
         """Test that _fetch_tuples_for_rust includes cross-zone tuples."""
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         # Create cross-zone share: partner-zone user gets access to acme-zone file
         enhanced_manager.rebac_write(

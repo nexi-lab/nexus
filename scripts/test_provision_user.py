@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from datetime import UTC, datetime
 
 import nexus
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 

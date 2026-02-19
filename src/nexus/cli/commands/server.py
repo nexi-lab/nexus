@@ -23,6 +23,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+from nexus.lib.env import get_database_url
 
 logger = logging.getLogger(__name__)
 
@@ -953,12 +954,12 @@ def serve(
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.server.auth.factory import DiscriminatingAuthProvider
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            db_url = os.getenv("NEXUS_DATABASE_URL")
+            db_url = get_database_url()
             if not db_url:
                 console.print(
                     "[red]Error:[/red] Database authentication requires NEXUS_DATABASE_URL"
@@ -997,10 +998,10 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            db_url = os.getenv("NEXUS_DATABASE_URL")
+            db_url = get_database_url()
             if not db_url:
                 console.print("[red]Error:[/red] Local authentication requires NEXUS_DATABASE_URL")
                 sys.exit(1)
@@ -1106,7 +1107,7 @@ def serve(
         # Database Reset (if requested)
         # ============================================
         if reset:
-            db_url = os.getenv("NEXUS_DATABASE_URL")
+            db_url = get_database_url()
             if not db_url:
                 console.print("[red]Error:[/red] NEXUS_DATABASE_URL environment variable not set")
                 sys.exit(1)
@@ -1210,7 +1211,7 @@ def serve(
             console.print()
 
             # Get database URL
-            db_url = os.getenv("NEXUS_DATABASE_URL")
+            db_url = get_database_url()
             if not db_url:
                 console.print("[red]Error:[/red] NEXUS_DATABASE_URL environment variable not set")
                 sys.exit(1)
@@ -1448,7 +1449,7 @@ def serve(
         console.print("  [dim]10-50x throughput improvement under concurrent load[/dim]")
 
         # Get database URL for async operations
-        database_url = os.getenv("NEXUS_DATABASE_URL")
+        database_url = get_database_url()
 
         app = create_app(
             nexus_fs=nx,  # type: ignore[arg-type]

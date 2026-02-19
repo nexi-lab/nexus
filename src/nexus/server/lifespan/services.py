@@ -31,8 +31,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
     _startup_agent_registry(app)
     _startup_key_service(app)
-    _startup_reputation_service(app)
-    _startup_delegation_service(app)
+    _startup_reputation_delegation_from_bricks(app)
     _startup_sandbox_auth(app)
     _startup_transactional_snapshot(app)
     _startup_rlm_service(app)
@@ -53,6 +52,15 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
+    # Issue #625: Stop workflow dispatch consumer
+    wds = getattr(app.state, "workflow_dispatch", None)
+    if wds is not None:
+        try:
+            await wds.stop()
+            logger.info("Workflow dispatch service stopped")
+        except Exception as e:
+            logger.warning("Error stopping workflow dispatch service: %s", e, exc_info=True)
+
     # Stop Task Queue runner (Issue #574)
     task_runner = getattr(app.state, "task_runner", None)
     if task_runner:
@@ -72,16 +80,18 @@ async def shutdown_services(app: FastAPI) -> None:
             logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
         app.state._scheduler_pool = None
 
-    # Cancel agent background tasks and final flush (Issue #1240)
+    # Cancel agent background tasks and final flush (Issue #1240, #2170)
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
     stale_detection_task = getattr(app.state, "_stale_detection_task", None)
-    for task_ref in (heartbeat_task, stale_detection_task):
+    eviction_task = getattr(app.state, "_eviction_task", None)
+    for task_ref in (heartbeat_task, stale_detection_task, eviction_task):
         if task_ref and not task_ref.done():
             task_ref.cancel()
             with suppress(asyncio.CancelledError):
                 await task_ref
     app.state._heartbeat_task = None
     app.state._stale_detection_task = None
+    app.state._eviction_task = None
 
     if app.state.agent_registry:
         try:
@@ -151,10 +161,11 @@ def _startup_agent_registry(app: FastAPI) -> None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
 
+            _bg = getattr(getattr(app.state, "profile_tuning", None), "background_task", None)
             app.state.agent_registry = AgentRegistry(
                 session_factory=app.state.nexus_fs.SessionLocal,
                 entity_registry=getattr(app.state.nexus_fs, "_entity_registry", None),
-                flush_interval=60,
+                flush_interval=_bg.heartbeat_flush_interval if _bg else 60,
             )
             # Inject into NexusFS for RPC methods
             app.state.nexus_fs._agent_registry = app.state.agent_registry
@@ -218,55 +229,34 @@ def _startup_key_service(app: FastAPI) -> None:
         app.state.key_service = None
 
 
-def _startup_reputation_service(app: FastAPI) -> None:
-    """Initialize ReputationService singleton for trust routing (#1619)."""
-    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
+def _startup_reputation_delegation_from_bricks(app: FastAPI) -> None:
+    """Expose ReputationService and DelegationService from factory brick_dict (Issue #2131).
+
+    These services are now created in ``factory._boot_brick_services()`` and
+    stored in ``BrickServices``. This function wires them onto ``app.state``
+    for backward-compatible access by routers and dependencies.
+    """
+    nx = app.state.nexus_fs
+    if nx is None:
         app.state.reputation_service = None
-        return
-
-    try:
-        from nexus.services.reputation.reputation_service import ReputationService
-
-        app.state.reputation_service = ReputationService(
-            session_factory=app.state.nexus_fs.SessionLocal,
-        )
-        logger.info("[REPUTATION] ReputationService initialized (singleton)")
-    except Exception as e:
-        logger.warning("[REPUTATION] Failed to initialize: %s", e, exc_info=True)
-        app.state.reputation_service = None
-
-
-def _startup_delegation_service(app: FastAPI) -> None:
-    """Initialize DelegationService for agent delegation (Issue #1618)."""
-    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
         app.state.delegation_service = None
         return
 
-    rebac_manager = getattr(app.state.nexus_fs, "_rebac_manager", None)
-    if rebac_manager is None:
-        app.state.delegation_service = None
-        return
+    # Get from BrickServices (created by factory)
+    brk = getattr(nx, "_brick_services", None)
+    app.state.reputation_service = getattr(brk, "reputation_service", None) if brk else None
+    app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
 
-    try:
-        from nexus.services.delegation.service import DelegationService
-
-        namespace_manager = getattr(app.state.nexus_fs, "_namespace_manager", None)
-        entity_registry = getattr(app.state.nexus_fs, "_entity_registry", None)
-        agent_registry = getattr(app.state, "agent_registry", None)
-        reputation_service = getattr(app.state, "reputation_service", None)
-
-        app.state.delegation_service = DelegationService(
-            session_factory=app.state.nexus_fs.SessionLocal,
-            rebac_manager=rebac_manager,
-            namespace_manager=namespace_manager,
-            entity_registry=entity_registry,
-            agent_registry=agent_registry,
-            reputation_service=reputation_service,
-        )
-        logger.info("[DELEGATION] DelegationService initialized and wired")
-    except Exception as e:
-        logger.warning("[DELEGATION] Failed to initialize DelegationService: %s", e, exc_info=True)
-        app.state.delegation_service = None
+    if app.state.reputation_service is not None:
+        logger.info("[REPUTATION] ReputationService wired from brick_dict")
+    if app.state.delegation_service is not None:
+        # Wire system-tier dependencies that weren't available during factory boot
+        deleg = app.state.delegation_service
+        if getattr(deleg, "_namespace_manager", None) is None:
+            deleg._namespace_manager = getattr(nx, "_namespace_manager", None)
+        if getattr(deleg, "_agent_registry", None) is None:
+            deleg._agent_registry = getattr(app.state, "agent_registry", None)
+        logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
 
 def _startup_sandbox_auth(app: FastAPI) -> None:
@@ -280,15 +270,24 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
 
     try:
         from nexus.bricks.sandbox.auth_service import SandboxAuthService
-        from nexus.bricks.sandbox.events import AgentEventLog
         from nexus.bricks.sandbox.sandbox_manager import SandboxManager
+        from nexus.storage.repositories.agent_event_log import (
+            SQLAlchemyAgentEventLog as AgentEventLog,
+        )
 
         session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
         if not (session_factory and callable(session_factory)):
             return
 
-        # Create AgentEventLog for sandbox lifecycle audit
-        app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
+        # Get AgentEventLog from factory (preferred) or create fallback
+        _brk = getattr(app.state.nexus_fs, "_brick_services", None)
+        _factory_event_log = getattr(_brk, "agent_event_log", None) if _brk else None
+        if _factory_event_log is not None:
+            app.state.agent_event_log = _factory_event_log
+        else:
+            from nexus.bricks.sandbox.events import AgentEventLog
+
+            app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
         # Create SandboxManager
         sandbox_config = getattr(app.state.nexus_fs, "config", None)
@@ -399,15 +398,55 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
         stale_agent_detection_task,
     )
 
+    _bg_tuning = app.state.profile_tuning.background_task
     app.state._heartbeat_task = asyncio.create_task(
-        heartbeat_flush_task(app.state.agent_registry, interval_seconds=60)
+        heartbeat_flush_task(
+            app.state.agent_registry,
+            interval_seconds=_bg_tuning.heartbeat_flush_interval,
+        )
     )
     app.state._stale_detection_task = asyncio.create_task(
-        stale_agent_detection_task(app.state.agent_registry, interval_seconds=300)
+        stale_agent_detection_task(
+            app.state.agent_registry,
+            interval_seconds=_bg_tuning.stale_agent_check_interval,
+            threshold_seconds=_bg_tuning.stale_agent_threshold,
+        )
     )
     logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
-    return [app.state._heartbeat_task, app.state._stale_detection_task]
+    tasks = [app.state._heartbeat_task, app.state._stale_detection_task]
+
+    # Agent eviction under resource pressure (Issue #2170)
+    app.state.eviction_manager = None
+    app.state._eviction_task = None
+    _eviction_tuning = getattr(app.state.profile_tuning, "eviction", None)
+    if _eviction_tuning is not None:
+        try:
+            from nexus.server.background_tasks import agent_eviction_task
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
+
+            resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
+            eviction_policy = LRUEvictionPolicy()
+            app.state.eviction_manager = EvictionManager(
+                registry=app.state.agent_registry,
+                monitor=resource_monitor,
+                policy=eviction_policy,
+                tuning=_eviction_tuning,
+            )
+            app.state._eviction_task = asyncio.create_task(
+                agent_eviction_task(
+                    app.state.eviction_manager,
+                    interval_seconds=_eviction_tuning.eviction_cooldown_seconds,
+                )
+            )
+            tasks.append(app.state._eviction_task)
+            logger.info("[EVICTION] Background agent eviction task started")
+        except Exception:
+            logger.warning("[EVICTION] Failed to initialize eviction manager", exc_info=True)
+
+    return tasks
 
 
 async def _startup_scheduler(app: FastAPI) -> None:
@@ -426,7 +465,12 @@ async def _startup_scheduler(app: FastAPI) -> None:
 
         # Convert SQLAlchemy URL to asyncpg DSN
         pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-        pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+        _pool_tuning = app.state.profile_tuning.pool
+        pool = await asyncpg.create_pool(
+            pg_dsn,
+            min_size=_pool_tuning.asyncpg_min_size,
+            max_size=_pool_tuning.asyncpg_max_size,
+        )
         app.state._scheduler_pool = pool
 
         # Create scheduled_tasks table if it doesn't exist
@@ -527,11 +571,12 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
 
             from nexus.tasks.runner import AsyncTaskRunner
 
-            runner = AsyncTaskRunner(engine=engine, max_workers=4)
+            _task_workers = app.state.profile_tuning.concurrency.task_runner_workers
+            runner = AsyncTaskRunner(engine=engine, max_workers=_task_workers)
             service.set_runner(runner)
             app.state.task_runner = runner
             task = asyncio.create_task(runner.run())
-            logger.info("Task Queue runner started (4 workers)")
+            logger.info("Task Queue runner started (%d workers)", _task_workers)
             return task
         else:
             logger.debug("Task Queue: nexus_tasks Rust extension not available")
@@ -556,3 +601,12 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
 
     # Expose on app.state so routers can access without reaching into NexusFS
     app.state.workflow_engine = engine
+
+    # Issue #625: Start workflow dispatch consumer (DT_PIPE → workflow engine)
+    wds = getattr(app.state, "workflow_dispatch", None)
+    if wds is not None:
+        try:
+            await wds.start()
+            logger.info("Workflow dispatch service started")
+        except Exception as e:
+            logger.warning("Workflow dispatch service start failed (non-fatal): %s", e)

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.storage.sync_store_base import SyncStoreBase
 
 if TYPE_CHECKING:
@@ -47,14 +48,19 @@ class SyncBacklogStore(SyncStoreBase):
     Supports upsert coalescing, FIFO fetch, status transitions, and TTL expiry.
     """
 
-    def __init__(self, session_factory: Callable[..., Any] | None) -> None:
-        super().__init__(session_factory)
+    def __init__(
+        self,
+        session_factory: Callable[..., Any] | None,
+        *,
+        is_postgresql: bool = False,
+    ) -> None:
+        super().__init__(session_factory, is_postgresql=is_postgresql)
 
     def enqueue(
         self,
         path: str,
         backend_name: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         operation_type: str = "write",
         content_hash: str | None = None,
         new_path: str | None = None,
@@ -154,7 +160,7 @@ class SyncBacklogStore(SyncStoreBase):
     def fetch_pending(
         self,
         backend_name: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         limit: int = 100,
     ) -> list[SyncBacklogEntry]:
         """Fetch pending entries for a backend, FIFO ordered.

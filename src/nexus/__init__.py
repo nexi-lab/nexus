@@ -66,7 +66,7 @@ if TYPE_CHECKING:
     from nexus.backends.gcs import GCSBackend
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
-    from nexus.core.exceptions import (
+    from nexus.contracts.exceptions import (
         BackendError,
         InvalidPathError,
         MetadataError,
@@ -96,7 +96,7 @@ if TYPE_CHECKING:
 # =============================================================================
 # Lightweight imports (always loaded) - these are fast
 # =============================================================================
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BackendError,
     InvalidPathError,
     MetadataError,
@@ -396,6 +396,36 @@ def connect(
         providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
     )
 
+    # --- Profile resolution (Issue #1708) ---
+    from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+
+    if cfg.profile == "auto":
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
+
+        caps = detect_capabilities()
+        resolved_profile = suggest_profile(caps)
+        logger.info(
+            "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
+            resolved_profile,
+            caps.memory_mb,
+            caps.has_gpu,
+            caps.cpu_cores,
+        )
+    else:
+        resolved_profile = DeploymentProfile(cfg.profile)
+        # Warn if explicit profile may exceed device capabilities
+        from nexus.core.device_capabilities import (
+            detect_capabilities,
+            warn_if_profile_exceeds_device,
+        )
+
+        caps = detect_capabilities()
+        warn_if_profile_exceeds_device(resolved_profile, caps)
+
+    # Apply FeaturesConfig overrides (Issue #1389 — was unused in connect())
+    overrides = cfg.features.to_overrides() if cfg.features else {}
+    enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
+
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
@@ -409,6 +439,7 @@ def connect(
         permissions=perm_cfg,
         distributed=dist_cfg,
         parsing=parse_cfg,
+        enabled_bricks=enabled_bricks,
     )
 
     # Set memory config for Memory API

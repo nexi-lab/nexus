@@ -54,3 +54,16 @@ DEFAULT_ZOEKT_URL = "http://localhost:6070"
 
 DEFAULT_NATS_URL = "nats://localhost:4222"
 """Default NATS JetStream server URL. Override via NEXUS_NATS_URL env var."""
+
+# =============================================================================
+# Zone Defaults
+# =============================================================================
+
+ROOT_ZONE_ID = "root"
+"""Default zone ID for standalone (non-federated) deployments.
+
+Every NexusFS instance has a zone_id. In standalone mode it defaults to
+``"root"``. In federated mode each zone has a unique ID assigned by
+the Raft consensus layer. This is a kernel concept — raft and other
+layers import from here.
+"""

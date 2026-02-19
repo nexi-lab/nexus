@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.contracts.exceptions import BootError, NexusError
 from nexus.core.deployment_profile import DeploymentProfile
-from nexus.core.exceptions import BootError, NexusError
 
 # ---------------------------------------------------------------------------
 # TestBootError
@@ -151,8 +151,8 @@ class TestBootKernelServices:
         ctx = _make_mock_ctx(enable_write_buffer=False)
         result = _boot_kernel_services(ctx)
         wo = result["write_observer"]
-        # RecordStoreSyncer doesn't have .start() called in kernel boot
-        # (only BufferedRecordStoreSyncer does, and only in _start_background_services)
+        # RecordStoreWriteObserver doesn't have .start() called in kernel boot
+        # (only BufferedRecordStoreWriteObserver does, and only in _start_background_services)
         assert wo is not None
 
     def test_deferred_buffer_created_when_enabled(self) -> None:
@@ -196,6 +196,7 @@ class TestBootSystemServices:
         expected_keys = {
             "agent_registry",
             "async_agent_registry",
+            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "async_vfs_router",
@@ -246,6 +247,7 @@ class TestBootBrickServices:
         result = _boot_brick_services(ctx, kernel)
 
         expected_keys = {
+            "agent_event_log",
             "wallet_provisioner",
             "manifest_resolver",
             "manifest_metrics",
@@ -260,6 +262,10 @@ class TestBootBrickServices:
             "ipc_storage_driver",
             "ipc_vfs_driver",
             "ipc_provisioner",
+            "skill_service",
+            "skill_package_service",
+            "delegation_service",
+            "reputation_service",
         }
         assert expected_keys == set(result.keys())
 
@@ -313,9 +319,9 @@ class TestStartBackgroundServices:
 
     def test_buffered_syncer_started(self) -> None:
         from nexus.factory import _start_background_services
-        from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
 
-        wo = MagicMock(spec=BufferedRecordStoreSyncer)
+        wo = MagicMock(spec=BufferedRecordStoreWriteObserver)
         kernel = {"deferred_permission_buffer": None, "write_observer": wo}
         system = {"delivery_worker": None}
         _start_background_services(kernel, system)

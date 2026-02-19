@@ -164,6 +164,8 @@ async def tiger_cache_queue_task(
 async def version_gc_task(
     session_factory: Any,
     config: VersionGCSettings | None = None,
+    *,
+    is_postgresql: bool = False,
 ) -> None:
     """Background task: Garbage collect old version history (Issue #974).
 
@@ -176,6 +178,7 @@ async def version_gc_task(
     Args:
         session_factory: SQLAlchemy session factory
         config: GC configuration (uses VersionGCSettings.from_env() if None)
+        is_postgresql: Whether the database is PostgreSQL (config-time flag).
 
     Examples:
         >>> # Start version GC task in server
@@ -193,7 +196,7 @@ async def version_gc_task(
     # Wait for server to fully start
     await asyncio.sleep(10)
 
-    gc = VersionHistoryGC(session_factory)
+    gc = VersionHistoryGC(session_factory, is_postgresql=is_postgresql)
 
     while True:
         if config.enabled:
@@ -334,10 +337,37 @@ async def stale_agent_detection_task(
             logger.exception("[HEARTBEAT] Failed to detect stale agents")
 
 
+async def agent_eviction_task(
+    eviction_manager: Any,
+    interval_seconds: int = 300,
+) -> None:
+    """Periodically run eviction cycle under resource pressure (Issue #2170).
+
+    Args:
+        eviction_manager: EvictionManager instance with run_cycle() method
+        interval_seconds: How often to check for eviction (default: 300)
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            result = await eviction_manager.run_cycle()
+            if result.evicted > 0:
+                logger.info(
+                    "[EVICTION] Evicted %d agents (reason=%s, post_pressure=%s)",
+                    result.evicted,
+                    result.reason,
+                    result.post_pressure,
+                )
+        except Exception:
+            logger.exception("[EVICTION] Eviction cycle failed")
+
+
 def start_background_tasks(
     session_factory: Any,
     sandbox_manager: Any | None = None,
     agent_registry: Any | None = None,
+    *,
+    is_postgresql: bool = False,
 ) -> list:
     """Start all background tasks.
 
@@ -345,6 +375,7 @@ def start_background_tasks(
         session_factory: SQLAlchemy session factory
         sandbox_manager: Optional SandboxManager for sandbox cleanup (Issue #372)
         agent_registry: Optional AgentRegistry for heartbeat flush (Issue #1240)
+        is_postgresql: Whether the database is PostgreSQL (config-time flag).
 
     Returns:
         List of asyncio tasks
@@ -368,7 +399,11 @@ def start_background_tasks(
     # Add version history GC (Issue #974)
     gc_config = VersionGCSettings.from_env()
     if gc_config.enabled:
-        tasks.append(asyncio.create_task(version_gc_task(session_factory, gc_config)))
+        tasks.append(
+            asyncio.create_task(
+                version_gc_task(session_factory, gc_config, is_postgresql=is_postgresql)
+            )
+        )
 
     # Add agent heartbeat flush and stale detection (Issue #1240)
     if agent_registry is not None:

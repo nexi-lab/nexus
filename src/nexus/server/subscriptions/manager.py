@@ -40,13 +40,20 @@ MAX_CONSECUTIVE_FAILURES = 10  # Disable after this many failures
 class SubscriptionManager:
     """Manages webhook subscriptions and event delivery."""
 
-    def __init__(self, session_factory: Callable[[], Session]) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[[], Session],
+        webhook_timeout: float = WEBHOOK_TIMEOUT,
+    ) -> None:
         """Initialize subscription manager.
 
         Args:
             session_factory: SQLAlchemy session factory
+            webhook_timeout: Per-request webhook delivery timeout (seconds).
+                Defaults to module-level WEBHOOK_TIMEOUT (FULL profile default).
         """
         self._session_factory = session_factory
+        self._webhook_timeout = webhook_timeout
 
     # =========================================================================
     # CRUD Operations
@@ -454,7 +461,9 @@ class SubscriptionManager:
             try:
                 # Create a fresh client for each attempt to avoid connection state issues
                 # trust_env=False prevents proxy interference with localhost connections
-                async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, trust_env=False) as client:
+                async with httpx.AsyncClient(
+                    timeout=self._webhook_timeout, trust_env=False
+                ) as client:
                     logger.debug(f"_deliver_webhook: attempt {attempt + 1} to {subscription.url}")
                     response = await client.post(
                         subscription.url,

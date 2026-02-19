@@ -37,6 +37,7 @@ GENERATED_NAMES: dict[str, set[str]] = {
         "DT_REG",
         "DT_DIR",
         "DT_MOUNT",
+        "DT_PIPE",
     },
     "metastore": {
         "MetastoreABC",
@@ -323,7 +324,7 @@ To modify FileMetadata:
 Contains:
   - FileMetadata: Core file metadata dataclass
   - PaginatedResult: Cursor-based pagination container
-  - DT_REG, DT_DIR, DT_MOUNT: Directory entry type constants
+  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE: Directory entry type constants
 """
 
 from __future__ import annotations
@@ -382,7 +383,7 @@ class FileMetadata:
         Raises:
             ValidationError: If validation fails with clear message.
         """
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         if not self.path:
             raise ValidationError("path is required")
@@ -392,6 +393,10 @@ class FileMetadata:
 
         if "\\x00" in self.path:
             raise ValidationError("path contains null bytes", path=self.path)
+
+        # DT_PIPE inodes: in-memory ring buffer, no backend storage required
+        if self.entry_type == 3:  # DT_PIPE
+            return
 
         if not self.backend_name:
             raise ValidationError("backend_name is required", path=self.path)

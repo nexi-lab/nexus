@@ -317,7 +317,7 @@ class SandboxRouter:
         """
         for node in ast.walk(tree):
             # Import statements
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.Import | ast.ImportFrom):
                 return True
 
             # Function calls to escalation-triggering functions

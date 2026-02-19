@@ -19,8 +19,7 @@ from typing import Any
 
 import pytest
 
-from nexus.services.agents.agent_record import AgentRecord, AgentState
-from nexus.services.context_manifest.models import (
+from nexus.bricks.context_manifest.models import (
     FileGlobSource,
     ManifestResult,
     MCPToolSource,
@@ -28,7 +27,8 @@ from nexus.services.context_manifest.models import (
     SourceResult,
     WorkspaceSnapshotSource,
 )
-from nexus.services.context_manifest.resolver import ManifestResolver
+from nexus.bricks.context_manifest.resolver import ManifestResolver
+from nexus.contracts.agent_types import AgentRecord, AgentState
 
 # ---------------------------------------------------------------------------
 # Stub executors
@@ -208,7 +208,7 @@ class TestAgentRecordManifestRoundTrip:
         """AgentRecord stores manifest as tuple of dicts, round-trips correctly."""
         from pydantic import TypeAdapter
 
-        from nexus.services.context_manifest.models import ContextSource
+        from nexus.bricks.context_manifest.models import ContextSource
 
         # Create sources via Pydantic models
         sources = [
@@ -276,7 +276,7 @@ class TestFileGlobExecutorE2E:
     @pytest.mark.asyncio
     async def test_file_glob_executor_e2e(self, tmp_path: Path) -> None:
         """Create temp files → FileGlobExecutor → verify file contents in result."""
-        from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
+        from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
 
         # Create workspace with files
         workspace = tmp_path / "workspace"
@@ -307,7 +307,7 @@ class TestFullPipelineWithFileGlob:
     @pytest.mark.asyncio
     async def test_full_pipeline_with_file_glob(self, tmp_path: Path) -> None:
         """Set manifest on agent → resolve with real FileGlobExecutor → verify."""
-        from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
+        from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
 
         # Create workspace with files
         workspace = tmp_path / "workspace"
@@ -371,7 +371,7 @@ class TestWorkspaceSnapshotExecutorInPipeline:
     @pytest.mark.asyncio
     async def test_workspace_snapshot_in_full_pipeline(self, tmp_path: Path) -> None:
         """WorkspaceSnapshotExecutor wired into full resolver pipeline."""
-        from nexus.services.context_manifest.executors.workspace_snapshot import (
+        from nexus.bricks.context_manifest.executors.workspace_snapshot import (
             WorkspaceSnapshotExecutor,
         )
 
@@ -423,7 +423,7 @@ class TestMemoryQueryExecutorInPipeline:
     @pytest.mark.asyncio
     async def test_memory_query_in_full_pipeline(self, tmp_path: Path) -> None:
         """MemoryQueryExecutor wired into full resolver pipeline."""
-        from nexus.services.context_manifest.executors.memory_query import (
+        from nexus.bricks.context_manifest.executors.memory_query import (
             MemoryQueryExecutor,
         )
 
@@ -452,7 +452,7 @@ class TestMetricsObserverInPipeline:
     @pytest.mark.asyncio
     async def test_metrics_observer_wired(self, tmp_path: Path) -> None:
         """MetricsObserver receives hooks from resolver during resolution."""
-        from nexus.services.context_manifest.metrics import ManifestMetricsObserver
+        from nexus.bricks.context_manifest.metrics import ManifestMetricsObserver
 
         observer = ManifestMetricsObserver()
         resolver = ManifestResolver(

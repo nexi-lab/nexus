@@ -4,7 +4,7 @@ import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nexus.core.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
+from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 
 if TYPE_CHECKING:
     from nexus.core.protocols.connector import ConnectorProtocol

@@ -20,12 +20,12 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
-from nexus.core.exceptions import ValidationError as CoreValidationError
+from nexus.contracts.exceptions import ValidationError as CoreValidationError
 
 if TYPE_CHECKING:
     from nexus.connectors.error_formatter import SkillErrorFormatter
     from nexus.connectors.schema_generator import SkillDocGenerator
-    from nexus.skills.registry import SkillRegistry
+    from nexus.skills.protocols import SkillRegistryProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,9 @@ class Reversibility(StrEnum):
     FULL = "full"  # Can undo completely (e.g., delete created event)
     PARTIAL = "partial"  # Can undo with limitations (e.g., restore from trash)
     NONE = "none"  # Cannot undo (e.g., send email)
+
+
+_CONFIRM_LEVEL_ORDER: dict[str, int] = {"none": 0, "intent": 1, "explicit": 2, "user": 3}
 
 
 class ConfirmLevel(StrEnum):
@@ -61,28 +64,14 @@ class ConfirmLevel(StrEnum):
     @property
     def level(self) -> int:
         """Return numeric level for comparison."""
-        return {"none": 0, "intent": 1, "explicit": 2, "user": 3}[self.value]
+        return _CONFIRM_LEVEL_ORDER[self.value]
 
     def __ge__(self, other: object) -> bool:
-        """Compare levels by strictness."""
         if isinstance(other, ConfirmLevel):
             return self.level >= other.level
         return NotImplemented
 
-    def __gt__(self, other: object) -> bool:
-        """Compare levels by strictness."""
-        if isinstance(other, ConfirmLevel):
-            return self.level > other.level
-        return NotImplemented
-
-    def __le__(self, other: object) -> bool:
-        """Compare levels by strictness."""
-        if isinstance(other, ConfirmLevel):
-            return self.level <= other.level
-        return NotImplemented
-
     def __lt__(self, other: object) -> bool:
-        """Compare levels by strictness."""
         if isinstance(other, ConfirmLevel):
             return self.level < other.level
         return NotImplemented
@@ -215,9 +204,13 @@ class SkillDocMixin:
     OPERATION_TRAITS: dict[str, OpTraits] = {}
     ERROR_REGISTRY: dict[str, ErrorDef] = {}
     EXAMPLES: dict[str, str] = {}  # Example files: {"create_meeting.yaml": "content..."}
+    NESTED_EXAMPLES: dict[str, list[str]] = {}  # Nested field examples for SKILL.md
+    FIELD_EXAMPLES: dict[str, str] = {}  # Field-specific examples for SKILL.md
 
-    _skill_registry: SkillRegistry | None = None
+    _skill_registry: SkillRegistryProtocol | None = None
     _mount_path: str | None = None  # Set during mount
+    _cached_doc_generator: SkillDocGenerator | None = None
+    _cached_error_formatter: SkillErrorFormatter | None = None
 
     @property
     def skill_md_path(self) -> str:
@@ -226,35 +219,46 @@ class SkillDocMixin:
             return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
         return "/.skill/SKILL.md"  # Default fallback
 
-    def set_skill_registry(self, registry: SkillRegistry) -> None:
+    def set_skill_registry(self, registry: SkillRegistryProtocol) -> None:
         """Set the skill registry for this connector."""
         self._skill_registry = registry
 
     def set_mount_path(self, mount_path: str) -> None:
-        """Set the mount path (called during mount)."""
+        """Set the mount path (called during mount).
+
+        Invalidates cached delegates since mount_path changed.
+        """
         self._mount_path = mount_path
+        self._cached_doc_generator = None
+        self._cached_error_formatter = None
 
     def _get_doc_generator(self) -> SkillDocGenerator:
-        """Lazy-create the SkillDocGenerator."""
-        from nexus.connectors.schema_generator import SkillDocGenerator
+        """Get or create the cached SkillDocGenerator."""
+        if self._cached_doc_generator is None:
+            from nexus.connectors.schema_generator import SkillDocGenerator
 
-        return SkillDocGenerator(
-            skill_name=self.SKILL_NAME,
-            schemas=self.SCHEMAS,
-            operation_traits=self.OPERATION_TRAITS,
-            error_registry=self.ERROR_REGISTRY,
-            examples=self.EXAMPLES,
-            skill_dir=self.SKILL_DIR,
-        )
+            self._cached_doc_generator = SkillDocGenerator(
+                skill_name=self.SKILL_NAME,
+                schemas=self.SCHEMAS,
+                operation_traits=self.OPERATION_TRAITS,
+                error_registry=self.ERROR_REGISTRY,
+                examples=self.EXAMPLES,
+                skill_dir=self.SKILL_DIR,
+                nested_examples=self.NESTED_EXAMPLES or None,
+                field_examples=self.FIELD_EXAMPLES or None,
+            )
+        return self._cached_doc_generator
 
     def _get_error_formatter(self) -> SkillErrorFormatter:
-        """Lazy-create the SkillErrorFormatter."""
-        from nexus.connectors.error_formatter import SkillErrorFormatter
+        """Get or create the cached SkillErrorFormatter."""
+        if self._cached_error_formatter is None:
+            from nexus.connectors.error_formatter import SkillErrorFormatter
 
-        return SkillErrorFormatter(
-            skill_name=self.SKILL_NAME,
-            mount_path=self._mount_path or "",
-        )
+            self._cached_error_formatter = SkillErrorFormatter(
+                skill_name=self.SKILL_NAME,
+                mount_path=self._mount_path or "",
+            )
+        return self._cached_error_formatter
 
     def generate_skill_doc(self, mount_path: str) -> str:
         """Auto-generate SKILL.md from connector metadata."""
@@ -269,46 +273,6 @@ class SkillDocMixin:
         self._mount_path = mount_path
         return self._get_doc_generator().write_skill_docs(mount_path, filesystem)
 
-    def _format_display_name(self) -> str:
-        """Format SKILL_NAME as display name."""
-        return self.SKILL_NAME.replace("_", " ").replace("-", " ").title()
-
-    def _generate_operations_section(self) -> list[str]:
-        """Generate Operations section from SCHEMAS."""
-        return self._get_doc_generator()._generate_operations_section()
-
-    def _schema_to_yaml_lines(self, schema: type[BaseModel]) -> list[str]:
-        """Convert Pydantic schema to YAML example lines."""
-        return self._get_doc_generator()._schema_to_yaml_lines(schema)
-
-    def _is_nested_model(self, annotation: Any) -> bool:
-        """Check if annotation is a nested Pydantic model."""
-        return self._get_doc_generator()._is_nested_model(annotation)
-
-    def _get_nested_example(self, field_name: str, _annotation: Any, required: bool) -> list[str]:
-        """Get example lines for nested model."""
-        return self._get_doc_generator()._get_nested_example(field_name, _annotation, required)
-
-    def _get_field_example(
-        self, field_name: str, _field_info: Any, annotation: Any, required: bool
-    ) -> str:
-        """Get example value for a field."""
-        return self._get_doc_generator()._get_field_example(
-            field_name, _field_info, annotation, required
-        )
-
-    def _format_type_hint(self, annotation: Any) -> str:
-        """Format type annotation as readable string."""
-        return self._get_doc_generator()._format_type_hint(annotation)
-
-    def _generate_required_format_section(self) -> list[str]:
-        """Generate Required Format section from OPERATION_TRAITS."""
-        return self._get_doc_generator()._generate_required_format_section()
-
-    def _generate_errors_section(self) -> list[str]:
-        """Generate Error Codes section from ERROR_REGISTRY."""
-        return self._get_doc_generator()._generate_errors_section()
-
     def format_error_with_skill_ref(
         self,
         code: str,
@@ -317,7 +281,7 @@ class SkillDocMixin:
         fix_example: str | None = None,
     ) -> ValidationError:
         """Create ValidationError with skill reference."""
-        return self._get_error_formatter().format_error_with_skill_ref(
+        return self._get_error_formatter().format_error(
             code=code,
             message=message,
             error_registry=self.ERROR_REGISTRY,
@@ -368,16 +332,21 @@ class ValidatedMixin:
         try:
             return schema.model_validate(data)
         except PydanticValidationError as e:
-            from nexus.connectors.error_formatter import SkillErrorFormatter
-
             field_errors = {}
             for error in e.errors():
                 loc = ".".join(str(x) for x in error["loc"])
                 field_errors[loc] = error["msg"]
 
-            skill_name = getattr(self, "SKILL_NAME", "")
-            mount_path = getattr(self, "_mount_path", "") or ""
-            formatter = SkillErrorFormatter(skill_name=skill_name, mount_path=mount_path)
+            # Reuse cached formatter from SkillDocMixin if available
+            formatter_fn = getattr(self, "_get_error_formatter", None)
+            if formatter_fn is not None:
+                formatter = formatter_fn()
+            else:
+                from nexus.connectors.error_formatter import SkillErrorFormatter
+
+                skill_name = getattr(self, "SKILL_NAME", "")
+                mount_path = getattr(self, "_mount_path", "") or ""
+                formatter = SkillErrorFormatter(skill_name=skill_name, mount_path=mount_path)
             raise formatter.format_validation_error(operation, field_errors) from e
 
 
@@ -516,7 +485,8 @@ class CheckpointMixin:
 
     OPERATION_TRAITS: dict[str, OpTraits] = {}
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         # Instance-level checkpoint storage (fix for shared-dict bug #7-A)
         self._checkpoints: dict[str, Checkpoint] = {}
 

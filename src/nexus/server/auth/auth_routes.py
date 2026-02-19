@@ -11,7 +11,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from nexus.auth.oauth.user_auth import OAuthUserAuth
 from nexus.auth.providers.database_local import DatabaseLocalAuth
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -495,7 +495,7 @@ async def setup_zone(
         api_key_value = None
         key_id = None
         try:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             nx = get_nexus_instance()
             if not nx:
@@ -1370,7 +1370,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         api_key_value = None
         key_id = None
         try:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             nx = get_nexus_instance()
             if nx:

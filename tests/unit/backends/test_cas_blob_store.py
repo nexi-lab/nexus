@@ -370,7 +370,7 @@ class TestCASBlobStore:
         blob_path = store.hash_to_path(h)
         blob_path.write_bytes(b"different content")
 
-        from nexus.core.exceptions import BackendError
+        from nexus.contracts.exceptions import BackendError
 
         with pytest.raises(BackendError, match="Content hash mismatch"):
             store.read_blob(h, verify=True)

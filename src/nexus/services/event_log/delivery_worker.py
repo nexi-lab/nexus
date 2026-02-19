@@ -25,6 +25,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.core.operation_types import OperationType
 
@@ -96,6 +97,7 @@ class EventDeliveryWorker:
         batch_size: int = 50,
         max_retries: int = 3,
         max_backoff_ms: int = 5000,
+        use_row_locking: bool = False,
     ) -> None:
         self._session_factory = session_factory
         self._event_bus = event_bus
@@ -105,6 +107,7 @@ class EventDeliveryWorker:
         self._batch_size = batch_size
         self._max_retries = max_retries
         self._max_backoff_s = max_backoff_ms / 1000.0
+        self._use_row_locking = use_row_locking
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -210,9 +213,8 @@ class EventDeliveryWorker:
                 .limit(self._batch_size)
             )
 
-            # PostgreSQL: row-level locking for concurrent workers
-            dialect_name = session.bind.dialect.name if session.bind else ""
-            if dialect_name == "postgresql":
+            # Row-level locking for concurrent workers (PostgreSQL)
+            if self._use_row_locking:
                 stmt = stmt.with_for_update(skip_locked=True)
 
             rows = list(session.execute(stmt).scalars())
@@ -274,7 +276,7 @@ class EventDeliveryWorker:
                             "size": event.size,
                             "timestamp": event.timestamp,
                         },
-                        zone_id=event.zone_id or "root",
+                        zone_id=event.zone_id or ROOT_ZONE_ID,
                     )
 
                 _run_async(_broadcast(), self._event_loop)
@@ -370,7 +372,7 @@ class EventDeliveryWorker:
         return FileEvent(
             type=event_type,
             path=record.path,
-            zone_id=record.zone_id or "root",
+            zone_id=record.zone_id or ROOT_ZONE_ID,
             timestamp=record.created_at.isoformat() if record.created_at else "",
             old_path=record.new_path,  # new_path stores old_path for renames
             agent_id=record.agent_id,

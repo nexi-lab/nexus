@@ -7,7 +7,7 @@ import errno
 import pytest
 from fuse import FuseOSError
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
     RemoteConnectionError,

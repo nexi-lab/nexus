@@ -29,9 +29,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext, Permission
     from nexus.core.metadata import FileMetadata
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.permissions import OperationContext, Permission
     from nexus.core.router import PathRouter
 
 logger = logging.getLogger(__name__)
@@ -461,6 +461,15 @@ class NexusFSGateway:
     # =========================================================================
     # Database URL
     # =========================================================================
+
+    @property
+    def is_postgresql(self) -> bool:
+        """Check if the database is PostgreSQL (config-time detection)."""
+        try:
+            url = self.get_database_url()
+            return url.startswith(("postgres", "postgresql"))
+        except Exception:
+            return False
 
     def get_database_url(self) -> str:
         """Get database URL for OAuth backends.

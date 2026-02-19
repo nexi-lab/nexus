@@ -52,7 +52,9 @@ class QueryObserver:
     A circuit breaker auto-disables listeners after ``max_listener_errors``
     consecutive failures to prevent observability bugs from affecting queries.
 
-    Thread safety: all counter mutations are protected by ``_lock``.
+    Thread safety: single-integer counter increments are GIL-atomic.
+    The lock is only used for compound operations (``_last_event`` swap,
+    ``reset_counters``).
     """
 
     def __init__(self, config: ObservabilityConfig) -> None:
@@ -206,9 +208,9 @@ class QueryObserver:
 
             with self._lock:
                 self._total_queries += 1
-                self._last_event = evt
                 if is_slow:
                     self._slow_queries += 1
+                self._last_event = evt
 
             if is_slow:
                 extra: dict[str, Any] = {
@@ -237,25 +239,27 @@ class QueryObserver:
 
     # -- Pool event handlers -------------------------------------------------
 
+    # Pool event handlers — lock-free single integer increments.
+    # Under CPython's GIL, `x += 1` on an instance attribute is safe for
+    # approximate counters where exact accuracy is not required.
+    # If PEP 703 (free-threaded Python) is adopted, these should be
+    # converted to threading.Lock or atomics.
+
     def _on_pool_checkout(
         self, _dbapi_conn: Any, _connection_record: Any, _connection_proxy: Any
     ) -> None:
-        with self._lock:
-            self._pool_checkouts += 1
+        self._pool_checkouts += 1
 
     def _on_pool_checkin(self, _dbapi_conn: Any, _connection_record: Any) -> None:
-        with self._lock:
-            self._pool_checkins += 1
+        self._pool_checkins += 1
 
     def _on_pool_connect(self, _dbapi_conn: Any, _connection_record: Any) -> None:
-        with self._lock:
-            self._pool_connects += 1
+        self._pool_connects += 1
 
     def _on_pool_invalidate(
         self, _dbapi_conn: Any, _connection_record: Any, _exception: Any
     ) -> None:
-        with self._lock:
-            self._pool_invalidations += 1
+        self._pool_invalidations += 1
 
     # -- Helpers -------------------------------------------------------------
 

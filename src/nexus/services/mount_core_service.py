@@ -33,7 +33,7 @@ from nexus.core.context_utils import get_user_identity, get_zone_id
 from nexus.services.permission_utils import check_permission
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
@@ -458,7 +458,7 @@ class MountCoreService:
         """
         try:
             from nexus.backends.service_map import ServiceMap
-            from nexus.skills.skill_generator import generate_skill_md
+            from nexus.services.protocols.skill_doc import generate_skill_md
 
             # Get service name from backend type
             service_name = ServiceMap.get_service_name(connector=backend_type)

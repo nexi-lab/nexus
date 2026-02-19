@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from nexus.core.permissions import OperationContext, Permission
+from nexus.contracts.types import OperationContext, Permission
 from nexus.storage.models import PlaybookModel
 
 

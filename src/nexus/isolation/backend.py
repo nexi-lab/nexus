@@ -25,7 +25,7 @@ from nexus.isolation.errors import (
 )
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ class IsolatedBackend(Backend):
         except IsolationError as exc:
             return HandlerStatusResponse(success=False, error_message=str(exc))
 
-    def disconnect(self, context: OperationContext | None = None) -> None:  # noqa: ARG002
+    def disconnect(self, _context: OperationContext | None = None) -> None:
         self._pool.shutdown()
 
     # ── Internal helpers ────────────────────────────────────────────────

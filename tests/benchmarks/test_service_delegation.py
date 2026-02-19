@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.permissions import OperationContext
 from nexus.services.gateway import NexusFSGateway
 
 # =============================================================================
@@ -186,8 +186,11 @@ class TestSyncDelegationOverhead:
     Measures pure Python call overhead for sync delegation.
     """
 
-    def test_skills_share_with_result_wrapping(self, benchmark, mock_nexus_fs, context):
-        """Benchmark skills_share: delegate + dict construction."""
+    def test_skills_share_via_brick_service(self, benchmark, mock_nexus_fs, context):
+        """Benchmark skills_share: brick service RPC method."""
+        mock_nexus_fs.skill_service.rpc_share = MagicMock(
+            return_value={"success": True, "tuple_id": "t-1"}
+        )
         benchmark(
             mock_nexus_fs.skills_share,
             "/skills/test.py",
@@ -195,12 +198,18 @@ class TestSyncDelegationOverhead:
             context,
         )
 
-    def test_skills_discover_with_list_wrapping(self, benchmark, mock_nexus_fs, context):
-        """Benchmark skills_discover: delegate + list comprehension."""
+    def test_skills_discover_via_brick_service(self, benchmark, mock_nexus_fs, context):
+        """Benchmark skills_discover: brick service RPC method."""
+        mock_nexus_fs.skill_service.rpc_discover = MagicMock(
+            return_value={"skills": [], "count": 0}
+        )
         benchmark(mock_nexus_fs.skills_discover, "all", context)
 
-    def test_skills_get_prompt_context(self, benchmark, mock_nexus_fs, context):
-        """Benchmark skills_get_prompt_context: delegate + to_dict."""
+    def test_skills_get_prompt_context_via_brick_service(self, benchmark, mock_nexus_fs, context):
+        """Benchmark skills_get_prompt_context: brick service RPC method."""
+        mock_nexus_fs.skill_service.rpc_get_prompt_context = MagicMock(
+            return_value={"skills": [], "count": 0}
+        )
         benchmark(mock_nexus_fs.skills_get_prompt_context, 50, context)
 
     def test_search_list_delegation(self, benchmark, mock_nexus_fs, context):

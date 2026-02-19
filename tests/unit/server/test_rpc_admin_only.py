@@ -129,7 +129,7 @@ class TestDispatchAdminEnforcement:
     @pytest.mark.asyncio
     async def test_non_admin_caller_rejected(self, _mock_app_state):
         """Non-admin callers get NexusPermissionError for admin_only methods."""
-        from nexus.core.exceptions import NexusPermissionError
+        from nexus.contracts.exceptions import NexusPermissionError
         from nexus.server.fastapi_server import _dispatch_method
 
         non_admin_context = FakeContext(is_admin=False)
@@ -148,7 +148,7 @@ class TestDispatchAdminEnforcement:
     @pytest.mark.asyncio
     async def test_none_context_rejected(self, _mock_app_state):
         """None context is rejected for admin_only methods."""
-        from nexus.core.exceptions import NexusPermissionError
+        from nexus.contracts.exceptions import NexusPermissionError
         from nexus.server.fastapi_server import _dispatch_method
 
         params = type("Params", (), {})()

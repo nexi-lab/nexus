@@ -157,7 +157,7 @@ class EnrichmentPipeline:
     def _resolve_coreferences(self, text: str, context: str | None) -> str:
         """Apply coreference resolution (#1027)."""
         try:
-            from nexus.core.coref_resolver import resolve_coreferences as resolve_coref
+            from nexus.services.memory.coref_resolver import resolve_coreferences as resolve_coref
 
             return resolve_coref(
                 text=text,
@@ -171,7 +171,7 @@ class EnrichmentPipeline:
     def _resolve_temporal(self, text: str, reference_time: Any) -> str:
         """Apply temporal expression resolution (#1027)."""
         try:
-            from nexus.core.temporal_resolver import resolve_temporal as resolve_temp
+            from nexus.services.memory.temporal_resolver import resolve_temporal as resolve_temp
 
             return resolve_temp(
                 text=text,
@@ -230,7 +230,7 @@ class EnrichmentPipeline:
     def _enrich_temporal(self, text: str, reference_time: Any, result: EnrichmentResult) -> None:
         """Extract temporal metadata (#1028)."""
         try:
-            from nexus.core.temporal_resolver import extract_temporal_metadata
+            from nexus.services.memory.temporal_resolver import extract_temporal_metadata
 
             temporal_meta = extract_temporal_metadata(text, reference_time=reference_time)
 

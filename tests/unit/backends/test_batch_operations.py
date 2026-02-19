@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.core.response import HandlerResponse
 
 
@@ -587,7 +587,7 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
 
     def _download_blob(self, blob_path, version_id=None) -> tuple[bytes, str | None]:
         if blob_path not in self.files:
-            from nexus.core.exceptions import NexusFileNotFoundError
+            from nexus.contracts.exceptions import NexusFileNotFoundError
 
             raise NexusFileNotFoundError(blob_path)
         return self.files[blob_path], "v1"

@@ -31,7 +31,7 @@ async def startup_permissions(app: FastAPI) -> list[asyncio.Task]:
     bg_tasks: list[asyncio.Task] = []
 
     await _startup_async_rebac(app)
-    await _startup_cache_factory(app)
+    await _startup_cache_brick(app)
     bg_tasks.extend(_startup_tiger_cache(app))
     bg_tasks.extend(_startup_backfill(app))
     _startup_cache_warmup(app)
@@ -51,11 +51,24 @@ async def _startup_async_rebac(app: FastAPI) -> None:
         return
 
     try:
-        from nexus.rebac.async_manager import AsyncReBACManager, create_async_engine_from_url
+        from nexus.rebac.async_manager import AsyncReBACManager
 
-        engine = create_async_engine_from_url(app.state.database_url)
-        app.state.async_rebac_manager = AsyncReBACManager(engine)
-        logger.info("Async ReBAC manager initialized")
+        # Reuse the sync ReBACManager from NexusFS (avoids creating standalone engine)
+        sync_rebac = (
+            getattr(app.state.nexus_fs, "_rebac_manager", None) if app.state.nexus_fs else None
+        )
+        if sync_rebac:
+            app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
+            logger.info("Async ReBAC manager initialized (wrapping sync manager)")
+        else:
+            # Fallback: create fresh sync manager using RecordStore engine
+            from nexus.rebac.manager import ReBACManager
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            _store = SQLAlchemyRecordStore(db_url=app.state.database_url)
+            _sync_mgr = ReBACManager(engine=_store.engine)
+            app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
+            logger.info("Async ReBAC manager initialized (fresh sync manager via RecordStore)")
 
         # Issue #940: Initialize AsyncNexusFS with permission enforcement
         try:
@@ -123,40 +136,56 @@ async def _startup_async_rebac(app: FastAPI) -> None:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
 
 
-async def _startup_cache_factory(app: FastAPI) -> None:
-    """Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)."""
+async def _startup_cache_brick(app: FastAPI) -> None:
+    """Initialize cache for Dragonfly/Redis or NullCacheStore fallback (Issue #1075, #1251, #1524).
+
+    Prefers CacheBrick from BrickServices (injected by factory). Falls back to
+    creating a CacheBrick from environment settings if not available.
+    """
     try:
-        from nexus.cache.factory import CacheFactory
-        from nexus.cache.settings import CacheSettings
+        # Prefer CacheBrick already in BrickServices (set by create_nexus_fs → lifespan)
+        cache_brick = getattr(app.state, "cache_brick", None)
+        if cache_brick is None:
+            cache_brick = getattr(
+                getattr(getattr(app.state, "nexus_fs", None), "_brick_services", None),
+                "cache_brick",
+                None,
+            )
 
-        cache_settings = CacheSettings.from_env()
+        if cache_brick is None:
+            # Fallback: create CacheBrick from env settings (standalone mode)
+            from nexus.bricks.cache.brick import CacheBrick
+            from nexus.bricks.cache.settings import CacheSettings
 
-        # Pass RecordStore for SQL-backed cache fallback
-        record_store = getattr(app.state.nexus_fs, "_record_store", None)
+            cache_settings = CacheSettings.from_env()
+            record_store = getattr(app.state.nexus_fs, "_record_store", None)
+            cache_store = getattr(app.state.nexus_fs, "_cache_store", None)
+            cache_brick = CacheBrick(
+                cache_store=cache_store,
+                settings=cache_settings,
+                record_store=record_store,
+            )
 
-        cache_factory = CacheFactory(cache_settings, record_store=record_store)
-        await cache_factory.initialize()
-        app.state.cache_factory = cache_factory
-        logger.info(
-            f"Cache factory initialized with {app.state.cache_factory.backend_name} backend"
-        )
+        await cache_brick.start()
+        app.state.cache_brick = cache_brick
+        logger.info("CacheBrick initialized with %s backend", cache_brick.backend_name)
 
         # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
-        if app.state.cache_factory.has_cache_store:
+        if cache_brick.has_cache_store:
             tiger_cache = getattr(
                 getattr(app.state.nexus_fs, "_rebac_manager", None),
                 "_tiger_cache",
                 None,
             )
             if tiger_cache:
-                dragonfly_tiger = app.state.cache_factory.get_tiger_cache()
+                dragonfly_tiger = cache_brick.get_tiger_cache()
                 tiger_cache.set_dragonfly_cache(dragonfly_tiger)
                 logger.info(
                     "[TIGER] Dragonfly L2 cache wired up - "
-                    "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
+                    "L1 (memory) -> L2 (CacheBrick) -> L3 (PostgreSQL)"
                 )
     except Exception as e:
-        logger.warning("Failed to initialize cache factory: %s", e, exc_info=True)
+        logger.warning("Failed to initialize cache: %s", e, exc_info=True)
 
 
 def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:

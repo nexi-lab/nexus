@@ -1,3 +1,4 @@
+# Nexus AI Filesystem
 [project]
 name = "nexus-ai-fs"
 version = "0.7.2.dev0"
@@ -128,6 +129,8 @@ dependencies = [
     "structlog>=24.4.0",
     # Governance graphs: collusion detection, ring detection (Issue #1359)
     "networkx>=3.2",
+    # Governance: sparse matrices for EigenTrust (Issue #2129)
+    "scipy>=1.11.0",
 ]
 
 [project.optional-dependencies]
@@ -141,6 +144,11 @@ compression = [
     # zstd compression for CompressedStorage wrapper (Issue #1705)
     # Python 3.14+ has native compression.zstd; this is the fallback for 3.12/3.13
     "zstandard>=0.22.0",
+]
+
+monitoring = [
+    # System resource monitoring for agent eviction (Issue #2170)
+    "psutil>=5.9",
 ]
 
 mobile = [
@@ -738,6 +746,8 @@ ignore = [
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
 "src/nexus/core/distributed_lock.py" = ["ARG002"]  # Interface method signature
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
+"src/nexus/skills/__init__.py" = ["E402", "ARG002"]  # PEP 451 finder: import order + unused PEP 451 signature params
+"src/nexus/bricks/skills/testing.py" = ["ARG002"]  # Protocol stub implementations — unused args by design
 "src/nexus/raft/transport_pb2_grpc.py" = ["ARG002"]  # Auto-generated gRPC stubs
 "src/nexus/raft/client.py" = ["SIM105"]  # datetime parsing with fallback
 "src/nexus/storage/raft_metadata_store.py" = ["ARG002", "SIM105", "SIM108", "SIM102"]  # Interface + datetime parsing + style

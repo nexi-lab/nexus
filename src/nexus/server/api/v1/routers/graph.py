@@ -18,7 +18,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from nexus.server.api.v1.dependencies import get_async_read_session_factory, get_nexus_fs
+from nexus.constants import ROOT_ZONE_ID
+from nexus.server.api.v1.dependencies import (
+    get_async_read_session_factory,
+    get_nexus_fs,
+    get_record_store,
+)
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -32,7 +37,9 @@ router = APIRouter(tags=["graph"])
 
 
 @asynccontextmanager
-async def _graph_session(async_session_factory: Any, zone_id: str) -> AsyncIterator[Any]:
+async def _graph_session(
+    record_store: Any, async_session_factory: Any, zone_id: str
+) -> AsyncIterator[Any]:
     """Create a GraphStore from the RecordStoreABC async session factory.
 
     Uses the shared async_session_factory from RecordStoreABC rather than
@@ -44,12 +51,12 @@ async def _graph_session(async_session_factory: Any, zone_id: str) -> AsyncItera
     from nexus.search.graph_store import GraphStore
 
     async with async_session_factory() as session:
-        yield GraphStore(session, zone_id=zone_id)
+        yield GraphStore(record_store, session, zone_id=zone_id)
 
 
 def _zone_id_from(nexus_fs: Any) -> str:
     """Extract zone_id from a NexusFS instance, defaulting to ``"root"``."""
-    return getattr(nexus_fs, "zone_id", None) or "root"
+    return getattr(nexus_fs, "zone_id", None) or ROOT_ZONE_ID
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +69,7 @@ async def get_graph_entity(
     entity_id: str,
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(get_nexus_fs),
+    record_store: Any = Depends(get_record_store),
     async_sf: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Get an entity by ID from the knowledge graph.
@@ -74,7 +82,7 @@ async def get_graph_entity(
     """
     try:
         zone_id = _zone_id_from(nexus_fs)
-        async with _graph_session(async_sf, zone_id) as graph_store:
+        async with _graph_session(record_store, async_sf, zone_id) as graph_store:
             entity = await graph_store.get_entity(entity_id)
             return {"entity": entity.to_dict() if entity else None}
     except Exception as e:
@@ -89,6 +97,7 @@ async def get_graph_neighbors(
     direction: str = Query("both", description="Direction: outgoing, incoming, both"),
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(get_nexus_fs),
+    record_store: Any = Depends(get_record_store),
     async_sf: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Get N-hop neighbors of an entity.
@@ -103,7 +112,7 @@ async def get_graph_neighbors(
     """
     try:
         zone_id = _zone_id_from(nexus_fs)
-        async with _graph_session(async_sf, zone_id) as graph_store:
+        async with _graph_session(record_store, async_sf, zone_id) as graph_store:
             neighbors = await graph_store.get_neighbors(entity_id, hops=hops, direction=direction)
             return {
                 "neighbors": [
@@ -125,6 +134,7 @@ async def get_graph_subgraph(
     request: Request,
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(get_nexus_fs),
+    record_store: Any = Depends(get_record_store),
     async_sf: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Extract a subgraph for GraphRAG context building.
@@ -144,7 +154,7 @@ async def get_graph_subgraph(
         max_hops = body.get("max_hops", 2)
 
         zone_id = _zone_id_from(nexus_fs)
-        async with _graph_session(async_sf, zone_id) as graph_store:
+        async with _graph_session(record_store, async_sf, zone_id) as graph_store:
             subgraph = await graph_store.get_subgraph(entity_ids, max_hops=max_hops)
             result: dict[str, Any] = subgraph.to_dict()
             return result
@@ -160,6 +170,7 @@ async def search_graph_entities(
     fuzzy: bool = Query(False, description="Search in aliases as well"),
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(get_nexus_fs),
+    record_store: Any = Depends(get_record_store),
     async_sf: Any = Depends(get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Search for entities by name.
@@ -174,7 +185,7 @@ async def search_graph_entities(
     """
     try:
         zone_id = _zone_id_from(nexus_fs)
-        async with _graph_session(async_sf, zone_id) as graph_store:
+        async with _graph_session(record_store, async_sf, zone_id) as graph_store:
             entity = await graph_store.find_entity(name=name, entity_type=entity_type, fuzzy=fuzzy)
             return {"entity": entity.to_dict() if entity else None}
     except Exception as e:

@@ -4,7 +4,7 @@ from typing import Protocol, runtime_checkable
 
 import pytest
 
-from nexus.core.registry import BrickInfo, BrickRegistry
+from nexus.lib.registry import BrickInfo, BrickRegistry
 
 
 @runtime_checkable

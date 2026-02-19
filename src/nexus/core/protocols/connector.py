@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from nexus.backends.backend import FileInfo, HandlerStatusResponse
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.core.response import HandlerResponse
 
 

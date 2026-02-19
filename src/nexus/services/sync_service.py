@@ -25,17 +25,18 @@ import re
 import threading
 from collections import deque
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import SyncContext, SyncResult
 from nexus.core.context_utils import get_zone_id
 from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
 from nexus.services.permission_utils import check_permission
 
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
@@ -49,55 +50,6 @@ def _belongs_to_other_mount(path: str, sorted_mounts: list[str]) -> bool:
         if path == candidate or path.startswith(candidate + "/"):
             return True
     return False
-
-
-# Type alias for progress callback: (files_scanned: int, current_path: str) -> None
-ProgressCallback = Callable[[int, str], None]
-
-
-@dataclass
-class SyncContext:
-    """Context object for sync_mount operations.
-
-    Groups all parameters needed for syncing a mount to reduce parameter passing.
-    """
-
-    mount_point: str | None
-    path: str | None = None
-    recursive: bool = True
-    dry_run: bool = False
-    sync_content: bool = True
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    generate_embeddings: bool = False
-    context: OperationContext | None = None
-    progress_callback: ProgressCallback | None = None
-    # Issue #1127: Delta sync support
-    full_sync: bool = False  # Force full scan, bypassing delta checks
-
-
-@dataclass
-class SyncResult:
-    """Result of a sync operation."""
-
-    files_scanned: int = 0
-    files_created: int = 0
-    files_updated: int = 0
-    files_deleted: int = 0
-    # Issue #1127: Delta sync metrics
-    files_skipped: int = 0  # Files skipped due to no changes (delta sync)
-    cache_synced: int = 0
-    cache_bytes: int = 0
-    cache_skipped: int = 0
-    embeddings_generated: int = 0
-    errors: list[str] = field(default_factory=list)
-    # For sync_all_mounts
-    mounts_synced: int = 0
-    mounts_skipped: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return asdict(self)
 
 
 class SyncService:
@@ -122,7 +74,9 @@ class SyncService:
         """
         self._gw = gateway
         # Issue #1127: Initialize change log store for delta sync
-        self._change_log = ChangeLogStore(gateway.session_factory)
+        self._change_log = ChangeLogStore(
+            gateway.session_factory, is_postgresql=gateway.is_postgresql
+        )
         # Issue #1127: Per-mount sync locks to prevent concurrent races
         self._mount_locks: dict[str, threading.Lock] = {}
         self._lock_guard = threading.Lock()
@@ -387,7 +341,7 @@ class SyncService:
         if not ctx.full_sync and hasattr(backend, "get_file_info"):
             cached_entries = self._change_log.get_change_logs_batch(
                 backend_name=backend.name,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
                 path_prefix=ctx.mount_point or "",
             )
             if cached_entries:
@@ -581,7 +535,7 @@ class SyncService:
                         cached = cached_entries.get(virtual_path)
                     else:
                         cached = self._change_log.get_change_log(
-                            virtual_path, backend.name, zone_id or "root"
+                            virtual_path, backend.name, zone_id or ROOT_ZONE_ID
                         )
                     if cached and self._file_unchanged(file_info, cached):
                         result.files_skipped += 1
@@ -648,7 +602,7 @@ class SyncService:
                         pending_upserts,
                         virtual_path,
                         backend.name,
-                        zone_id or "root",
+                        zone_id or ROOT_ZONE_ID,
                         file_info,
                     )
 
@@ -662,7 +616,7 @@ class SyncService:
                     pending_upserts,
                     virtual_path,
                     backend.name,
-                    zone_id or "root",
+                    zone_id or ROOT_ZONE_ID,
                     file_info,
                 )
 
@@ -898,7 +852,7 @@ class SyncService:
             # Issue #1127: Batch-delete stale change log entries (single DB session)
             if paths_to_delete:
                 self._change_log.delete_change_logs_batch(
-                    paths_to_delete, backend.name, zone_id or "root"
+                    paths_to_delete, backend.name, zone_id or ROOT_ZONE_ID
                 )
 
         except Exception as e:
@@ -1130,7 +1084,7 @@ class SyncService:
         """
         try:
             if hasattr(backend, "get_content_size"):
-                from nexus.core.permissions import OperationContext
+                from nexus.contracts.types import OperationContext
 
                 size_context = OperationContext(
                     user_id="system",

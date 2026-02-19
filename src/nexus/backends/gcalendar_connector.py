@@ -57,7 +57,7 @@ from nexus.connectors.calendar.schemas import (
     DeleteEventSchema,
     UpdateEventSchema,
 )
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, timed_response
 
 # Suppress annoying googleapiclient discovery cache warnings
@@ -66,7 +66,7 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,22 @@ class GoogleCalendarConnectorBackend(
     # SkillDocMixin config
     SKILL_NAME = "gcalendar"
     SKILL_DIR = ".skill"  # Will be at <mount_path>/.skill/
+
+    # Domain-specific examples for SKILL.md generation
+    NESTED_EXAMPLES: dict[str, list[str]] = {
+        "start": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
+        "end": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
+        "attendees": ["- email: attendee@example.com"],
+    }
+    FIELD_EXAMPLES: dict[str, str] = {
+        "summary": '"Meeting Title"',
+        "description": '"Event description"',
+        "location": '"Conference Room A"',
+        "visibility": "default  # default, public, private, confidential",
+        "colorId": '"1"  # 1-11',
+        "recurrence": '["RRULE:FREQ=WEEKLY;BYDAY=MO"]',
+        "send_notifications": "true",
+    }
 
     # Example YAML files for agents
     EXAMPLES = {
@@ -242,10 +258,14 @@ send_notifications: true
             For single-user scenarios (demos), set user_email explicitly.
             For multi-user production, leave user_email=None to auto-detect from context.
         """
+        super().__init__()
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
         self.session_factory = session_factory
         self.max_events_per_calendar = max_events_per_calendar
         self.metadata_store = metadata_store
+
+        # Initialize CheckpointMixin state (MRO doesn't call CheckpointMixin.__init__)
+        self._checkpoints: dict[str, Any] = {}
 
         # Register OAuth provider
         self._register_oauth_provider()

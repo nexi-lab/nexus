@@ -14,6 +14,8 @@ from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -270,7 +272,7 @@ async def get_operation_logger(
         _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
     )
     session = session_factory()
-    zone_id = context.zone_id or "root"
+    zone_id = context.zone_id or ROOT_ZONE_ID
 
     return OperationLogger(session=session), zone_id
 
@@ -300,7 +302,7 @@ async def get_hierarchy_manager(
     return HierarchicalMemoryManager(
         consolidation_engine=consolidation_engine,
         session=session,
-        zone_id=context.zone_id or "root",
+        zone_id=context.zone_id or ROOT_ZONE_ID,
     )
 
 
@@ -316,7 +318,7 @@ async def get_exchange_audit_logger(
     from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 
     context = _get_operation_context(auth_result)
-    zone_id = context.zone_id or "root"
+    zone_id = context.zone_id or ROOT_ZONE_ID
 
     _record_store = getattr(nexus_fs, "_record_store", None)
     session_factory = (
@@ -342,8 +344,8 @@ async def get_reputation_context(
     Returns:
         Tuple of (ReputationService, DisputeService, auth_context dict).
     """
-    from nexus.services.reputation.dispute_service import DisputeService
-    from nexus.services.reputation.reputation_service import ReputationService
+    from nexus.bricks.reputation.dispute_service import DisputeService
+    from nexus.bricks.reputation.reputation_service import ReputationService
 
     _record_store = getattr(nexus_fs, "_record_store", None)
     session_factory = (

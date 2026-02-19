@@ -32,7 +32,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.agents.agent_record import AgentState
+from nexus.contracts.agent_types import AgentState
 from nexus.services.agents.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,

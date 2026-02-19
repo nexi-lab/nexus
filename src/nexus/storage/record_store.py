@@ -92,6 +92,16 @@ class RecordStoreABC(ABC):
             "Override this property to enable async database access."
         )
 
+    @property
+    def async_engine(self) -> Any:
+        """Async SQLAlchemy engine, or None if async is not supported.
+
+        Concrete drivers that lazily create an async engine (e.g.
+        SQLAlchemyRecordStore) should override this property.
+        Used by cache brick and other consumers that need non-blocking I/O.
+        """
+        return None
+
     # -- Read replica properties (Issue #725) --
 
     @property
@@ -145,6 +155,8 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         read_replica_url: str | None = None,
         read_replica_creator: Any | None = None,
         async_read_replica_creator: Any | None = None,
+        pool_size: int | None = None,
+        max_overflow: int | None = None,
     ):
         """Initialize SQLAlchemy record store.
 
@@ -166,6 +178,10 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                                 creation (e.g. Cloud SQL read instance).
             async_read_replica_creator: Optional callable for custom async read replica
                                       connection creation.
+            pool_size: Override default pool size from ProfileTuning.storage.db_pool_size.
+                      When None, uses _build_pool_kwargs defaults (20 primary, 10 with replica).
+            max_overflow: Override default max overflow from ProfileTuning.storage.db_max_overflow.
+                         When None, uses _build_pool_kwargs defaults (30 primary, 10 with replica).
         """
         from sqlalchemy import create_engine, event
         from sqlalchemy.orm import sessionmaker
@@ -189,12 +205,18 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         if not self._is_postgresql:
             engine_kwargs["connect_args"] = {"check_same_thread": False}
         else:
+            _default_pool = (
+                pool_size if pool_size is not None else (10 if self._has_read_replica else 20)
+            )
+            _default_overflow = (
+                max_overflow if max_overflow is not None else (10 if self._has_read_replica else 30)
+            )
             engine_kwargs.update(
                 self._build_pool_kwargs(
                     prefix="NEXUS_DB",
                     is_async=False,
-                    default_pool_size=10 if self._has_read_replica else 20,
-                    default_max_overflow=10 if self._has_read_replica else 30,
+                    default_pool_size=_default_pool,
+                    default_max_overflow=_default_overflow,
                 )
             )
 
@@ -333,7 +355,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             return db_url
 
         # Check environment variables
-        env_url = os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+        from nexus.lib.env import get_database_url
+
+        env_url = get_database_url()
         if env_url:
             return env_url
 
@@ -413,6 +437,15 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     )
 
         return self._async_session_factory_instance
+
+    @property
+    def async_engine(self) -> Any:
+        """Async SQLAlchemy engine (lazily created on first async_session_factory access).
+
+        Returns None if async_session_factory has not been accessed yet.
+        Accessing async_session_factory triggers lazy creation of this engine.
+        """
+        return self._async_engine
 
     # -- Read replica properties (Issue #725) --
 

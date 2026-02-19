@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.config import PermissionConfig
-from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -279,7 +279,7 @@ class TestTimeTravelDebug:
 
     def test_time_travel_with_agent_id(self, nx, record_store):
         """Test time-travel with agent-specific operations using context parameter."""
-        from nexus.core.types import OperationContext
+        from nexus.contracts.types import OperationContext
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
 

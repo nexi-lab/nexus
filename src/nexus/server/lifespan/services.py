@@ -53,6 +53,15 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
+    # Issue #625: Stop workflow dispatch consumer
+    wds = getattr(app.state.nexus_fs, "_workflow_dispatch", None) if app.state.nexus_fs else None
+    if wds is not None:
+        try:
+            await wds.stop()
+            logger.info("Workflow dispatch service stopped")
+        except Exception as e:
+            logger.warning("Error stopping workflow dispatch service: %s", e, exc_info=True)
+
     # Stop Task Queue runner (Issue #574)
     task_runner = getattr(app.state, "task_runner", None)
     if task_runner:
@@ -556,3 +565,12 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
 
     # Expose on app.state so routers can access without reaching into NexusFS
     app.state.workflow_engine = engine
+
+    # Issue #625: Start workflow dispatch consumer (DT_PIPE → workflow engine)
+    wds = getattr(app.state.nexus_fs, "_workflow_dispatch", None)
+    if wds is not None:
+        try:
+            await wds.start()
+            logger.info("Workflow dispatch service started")
+        except Exception as e:
+            logger.warning("Workflow dispatch service start failed (non-fatal): %s", e)

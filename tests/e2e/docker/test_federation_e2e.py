@@ -27,9 +27,9 @@ import uuid
 import httpx
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.metadata import FileMetadata
 from nexus.raft.client import RaftClient
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # All tests share one Docker cluster — run sequentially in a single xdist worker.
 pytestmark = [pytest.mark.xdist_group("federation-e2e")]

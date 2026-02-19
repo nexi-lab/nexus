@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from nexus.contracts.exceptions import ParserError
-from nexus.contracts.registry import BaseRegistry
+from nexus.lib.registry import BaseRegistry
 from nexus.parsers.base import Parser
 
 logger = logging.getLogger(__name__)

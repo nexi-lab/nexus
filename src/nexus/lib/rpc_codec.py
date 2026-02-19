@@ -1,7 +1,7 @@
 """RPC message codec — encode/decode JSON-RPC payloads.
 
 Tier-neutral serialization utilities used by server, proxy, remote, and
-service layers.  Lives in ``nexus.contracts`` because it has **zero** kernel
+service layers.  Lives in ``nexus.lib`` because it has **zero** kernel
 dependencies (only stdlib + optional orjson).
 
 Extracted from server.protocol to avoid cross-layer imports

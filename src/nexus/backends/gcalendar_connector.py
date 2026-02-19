@@ -247,6 +247,9 @@ send_notifications: true
         self.max_events_per_calendar = max_events_per_calendar
         self.metadata_store = metadata_store
 
+        # Initialize CheckpointMixin state (MRO doesn't call CheckpointMixin.__init__)
+        self._checkpoints: dict[str, Any] = {}
+
         # Register OAuth provider
         self._register_oauth_provider()
 

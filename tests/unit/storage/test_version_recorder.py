@@ -240,7 +240,7 @@ class TestRecordCreate:
             select(FilePathModel).where(FilePathModel.virtual_path == "/test/file.txt")
         ).scalar_one()
 
-        assert fp.zone_id == "root"
+        assert fp.zone_id == "default"
 
 
 # ---------------------------------------------------------------------------

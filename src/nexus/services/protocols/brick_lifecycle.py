@@ -32,6 +32,7 @@ PRE_UNMOUNT: str = "pre_unmount"
 POST_UNMOUNT: str = "post_unmount"
 BRICK_STARTED: str = "brick_started"
 BRICK_STOPPED: str = "brick_stopped"
+BRICK_RESET: str = "brick_reset"
 
 
 # ---------------------------------------------------------------------------

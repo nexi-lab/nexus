@@ -194,6 +194,9 @@ class SystemServices:
     # Brick lifecycle (Issue #1704)
     brick_lifecycle_manager: Any = None
 
+    # Brick reconciler — self-healing with backoff (Issue #2059)
+    brick_reconciler: Any = None
+
     # Event delivery (Issue #1241)
     delivery_worker: Any = None
 

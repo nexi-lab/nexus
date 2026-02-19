@@ -23,9 +23,10 @@ References:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from graphlib import CycleError, TopologicalSorter
 from typing import Any
@@ -144,6 +145,8 @@ _TRANSITIONS: dict[tuple[BrickState, str], BrickState] = {
     (BrickState.ACTIVE, "failed"): BrickState.FAILED,
     (BrickState.STOPPING, "stopped"): BrickState.UNREGISTERED,
     (BrickState.STOPPING, "failed"): BrickState.FAILED,
+    # Recovery path: reconciler resets a failed brick for re-mount (Issue #2059)
+    (BrickState.FAILED, "reset"): BrickState.REGISTERED,
 }
 
 
@@ -222,13 +225,19 @@ class BrickLifecycleManager:
         await manager.unmount_all() # Reverse-DAG-ordered shutdown
     """
 
+    # Type alias for the state-change callback (Issue #2059).
+    # Signature: (brick_name, old_state, new_state) → None
+    StateChangeCallback = Callable[[str, BrickState, BrickState], None]
+
     def __init__(
         self,
         *,
         hook_engine: HookEngineProtocol | None = None,
+        on_state_change: StateChangeCallback | None = None,
     ) -> None:
         self._bricks: dict[str, _BrickEntry] = {}
         self._hook_engine = hook_engine
+        self.on_state_change = on_state_change
 
     # ------------------------------------------------------------------
     # Registration (synchronous, boot-time)
@@ -298,7 +307,20 @@ class BrickLifecycleManager:
 
         old_state = entry.state
         entry.state = new_state
+
+        # Clear error on reset (recovery path)
+        if event == "reset":
+            entry.error = None
+
         logger.debug("[LIFECYCLE] %s: %s + %s → %s", name, old_state.name, event, new_state.name)
+
+        # Fire state-change callback for reconciler (Issue #2059)
+        if self.on_state_change is not None:
+            try:
+                self.on_state_change(name, old_state, new_state)
+            except Exception:
+                logger.warning("[LIFECYCLE] on_state_change callback failed for %s", name)
+
         return new_state
 
     def _force_state(self, name: str, state: BrickState) -> None:
@@ -391,6 +413,65 @@ class BrickLifecycleManager:
             failed=failed,
             bricks=statuses,
         )
+
+    def get_active_brick_names(self) -> list[str]:
+        """Return names of all ACTIVE bricks (lightweight, no snapshot allocation)."""
+        return [name for name, entry in self._bricks.items() if entry.state == BrickState.ACTIVE]
+
+    # ------------------------------------------------------------------
+    # Health checking & recovery (Issue #2059)
+    # ------------------------------------------------------------------
+
+    async def check_health(self, name: str, *, timeout: float = 5.0) -> bool:
+        """Invoke ``health_check()`` on a single ACTIVE brick.
+
+        If health_check returns False or raises, transitions the brick to
+        FAILED and returns False.  Stateless bricks (no health_check method)
+        are always considered healthy.
+
+        Returns True if the brick is healthy, False otherwise.
+        Silently returns True for bricks not in ACTIVE state (no-op).
+        """
+        entry = self._bricks.get(name)
+        if entry is None:
+            return True
+
+        is_lifecycle = isinstance(entry.instance, BrickLifecycleProtocol)
+        if not is_lifecycle:
+            return True  # Stateless bricks are always healthy
+
+        async with entry.lock:
+            # Re-check state inside lock to avoid TOCTOU race (CRITICAL-2)
+            if entry.state != BrickState.ACTIVE:
+                return True
+
+            try:
+                healthy = await asyncio.wait_for(entry.instance.health_check(), timeout=timeout)
+            except Exception as exc:
+                entry.error = f"health_check raised: {exc}"
+                self._transition(name, "failed")
+                logger.warning("[LIFECYCLE] Brick %r FAILED health check: %s", name, entry.error)
+                return False
+
+            if not healthy:
+                entry.error = "health_check returned False"
+                self._transition(name, "failed")
+                logger.warning("[LIFECYCLE] Brick %r FAILED health check: unhealthy", name)
+                return False
+
+        return True
+
+    def reset(self, name: str) -> None:
+        """Reset a FAILED brick to REGISTERED state for re-mount.
+
+        This is the recovery path used by the reconciler.
+
+        Raises:
+            KeyError: If brick not found.
+            InvalidTransitionError: If brick is not in FAILED state.
+        """
+        self._transition(name, "reset")
+        logger.info("[LIFECYCLE] Brick %r reset (FAILED → REGISTERED)", name)
 
     # ------------------------------------------------------------------
     # DAG ordering
@@ -640,14 +721,22 @@ class BrickLifecycleManager:
             await self.mount(name, timeout=timeout)
         except Exception as exc:
             logger.warning("[LIFECYCLE] Brick %r failed during mount_all: %s", name, exc)
-            # Ensure the brick is in FAILED state
+            # Ensure the brick is in FAILED state (use _transition for callback)
             entry = self._bricks.get(name)
             if entry is not None and entry.state not in (
                 BrickState.FAILED,
                 BrickState.UNREGISTERED,
             ):
-                entry.state = BrickState.FAILED
                 entry.error = str(exc)
+                try:
+                    self._transition(name, "failed")
+                except InvalidTransitionError:
+                    # Fallback: force state and fire callback manually
+                    old_state = entry.state
+                    entry.state = BrickState.FAILED
+                    if self.on_state_change is not None:
+                        with contextlib.suppress(Exception):
+                            self.on_state_change(name, old_state, BrickState.FAILED)
 
     async def unmount_all(self) -> BrickHealthReport:
         """Unmount all ACTIVE bricks in reverse-DAG order.
@@ -676,10 +765,19 @@ class BrickLifecycleManager:
             await self.unmount(name)
         except Exception as exc:
             logger.warning("[LIFECYCLE] Brick %r failed during unmount_all: %s", name, exc)
+            # Ensure the brick is in FAILED state (use _transition for callback)
             entry = self._bricks.get(name)
             if entry is not None and entry.state not in (
                 BrickState.FAILED,
                 BrickState.UNREGISTERED,
             ):
-                entry.state = BrickState.FAILED
                 entry.error = str(exc)
+                try:
+                    self._transition(name, "failed")
+                except InvalidTransitionError:
+                    # Fallback: force state and fire callback manually
+                    old_state = entry.state
+                    entry.state = BrickState.FAILED
+                    if self.on_state_change is not None:
+                        with contextlib.suppress(Exception):
+                            self.on_state_change(name, old_state, BrickState.FAILED)

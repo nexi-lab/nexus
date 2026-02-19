@@ -52,13 +52,12 @@ except ImportError:
 
 # Import LocalDiskCache for L2 caching (Issue #1072)
 try:
-    from nexus.storage.local_disk_cache import LocalDiskCache, get_local_disk_cache
+    from nexus.storage.local_disk_cache import LocalDiskCache
 
     HAS_LOCAL_DISK_CACHE = True
 except ImportError:
     HAS_LOCAL_DISK_CACHE = False
     LocalDiskCache = None  # type: ignore[misc,assignment]
-    get_local_disk_cache = None  # type: ignore[assignment]
 
 # Import event system (Issue #1115)
 try:
@@ -138,12 +137,14 @@ class NexusFUSEOperations(Operations):
         # Initialize L2 local disk cache (Issue #1072)
         local_disk_cache = None
         enable_local_disk_cache = cache_config.get("enable_local_disk_cache", True)
-        if enable_local_disk_cache and HAS_LOCAL_DISK_CACHE and get_local_disk_cache is not None:
+        if enable_local_disk_cache and HAS_LOCAL_DISK_CACHE and LocalDiskCache is not None:
             try:
-                local_disk_cache = get_local_disk_cache(
-                    cache_dir=cache_config.get("local_disk_cache_dir"),
-                    max_size_gb=cache_config.get("local_disk_cache_size_gb"),
-                )
+                ldc_kwargs: dict[str, Any] = {}
+                if cache_config.get("local_disk_cache_dir") is not None:
+                    ldc_kwargs["cache_dir"] = cache_config["local_disk_cache_dir"]
+                if cache_config.get("local_disk_cache_size_gb") is not None:
+                    ldc_kwargs["max_size_gb"] = cache_config["local_disk_cache_size_gb"]
+                local_disk_cache = LocalDiskCache(**ldc_kwargs)
                 logger.info("[FUSE] L2 LocalDiskCache enabled for faster reads")
             except Exception as e:
                 logger.warning(f"[FUSE] Failed to initialize LocalDiskCache: {e}")

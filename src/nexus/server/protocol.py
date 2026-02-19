@@ -33,7 +33,6 @@ from nexus.server.rpc_results import RebacCheckResult, RebacCreateResult  # noqa
 # Issue #1519, 1A: RPC types extracted to core/rpc_types.py so core/ modules
 # (rpc_transport, rpc_codec) can use them without importing from server/.
 # Re-exported here for backward compatibility.
-from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse  # noqa: F401
 
 # ============================================================
 # Merged METHOD_PARAMS (overrides take precedence over generated)

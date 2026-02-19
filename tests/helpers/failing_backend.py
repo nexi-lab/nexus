@@ -196,25 +196,19 @@ class FailingBackend(Backend):
         self._maybe_fail("is_directory")
         return self._inner.is_directory(path, context)
 
-    def list_dir(
-        self, path: str, context: OperationContext | None = None
-    ) -> list[str]:
+    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         self._maybe_fail("list_dir")
         return self._inner.list_dir(path, context)
 
     # === Connection Management ===
 
-    def connect(
-        self, context: OperationContext | None = None
-    ) -> HandlerStatusResponse:
+    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         return self._inner.connect(context)
 
     def disconnect(self, context: OperationContext | None = None) -> None:
         self._inner.disconnect(context)
 
-    def check_connection(
-        self, context: OperationContext | None = None
-    ) -> HandlerStatusResponse:
+    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         return self._inner.check_connection(context)
 
     # === Capability Delegation ===

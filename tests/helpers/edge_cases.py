@@ -49,10 +49,10 @@ EDGE_CONTENT: list[tuple[str, bytes]] = [
     ("single_newline", b"\n"),
     ("crlf", b"\r\n"),
     ("binary_ff", b"\xff" * 16),
-    ("mixed_encoding", "café ☕ naïve".encode("utf-8")),
+    ("mixed_encoding", "café ☕ naïve".encode()),
     ("large_single_line", b"x" * 65536),
     ("many_newlines", b"\n" * 1000),
-    ("bom_utf8", b"\xef\xbb\xbf" + "hello".encode("utf-8")),
+    ("bom_utf8", b"\xef\xbb\xbf" + b"hello"),
     ("bom_utf16", b"\xff\xfeh\x00e\x00l\x00l\x00o\x00"),
 ]
 

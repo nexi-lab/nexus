@@ -114,7 +114,9 @@ class FailingMetastore(MetastoreABC):
         self._maybe_fail("is_committed")
         return self._inner.is_committed(token)
 
-    def list_iter(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> Iterator[FileMetadata]:
+    def list_iter(
+        self, prefix: str = "", recursive: bool = True, **kwargs: Any
+    ) -> Iterator[FileMetadata]:
         self._maybe_fail("list_iter")
         return self._inner.list_iter(prefix, recursive, **kwargs)
 

@@ -107,9 +107,7 @@ class TestVersionServiceDelegation:
         mock_fs.version_service.diff_versions = AsyncMock(return_value={})
         asyncio.run(mock_fs.adiff_versions("/file.txt", 1, 2))
         # __getattr__ alias passes args through; defaults are on the service method
-        mock_fs.version_service.diff_versions.assert_called_once_with(
-            "/file.txt", 1, 2
-        )
+        mock_fs.version_service.diff_versions.assert_called_once_with("/file.txt", 1, 2)
 
 
 # =============================================================================
@@ -187,7 +185,9 @@ class TestSearchServiceDelegation:
         assert result == hits
         # __getattr__ pass-through: args forwarded as-is, service handles defaults
         mock_fs.search_service.semantic_search.assert_called_once_with(
-            "find errors", path="/logs", limit=5,
+            "find errors",
+            path="/logs",
+            limit=5,
         )
 
     def test_asemantic_search_index_delegates(self, mock_fs):
@@ -201,4 +201,3 @@ class TestSearchServiceDelegation:
 # =============================================================================
 # ShareLinkService Delegation (6 async methods)
 # =============================================================================
-

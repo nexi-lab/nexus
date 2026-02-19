@@ -37,9 +37,13 @@ def mock_fs():
     fs.rebac_service = MagicMock()
     fs.rebac_service.rebac_create_sync = MagicMock(return_value={"tuple_id": "t1"})
     fs.rebac_service.rebac_check_sync = MagicMock(return_value=True)
-    fs.rebac_service.rebac_list_tuples_sync = MagicMock(return_value=[
-        {"tuple_id": "t1"}, {"tuple_id": "t2"}, {"tuple_id": "t3"},
-    ])
+    fs.rebac_service.rebac_list_tuples_sync = MagicMock(
+        return_value=[
+            {"tuple_id": "t1"},
+            {"tuple_id": "t2"},
+            {"tuple_id": "t3"},
+        ]
+    )
     fs.rebac_service.rebac_delete_sync = MagicMock(return_value=True)
     fs._rebac_manager = MagicMock()
     fs._rebac_manager.rebac_delete = MagicMock()

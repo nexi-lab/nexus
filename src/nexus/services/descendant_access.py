@@ -128,9 +128,7 @@ class DescendantAccessChecker:
                 dir_path=path,
             )
             if cached_visible is not None:
-                logger.debug(
-                    f"has_access: DirVisCache HIT for {path} = {cached_visible}"
-                )
+                logger.debug(f"has_access: DirVisCache HIT for {path} = {cached_visible}")
                 return cached_visible
 
         # =============================================================
@@ -189,9 +187,7 @@ class DescendantAccessChecker:
                 permission=rebac_permission,
             )
             if bitmap_result is not None:
-                logger.debug(
-                    f"has_access: Tiger bitmap compute for {path} = {bitmap_result}"
-                )
+                logger.debug(f"has_access: Tiger bitmap compute for {path} = {bitmap_result}")
                 return bitmap_result
 
         # =============================================================
@@ -233,10 +229,7 @@ class DescendantAccessChecker:
 
         # 4. OPTIMIZATION (issue #380): Use bulk permission checking for descendants
         # Instead of checking each descendant individually (N queries), use rebac_check_bulk()
-        if (
-            self._rebac_manager is not None
-            and hasattr(self._rebac_manager, "rebac_check_bulk")
-        ):
+        if self._rebac_manager is not None and hasattr(self._rebac_manager, "rebac_check_bulk"):
             logger.debug(
                 f"has_access: Using bulk check for {len(all_descendants)} descendants of {path}"
             )
@@ -255,9 +248,7 @@ class DescendantAccessChecker:
                 # OPTIMIZATION 5: Early exit on first accessible descendant
                 for check in checks:
                     if results.get(check, False):
-                        logger.debug(
-                            f"has_access: Found accessible descendant {check[2][1]}"
-                        )
+                        logger.debug(f"has_access: Found accessible descendant {check[2][1]}")
                         # Cache positive result from slow path
                         if self._dir_visibility_cache is not None:
                             self._dir_visibility_cache.set_visible(
@@ -352,8 +343,7 @@ class DescendantAccessChecker:
 
         # Check if ReBAC bulk checking is available
         if not (
-            self._rebac_manager is not None
-            and hasattr(self._rebac_manager, "rebac_check_bulk")
+            self._rebac_manager is not None and hasattr(self._rebac_manager, "rebac_check_bulk")
         ):
             # Fallback to individual checks
             return {path: self.has_access(path, permission, context) for path in paths}

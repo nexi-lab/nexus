@@ -119,7 +119,7 @@ class NexusFSGateway:
         """
         result = self._fs.read(path, context=context)
         # Normalize to bytes or str
-        if isinstance(result, (bytes, str)):
+        if isinstance(result, bytes | str):
             return result
         # Handle dict results (parsed content) by returning empty bytes
         return b""

@@ -61,10 +61,12 @@ class TestWriteBatchHappyPath:
     def test_write_batch_deduplicates_content(self, nx):
         """Same content written to different paths should share the same hash."""
         content = b"identical content"
-        results = nx.write_batch([
-            ("/files/a.txt", content),
-            ("/files/b.txt", content),
-        ])
+        results = nx.write_batch(
+            [
+                ("/files/a.txt", content),
+                ("/files/b.txt", content),
+            ]
+        )
         assert results[0]["etag"] == results[1]["etag"]
 
 
@@ -86,10 +88,12 @@ class TestWriteBatchVersioning:
 
     def test_batch_overwrite_mixed_new_and_existing(self, nx):
         nx.write("/files/existing.txt", b"old")
-        results = nx.write_batch([
-            ("/files/existing.txt", b"updated"),
-            ("/files/new.txt", b"fresh"),
-        ])
+        results = nx.write_batch(
+            [
+                ("/files/existing.txt", b"updated"),
+                ("/files/new.txt", b"fresh"),
+            ]
+        )
         assert results[0]["version"] == 2  # existing file incremented
         assert results[1]["version"] == 1  # new file starts at 1
 
@@ -112,10 +116,12 @@ class TestWriteBatchWithFailingBackend:
         # First file write succeeds (call #1 = write_content)
         # Second file write fails (call #2 = write_content)
         with pytest.raises(BackendError):
-            nx.write_batch([
-                ("/files/a.txt", b"ok"),
-                ("/files/b.txt", b"fail"),
-            ])
+            nx.write_batch(
+                [
+                    ("/files/a.txt", b"ok"),
+                    ("/files/b.txt", b"fail"),
+                ]
+            )
 
 
 class TestWriteBatchContentEdgeCases:

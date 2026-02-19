@@ -53,9 +53,7 @@ class WorkspaceRPCService:
         ctx = parse_operation_context(context)
         return ctx
 
-    def _resolve_ids(
-        self, ctx: OperationContext
-    ) -> tuple[str, str | None, str | None]:
+    def _resolve_ids(self, ctx: OperationContext) -> tuple[str, str | None, str | None]:
         """Return (user_id, agent_id, zone_id) with fallback to defaults."""
         return (
             ctx.user_id or self._default_ctx.user_id,
@@ -65,9 +63,7 @@ class WorkspaceRPCService:
 
     def _require_workspace(self, path: str) -> None:
         if not self._wr.get_workspace(path):
-            raise ValueError(
-                f"Workspace not registered: {path}. Use register_workspace() first."
-            )
+            raise ValueError(f"Workspace not registered: {path}. Use register_workspace() first.")
 
     # ------------------------------------------------------------------
     # Workspace Snapshot Operations

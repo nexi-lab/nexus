@@ -275,8 +275,8 @@ class TestHookPipelineE2EDispatch:
         nx.write("/test.txt", b"v2")
 
         assert len(tracker.calls) == 2
-        assert tracker.calls[0].is_new_file is True   # first write = new file
-        assert tracker.calls[1].is_new_file is False   # second write = update
+        assert tracker.calls[0].is_new_file is True  # first write = new file
+        assert tracker.calls[1].is_new_file is False  # second write = update
 
     def test_delete_dispatches_post_delete_hook(self, tmp_path):
         nx = make_test_nexus(tmp_path)
@@ -314,10 +314,10 @@ class TestHookPipelineE2EDispatch:
         nx._hook_pipeline.register_delete_hook(delete_tracker)
         nx._hook_pipeline.register_rename_hook(rename_tracker)
 
-        nx.write("/a.txt", b"data")     # write hook fires
-        nx.read("/a.txt")               # read hook fires
-        nx.rename("/a.txt", "/b.txt")   # rename hook fires
-        nx.delete("/b.txt")             # delete hook fires
+        nx.write("/a.txt", b"data")  # write hook fires
+        nx.read("/a.txt")  # read hook fires
+        nx.rename("/a.txt", "/b.txt")  # rename hook fires
+        nx.delete("/b.txt")  # delete hook fires
 
         assert len(write_tracker.calls) == 1
         assert len(read_tracker.calls) == 1

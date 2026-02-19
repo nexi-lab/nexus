@@ -66,9 +66,6 @@ from nexus.storage.models.context_branch import ContextBranchModel as ContextBra
 from nexus.storage.models.dead_letter import DeadLetterModel as DeadLetterModel
 
 # Domain: Context Branching (Issue #1315)
-from nexus.storage.models.context_branch import ContextBranchModel as ContextBranchModel
-from nexus.storage.models.dead_letter import DeadLetterModel as DeadLetterModel
-
 # Issue #1356: Reputation & Trust models
 from nexus.storage.models.dispute import DisputeModel as DisputeModel
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel

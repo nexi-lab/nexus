@@ -236,14 +236,25 @@ class MetadataExportService:
 
                     if existing:
                         self._handle_collision(
-                            existing, imported_etag, metadata_dict,
-                            path, original_path, created_at, modified_at,
-                            options, result,
+                            existing,
+                            imported_etag,
+                            metadata_dict,
+                            path,
+                            original_path,
+                            created_at,
+                            modified_at,
+                            options,
+                            result,
                         )
                     else:
                         self._handle_new_entry(
-                            path, metadata_dict, imported_etag,
-                            created_at, modified_at, options, result,
+                            path,
+                            metadata_dict,
+                            imported_etag,
+                            created_at,
+                            modified_at,
+                            options,
+                            result,
                         )
 
                 except json.JSONDecodeError as e:
@@ -304,8 +315,16 @@ class MetadataExportService:
         }.get(options.conflict_mode, self._collision_skip)
 
         handler(
-            existing, existing_etag, imported_etag, metadata_dict,
-            path, original_path, created_at, modified_at, options, result,
+            existing,
+            existing_etag,
+            imported_etag,
+            metadata_dict,
+            path,
+            original_path,
+            created_at,
+            modified_at,
+            options,
+            result,
         )
 
     def _collision_skip(

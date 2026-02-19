@@ -664,7 +664,7 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
         found_parents = ttu.get("found_parents", [])
         if found_parents:
             for parent in found_parents:
-                if isinstance(parent, (list, tuple)) and len(parent) >= 2:
+                if isinstance(parent, list | tuple) and len(parent) >= 2:
                     parent_type, parent_id = parent[0], parent[1]
                     console.print(
                         f"{indent}   • {tupleset}([cyan]{obj}[/cyan]) = [cyan]{parent_type}:{parent_id}[/cyan]  [green]✓[/green]"

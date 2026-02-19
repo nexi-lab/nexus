@@ -25,13 +25,13 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.types import OperationContext
 from nexus.core.config import (
     DistributedConfig,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
 )
-from nexus.contracts.types import OperationContext
 
 pytestmark = [pytest.mark.e2e]
 

@@ -16,11 +16,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.rpc import rpc_expose
-from nexus.contracts.types import OperationContext, VFSOperations, parse_operation_context
+from nexus.contracts.types import VFSOperations, parse_operation_context
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
-    from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +90,20 @@ class AgentRPCService:
 
     @staticmethod
     def _create_agent_config_data(
-        agent_id: str, name: str, user_id: str, description: str | None,
-        created_at: str | None, metadata: dict | None = None,
+        agent_id: str,
+        name: str,
+        user_id: str,
+        description: str | None,
+        created_at: str | None,
+        metadata: dict | None = None,
         api_key: str | None = None,
     ) -> dict[str, Any]:
         config_data: dict[str, Any] = {
-            "agent_id": agent_id, "name": name, "user_id": user_id,
-            "description": description, "created_at": created_at,
+            "agent_id": agent_id,
+            "name": name,
+            "user_id": user_id,
+            "description": description,
+            "created_at": created_at,
         }
         if metadata:
             config_data["metadata"] = metadata.copy()
@@ -106,7 +112,10 @@ class AgentRPCService:
         return config_data
 
     def _write_agent_config(
-        self, config_path: str, config_data: dict[str, Any], context: dict | Any | None,
+        self,
+        config_path: str,
+        config_data: dict[str, Any],
+        context: dict | Any | None,
     ) -> None:
         import yaml
 
@@ -119,8 +128,13 @@ class AgentRPCService:
     # ------------------------------------------------------------------
 
     def _create_agent_directory(
-        self, agent_id: str, user_id: str, agent_dir: str,
-        config_path: str, config_data: dict[str, Any], context: dict | Any | None,
+        self,
+        agent_id: str,
+        user_id: str,
+        agent_dir: str,
+        config_path: str,
+        config_data: dict[str, Any],
+        context: dict | Any | None,
     ) -> None:
         try:
             ctx = parse_operation_context(context)
@@ -131,15 +145,19 @@ class AgentRPCService:
                 zone_id = self._extract_zone_id(context) or "root"
                 try:
                     self._rebac_manager.rebac_write(
-                        subject=("agent", agent_id), relation="direct_owner",
-                        object=("file", agent_dir), zone_id=zone_id,
+                        subject=("agent", agent_id),
+                        relation="direct_owner",
+                        object=("file", agent_dir),
+                        zone_id=zone_id,
                     )
                 except Exception as e:
                     logger.warning("Failed to grant direct_owner to agent for %s: %s", agent_dir, e)
                 try:
                     self._rebac_manager.rebac_write(
-                        subject=("user", user_id), relation="direct_owner",
-                        object=("file", agent_dir), zone_id=zone_id,
+                        subject=("user", user_id),
+                        relation="direct_owner",
+                        object=("file", agent_dir),
+                        zone_id=zone_id,
                     )
                 except Exception as e:
                     logger.warning("Failed to grant owner to user for %s: %s", agent_dir, e)
@@ -147,15 +165,22 @@ class AgentRPCService:
             logger.warning("Failed to create agent directory or config: %s", e)
 
     def _grant_agent_self_permission(
-        self, agent_id: str, agent_dir: str, zone_id: str,
-        context: dict | None, _logger: logging.Logger,
+        self,
+        agent_id: str,
+        agent_dir: str,
+        zone_id: str,
+        context: dict | None,
+        _logger: logging.Logger,
     ) -> None:
         if self._rebac_create_fn is None:
             return
         try:
             self._rebac_create_fn(
-                subject=("agent", agent_id), relation="viewer",
-                object=("file", agent_dir), zone_id=zone_id, context=context,
+                subject=("agent", agent_id),
+                relation="viewer",
+                object=("file", agent_dir),
+                zone_id=zone_id,
+                context=context,
             )
             _logger.info("Granted viewer permission to agent %s on %s", agent_id, agent_dir)
         except Exception as e:
@@ -166,7 +191,10 @@ class AgentRPCService:
     # ------------------------------------------------------------------
 
     def _provision_agent_identity(
-        self, agent_id: str, agent: dict, _logger: logging.Logger,
+        self,
+        agent_id: str,
+        agent: dict,
+        _logger: logging.Logger,
     ) -> str | None:
         if not self._key_service:
             return None
@@ -174,14 +202,19 @@ class AgentRPCService:
             key_record = self._key_service.ensure_keypair(agent_id)
             agent["did"] = key_record.did
             agent["key_id"] = key_record.key_id
-            _logger.info("[KYA] Provisioned identity for agent %s (did=%s)", agent_id, key_record.did)
+            _logger.info(
+                "[KYA] Provisioned identity for agent %s (did=%s)", agent_id, key_record.did
+            )
             return key_record.did
         except Exception as e:
             _logger.warning("[KYA] Failed to provision identity for agent %s: %s", agent_id, e)
             return None
 
     def _provision_agent_wallet(
-        self, agent_id: str, zone_id: str, _logger: logging.Logger,
+        self,
+        agent_id: str,
+        zone_id: str,
+        _logger: logging.Logger,
     ) -> None:
         if self._wallet_provisioner is None:
             return
@@ -200,7 +233,11 @@ class AgentRPCService:
 
         stmt = (
             select(APIKeyModel)
-            .where(APIKeyModel.user_id == user_id, APIKeyModel.revoked == 0, APIKeyModel.subject_type != "agent")
+            .where(
+                APIKeyModel.user_id == user_id,
+                APIKeyModel.revoked == 0,
+                APIKeyModel.subject_type != "agent",
+            )
             .order_by(APIKeyModel.created_at.desc())
         )
         owner_key = session.scalar(stmt)
@@ -226,8 +263,13 @@ class AgentRPCService:
         try:
             expires_at = self._determine_agent_key_expiration(user_id, session)
             _key_id, raw_key = self._api_key_creator.create_key(
-                session, user_id=user_id, name=agent_id, subject_type="agent",
-                subject_id=agent_id, zone_id=zone_id, expires_at=expires_at,
+                session,
+                user_id=user_id,
+                name=agent_id,
+                subject_type="agent",
+                subject_id=agent_id,
+                zone_id=zone_id,
+                expires_at=expires_at,
             )
             session.commit()
             return raw_key
@@ -235,9 +277,16 @@ class AgentRPCService:
             session.close()
 
     def _provision_agent_api_key(
-        self, agent_id: str, user_id: str, name: str, description: str | None,
-        metadata: dict | None, agent: dict, config_path: str,
-        context: dict | None, _logger: logging.Logger,
+        self,
+        agent_id: str,
+        user_id: str,
+        name: str,
+        description: str | None,
+        metadata: dict | None,
+        agent: dict,
+        config_path: str,
+        context: dict | None,
+        _logger: logging.Logger,
     ) -> None:
         try:
             raw_key = self._create_agent_api_key(agent_id, user_id, context)
@@ -245,7 +294,13 @@ class AgentRPCService:
             agent["has_api_key"] = True
             try:
                 updated = self._create_agent_config_data(
-                    agent_id, name, user_id, description, agent.get("created_at"), metadata, raw_key,
+                    agent_id,
+                    name,
+                    user_id,
+                    description,
+                    agent.get("created_at"),
+                    metadata,
+                    raw_key,
                 )
                 self._write_agent_config(config_path, updated, context)
             except Exception as e:
@@ -255,14 +310,20 @@ class AgentRPCService:
             raise
 
     def _write_agent_identity_document(
-        self, agent_id: str, agent_did: str, agent_dir: str,
-        context: dict | None, _logger: logging.Logger,
+        self,
+        agent_id: str,
+        agent_did: str,
+        agent_dir: str,
+        context: dict | None,
+        _logger: logging.Logger,
     ) -> None:
         try:
             from nexus.identity.did import create_did_document
 
             key_record = self._key_service.get_active_keys(agent_id)[0]
-            public_key = self._key_service._crypto.public_key_from_bytes(key_record.public_key_bytes)
+            public_key = self._key_service._crypto.public_key_from_bytes(
+                key_record.public_key_bytes
+            )
             did_doc = create_did_document(agent_did, public_key)
             identity_dir = f"{agent_dir}/.identity"
             ctx = parse_operation_context(context)
@@ -284,7 +345,8 @@ class AgentRPCService:
         from nexus.services.agents.agent_registry import AgentRegistry
 
         self._agent_registry = AgentRegistry(
-            session_factory=self._session_factory, entity_registry=self._entity_registry,
+            session_factory=self._session_factory,
+            entity_registry=self._entity_registry,
         )
 
     def _check_agent_not_exists(self, agent_id: str, user_id: str, zone_id: str) -> None:
@@ -310,9 +372,14 @@ class AgentRPCService:
 
     @rpc_expose(description="Register an AI agent")
     def register_agent(
-        self, agent_id: str, name: str, description: str | None = None,
-        generate_api_key: bool = False, metadata: dict | None = None,
-        capabilities: list[str] | None = None, context: dict | None = None,
+        self,
+        agent_id: str,
+        name: str,
+        description: str | None = None,
+        generate_api_key: bool = False,
+        metadata: dict | None = None,
+        capabilities: list[str] | None = None,
+        context: dict | None = None,
     ) -> dict:
         """Register an AI agent."""
         user_id = self._extract_user_id(context)
@@ -327,8 +394,12 @@ class AgentRPCService:
         self._ensure_agent_registry()
 
         record = self._agent_registry.register(
-            agent_id=agent_id, owner_id=user_id, zone_id=zone_id,
-            name=name, metadata=metadata, capabilities=capabilities,
+            agent_id=agent_id,
+            owner_id=user_id,
+            zone_id=zone_id,
+            name=name,
+            metadata=metadata,
+            capabilities=capabilities,
         )
         agent = record.to_dict()
 
@@ -337,9 +408,16 @@ class AgentRPCService:
 
         config_path = f"{agent_dir}/config.yaml"
         config_data = self._create_agent_config_data(
-            agent_id, name, user_id, description, agent.get("created_at"), metadata,
+            agent_id,
+            name,
+            user_id,
+            description,
+            agent.get("created_at"),
+            metadata,
         )
-        self._create_agent_directory(agent_id, user_id, agent_dir, config_path, config_data, context)
+        self._create_agent_directory(
+            agent_id, user_id, agent_dir, config_path, config_data, context
+        )
         agent["config_path"] = config_path
 
         self._grant_agent_self_permission(agent_id, agent_dir, zone_id, context, logger)
@@ -349,7 +427,15 @@ class AgentRPCService:
 
         if generate_api_key:
             self._provision_agent_api_key(
-                agent_id, user_id, name, description, metadata, agent, config_path, context, logger,
+                agent_id,
+                user_id,
+                name,
+                description,
+                metadata,
+                agent,
+                config_path,
+                context,
+                logger,
             )
         else:
             agent["has_api_key"] = False
@@ -360,8 +446,12 @@ class AgentRPCService:
 
     @rpc_expose(description="Update agent configuration")
     def update_agent(
-        self, agent_id: str, name: str | None = None, description: str | None = None,
-        metadata: dict | None = None, context: dict | None = None,
+        self,
+        agent_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict | None = None,
+        context: dict | None = None,
     ) -> dict:
         """Update an existing agent's configuration."""
         import yaml
@@ -411,12 +501,16 @@ class AgentRPCService:
                     if description is not None:
                         entity_meta["description"] = description
                     from sqlalchemy import update
+
                     from nexus.storage.models import EntityRegistryModel
 
                     with self._entity_registry._get_session() as session:
                         stmt = (
                             update(EntityRegistryModel)
-                            .where(EntityRegistryModel.entity_type == "agent", EntityRegistryModel.entity_id == agent_id)
+                            .where(
+                                EntityRegistryModel.entity_type == "agent",
+                                EntityRegistryModel.entity_id == agent_id,
+                            )
                             .values(entity_metadata=json.dumps(entity_meta))
                         )
                         session.execute(stmt)
@@ -425,9 +519,12 @@ class AgentRPCService:
                     logger.warning("Failed to update entity registry: %s", e)
 
         return {
-            "agent_id": agent_id, "user_id": user_id,
-            "name": existing_config.get("name"), "description": existing_config.get("description"),
-            "metadata": existing_config.get("metadata", {}), "config_path": config_path,
+            "agent_id": agent_id,
+            "user_id": user_id,
+            "name": existing_config.get("name"),
+            "description": existing_config.get("description"),
+            "metadata": existing_config.get("metadata", {}),
+            "config_path": config_path,
         }
 
     @rpc_expose(description="List all registered agents")
@@ -437,6 +534,7 @@ class AgentRPCService:
         entities = self._entity_registry.get_entities_by_type("agent")
 
         from sqlalchemy import select
+
         from nexus.storage.models import APIKeyModel
 
         session = self._session_factory()
@@ -444,7 +542,9 @@ class AgentRPCService:
             agent_keys = {
                 key.subject_id: key
                 for key in session.scalars(
-                    select(APIKeyModel).where(APIKeyModel.subject_type == "agent", APIKeyModel.revoked == 0)
+                    select(APIKeyModel).where(
+                        APIKeyModel.subject_type == "agent", APIKeyModel.revoked == 0
+                    )
                 ).all()
             }
         finally:
@@ -458,7 +558,8 @@ class AgentRPCService:
                     meta = json.loads(e.entity_metadata)
 
             info: dict[str, Any] = {
-                "agent_id": e.entity_id, "user_id": e.parent_id,
+                "agent_id": e.entity_id,
+                "user_id": e.parent_id,
                 "name": meta.get("name", e.entity_id),
                 "created_at": e.created_at.isoformat() if e.created_at else None,
             }
@@ -471,8 +572,12 @@ class AgentRPCService:
                 info["inherit_permissions"] = bool(agent_key.inherit_permissions)
             else:
                 info["has_api_key"] = False
-                inherit_perms = self._read_config_field(e.entity_id, "inherit_permissions", _context)
-                info["inherit_permissions"] = bool(inherit_perms) if inherit_perms is not None else True
+                inherit_perms = self._read_config_field(
+                    e.entity_id, "inherit_permissions", _context
+                )
+                info["inherit_permissions"] = (
+                    bool(inherit_perms) if inherit_perms is not None else True
+                )
 
             result.append(info)
         return result
@@ -491,7 +596,8 @@ class AgentRPCService:
                 meta = json.loads(entity.entity_metadata)
 
         info: dict[str, Any] = {
-            "agent_id": entity.entity_id, "user_id": entity.parent_id,
+            "agent_id": entity.entity_id,
+            "user_id": entity.parent_id,
             "name": meta.get("name", entity.entity_id),
             "created_at": entity.created_at.isoformat() if entity.created_at else None,
         }
@@ -499,13 +605,15 @@ class AgentRPCService:
             info["description"] = meta["description"]
 
         from sqlalchemy import select
+
         from nexus.storage.models import APIKeyModel
 
         session = self._session_factory()
         try:
             agent_key = session.scalar(
                 select(APIKeyModel).where(
-                    APIKeyModel.subject_type == "agent", APIKeyModel.subject_id == agent_id,
+                    APIKeyModel.subject_type == "agent",
+                    APIKeyModel.subject_id == agent_id,
                     APIKeyModel.revoked == 0,
                 )
             )
@@ -514,8 +622,12 @@ class AgentRPCService:
                 info["inherit_permissions"] = bool(agent_key.inherit_permissions)
             else:
                 info["has_api_key"] = False
-                inherit_perms = self._read_config_field(entity.entity_id, "inherit_permissions", _context)
-                info["inherit_permissions"] = bool(inherit_perms) if inherit_perms is not None else True
+                inherit_perms = self._read_config_field(
+                    entity.entity_id, "inherit_permissions", _context
+                )
+                info["inherit_permissions"] = (
+                    bool(inherit_perms) if inherit_perms is not None else True
+                )
 
             # Enrich from config.yaml
             self._enrich_from_config(entity, info, _context, has_api_key=bool(agent_key))
@@ -545,11 +657,16 @@ class AgentRPCService:
                 session = self._session_factory()
                 try:
                     from sqlalchemy import update as sa_update
+
                     from nexus.storage.models import APIKeyModel
 
                     result = session.execute(
                         sa_update(APIKeyModel)
-                        .where(APIKeyModel.subject_type == "agent", APIKeyModel.subject_id == agent_id, APIKeyModel.revoked == 0)
+                        .where(
+                            APIKeyModel.subject_type == "agent",
+                            APIKeyModel.subject_id == agent_id,
+                            APIKeyModel.revoked == 0,
+                        )
                         .values(revoked=1)
                     )
                     session.commit()
@@ -573,11 +690,14 @@ class AgentRPCService:
                                 except Exception as e:
                                     logger.warning("Failed to delete ReBAC tuple: %s", e)
                     except Exception as e:
-                        logger.warning("Failed to delete ReBAC tuples for agent %s: %s", agent_id, e)
+                        logger.warning(
+                            "Failed to delete ReBAC tuples for agent %s: %s", agent_id, e
+                        )
 
                     try:
                         user_tuples = self._rebac_list_tuples_fn(
-                            subject=("user", user_id), object=("file", agent_dir),
+                            subject=("user", user_id),
+                            object=("file", agent_dir),
                         )
                         for t in user_tuples:
                             tid = t.get("tuple_id")
@@ -610,8 +730,11 @@ class AgentRPCService:
 
     @rpc_expose(description="Transition agent lifecycle state")
     def agent_transition(
-        self, agent_id: str, target_state: str,
-        expected_generation: int | None = None, context: dict | None = None,
+        self,
+        agent_id: str,
+        target_state: str,
+        expected_generation: int | None = None,
+        context: dict | None = None,  # noqa: ARG002
     ) -> dict:
         """Transition an agent's lifecycle state with optimistic locking."""
         if not self._agent_registry:
@@ -626,12 +749,18 @@ class AgentRPCService:
             ) from err
 
         record = self._agent_registry.transition(
-            agent_id=agent_id, target_state=target, expected_generation=expected_generation,
+            agent_id=agent_id,
+            target_state=target,
+            expected_generation=expected_generation,
         )
-        return {"agent_id": record.agent_id, "state": record.state.value, "generation": record.generation}
+        return {
+            "agent_id": record.agent_id,
+            "state": record.state.value,
+            "generation": record.generation,
+        }
 
     @rpc_expose(description="Record agent heartbeat")
-    def agent_heartbeat(self, agent_id: str, context: dict | None = None) -> dict:
+    def agent_heartbeat(self, agent_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
         """Record a heartbeat for an active agent."""
         if not self._agent_registry:
             raise ValueError("AgentRegistry not available")
@@ -640,7 +769,10 @@ class AgentRPCService:
 
     @rpc_expose(description="List agents in a zone")
     def agent_list_by_zone(
-        self, zone_id: str, state: str | None = None, context: dict | None = None,
+        self,
+        zone_id: str,
+        state: str | None = None,
+        context: dict | None = None,  # noqa: ARG002
     ) -> list[dict]:
         """List agents in a zone, optionally filtered by state."""
         if not self._agent_registry:
@@ -657,10 +789,15 @@ class AgentRPCService:
         records = self._agent_registry.list_by_zone(zone_id, state=state_enum)
         return [
             {
-                "agent_id": r.agent_id, "owner_id": r.owner_id, "zone_id": r.zone_id,
-                "name": r.name, "state": r.state.value, "generation": r.generation,
+                "agent_id": r.agent_id,
+                "owner_id": r.owner_id,
+                "zone_id": r.zone_id,
+                "name": r.name,
+                "state": r.state.value,
+                "generation": r.generation,
                 "last_heartbeat": r.last_heartbeat.isoformat() if r.last_heartbeat else None,
-                "created_at": r.created_at.isoformat(), "updated_at": r.updated_at.isoformat(),
+                "created_at": r.created_at.isoformat(),
+                "updated_at": r.updated_at.isoformat(),
             }
             for r in records
         ]
@@ -670,7 +807,10 @@ class AgentRPCService:
     # ------------------------------------------------------------------
 
     def _read_config_field(
-        self, entity_id: str, field: str, context: dict | None,
+        self,
+        entity_id: str,
+        field: str,
+        context: dict | None,
     ) -> Any:
         """Read a single field from agent config.yaml. Returns None on failure."""
         try:
@@ -691,8 +831,12 @@ class AgentRPCService:
         return None
 
     def _enrich_from_config(
-        self, entity: Any, info: dict[str, Any], context: dict | None,
-        *, has_api_key: bool,
+        self,
+        entity: Any,
+        info: dict[str, Any],
+        context: dict | None,
+        *,
+        has_api_key: bool,
     ) -> None:
         """Enrich agent info dict from config.yaml fields."""
         try:
@@ -741,6 +885,8 @@ class AgentRPCService:
 
             if not has_api_key:
                 inherit_perms = config_data.get("inherit_permissions")
-                info["inherit_permissions"] = bool(inherit_perms) if inherit_perms is not None else True
+                info["inherit_permissions"] = (
+                    bool(inherit_perms) if inherit_perms is not None else True
+                )
         except Exception:
             pass

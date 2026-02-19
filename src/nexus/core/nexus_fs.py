@@ -15,6 +15,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
 from nexus.core.hash_fast import hash_content
+from nexus.core.mutation_hooks import MutationOp
 
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
@@ -79,7 +80,7 @@ class NexusFS(  # type: ignore[misc]
         distributed: DistributedConfig | None = None,
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
-        services: KernelServices | None = None,
+        kernel_services: KernelServices | None = None,
         parse_fn: Any | None = None,
         content_cache: Any | None = None,
         parser_registry: ParserRegistry | None = None,
@@ -93,7 +94,7 @@ class NexusFS(  # type: ignore[misc]
         distributed = distributed or DistributedConfig()
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
-        svc = services or KernelServices()
+        svc = kernel_services or KernelServices()
 
         self._cache_config = cache
         self._perm_config = permissions
@@ -320,7 +321,9 @@ class NexusFS(  # type: ignore[misc]
         if tiger_cache is not None:
 
             def _metadata_list_iter(
-                prefix: str, recursive: bool = True, zone_id: str = "root"
+                prefix: str,
+                recursive: bool = True,
+                zone_id: str = "root",  # noqa: ARG001
             ) -> Any:
                 return self.metadata.list(prefix=prefix, recursive=recursive)
 
@@ -707,6 +710,23 @@ class NexusFS(  # type: ignore[misc]
             except Exception as e:
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
+        # Issue #625: Observer + hook coverage for mkdir
+        new_revision = self._increment_zone_revision()
+        if self._write_observer:
+            self._write_observer.on_mkdir(
+                path=path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            )
+        self._fire_post_mutation_hooks(
+            MutationOp.MKDIR,
+            path,
+            ctx.zone_id or "root",
+            new_revision,
+            agent_id=ctx.agent_id,
+            user_id=ctx.user_id,
+        )
+
         # Issue #1331: Publish dir_create event to event bus
         self._publish_file_event(
             event_type="dir_create",
@@ -844,6 +864,24 @@ class NexusFS(  # type: ignore[misc]
                 self.metadata.delete_directory_entries_recursive(path)
             except Exception as e:
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
+
+        # Issue #625: Observer + hook coverage for rmdir
+        new_revision = self._increment_zone_revision()
+        if self._write_observer:
+            self._write_observer.on_rmdir(
+                path=path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                recursive=recursive,
+            )
+        self._fire_post_mutation_hooks(
+            MutationOp.RMDIR,
+            path,
+            ctx.zone_id or "root",
+            new_revision,
+            agent_id=ctx.agent_id,
+            user_id=ctx.user_id,
+        )
 
     @rpc_expose(description="Check if path is a directory")
     def is_directory(

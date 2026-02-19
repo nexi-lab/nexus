@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
 
@@ -71,9 +72,7 @@ class DynamicViewerReadHook:
             f"[DynamicViewerHook] Applying filter for {subject} on {ctx.path}: {column_config}"
         )
 
-        content_str = (
-            ctx.content.decode("utf-8") if isinstance(ctx.content, bytes) else ctx.content
-        )
+        content_str = ctx.content.decode("utf-8") if isinstance(ctx.content, bytes) else ctx.content
         result = self._apply_filter(content_str, column_config, "csv")
 
         filtered = result["filtered_data"]
@@ -144,14 +143,16 @@ class AutoParseWriteHook:
             error_msg = str(e)
 
             if "disk" in error_msg.lower() or "space" in error_msg.lower():
-                logger.error(f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}")
+                logger.error(
+                    f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}"
+                )
             elif "database" in error_msg.lower() or "connection" in error_msg.lower():
                 logger.error(f"Auto-parse FAILED for {path}: DB error - {error_type}: {error_msg}")
             elif "memory" in error_msg.lower() or isinstance(e, MemoryError):
                 logger.error(
                     f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
                 )
-            elif "permission" in error_msg.lower() or isinstance(e, (PermissionError, OSError)):
+            elif "permission" in error_msg.lower() or isinstance(e, PermissionError | OSError):
                 logger.warning(
                     f"Auto-parse FAILED for {path}: Permission error - {error_type}: {error_msg}"
                 )
@@ -193,9 +194,7 @@ class AutoParseWriteHook:
             if thread.is_alive():
                 timed_out += 1
                 timeout_threads.append(thread.name)
-                logger.warning(
-                    f"Parser thread '{thread.name}' did not complete within {timeout}s."
-                )
+                logger.warning(f"Parser thread '{thread.name}' did not complete within {timeout}s.")
             else:
                 completed += 1
 

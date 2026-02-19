@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import time
 import threading
+import time
 from unittest.mock import MagicMock
 
-from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
 from nexus.core.vfs_hook_impls import (
     AutoParseWriteHook,
     DynamicViewerReadHook,
     TigerCacheRenameHook,
 )
-
+from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
 
 # =========================================================================
 # DynamicViewerReadHook
@@ -159,9 +158,7 @@ class TestTigerCacheRenameHook:
     ) -> MagicMock:
         tc = MagicMock()
         tc.get_directory_grants_for_path = MagicMock(
-            side_effect=lambda path, zone: old_grants or []
-            if "old" in path
-            else new_grants or []
+            side_effect=lambda path, zone: old_grants or [] if "old" in path else new_grants or []
         )
         tc._resource_map = MagicMock()
         tc._resource_map.get_or_create_int_id = MagicMock(return_value=42)
@@ -169,9 +166,7 @@ class TestTigerCacheRenameHook:
 
     def test_skips_if_no_tiger_cache(self):
         hook = TigerCacheRenameHook(tiger_cache=None)
-        ctx = RenameHookContext(
-            old_path="/old/file.txt", new_path="/new/file.txt", context=None
-        )
+        ctx = RenameHookContext(old_path="/old/file.txt", new_path="/new/file.txt", context=None)
         hook.on_post_rename(ctx)  # should not raise
 
     def test_skips_if_no_grant_changes(self):

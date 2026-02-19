@@ -45,6 +45,7 @@ def nexus_fs():
 
     # Create NexusFS and inject the service for __getattr__ forwarding
     from nexus.core.nexus_fs import NexusFS
+
     with patch.object(NexusFS, "__init__", lambda self: None):
         fs = NexusFS.__new__(NexusFS)
         fs._workspace_rpc_service = svc

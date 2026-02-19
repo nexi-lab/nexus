@@ -16,7 +16,6 @@ from __future__ import annotations
 import builtins
 from typing import Any
 
-
 # Global namespaces that bypass scoping — shared resources with their own
 # ownership/permission structures.  Defined once, used by both variants.
 GLOBAL_NAMESPACES: tuple[str, ...] = (

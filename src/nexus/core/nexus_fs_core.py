@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import logging
 import threading
 import time
@@ -243,6 +242,53 @@ class NexusFSCoreMixin:
                     event_context.get("zone_id", "root"),
                 )
             )
+
+    def _fire_post_mutation_hooks(
+        self,
+        op: MutationOp,
+        path: str,
+        zone_id: str,
+        revision: int,
+        *,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+        timestamp: str | None = None,
+        etag: str | None = None,
+        size: int | None = None,
+        version: int | None = None,
+        is_new: bool = False,
+        new_path: str | None = None,
+    ) -> None:
+        """Fire MutationEvent to all registered post-mutation hooks.
+
+        Called after every successful write/delete/rename. Error policy:
+        fire-and-forget — hook failures are logged but never abort the mutation.
+        """
+        hooks = getattr(self, "_post_mutation_hooks", None)
+        if not hooks:
+            return
+
+        from nexus.core.mutation_hooks import MutationEvent
+
+        event = MutationEvent(
+            operation=op,
+            path=path,
+            zone_id=zone_id,
+            revision=revision,
+            agent_id=agent_id,
+            user_id=user_id,
+            timestamp=timestamp,
+            etag=etag,
+            size=size,
+            version=version,
+            is_new=is_new,
+            new_path=new_path,
+        )
+        for hook in hooks:
+            try:
+                hook.on_mutation(event)
+            except Exception as exc:
+                logger.warning("Post-mutation hook %s failed: %s", type(hook).__name__, exc)
 
     async def _start_workflow_consumer(self) -> None:
         """Background consumer for bounded workflow event queue (#1522)."""
@@ -2298,7 +2344,7 @@ class NexusFSCoreMixin:
             # Permission errors on non-existent files are OK - write() will check parent permissions
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
-            if not isinstance(e, (NexusFileNotFoundError, PermissionError)):
+            if not isinstance(e, NexusFileNotFoundError | PermissionError):
                 # Re-raise unexpected errors
                 raise
             # For FileNotFoundError or PermissionError, continue with empty content
@@ -2440,7 +2486,7 @@ class NexusFSCoreMixin:
         for edit in edits:
             if isinstance(edit, EditOp):
                 edit_operations.append(edit)
-            elif isinstance(edit, (tuple, list)) and len(edit) >= 2:
+            elif isinstance(edit, tuple | list) and len(edit) >= 2:
                 # Handle both tuple and list (JSON deserializes tuples as lists)
                 edit_operations.append(EditOp(old_str=edit[0], new_str=edit[1]))
             elif isinstance(edit, dict):
@@ -2894,7 +2940,7 @@ class NexusFSCoreMixin:
                 logger.error(
                     f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
                 )
-            elif "permission" in error_msg.lower() or isinstance(e, (PermissionError, OSError)):
+            elif "permission" in error_msg.lower() or isinstance(e, PermissionError | OSError):
                 logger.warning(
                     f"Auto-parse FAILED for {path}: Permission/OS error - {error_type}: {error_msg}"
                 )

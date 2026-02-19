@@ -145,8 +145,7 @@ class PermissionChecker:
         original_path, view_type = parse_virtual_path(path, metadata_exists)
         if view_type == "md":
             logger.debug(
-                f"  -> Virtual view detected: checking permissions on "
-                f"original file {original_path}"
+                f"  -> Virtual view detected: checking permissions on original file {original_path}"
             )
             permission_path = original_path
         else:
@@ -166,8 +165,7 @@ class PermissionChecker:
             subject_id = ctx.subject_id or ctx.user_id
             if file_meta.owner_id == subject_id:
                 logger.debug(
-                    f"  -> OWNER FAST-PATH: {subject_id} owns "
-                    f"{permission_path}, skipping ReBAC"
+                    f"  -> OWNER FAST-PATH: {subject_id} owns {permission_path}, skipping ReBAC"
                 )
                 return  # Owner has all permissions
 

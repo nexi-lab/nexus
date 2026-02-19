@@ -5,9 +5,7 @@ Service-layer concern: citation extraction depends on document-reading
 orchestration, not on the LLM brick itself.
 """
 
-This module re-exports from the new location for import compatibility.
-Consumers should update imports to nexus.services.llm_citation.
-"""
+from __future__ import annotations
 
 import re
 from dataclasses import dataclass

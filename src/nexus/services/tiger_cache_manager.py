@@ -10,7 +10,8 @@ import logging
 import os
 import sys
 import threading
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC

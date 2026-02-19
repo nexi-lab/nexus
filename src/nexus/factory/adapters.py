@@ -278,9 +278,7 @@ def _create_distributed_infra(
     return event_bus, lock_manager
 
 
-def _create_workflow_engine(
-    record_store: Any, glob_match_fn: Any = None
-) -> Any:
+def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any:
     """Create workflow engine with async store and DI.
 
     Args:

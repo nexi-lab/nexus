@@ -412,7 +412,7 @@ def create_nexus_fs(
         distributed=distributed,
         memory=memory,
         parsing=parsing,
-        services=services,
+        kernel_services=services,
         parse_fn=_parse_fn,
         content_cache=_content_cache,
         parser_registry=parsers_brick.parser_registry,

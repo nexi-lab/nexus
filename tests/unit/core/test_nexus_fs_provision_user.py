@@ -23,7 +23,7 @@ from tests.conftest import make_test_nexus
 def nx_with_db(tmp_path):
     """Create a NexusFS instance with a real SQLite database for provisioning tests."""
     from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import sessionmaker
 
     from nexus.storage.models import Base
 
@@ -114,9 +114,9 @@ class TestProvisionUserHappyPath:
         )
         session = nx_with_db.SessionLocal()
         try:
-            zone = session.execute(
-                select(ZoneModel).filter_by(zone_id="test-zone")
-            ).scalars().first()
+            zone = (
+                session.execute(select(ZoneModel).filter_by(zone_id="test-zone")).scalars().first()
+            )
             assert zone is not None
             assert zone.zone_id == "test-zone"
         finally:
@@ -134,9 +134,7 @@ class TestProvisionUserHappyPath:
         )
         session = nx_with_db.SessionLocal()
         try:
-            user = session.execute(
-                select(UserModel).filter_by(user_id="alice")
-            ).scalars().first()
+            user = session.execute(select(UserModel).filter_by(user_id="alice")).scalars().first()
             assert user is not None
             assert user.email == "alice@example.com"
             assert user.is_active == 1
@@ -183,9 +181,7 @@ class TestProvisionUserIdempotency:
 
         session = nx_with_db.SessionLocal()
         try:
-            zones = session.execute(
-                select(ZoneModel).filter_by(zone_id="z1")
-            ).scalars().all()
+            zones = session.execute(select(ZoneModel).filter_by(zone_id="z1")).scalars().all()
             assert len(zones) == 1
         finally:
             session.close()

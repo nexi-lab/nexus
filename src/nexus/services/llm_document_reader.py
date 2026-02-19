@@ -10,11 +10,6 @@ Key refactoring (Issue #1521):
 - Moved to services/ as an orchestration concern (Issue 1)
 """
 
-from nexus.services.llm_document_reader import (
-    LLMDocumentReader,
-    ReadChunk,
-)
-
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass

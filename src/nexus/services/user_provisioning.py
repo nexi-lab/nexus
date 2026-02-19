@@ -102,12 +102,19 @@ class UserProvisioningService:
         logger.info("Provisioning user %s (email=%s, zone=%s)", user_id, email, zone_id)
 
         admin_context = context or OperationContext(
-            user_id=user_id, groups=[], zone_id=zone_id, is_admin=True,
+            user_id=user_id,
+            groups=[],
+            zone_id=zone_id,
+            is_admin=True,
         )
 
         created_resources: dict[str, Any] = {
-            "user": False, "zone": False, "directories": [],
-            "workspace": None, "agents": [], "skills": [],
+            "user": False,
+            "zone": False,
+            "directories": [],
+            "workspace": None,
+            "agents": [],
+            "skills": [],
         }
 
         self._ensure_entity_registry()
@@ -122,13 +129,16 @@ class UserProvisioningService:
             from nexus.storage.models import UserModel, ZoneModel
 
             # 1. Create/update ZoneModel
-            zone = session.execute(
-                sa_select(ZoneModel).filter_by(zone_id=zone_id)
-            ).scalars().first()
+            zone = (
+                session.execute(sa_select(ZoneModel).filter_by(zone_id=zone_id)).scalars().first()
+            )
             if not zone:
                 zone = ZoneModel(
-                    zone_id=zone_id, name=zone_name or f"{zone_id} Organization",
-                    is_active=1, created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+                    zone_id=zone_id,
+                    name=zone_name or f"{zone_id} Organization",
+                    is_active=1,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
                 session.add(zone)
                 session.commit()
@@ -140,9 +150,9 @@ class UserProvisioningService:
                 self._entity_registry.register_entity("zone", zone_id)
 
             # 3. Create/update UserModel
-            user = session.execute(
-                sa_select(UserModel).filter_by(user_id=user_id)
-            ).scalars().first()
+            user = (
+                session.execute(sa_select(UserModel).filter_by(user_id=user_id)).scalars().first()
+            )
             if user:
                 if not user.is_active:
                     user.is_active = 1
@@ -151,10 +161,17 @@ class UserProvisioningService:
                     logger.info("Reactivated soft-deleted user: %s", user_id)
             else:
                 user = UserModel(
-                    user_id=user_id, email=email, username=user_id,
-                    display_name=display_name or user_id, zone_id=zone_id,
-                    primary_auth_method="api_key", is_active=1, is_global_admin=0,
-                    email_verified=1, created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+                    user_id=user_id,
+                    email=email,
+                    username=user_id,
+                    display_name=display_name or user_id,
+                    zone_id=zone_id,
+                    primary_auth_method="api_key",
+                    is_active=1,
+                    is_global_admin=0,
+                    email_verified=1,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
                 session.add(user)
                 session.commit()
@@ -164,7 +181,10 @@ class UserProvisioningService:
             # 4. Register user in entity registry
             if not self._entity_registry.get_entity("user", user_id):
                 self._entity_registry.register_entity(
-                    "user", user_id, parent_type="zone", parent_id=zone_id,
+                    "user",
+                    user_id,
+                    parent_type="zone",
+                    parent_id=zone_id,
                 )
 
             admin_context.user_id = user_id
@@ -187,17 +207,23 @@ class UserProvisioningService:
                     raise ValueError(f"User not found: {user_id}")
 
                 existing_key = session.scalar(
-                    select(APIKeyModel).where(
+                    select(APIKeyModel)
+                    .where(
                         APIKeyModel.user_id == user_id,
                         APIKeyModel.subject_type == "user",
                         APIKeyModel.revoked == 0,
-                    ).limit(1)
+                    )
+                    .limit(1)
                 )
                 if not existing_key:
                     key_name = api_key_name or f"Primary key for {email}"
                     key_id, api_key = self._api_key_creator.create_key(
-                        session, user_id=user_id, name=key_name, zone_id=zone_id,
-                        is_admin=False, expires_at=api_key_expires_at,
+                        session,
+                        user_id=user_id,
+                        name=key_name,
+                        zone_id=zone_id,
+                        is_admin=False,
+                        expires_at=api_key_expires_at,
                     )
                     session.commit()
                     logger.info("Created API key for user: %s", user_id)
@@ -230,8 +256,10 @@ class UserProvisioningService:
                 self._vfs.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
                 if self._register_workspace_fn:
                     self._register_workspace_fn(
-                        workspace_path, name="Personal Workspace",
-                        description="Default personal workspace", context=admin_context,
+                        workspace_path,
+                        name="Personal Workspace",
+                        description="Default personal workspace",
+                        context=admin_context,
                     )
                 logger.info("Created workspace: %s", workspace_path)
             created_resources["workspace"] = workspace_path
@@ -257,16 +285,22 @@ class UserProvisioningService:
         skill_paths: list[str] = []
         if import_skills:
             self._start_skill_import_thread(
-                zone_id, user_id, admin_context, create_agents, created_resources,
+                zone_id,
+                user_id,
+                admin_context,
+                create_agents,
+                created_resources,
             )
 
         # 10. Grant ReBAC permissions (zone owner)
         if self._rebac_create_fn:
             try:
                 self._rebac_create_fn(
-                    subject=("user", user_id), relation="member",
+                    subject=("user", user_id),
+                    relation="member",
                     object=("group", f"zone_owners:{zone_id}"),
-                    zone_id=zone_id, context=admin_context,
+                    zone_id=zone_id,
+                    context=admin_context,
                 )
                 logger.info("Granted zone owner permissions to user %s", user_id)
             except Exception as e:
@@ -277,9 +311,13 @@ class UserProvisioningService:
 
         logger.info("Successfully provisioned user %s", user_id)
         return {
-            "user_id": user_id, "zone_id": zone_id, "api_key": api_key,
-            "key_id": key_id, "workspace_path": workspace_path,
-            "agent_paths": agent_paths, "skill_paths": skill_paths,
+            "user_id": user_id,
+            "zone_id": zone_id,
+            "api_key": api_key,
+            "key_id": key_id,
+            "workspace_path": workspace_path,
+            "agent_paths": agent_paths,
+            "skill_paths": skill_paths,
             "created_resources": created_resources,
         }
 
@@ -301,14 +339,21 @@ class UserProvisioningService:
         logger.info("Deprovisioning user %s", user_id)
 
         admin_context = context or OperationContext(
-            user_id="system", groups=[], zone_id=zone_id or "system", is_admin=True,
+            user_id="system",
+            groups=[],
+            zone_id=zone_id or "system",
+            is_admin=True,
         )
 
         result: dict[str, Any] = {
-            "user_id": user_id, "zone_id": None,
-            "deleted_directories": [], "deleted_api_keys": 0,
-            "deleted_oauth_api_keys": 0, "deleted_oauth_accounts": 0,
-            "deleted_permissions": 0, "deleted_entities": 0,
+            "user_id": user_id,
+            "zone_id": None,
+            "deleted_directories": [],
+            "deleted_api_keys": 0,
+            "deleted_oauth_api_keys": 0,
+            "deleted_oauth_accounts": 0,
+            "deleted_permissions": 0,
+            "deleted_entities": 0,
             "user_record_deleted": False,
         }
 
@@ -318,9 +363,9 @@ class UserProvisioningService:
 
             from nexus.storage.models import UserModel
 
-            user = session.execute(
-                sa_select(UserModel).filter_by(user_id=user_id)
-            ).scalars().first()
+            user = (
+                session.execute(sa_select(UserModel).filter_by(user_id=user_id)).scalars().first()
+            )
 
             if not user:
                 logger.warning("User not found in database: %s", user_id)
@@ -337,13 +382,23 @@ class UserProvisioningService:
 
             if zone_id:
                 admin_context = OperationContext(
-                    user_id="system", groups=[], zone_id=zone_id, is_admin=True,
+                    user_id="system",
+                    groups=[],
+                    zone_id=zone_id,
+                    is_admin=True,
                 )
 
             # 1. Delete user directories
             if zone_id:
                 user_base_path = f"/zone/{zone_id}/user/{user_id}"
-                for resource_type in ["workspace", "memory", "skill", "agent", "connector", "resource"]:
+                for resource_type in [
+                    "workspace",
+                    "memory",
+                    "skill",
+                    "agent",
+                    "connector",
+                    "resource",
+                ]:
                     dir_path = f"{user_base_path}/{resource_type}"
                     try:
                         was_deleted = self._delete_directory_recursive(dir_path, admin_context)
@@ -358,9 +413,7 @@ class UserProvisioningService:
 
                 from nexus.storage.models import APIKeyModel
 
-                del_result: Any = session.execute(
-                    sa_delete(APIKeyModel).filter_by(user_id=user_id)
-                )
+                del_result: Any = session.execute(sa_delete(APIKeyModel).filter_by(user_id=user_id))
                 deleted_keys = del_result.rowcount
                 session.commit()
                 result["deleted_api_keys"] = deleted_keys
@@ -423,7 +476,9 @@ class UserProvisioningService:
                     user_entity = self._entity_registry.get_entity("user", user_id)
                     if user_entity:
                         deleted = self._entity_registry.delete_entity(
-                            "user", user_id, cascade=True,
+                            "user",
+                            user_id,
+                            cascade=True,
                         )
                         if deleted:
                             result["deleted_entities"] = 1
@@ -450,8 +505,11 @@ class UserProvisioningService:
 
         logger.info(
             "Successfully deprovisioned user %s: dirs=%d, keys=%d, perms=%d, entities=%d",
-            user_id, len(result["deleted_directories"]), result["deleted_api_keys"],
-            result["deleted_permissions"], result["deleted_entities"],
+            user_id,
+            len(result["deleted_directories"]),
+            result["deleted_api_keys"],
+            result["deleted_permissions"],
+            result["deleted_entities"],
         )
         return result
 
@@ -460,8 +518,12 @@ class UserProvisioningService:
     # ------------------------------------------------------------------
 
     def _start_skill_import_thread(
-        self, zone_id: str, user_id: str, admin_context: OperationContext,
-        create_agents: bool, created_resources: dict[str, Any],
+        self,
+        zone_id: str,
+        user_id: str,
+        admin_context: OperationContext,
+        create_agents: bool,
+        created_resources: dict[str, Any],
     ) -> None:
         """Launch background thread for skill import."""
         import threading
@@ -472,17 +534,20 @@ class UserProvisioningService:
                 imported_paths = self._import_user_skills(zone_id, user_id, admin_context)
                 logger.info(
                     "[ASYNC] Background skill import completed for %s: %d skills imported",
-                    user_id, len(imported_paths),
+                    user_id,
+                    len(imported_paths),
                 )
                 if create_agents:
                     try:
                         from nexus.services.agents.agent_provisioning import (
                             grant_skill_builder_permissions,
                         )
+
                         granted = grant_skill_builder_permissions(self._vfs, user_id, zone_id)
                         logger.info(
                             "[ASYNC] Granted %d permissions to SkillBuilder for user %s",
-                            granted, user_id,
+                            granted,
+                            user_id,
                         )
                     except Exception as e:
                         logger.error("[ASYNC] Failed to grant SkillBuilder permissions: %s", e)
@@ -490,14 +555,18 @@ class UserProvisioningService:
                 logger.error("[ASYNC] Failed to import skills in background: %s", e)
 
         thread = threading.Thread(
-            target=_import_skills_async, name=f"skill-import-{user_id[:8]}", daemon=True,
+            target=_import_skills_async,
+            name=f"skill-import-{user_id[:8]}",
+            daemon=True,
         )
         thread.start()
         logger.info("Skill import started in background for user %s", user_id)
         created_resources["skills"] = "importing"
 
     def _delete_directory_recursive(
-        self, dir_path: str, context: OperationContext,
+        self,
+        dir_path: str,
+        context: OperationContext,
     ) -> bool:
         """Recursively delete a directory and all its contents."""
         directory_removed = False
@@ -601,9 +670,7 @@ class UserProvisioningService:
                 from nexus.storage.models import FilePathModel
 
                 fp_result: Any = session.execute(
-                    sa_delete(FilePathModel).where(
-                        FilePathModel.virtual_path.like(f"{dir_path}%")
-                    )
+                    sa_delete(FilePathModel).where(FilePathModel.virtual_path.like(f"{dir_path}%"))
                 )
                 session.commit()
                 logger.debug("Deleted %d file path entries for %s", fp_result.rowcount, dir_path)
@@ -657,7 +724,10 @@ class UserProvisioningService:
                 pass
 
     def _create_user_directories(
-        self, user_id: str, zone_id: str, context: OperationContext,
+        self,
+        user_id: str,
+        zone_id: str,
+        context: OperationContext,
     ) -> list[str]:
         """Create all user directories with proper permissions."""
         all_types = ["workspace", "memory", "skill", "agent", "connector", "resource"]
@@ -670,8 +740,11 @@ class UserProvisioningService:
                 if self._rebac_create_fn:
                     try:
                         self._rebac_create_fn(
-                            subject=("user", user_id), relation="direct_owner",
-                            object=("file", folder_path), zone_id=zone_id, context=context,
+                            subject=("user", user_id),
+                            relation="direct_owner",
+                            object=("file", folder_path),
+                            zone_id=zone_id,
+                            context=context,
                         )
                     except Exception as e:
                         if "already exists" not in str(e).lower():
@@ -683,7 +756,10 @@ class UserProvisioningService:
         return created_paths
 
     def _import_user_skills(
-        self, _zone_id: str, _user_id: str, context: OperationContext,
+        self,
+        _zone_id: str,
+        _user_id: str,
+        context: OperationContext,
     ) -> list[str]:
         """Import all default skills from data/skills/ directory."""
         import base64
@@ -695,7 +771,11 @@ class UserProvisioningService:
         if os.environ.get("NEXUS_DATA_DIR"):
             possible_dirs.append(Path(os.environ["NEXUS_DATA_DIR"]) / "skills")
 
-        if self._backend and getattr(self._backend, "has_data_dir", False) and self._backend.data_dir:
+        if (
+            self._backend
+            and getattr(self._backend, "has_data_dir", False)
+            and self._backend.data_dir
+        ):
             possible_dirs.append(Path(self._backend.data_dir) / "skills")
 
         possible_dirs.append(Path(__file__).parent.parent.parent / "data" / "skills")
@@ -707,7 +787,9 @@ class UserProvisioningService:
                 break
 
         if not skills_dir:
-            logger.warning("Skills directory not found in any of: %s", [str(d) for d in possible_dirs])
+            logger.warning(
+                "Skills directory not found in any of: %s", [str(d) for d in possible_dirs]
+            )
             return []
 
         skill_paths: list[str] = []
@@ -719,8 +801,10 @@ class UserProvisioningService:
 
                 if self._skills_import_fn:
                     result = self._skills_import_fn(
-                        zip_data=zip_base64, tier="personal",
-                        allow_overwrite=False, context=context,
+                        zip_data=zip_base64,
+                        tier="personal",
+                        allow_overwrite=False,
+                        context=context,
                     )
                     skill_paths.extend(result.get("skill_paths", []))
                     logger.debug("Imported skill: %s", skill_file.name)

@@ -8,12 +8,6 @@ Includes adaptive retrieval depth based on query complexity (Issue #1021),
 inspired by SimpleMem (arXiv:2601.02553).
 """
 
-from nexus.services.llm_context_builder import (
-    AdaptiveRetrievalConfig,
-    ChunkLike,
-    ContextBuilder,
-)
-
 import logging
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable

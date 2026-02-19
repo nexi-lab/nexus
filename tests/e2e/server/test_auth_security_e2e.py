@@ -571,8 +571,8 @@ class TestStaleSessionDetection:
 
     def test_stale_jwt_rejected_by_permission_enforcer(self, nexus_fs_enforced: NexusFS):
         """Agent JWT with outdated generation is rejected during permission check."""
+        from nexus.contracts.exceptions import StaleSessionError
         from nexus.contracts.types import OperationContext
-        from nexus.core.exceptions import StaleSessionError
 
         nx = nexus_fs_enforced
 
@@ -675,8 +675,8 @@ class TestStaleSessionDetection:
 
     def test_deleted_agent_jwt_rejected(self, nexus_fs_enforced: NexusFS):
         """Agent deleted from registry but JWT still valid should be rejected."""
+        from nexus.contracts.exceptions import StaleSessionError
         from nexus.contracts.types import OperationContext
-        from nexus.core.exceptions import StaleSessionError
 
         nx = nexus_fs_enforced
 

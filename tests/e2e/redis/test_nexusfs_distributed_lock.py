@@ -185,7 +185,7 @@ class TestLockTimeoutException:
 
     def test_lock_timeout_exception_attributes(self):
         """Test LockTimeout has correct attributes."""
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         exc = LockTimeout(path="/test.txt", timeout=5.0)
 
@@ -196,7 +196,7 @@ class TestLockTimeoutException:
 
     def test_lock_timeout_custom_message(self):
         """Test LockTimeout with custom message."""
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         exc = LockTimeout(path="/test.txt", timeout=10.0, message="Custom lock error")
 
@@ -247,7 +247,7 @@ class TestLockedContextManager:
     @pytest.mark.asyncio
     async def test_locked_timeout_raises_lock_timeout(self, nx_pair_with_lock):
         """Test that locked() raises LockTimeout when lock unavailable."""
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         nx1, nx2 = nx_pair_with_lock
         nx1.write("/shared.txt", b"content")
@@ -327,7 +327,7 @@ class TestWriteWithLock:
         """Test that write(lock=True, lock_timeout=0.1) raises LockTimeout when contended."""
         import threading
 
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         # First, acquire a lock on the file manually so write(lock=True) will contend
         nx_sync_with_lock.write("/contended.txt", b"initial")
@@ -371,7 +371,7 @@ class TestWriteWithLock:
         assert nx_sync_with_lock.read("/occ.txt") == b"v2"
 
         # Write with stale etag + lock should fail with ConflictError
-        from nexus.core.exceptions import ConflictError
+        from nexus.contracts.exceptions import ConflictError
 
         with pytest.raises(ConflictError):
             nx_sync_with_lock.write("/occ.txt", b"v3", lock=True, if_match=etag)
@@ -531,7 +531,7 @@ class TestAtomicUpdate:
     @pytest.mark.asyncio
     async def test_atomic_update_file_not_found(self, nx_with_lock: NexusFS):
         """Test atomic_update on non-existent file raises error."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             await nx_with_lock.atomic_update(
@@ -566,7 +566,7 @@ class TestCombinedScenarios:
     @pytest.mark.asyncio
     async def test_locked_prevents_write_with_lock(self, nx_pair_with_lock):
         """Test that locked() prevents write(lock=True) from another agent."""
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         nx1, nx2 = nx_pair_with_lock
         nx1.write("/shared.txt", b"initial")
@@ -596,7 +596,7 @@ class TestCombinedScenarios:
     @pytest.mark.asyncio
     async def test_atomic_update_vs_write_lock(self, nx_pair_with_lock):
         """Test atomic_update blocking write(lock=True)."""
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         nx1, nx2 = nx_pair_with_lock
         nx1.write("/shared.txt", b"initial")

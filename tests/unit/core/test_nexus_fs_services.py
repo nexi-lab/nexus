@@ -90,8 +90,8 @@ class TestNexusFSServiceComposition:
         assert fs.mount_service.router == fs.router
         assert fs.mount_service.mount_manager == fs.mount_manager
 
-        # Services that take nexus_fs should have it
-        assert fs.mcp_service.nexus_fs == fs
+        # Services that take filesystem should have it
+        assert fs.mcp_service._filesystem == fs
         assert fs.llm_service.nexus_fs == fs
         # SkillService is directly instantiated
         assert fs.skill_service is not None

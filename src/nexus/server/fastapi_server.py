@@ -1588,22 +1588,30 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     # (moved from here to avoid being gated on OAuth credentials)
 
 
-def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
-    """Discover all methods marked with @rpc_expose decorator."""
+def _discover_exposed_methods(
+    nexus_fs: NexusFS,
+    extra_services: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Discover all methods marked with @rpc_expose decorator.
+
+    Scans NexusFS and any registered auxiliary service objects.
+    """
     exposed = {}
 
-    for name in dir(nexus_fs):
-        if name.startswith("_"):
-            continue
+    scan_targets: list[Any] = [nexus_fs, *(extra_services or [])]
+    for target in scan_targets:
+        for name in dir(target):
+            if name.startswith("_"):
+                continue
 
-        try:
-            attr = getattr(nexus_fs, name)
-            if callable(attr) and hasattr(attr, "_rpc_exposed"):
-                method_name = getattr(attr, "_rpc_name", name)
-                exposed[method_name] = attr
-                logger.debug(f"Discovered RPC method: {method_name}")
-        except Exception:
-            continue
+            try:
+                attr = getattr(target, name)
+                if callable(attr) and hasattr(attr, "_rpc_exposed"):
+                    method_name = getattr(attr, "_rpc_name", name)
+                    exposed[method_name] = attr
+                    logger.debug(f"Discovered RPC method: {method_name}")
+            except Exception:
+                continue
 
     logger.info(f"Auto-discovered {len(exposed)} RPC methods")
     return exposed

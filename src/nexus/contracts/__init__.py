@@ -67,8 +67,6 @@ from nexus.contracts.validators import (
     ISODateTimeStr,
 )
 from nexus.contracts.write_observer import WriteObserverProtocol
-from nexus.lib.registry import BaseRegistry, BrickInfo, BrickRegistry
-from nexus.lib.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
 
 __all__ = [
     # Constants (shared across bricks)
@@ -79,14 +77,6 @@ __all__ = [
     "EmailList",
     "EmailListRequired",
     "ISODateTimeStr",
-    # RPC codec
-    "RPCEncoder",
-    "decode_rpc_message",
-    "encode_rpc_message",
-    # Registry
-    "BaseRegistry",
-    "BrickInfo",
-    "BrickRegistry",
     # Types
     "ContextIdentity",
     "OperationContext",

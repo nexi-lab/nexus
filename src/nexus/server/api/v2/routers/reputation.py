@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.dependencies import get_reputation_context
 
 logger = logging.getLogger(__name__)
@@ -305,7 +306,7 @@ def get_trust_score(
 
 @router.get("/api/v2/reputation/leaderboard")
 def get_leaderboard(
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     context: str = "general",
     limit: int = 50,
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
@@ -327,7 +328,7 @@ def submit_feedback(
     from nexus.services.reputation.reputation_service import DuplicateFeedbackError
 
     reputation_service, _dispute_service, auth_ctx = deps
-    zone_id = auth_ctx.get("zone_id", "root") or "root"
+    zone_id = auth_ctx.get("zone_id", ROOT_ZONE_ID) or ROOT_ZONE_ID
 
     try:
         event = reputation_service.submit_feedback(
@@ -373,7 +374,7 @@ def file_dispute(
     from nexus.services.reputation.dispute_service import DuplicateDisputeError
 
     _reputation_service, dispute_service, auth_ctx = deps
-    zone_id = auth_ctx.get("zone_id", "root") or "root"
+    zone_id = auth_ctx.get("zone_id", ROOT_ZONE_ID) or ROOT_ZONE_ID
 
     try:
         dispute = dispute_service.file_dispute(

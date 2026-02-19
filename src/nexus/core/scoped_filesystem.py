@@ -20,7 +20,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 from nexus.core.filesystem import NexusFilesystem
 

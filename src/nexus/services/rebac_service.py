@@ -94,6 +94,7 @@ class ReBACService(ReBACShareMixin):
         enable_audit_logging: bool = True,
         circuit_breaker: AsyncCircuitBreaker | None = None,
         file_reader: Callable | None = None,
+        permission_enforcer: Any = None,
     ):
         """Initialize ReBAC service.
 
@@ -104,12 +105,14 @@ class ReBACService(ReBACShareMixin):
             circuit_breaker: Optional circuit breaker for database resilience (Issue #726)
             file_reader: Optional callback ``(path) -> bytes|str`` for CSV column validation.
                          Provided by NexusFS at composition time.
+            permission_enforcer: Optional permission enforcer for file-resource permission checks.
         """
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._enable_audit_logging = enable_audit_logging
         self._circuit_breaker = circuit_breaker
         self._file_reader = file_reader
+        self._permission_enforcer = permission_enforcer
 
         logger.info(
             "[ReBACService] Initialized with audit_logging=%s, circuit_breaker=%s",

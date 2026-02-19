@@ -45,6 +45,7 @@ from nexus.bricks.pay.constants import (
     make_tb_account_id,
     micro_to_credits,
 )
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
@@ -164,7 +165,7 @@ class CreditsService:
         currency: str = "credits",
         status: str,
         application: str = "gateway",
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         trace_id: str | None = None,
         transfer_id: str | None = None,
     ) -> None:
@@ -268,7 +269,7 @@ class CreditsService:
                 # Log but don't fail - system might still work
                 pass
 
-    def _to_tb_id(self, agent_id: str, zone_id: str = "root") -> int:
+    def _to_tb_id(self, agent_id: str, zone_id: str = ROOT_ZONE_ID) -> int:
         """Convert agent_id to TigerBeetle account ID."""
         return make_tb_account_id(zone_id, agent_id)
 
@@ -289,7 +290,7 @@ class CreditsService:
     # Balance Operations
     # =========================================================================
 
-    async def get_balance(self, agent_id: str, zone_id: str = "root") -> Decimal:
+    async def get_balance(self, agent_id: str, zone_id: str = ROOT_ZONE_ID) -> Decimal:
         """Get available balance (credits_posted - debits_posted).
 
         Args:
@@ -314,7 +315,7 @@ class CreditsService:
         return Decimal(str(micro_to_credits(micro_balance)))
 
     async def get_balance_with_reserved(
-        self, agent_id: str, zone_id: str = "root"
+        self, agent_id: str, zone_id: str = ROOT_ZONE_ID
     ) -> tuple[Decimal, Decimal]:
         """Get available balance and reserved (pending) amount.
 
@@ -352,7 +353,7 @@ class CreditsService:
         *,
         memo: str = "",  # noqa: ARG002 - stored in PostgreSQL, not TigerBeetle
         idempotency_key: str | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> str:
         """Execute atomic credit transfer between agents.
 
@@ -449,7 +450,7 @@ class CreditsService:
         source: str,  # noqa: ARG002 - stored in PostgreSQL metadata
         *,
         external_tx_id: str | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> str:
         """Add credits from external source (treasury -> agent).
 
@@ -515,7 +516,7 @@ class CreditsService:
         amount: Decimal,
         timeout_seconds: int = 300,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> str:
         """Reserve credits for a pending operation.
 
@@ -706,7 +707,7 @@ class CreditsService:
         amount: Decimal,
         *,
         code: int = TRANSFER_CODE_API_USAGE,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> bool:
         """Fast credit deduction for API metering / rate limiting.
 
@@ -761,7 +762,7 @@ class CreditsService:
         self,
         transfers: list[TransferRequest],
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> list[str]:
         """Execute atomic batch transfer - all succeed or all fail.
 
@@ -837,7 +838,7 @@ class CreditsService:
     async def provision_wallet(
         self,
         agent_id: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         """Create TigerBeetle account for a new agent.
 
@@ -877,7 +878,7 @@ class CreditsService:
         agent_id: str,
         amount: Decimal,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> bool:
         """Check if agent has sufficient balance for an amount.
 

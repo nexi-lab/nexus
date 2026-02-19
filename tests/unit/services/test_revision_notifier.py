@@ -6,7 +6,7 @@ import threading
 import time
 from unittest.mock import patch
 
-from nexus.services.revision_notifier import (
+from nexus.lib.revision_notifier import (
     NullRevisionNotifier,
     RevisionNotifier,
     RevisionNotifierBase,

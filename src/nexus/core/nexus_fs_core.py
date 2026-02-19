@@ -121,7 +121,7 @@ class NexusFSCoreMixin:
         if overlay_data is None:
             return None
 
-        from nexus.services.overlay_resolver import OverlayConfig
+        from nexus.contracts.overlay_config import OverlayConfig
 
         return OverlayConfig(
             enabled=overlay_data.get("enabled", False),
@@ -294,11 +294,11 @@ class NexusFSCoreMixin:
         """
         if self._revision_notifier is None:
             try:
-                from nexus.services.revision_notifier import RevisionNotifier
+                from nexus.lib.revision_notifier import RevisionNotifier
 
                 NexusFSCoreMixin._revision_notifier = RevisionNotifier()
             except Exception:
-                from nexus.services.revision_notifier import NullRevisionNotifier
+                from nexus.lib.revision_notifier import NullRevisionNotifier
 
                 logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()

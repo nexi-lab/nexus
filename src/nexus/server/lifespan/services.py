@@ -279,9 +279,9 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         return
 
     try:
-        from nexus.sandbox.auth_service import SandboxAuthService
-        from nexus.sandbox.events import AgentEventLog
-        from nexus.sandbox.sandbox_manager import SandboxManager
+        from nexus.bricks.sandbox.auth_service import SandboxAuthService
+        from nexus.bricks.sandbox.events import AgentEventLog
+        from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
         session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
         if not (session_factory and callable(session_factory)):
@@ -418,11 +418,11 @@ async def _startup_scheduler(app: FastAPI) -> None:
     try:
         import asyncpg
 
-        from nexus.pay.credits import CreditsService
-        from nexus.scheduler.events import AgentStateEmitter
-        from nexus.scheduler.policies.fair_share import FairShareCounter
-        from nexus.scheduler.queue import TaskQueue
-        from nexus.scheduler.service import SchedulerService
+        from nexus.bricks.pay.credits import CreditsService
+        from nexus.bricks.scheduler.events import AgentStateEmitter
+        from nexus.bricks.scheduler.policies.fair_share import FairShareCounter
+        from nexus.bricks.scheduler.queue import TaskQueue
+        from nexus.bricks.scheduler.service import SchedulerService
 
         # Convert SQLAlchemy URL to asyncpg DSN
         pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")

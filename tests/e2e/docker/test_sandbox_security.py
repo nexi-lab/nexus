@@ -35,7 +35,7 @@ pytestmark = [
 ]
 
 
-from nexus.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
+from nexus.bricks.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -378,7 +378,7 @@ class TestInputValidation:
     """Verify input validation prevents command injection."""
 
     def test_mount_path_rejects_injection(self) -> None:
-        from nexus.sandbox.sandbox_provider import validate_mount_path
+        from nexus.bricks.sandbox.sandbox_provider import validate_mount_path
 
         with pytest.raises(ValueError):
             validate_mount_path("/mnt/nexus; rm -rf /")
@@ -394,7 +394,7 @@ class TestInputValidation:
         assert validate_mount_path("/home/user/data") == "/home/user/data"
 
     def test_nexus_url_rejects_injection(self) -> None:
-        from nexus.sandbox.sandbox_provider import validate_nexus_url
+        from nexus.bricks.sandbox.sandbox_provider import validate_nexus_url
 
         with pytest.raises(ValueError):
             validate_nexus_url("http://localhost; rm -rf /")
@@ -410,7 +410,7 @@ class TestInputValidation:
         assert validate_nexus_url("https://nexus.example.com") == "https://nexus.example.com"
 
     def test_agent_id_rejects_injection(self) -> None:
-        from nexus.sandbox.sandbox_provider import validate_agent_id
+        from nexus.bricks.sandbox.sandbox_provider import validate_agent_id
 
         with pytest.raises(ValueError):
             validate_agent_id("agent; rm -rf /")
@@ -423,7 +423,7 @@ class TestInputValidation:
         assert validate_agent_id("agent-123") == "agent-123"
 
     def test_egress_domain_rejects_injection(self) -> None:
-        from nexus.sandbox.egress_proxy import validate_domain
+        from nexus.bricks.sandbox.egress_proxy import validate_domain
 
         with pytest.raises(ValueError):
             validate_domain("evil.com'; rm -rf /")

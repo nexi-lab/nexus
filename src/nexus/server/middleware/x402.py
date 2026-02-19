@@ -28,7 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 if TYPE_CHECKING:
-    from nexus.pay.x402 import X402Client
+    from nexus.bricks.pay.x402 import X402Client
 
 logger = logging.getLogger(__name__)
 

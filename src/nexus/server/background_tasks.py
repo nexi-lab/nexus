@@ -25,7 +25,7 @@ async def sandbox_cleanup_task(sandbox_manager: Any, interval_seconds: int = 300
 
     Examples:
         >>> # Start cleanup task in server
-        >>> from nexus.sandbox import SandboxManager
+        >>> from nexus.bricks.sandbox import SandboxManager
         >>> mgr = SandboxManager(db_session, e2b_api_key="...")
         >>> asyncio.create_task(sandbox_cleanup_task(mgr, 300))
     """

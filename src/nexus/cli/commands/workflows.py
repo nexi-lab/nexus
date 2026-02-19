@@ -73,7 +73,7 @@ def workflows() -> None:
 def workflows_load(file_path: str, enabled: bool) -> None:
     """Load a workflow from a YAML file."""
     try:
-        from nexus.workflows import WorkflowLoader
+        from nexus.bricks.workflows import WorkflowLoader
 
         # Load workflow definition
         definition = WorkflowLoader.load_from_file(file_path)
@@ -265,7 +265,7 @@ def workflows_unload(workflow_name: str) -> None:
 def workflows_discover(directory: str, load: bool) -> None:
     """Discover workflows in a directory."""
     try:
-        from nexus.workflows import WorkflowLoader
+        from nexus.bricks.workflows import WorkflowLoader
 
         # Discover workflows
         workflows_found = WorkflowLoader.discover_workflows(directory)

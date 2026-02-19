@@ -67,7 +67,7 @@ class TestTigerBeetleConnection:
     @pytest.mark.asyncio
     async def test_connect_to_tigerbeetle(self, tigerbeetle_address: str):
         """Should connect to TigerBeetle server."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -86,7 +86,7 @@ class TestWalletProvisioning:
     @pytest.mark.asyncio
     async def test_provision_wallet(self, tigerbeetle_address: str):
         """Should create TigerBeetle account."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -103,7 +103,7 @@ class TestWalletProvisioning:
     @pytest.mark.asyncio
     async def test_provision_wallet_idempotent(self, tigerbeetle_address: str):
         """Provisioning same wallet twice should not fail."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -125,7 +125,7 @@ class TestTransferOperations:
     @pytest.mark.asyncio
     async def test_topup_and_check_balance(self, tigerbeetle_address: str):
         """Should add credits and reflect in balance."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -145,7 +145,7 @@ class TestTransferOperations:
     @pytest.mark.asyncio
     async def test_transfer_between_agents(self, tigerbeetle_address: str):
         """Should transfer credits between agents."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -181,7 +181,7 @@ class TestTransferOperations:
     @pytest.mark.asyncio
     async def test_transfer_insufficient_balance(self, tigerbeetle_address: str):
         """Should fail transfer when balance insufficient."""
-        from nexus.pay.credits import CreditsService, InsufficientCreditsError
+        from nexus.bricks.pay.credits import CreditsService, InsufficientCreditsError
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -209,7 +209,7 @@ class TestTwoPhaseTransfers:
     @pytest.mark.asyncio
     async def test_reserve_and_commit(self, tigerbeetle_address: str):
         """Should reserve credits then commit."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -242,7 +242,7 @@ class TestTwoPhaseTransfers:
     @pytest.mark.asyncio
     async def test_reserve_and_release(self, tigerbeetle_address: str):
         """Should reserve credits then release (void)."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -270,7 +270,7 @@ class TestTwoPhaseTransfers:
     @pytest.mark.asyncio
     async def test_reserve_insufficient_balance(self, tigerbeetle_address: str):
         """Should fail reservation when balance insufficient."""
-        from nexus.pay.credits import CreditsService, InsufficientCreditsError
+        from nexus.bricks.pay.credits import CreditsService, InsufficientCreditsError
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -291,7 +291,7 @@ class TestFastMetering:
     @pytest.mark.asyncio
     async def test_deduct_fast_success(self, tigerbeetle_address: str):
         """Should deduct credits quickly."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -313,7 +313,7 @@ class TestFastMetering:
     @pytest.mark.asyncio
     async def test_deduct_fast_insufficient(self, tigerbeetle_address: str):
         """Should return False when insufficient balance."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -334,7 +334,7 @@ class TestBatchOperations:
     @pytest.mark.asyncio
     async def test_batch_transfer(self, tigerbeetle_address: str):
         """Should execute batch transfers atomically."""
-        from nexus.pay.credits import CreditsService, TransferRequest
+        from nexus.bricks.pay.credits import CreditsService, TransferRequest
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -376,7 +376,7 @@ class TestConcurrentOperations:
     @pytest.mark.asyncio
     async def test_concurrent_transfers(self, tigerbeetle_address: str):
         """Multiple concurrent transfers should not interfere."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,
@@ -415,7 +415,7 @@ class TestIdempotency:
     @pytest.mark.asyncio
     async def test_idempotent_transfer(self, tigerbeetle_address: str):
         """Same idempotency key should not duplicate transfer."""
-        from nexus.pay.credits import CreditsService
+        from nexus.bricks.pay.credits import CreditsService
 
         service = CreditsService(
             tigerbeetle_address=tigerbeetle_address,

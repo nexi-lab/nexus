@@ -11,10 +11,10 @@ import grpc
 import grpc.aio
 import pytest
 
-from nexus.a2a import a2a_pb2, a2a_pb2_grpc
-from nexus.a2a.grpc_server import create_grpc_server, stop_grpc_server
-from nexus.a2a.models import TaskState
-from nexus.a2a.task_manager import TaskManager
+from nexus.bricks.a2a import a2a_pb2, a2a_pb2_grpc
+from nexus.bricks.a2a.grpc_server import create_grpc_server, stop_grpc_server
+from nexus.bricks.a2a.models import TaskState
+from nexus.bricks.a2a.task_manager import TaskManager
 
 
 @pytest.fixture

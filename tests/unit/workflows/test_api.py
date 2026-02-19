@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from nexus.workflows.api import WorkflowAPI
-from nexus.workflows.engine import WorkflowEngine
-from nexus.workflows.types import (
+from nexus.bricks.workflows.api import WorkflowAPI
+from nexus.bricks.workflows.engine import WorkflowEngine
+from nexus.bricks.workflows.types import (
     TriggerType,
     WorkflowAction,
     WorkflowDefinition,
@@ -74,7 +74,7 @@ class TestLoad:
         assert result is True
         mock_engine.load_workflow.assert_called_once_with(sample_workflow, enabled=True)
 
-    @patch("nexus.workflows.api.WorkflowLoader")
+    @patch("nexus.bricks.workflows.api.WorkflowLoader")
     def test_load_from_dict(self, mock_loader, workflow_api, mock_engine, sample_workflow):
         """Test loading from dictionary."""
         workflow_dict = {
@@ -90,7 +90,7 @@ class TestLoad:
         mock_loader.load_from_dict.assert_called_once_with(workflow_dict)
         mock_engine.load_workflow.assert_called_once_with(sample_workflow, enabled=True)
 
-    @patch("nexus.workflows.api.WorkflowLoader")
+    @patch("nexus.bricks.workflows.api.WorkflowLoader")
     def test_load_from_file(self, mock_loader, workflow_api, mock_engine, sample_workflow):
         """Test loading from file path."""
         file_path = Path("/test/workflow.yaml")
@@ -304,7 +304,7 @@ class TestUnload:
 class TestDiscover:
     """Test discovering workflows."""
 
-    @patch("nexus.workflows.api.WorkflowLoader")
+    @patch("nexus.bricks.workflows.api.WorkflowLoader")
     def test_discover_without_loading(self, mock_loader, workflow_api, sample_workflow):
         """Test discovering workflows without loading them."""
         workflow2 = WorkflowDefinition(name="workflow2", version="1.0")
@@ -318,7 +318,7 @@ class TestDiscover:
         assert discovered[1] == workflow2
         mock_loader.discover_workflows.assert_called_once_with(tmpdir)
 
-    @patch("nexus.workflows.api.WorkflowLoader")
+    @patch("nexus.bricks.workflows.api.WorkflowLoader")
     def test_discover_with_loading(self, mock_loader, workflow_api, mock_engine, sample_workflow):
         """Test discovering and loading workflows."""
         workflow2 = WorkflowDefinition(name="workflow2", version="1.0")

@@ -275,7 +275,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "PaymentProtocol",
         "nexus.services.protocols.payment",
-        "nexus.pay.protocol.X402PaymentProtocol",
+        "nexus.bricks.pay.protocol.X402PaymentProtocol",
         True,
     ),
 ]

@@ -10,7 +10,7 @@ import logging
 
 import pytest
 
-from nexus.a2a.stream_registry import StreamRegistry
+from nexus.bricks.a2a.stream_registry import StreamRegistry
 
 
 class TestRegister:

@@ -1,7 +1,7 @@
 """Tests for workflow protocol conformance."""
 
-from nexus.workflows.engine import WorkflowEngine
-from nexus.workflows.protocol import WorkflowProtocol, WorkflowServices
+from nexus.bricks.workflows.engine import WorkflowEngine
+from nexus.bricks.workflows.protocol import WorkflowProtocol, WorkflowServices
 
 
 class TestWorkflowProtocol:

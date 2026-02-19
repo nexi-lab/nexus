@@ -17,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.pay.x402 import X402Client, X402PaymentVerification
+from nexus.bricks.pay.x402 import X402Client, X402PaymentVerification
 from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_router
 from nexus.server.dependencies import require_auth

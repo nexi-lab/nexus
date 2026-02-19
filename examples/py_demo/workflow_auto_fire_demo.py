@@ -28,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import nexus
-from nexus.workflows import WorkflowAPI, WorkflowLoader
+from nexus.bricks.workflows import WorkflowAPI, WorkflowLoader
 
 
 def print_header(title: str):

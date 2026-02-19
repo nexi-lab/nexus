@@ -11,7 +11,7 @@ import shlex
 import time
 from typing import TYPE_CHECKING
 
-from nexus.sandbox.sandbox_provider import validate_mount_path
+from nexus.bricks.sandbox.sandbox_provider import validate_mount_path
 from nexus.validation.config import ValidatorConfigLoader
 from nexus.validation.detector import detect_project_validators
 from nexus.validation.models import (
@@ -26,7 +26,7 @@ from nexus.validation.script_builder import (
 )
 
 if TYPE_CHECKING:
-    from nexus.sandbox.sandbox_provider import SandboxProvider
+    from nexus.bricks.sandbox.sandbox_provider import SandboxProvider
 
 # Default configs for auto-detected validators (avoids instantiating Validator subclasses)
 _DEFAULT_VALIDATOR_CONFIGS: dict[str, ValidatorConfig] = {

@@ -11,7 +11,7 @@ import shlex
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.sandbox.sandbox_provider import SandboxProvider
+    from nexus.bricks.sandbox.sandbox_provider import SandboxProvider
 
 logger = logging.getLogger(__name__)
 

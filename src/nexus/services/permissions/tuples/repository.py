@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity
+from nexus.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.storage.models.permissions import (
     ReBACTupleModel as RT,
 )

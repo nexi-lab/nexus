@@ -305,7 +305,7 @@ The permission checker implements a recursive graph traversal algorithm with:
 To integrate with the Nexus Python codebase:
 
 ```python
-from nexus.core.rebac import check_permissions_python  # existing
+from nexus.rebac.domain import check_permissions_python  # existing
 import nexus_fast
 
 def check_permissions_optimized(checks, tuples, namespace_configs):

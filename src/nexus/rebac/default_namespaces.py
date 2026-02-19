@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 
-from nexus.core.rebac import NamespaceConfig
+from nexus.rebac.domain import NamespaceConfig
 
 # ---------------------------------------------------------------------------
 # File namespace (complex: parent inheritance + group + cross-zone sharing)

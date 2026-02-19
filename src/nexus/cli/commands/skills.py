@@ -70,9 +70,9 @@ def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
 
     Delegates to SQLAlchemyRecordStore for engine/session creation (Issue #622).
     """
-    import os
+    from nexus.lib.env import get_database_url
 
-    db_url = os.getenv("NEXUS_DATABASE_URL")
+    db_url = get_database_url()
     if not db_url:
         return None
 
@@ -1638,10 +1638,11 @@ def skills_mcp_mount(
             try:
                 import os
 
+                # Get TokenManager (same logic as oauth CLI)
+                from nexus.lib.env import get_database_url
                 from nexus.server.auth import TokenManager
 
-                # Get TokenManager (same logic as oauth CLI)
-                db_url = os.getenv("NEXUS_DATABASE_URL")
+                db_url = get_database_url()
                 if db_url:
                     token_manager = TokenManager(db_url=db_url)
                 else:

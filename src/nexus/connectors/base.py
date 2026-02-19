@@ -25,7 +25,7 @@ from nexus.core.exceptions import ValidationError as CoreValidationError
 if TYPE_CHECKING:
     from nexus.connectors.error_formatter import SkillErrorFormatter
     from nexus.connectors.schema_generator import SkillDocGenerator
-    from nexus.skills.registry import SkillRegistry
+    from nexus.skills.protocols import SkillRegistryProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +207,7 @@ class SkillDocMixin:
     NESTED_EXAMPLES: dict[str, list[str]] = {}  # Nested field examples for SKILL.md
     FIELD_EXAMPLES: dict[str, str] = {}  # Field-specific examples for SKILL.md
 
-    _skill_registry: SkillRegistry | None = None
+    _skill_registry: SkillRegistryProtocol | None = None
     _mount_path: str | None = None  # Set during mount
     _cached_doc_generator: SkillDocGenerator | None = None
     _cached_error_formatter: SkillErrorFormatter | None = None
@@ -219,7 +219,7 @@ class SkillDocMixin:
             return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
         return "/.skill/SKILL.md"  # Default fallback
 
-    def set_skill_registry(self, registry: SkillRegistry) -> None:
+    def set_skill_registry(self, registry: SkillRegistryProtocol) -> None:
         """Set the skill registry for this connector."""
         self._skill_registry = registry
 

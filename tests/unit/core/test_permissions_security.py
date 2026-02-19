@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import (
+from nexus.contracts.types import (
     OperationContext,
     Permission,
 )
@@ -754,7 +754,7 @@ class TestCheckStaleSessionHelper:
     def test_stale_generation_raises(self):
         """Mismatched generation should raise StaleSessionError."""
         from nexus.core.exceptions import StaleSessionError
-        from nexus.core.permissions import check_stale_session
+        from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         record = MagicMock()
@@ -774,7 +774,7 @@ class TestCheckStaleSessionHelper:
 
     def test_current_generation_passes(self):
         """Matching generation should not raise."""
-        from nexus.core.permissions import check_stale_session
+        from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         record = MagicMock()
@@ -794,7 +794,7 @@ class TestCheckStaleSessionHelper:
     def test_missing_agent_raises(self):
         """Agent not found in registry should raise StaleSessionError."""
         from nexus.core.exceptions import StaleSessionError
-        from nexus.core.permissions import check_stale_session
+        from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         registry.get.return_value = None
@@ -812,7 +812,7 @@ class TestCheckStaleSessionHelper:
 
     def test_none_registry_skips(self):
         """None agent_registry should skip check entirely."""
-        from nexus.core.permissions import check_stale_session
+        from nexus.rebac.enforcer import check_stale_session
 
         ctx = OperationContext(
             user_id="alice",
@@ -826,7 +826,7 @@ class TestCheckStaleSessionHelper:
 
     def test_none_generation_skips(self):
         """None agent_generation should skip check entirely."""
-        from nexus.core.permissions import check_stale_session
+        from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         ctx = OperationContext(
@@ -842,7 +842,7 @@ class TestCheckStaleSessionHelper:
 
     def test_user_subject_skips(self):
         """Non-agent subject_type should skip check entirely."""
-        from nexus.core.permissions import check_stale_session
+        from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         ctx = OperationContext(

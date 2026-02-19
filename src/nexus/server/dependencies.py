@@ -275,7 +275,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     Returns:
         OperationContext for filesystem operations
     """
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"

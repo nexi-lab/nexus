@@ -11,12 +11,12 @@ import time
 import pytest
 
 from nexus.core.event_bus import FileEvent
-from nexus.core.reactive_subscriptions import (
+from nexus.core.read_set import ReadSet, ReadSetRegistry
+from nexus.lib.path_utils import path_matches_pattern
+from nexus.services.reactive_subscriptions import (
     ReactiveSubscriptionManager,
     Subscription,
-    path_matches_pattern,
 )
-from nexus.core.read_set import ReadSet, ReadSetRegistry
 
 # ---------------------------------------------------------------------------
 # TestSubscription
@@ -51,7 +51,7 @@ class TestSubscription:
             query_id="q1",
         )
         with pytest.raises(AttributeError):
-            sub.subscription_id = "changed"  # type: ignore[misc]
+            sub.subscription_id = "changed"
 
 
 # ---------------------------------------------------------------------------

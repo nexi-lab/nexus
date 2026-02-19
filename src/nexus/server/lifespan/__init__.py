@@ -123,6 +123,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     down in reverse order during shutdown.
     """
     from nexus.server.lifespan.a2a_grpc import shutdown_a2a_grpc, startup_a2a_grpc
+    from nexus.server.lifespan.bricks import shutdown_bricks, startup_bricks
     from nexus.server.lifespan.ipc import shutdown_ipc, startup_ipc
     from nexus.server.lifespan.observability import (
         shutdown_observability,
@@ -145,6 +146,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bg_tasks.extend(await startup_realtime(app))
     bg_tasks.extend(await startup_search(app))
     bg_tasks.extend(await startup_services(app))
+    bg_tasks.extend(await startup_bricks(app))
     bg_tasks.extend(await startup_uploads(app))
     bg_tasks.extend(await startup_ipc(app))
     bg_tasks.extend(await startup_a2a_grpc(app))
@@ -168,6 +170,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await shutdown_a2a_grpc(app)
     await shutdown_ipc(app)
+    await shutdown_bricks(app)
     await shutdown_services(app)
     await shutdown_realtime(app)
 

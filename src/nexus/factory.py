@@ -165,6 +165,91 @@ class _NexusFSFileReader:
             return content_hash
 
 
+# ---------------------------------------------------------------------------
+# Issue #1704: WorkflowEngine lifecycle adapter
+# ---------------------------------------------------------------------------
+
+
+class _WorkflowLifecycleAdapter:
+    """Adapter: BrickLifecycleProtocol -> WorkflowEngine.
+
+    WorkflowEngine exposes ``startup()`` but BrickLifecycleManager expects
+    ``start()``.  This thin adapter bridges the naming mismatch.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    async def start(self) -> None:
+        if hasattr(self._engine, "startup"):
+            await self._engine.startup()
+
+    async def stop(self) -> None:
+        pass  # WorkflowEngine has no explicit shutdown
+
+    async def health_check(self) -> bool:
+        if hasattr(self._engine, "health_check"):
+            result: bool = await self._engine.health_check()
+            return result
+        return self._engine is not None
+
+
+# ---------------------------------------------------------------------------
+# Issue #1704: Register factory-created bricks with lifecycle manager
+# ---------------------------------------------------------------------------
+
+_FACTORY_BRICKS: list[tuple[str, str]] = [
+    ("manifest_resolver", "ManifestProtocol"),
+    ("chunked_upload_service", "ChunkedUploadProtocol"),
+    ("snapshot_service", "SnapshotProtocol"),
+    ("task_queue_service", "TaskQueueProtocol"),
+    ("ipc_vfs_driver", "IPCProtocol"),
+    ("wallet_provisioner", "WalletProtocol"),
+]
+
+# Entries intentionally NOT registered with lifecycle manager.
+# CI test ``test_all_brick_dict_keys_accounted_for`` will fail if a new
+# key appears in ``_boot_brick_services()`` without being added here or
+# to ``_FACTORY_BRICKS``.
+_FACTORY_SKIP: frozenset[str] = frozenset(
+    {
+        "event_bus",  # infrastructure, not a brick
+        "lock_manager",  # infrastructure, not a brick
+        "api_key_creator",  # class reference, not instance
+        "tool_namespace_middleware",  # stateless middleware, no lifecycle
+        "manifest_metrics",  # observability helper, not a brick
+        "ipc_storage_driver",  # internal to ipc_vfs_driver
+        "ipc_provisioner",  # provisioning helper, not a brick
+        "skill_service",  # wired later via NexusFS gateway adapters
+        "skill_package_service",  # wired later via NexusFS gateway adapters
+    }
+)
+
+
+def _register_factory_bricks(
+    manager: Any,
+    brick_dict: dict[str, Any],
+) -> None:
+    """Register Tier 2 bricks from ``_boot_brick_services()`` with the lifecycle manager.
+
+    Skips infrastructure entries (event_bus, lock_manager, etc.) and None values.
+    WorkflowEngine gets a thin adapter since its startup API differs.
+    """
+    for name, protocol in _FACTORY_BRICKS:
+        instance = brick_dict.get(name)
+        if instance is not None:
+            manager.register(name, instance, protocol_name=protocol)
+
+    # WorkflowEngine needs adapter (startup() != start())
+    wf = brick_dict.get("workflow_engine")
+    if wf is not None:
+        manager.register(
+            "workflow_engine",
+            _WorkflowLifecycleAdapter(wf),
+            protocol_name="WorkflowProtocol",
+        )
+
+
 def _create_wallet_provisioner() -> Any:
     """Create a sync wallet provisioner for NexusFS agent registration.
 
@@ -1187,6 +1272,11 @@ def create_nexus_services(
     # --- Start background threads post-construction ---
     _start_background_services(kernel_dict, system_dict)
 
+    # --- Register factory-created bricks with lifecycle manager (Issue #1704) ---
+    _blm = system_dict.get("brick_lifecycle_manager")
+    if _blm is not None:
+        _register_factory_bricks(_blm, brick_dict)
+
     # --- Assemble 3-tier containers (Issue #2034) ---
     kernel_services = _KernelServices(
         router=router,
@@ -1544,5 +1634,11 @@ def create_nexus_fs(
         provider_registry=parsers_brick.provider_registry,
         vfs_lock_manager=_vfs_lock_manager,
     )
+
+    # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)
+    _blm = getattr(system_services, "brick_lifecycle_manager", None)
+    if _blm is not None:
+        _blm.register("parsers", parsers_brick, protocol_name="ParsersProtocol")
+        _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
 
     return nx

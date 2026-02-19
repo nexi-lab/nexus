@@ -606,6 +606,7 @@ class BrickLifecycleManager:
 
         Returns the health report after all mounts complete.
         """
+        t0 = time.monotonic()
         levels = self.compute_startup_order()
         for level in levels:
             # Filter to only REGISTERED bricks (skip already-mounted or failed)
@@ -622,7 +623,16 @@ class BrickLifecycleManager:
                 for name in to_mount:
                     tg.create_task(self._safe_mount(name, timeout=timeout))
 
-        return self.health()
+        report = self.health()
+        elapsed = time.monotonic() - t0
+        logger.info(
+            "[LIFECYCLE] mount_all: %d/%d active, %d failed (%.3fs)",
+            report.active,
+            report.total,
+            report.failed,
+            elapsed,
+        )
+        return report
 
     async def _safe_mount(self, name: str, *, timeout: float) -> None:
         """Mount a brick, catching all exceptions (fail-forward)."""

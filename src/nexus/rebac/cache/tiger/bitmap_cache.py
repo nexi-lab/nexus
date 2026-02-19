@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
     from nexus.cache.base import TigerCacheProtocol
+    from nexus.rebac.cache.tiger.resource_map import TigerResourceMap
     from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
-    from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class TigerCache:
             dragonfly_cache: Optional Dragonfly cache for L2 distributed caching
             l2_max_workers: Thread pool size for L2 dragonfly operations.
         """
-        from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap as _TRM
+        from nexus.rebac.cache.tiger.resource_map import TigerResourceMap as _TRM
 
         self._engine = engine
         self._resource_map = resource_map or _TRM(engine)

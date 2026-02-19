@@ -296,15 +296,14 @@ async def lifespan(_app: FastAPI) -> Any:
                 _app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
                 logger.info("Async ReBAC manager initialized (wrapping sync manager)")
             else:
-                # Fallback: create a fresh sync manager for async wrapper
-                from sqlalchemy import create_engine as _create_engine
-
+                # Fallback: create a fresh sync manager via RecordStore
                 from nexus.rebac.manager import ReBACManager
+                from nexus.storage.record_store import SQLAlchemyRecordStore
 
-                _sync_engine = _create_engine(_app.state.database_url)
-                _sync_mgr = ReBACManager(engine=_sync_engine)
+                _store = SQLAlchemyRecordStore(db_url=_app.state.database_url)
+                _sync_mgr = ReBACManager(engine=_store.engine)
                 _app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
-                logger.info("Async ReBAC manager initialized (fresh sync manager)")
+                logger.info("Async ReBAC manager initialized (fresh sync manager via RecordStore)")
 
             # Issue #940: Initialize AsyncNexusFS with permission enforcement
             try:

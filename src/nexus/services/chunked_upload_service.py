@@ -19,6 +19,7 @@ import zlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.exceptions import (
     BackendError,
     UploadChecksumMismatchError,
@@ -118,7 +119,7 @@ class ChunkedUploadService:
         upload_length: int,
         *,
         metadata: dict[str, str] | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         user_id: str = "anonymous",
         checksum_algorithm: str | None = None,
     ) -> UploadSession:

@@ -28,7 +28,7 @@ from nexus.core.path_utils import get_ancestors, get_parent, get_parent_chain
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 
 class HierarchyManager:
@@ -144,7 +144,7 @@ class HierarchyManager:
         # BUGFIX: Check child -> parent direction (child is subject, parent is object)
         # This matches _create_parent_tuple which creates (child, "parent", parent)
         # BUGFIX: Pass zone_id to ensure proper scoping and prevent duplicate tuples
-        return self.rebac_manager._has_direct_relation(  # type: ignore[no-any-return]
+        return self.rebac_manager._has_direct_relation(
             subject=child_entity,
             relation="parent",
             obj=parent_entity,
@@ -507,7 +507,7 @@ class HierarchyManager:
         ]
 
         # Use ReBAC manager's bulk insert method
-        return self.rebac_manager.rebac_write_batch(rebac_tuples)  # type: ignore[no-any-return]
+        return self.rebac_manager.rebac_write_batch(rebac_tuples)
 
     def get_parent_path(self, path: str) -> str | None:
         """Get parent directory path.

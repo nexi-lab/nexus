@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.rebac.types import WriteResult
 
 
@@ -94,7 +95,7 @@ class AsyncReBACManager:
     async def rebac_check_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Async bulk permission check."""
         return await asyncio.to_thread(self._sync.rebac_check_bulk, checks, zone_id)
@@ -155,7 +156,7 @@ class AsyncReBACManager:
     async def get_transitive_groups(
         self,
         subject: tuple[str, str],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> set[tuple[str, str]]:
         """Async transitive group lookup."""
         return await asyncio.to_thread(self._sync.get_transitive_groups, subject, zone_id)

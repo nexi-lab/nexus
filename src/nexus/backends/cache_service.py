@@ -29,8 +29,8 @@ from nexus.backends.cache_models import (
     CacheEntry,
 )
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import ConflictError
 from nexus.contracts.types import OperationContext
-from nexus.core.exceptions import ConflictError
 from nexus.core.hash_fast import hash_content
 from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import FilePathModel

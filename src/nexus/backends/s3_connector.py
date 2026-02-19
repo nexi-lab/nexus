@@ -41,7 +41,7 @@ from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:

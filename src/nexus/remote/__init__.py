@@ -31,7 +31,7 @@ Example (async):
     ...     await nx.skills.create("my-skill", "A skill", template="basic")
 """
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     RemoteConnectionError,
     RemoteFilesystemError,
     RemoteTimeoutError,

@@ -51,7 +51,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     RemoteConnectionError,
     RemoteFilesystemError,

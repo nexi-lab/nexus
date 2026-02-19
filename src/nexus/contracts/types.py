@@ -25,7 +25,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import IntFlag
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.read_set import ReadSet
@@ -223,3 +223,88 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
         ),
         is_admin=getattr(context, "is_admin", False),
     )
+
+
+def parse_operation_context(
+    context: OperationContext | dict[str, Any] | None = None,
+) -> OperationContext:
+    """Convert a dict / OperationContext / None into a canonical OperationContext.
+
+    Standalone replacement for ``NexusFS._parse_context()`` so every extracted
+    service can normalise caller context without depending on the kernel.
+
+    Args:
+        context: Raw context from an RPC call — may be a plain dict
+            (JSON-RPC), an existing OperationContext, or *None*.
+
+    Returns:
+        A validated OperationContext instance.
+    """
+    if isinstance(context, OperationContext):
+        return context
+
+    if context is None:
+        context = {}
+
+    return OperationContext(
+        user_id=context.get("user_id", "system"),
+        groups=context.get("groups", []),
+        zone_id=context.get("zone_id"),
+        agent_id=context.get("agent_id"),
+        is_admin=context.get("is_admin", False),
+        is_system=context.get("is_system", False),
+    )
+
+
+# ---------------------------------------------------------------------------
+# VFS operations protocol — services depend on this, not on NexusFS directly
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class VFSOperations(Protocol):
+    """Minimal filesystem surface that extracted services can depend on.
+
+    NexusFS satisfies this naturally. Services receive it via DI, breaking
+    the circular dependency ``service → NexusFS → service``.
+    """
+
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
+        context: OperationContext | None = None,
+    ) -> None: ...
+
+    def write(
+        self,
+        path: str,
+        content: bytes | str,
+        context: OperationContext | None = None,
+        **kw: Any,
+    ) -> Any: ...
+
+    def read(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> bytes: ...
+
+    def exists(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> bool: ...
+
+    def delete(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> None: ...
+
+    def list(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> list[str]: ...

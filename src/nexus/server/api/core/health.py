@@ -225,7 +225,7 @@ async def pool_metrics(request: Request) -> dict[str, Any]:
 
     # Redis/Dragonfly pool stats from CacheBrick (Issue #1524)
     try:
-        cache_brick = getattr(state, "cache_factory", None)
+        cache_brick = getattr(state, "cache_brick", None)
         if cache_brick is not None and cache_brick.has_cache_store:
             _store = cache_brick.cache_store
             dragonfly_stats = _store.get_pool_stats()

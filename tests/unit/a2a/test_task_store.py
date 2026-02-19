@@ -144,9 +144,10 @@ def _make_task_with_artifact(task_id: str = "task-art") -> Task:
 def store(request: pytest.FixtureRequest) -> TaskStoreProtocol:
     """Create a TaskStore instance for each backend."""
     if request.param == "in_memory":
-        from nexus.bricks.a2a.stores.in_memory import InMemoryTaskStore
+        from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
+        from nexus.cache.inmemory import InMemoryCacheStore
 
-        return InMemoryTaskStore()
+        return CacheBackedTaskStore(InMemoryCacheStore())
     elif request.param == "vfs":
         from nexus.bricks.a2a.stores.vfs import VFSTaskStore
 

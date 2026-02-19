@@ -301,6 +301,8 @@ def create_record_store(
     db_url: str | None = None,
     db_path: str | None = None,
     create_tables: bool = True,
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
 ) -> RecordStoreABC:
     """Create a RecordStore with Cloud SQL and read replica support auto-detected from env.
 
@@ -361,6 +363,8 @@ def create_record_store(
             read_replica_url=read_replica_url,
             read_replica_creator=read_replica_creator,
             async_read_replica_creator=async_read_replica_creator,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
         )
 
     return SQLAlchemyRecordStore(
@@ -368,6 +372,8 @@ def create_record_store(
         db_path=db_path,
         create_tables=create_tables,
         read_replica_url=read_replica_url,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
     )
 
 
@@ -386,6 +392,9 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
 
     t0 = time.perf_counter()
     try:
+        # Config-time dialect flag (KERNEL-ARCHITECTURE §7)
+        _is_pg = not ctx.db_url.startswith("sqlite")
+
         # --- ReBAC Manager ---
         from nexus.rebac.manager import EnhancedReBACManager
 
@@ -397,17 +406,19 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             enable_graph_limits=True,
             enable_tiger_cache=ctx.perm.enable_tiger_cache,
             read_engine=ctx.read_engine,
+            is_postgresql=_is_pg,
         )
 
         # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
         from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
 
+        _res = ctx.profile_tuning.resiliency
         rebac_circuit_breaker = AsyncCircuitBreaker(
             name="rebac_db",
             config=CircuitBreakerConfig(
-                failure_threshold=5,
+                failure_threshold=_res.circuit_breaker_failure_threshold,
                 success_threshold=3,
-                reset_timeout=30.0,
+                reset_timeout=_res.circuit_breaker_timeout,
                 failure_window=60.0,
             ),
         )
@@ -430,7 +441,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         # --- Audit Store ---
         from nexus.rebac.permissions_enhanced import AuditStore
 
-        audit_store = AuditStore(engine=ctx.engine)
+        audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
 
         # --- Entity Registry ---
         from nexus.rebac.entity_registry import EntityRegistry
@@ -587,7 +598,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
             agent_registry = AgentRegistry(
                 session_factory=ctx.session_factory,
                 entity_registry=kernel["entity_registry"],
-                flush_interval=60,
+                flush_interval=ctx.profile_tuning.background_task.heartbeat_flush_interval,
             )
             async_agent_registry = AsyncAgentRegistry(agent_registry)
             logger.debug("[BOOT:SYSTEM] AgentRegistry + AsyncAgentRegistry created")
@@ -1030,6 +1041,17 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except Exception as _mem_exc:
         logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
 
+    # --- Skills Brick (Issue #2035) ---
+    skill_service: Any = None
+    skill_package_service: Any = None
+    try:
+        # NexusFSGateway is not available during brick boot — skills brick
+        # will be wired later in NexusFS._wire_services() via the gateway
+        # adapters. Here we just flag availability.
+        logger.debug("[BOOT:BRICK] Skills brick modules available")
+    except Exception as _skills_exc:
+        logger.debug("[BOOT:BRICK] Skills brick not available: %s", _skills_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -1046,6 +1068,8 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "ipc_vfs_driver": ipc_vfs_driver,
         "ipc_provisioner": ipc_provisioner,
         "memory_brick_factory": memory_brick_factory,
+        "skill_service": skill_service,
+        "skill_package_service": skill_package_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1252,6 +1276,9 @@ def create_nexus_services(
         ipc_storage_driver=brick_dict["ipc_storage_driver"],
         ipc_vfs_driver=brick_dict["ipc_vfs_driver"],
         ipc_provisioner=brick_dict["ipc_provisioner"],
+        # Skills Brick (Issue #2035)
+        skill_service=brick_dict["skill_service"],
+        skill_package_service=brick_dict["skill_package_service"],
     )
 
     return kernel_services, system_services, brick_services
@@ -1506,10 +1533,10 @@ def create_nexus_fs(
     if brick_services is None:
         brick_services = _BrickServices()
 
+    from dataclasses import replace as _dc_replace
+
     # Inject workflow_engine override if provided directly (frozen — use replace)
     if workflow_engine is not None:
-        from dataclasses import replace as _dc_replace
-
         brick_services = _dc_replace(brick_services, workflow_engine=workflow_engine)
 
     # Create ParsersBrick — owns both registries (Issue #1523)
@@ -1519,12 +1546,13 @@ def create_nexus_fs(
     _parse_fn = parsers_brick.create_parse_fn()
 
     # Create CacheBrick — owns all cache domain services (Issue #1524)
-    from nexus.cache.brick import CacheBrick
+    from nexus.bricks.cache.brick import CacheBrick
 
     _cache_brick = CacheBrick(
         cache_store=cache_store,
         record_store=record_store,
     )
+    brick_services = _dc_replace(brick_services, cache_brick=_cache_brick)
 
     # Create content cache (Issue #657)
     _content_cache = None
@@ -1559,8 +1587,5 @@ def create_nexus_fs(
         provider_registry=parsers_brick.provider_registry,
         vfs_lock_manager=_vfs_lock_manager,
     )
-
-    # Attach CacheBrick to NexusFS for server layer access (Issue #1524)
-    nx._cache_brick = _cache_brick  # type: ignore[attr-defined]
 
     return nx

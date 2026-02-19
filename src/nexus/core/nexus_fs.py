@@ -365,17 +365,33 @@ class NexusFS(  # type: ignore[misc]
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
-        # Issue #625: Assemble post-mutation hooks list
-        # Hooks are called in order after each write/delete/rename mutation.
-        # Fire-and-forget: failures are logged but never abort the mutation.
+        # Issue #625: Post-mutation hooks list (fire-and-forget).
+        # Kernel-internal hooks (cache observer) are added here.
+        # Userspace hooks are registered post-construction via register_mutation_hook().
         self._post_mutation_hooks: list = []
         if self._cache_observer is not None:
             self._post_mutation_hooks.append(self._cache_observer)
-        if self._workflow_dispatch is not None:
-            self._post_mutation_hooks.append(self._workflow_dispatch)
 
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
         self._init_performance_optimizations()
+
+    # ------------------------------------------------------------------
+    # Public kernel API: mutation hook registration
+    # ------------------------------------------------------------------
+
+    def register_mutation_hook(self, hook: Any) -> None:
+        """Register a post-mutation hook (fire-and-forget).
+
+        Userspace services (e.g. WorkflowDispatchService) call this after
+        construction to receive mutation notifications.  The kernel does
+        not know or care what concrete hook is registered — it just calls
+        ``hook.on_mutation(event)`` after every write/delete/rename.
+
+        This is the *hook* subsystem (notifier-chain style).  The separate
+        *observer* subsystem (``_write_observer``) is audit-critical and
+        can abort — they are independent (cf. Linux LSM vs notifier chains).
+        """
+        self._post_mutation_hooks.append(hook)
 
     def _wire_services(self) -> None:
         """Wire services that require a reference to self (NexusFS).
@@ -478,10 +494,31 @@ class NexusFS(  # type: ignore[misc]
         if brk_svc.task_queue_service is not None:
             self.task_queue_service = brk_svc.task_queue_service
 
-        # SkillService: Skill management
-        from nexus.services.skill_service import SkillService as _SkillService
+        # SkillService: Skill management (Issue #2035 — prefer injected brick)
+        if brk_svc.skill_service is not None:
+            self.skill_service = brk_svc.skill_service
+        else:
+            from nexus.services.skill_service import SkillService as _SkillService
 
-        self.skill_service = _SkillService(gateway=self._gateway)
+            self.skill_service = _SkillService(gateway=self._gateway)
+
+        # SkillPackageService: Skill export/import/validate (Issue #2035)
+        if getattr(brk_svc, "skill_package_service", None) is not None:
+            self.skill_package_service = brk_svc.skill_package_service
+        else:
+            try:
+                from nexus.skills.package_service import (
+                    SkillPackageService as _SkillPkgSvc,
+                )
+
+                # Reuse same protocol deps as skill_service (gateway adapter)
+                self.skill_package_service = _SkillPkgSvc(
+                    fs=self.skill_service._fs,
+                    perms=self.skill_service._perms,
+                    skill_service=self.skill_service,
+                )
+            except Exception:
+                self.skill_package_service = None
 
         # SearchService: Search operations
         if self._inject_search_service is not None:
@@ -524,9 +561,9 @@ class NexusFS(  # type: ignore[misc]
                 metadata_cache=metadata_cache,
             )
 
-        # WorkflowDispatchService: accept DI, graceful degrade to None (#625 partial)
-        # Workflow dispatch is optional userspace — kernel does not self-build.
-        self._workflow_dispatch = brk_svc.workflow_dispatch
+        # _workflow_dispatch REMOVED (#625 infra cleanup)
+        # Kernel no longer references BrickServices.workflow_dispatch.
+        # Userspace hooks register via register_mutation_hook() post-construction.
 
     @property
     def read_set_cache(self) -> Any | None:
@@ -6293,7 +6330,7 @@ class NexusFS(  # type: ignore[misc]
         return result
 
     @rpc_expose(description="Validate code in sandbox")
-    async def sandbox_validate(  # type: ignore[override]
+    async def sandbox_validate(
         self,
         sandbox_id: str,
         workspace_path: str = "/workspace",
@@ -9673,159 +9710,32 @@ class NexusFS(  # type: ignore[misc]
         )
 
     # -------------------------------------------------------------------------
-    # SkillService Delegation Methods (10 methods)
-    # Issue #1287 Phase 1.5: NexusFSSkillsMixin removed, replaced by SkillService delegation
+    # SkillService backward compat (Issue #2035, Follow-up 1)
+    # RPC methods now live on brick services. This mapping provides
+    # backward compat for code calling nexus_fs.skills_*() directly.
     # -------------------------------------------------------------------------
+    _SKILLS_COMPAT_MAP: dict[str, tuple[str, str]] = {
+        "skills_share": ("skill_service", "rpc_share"),
+        "skills_unshare": ("skill_service", "rpc_unshare"),
+        "skills_discover": ("skill_service", "rpc_discover"),
+        "skills_subscribe": ("skill_service", "rpc_subscribe"),
+        "skills_unsubscribe": ("skill_service", "rpc_unsubscribe"),
+        "skills_get_prompt_context": ("skill_service", "rpc_get_prompt_context"),
+        "skills_load": ("skill_service", "rpc_load"),
+        "skills_export": ("skill_package_service", "export"),
+        "skills_import": ("skill_package_service", "import_skill"),
+        "skills_validate_zip": ("skill_package_service", "validate_zip"),
+    }
 
-    @rpc_expose(description="Share a skill with users, groups, or make public")
-    def skills_share(
-        self,
-        skill_path: str,
-        share_with: str,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Grant read permission on a skill - delegates to SkillService."""
-        tuple_id = self.skill_service.share(skill_path, share_with, context)
-        return {
-            "success": True,
-            "tuple_id": tuple_id,
-            "skill_path": skill_path,
-            "share_with": share_with,
-        }
-
-    @rpc_expose(description="Revoke sharing permission on a skill")
-    def skills_unshare(
-        self,
-        skill_path: str,
-        unshare_from: str,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Revoke read permission on a skill - delegates to SkillService."""
-        success = self.skill_service.unshare(skill_path, unshare_from, context)
-        return {
-            "success": success,
-            "skill_path": skill_path,
-            "unshare_from": unshare_from,
-        }
-
-    @rpc_expose(description="Discover skills the user has permission to see")
-    def skills_discover(
-        self,
-        filter: str = "all",
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """List skills the user can see - delegates to SkillService."""
-        skills = self.skill_service.discover(context, filter)
-        return {
-            "skills": [s.to_dict() for s in skills],
-            "count": len(skills),
-        }
-
-    @rpc_expose(description="Subscribe to a skill (add to user's library)")
-    def skills_subscribe(
-        self,
-        skill_path: str,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Subscribe to a skill - delegates to SkillService."""
-        newly_subscribed = self.skill_service.subscribe(skill_path, context)
-        return {
-            "success": True,
-            "skill_path": skill_path,
-            "already_subscribed": not newly_subscribed,
-        }
-
-    @rpc_expose(description="Unsubscribe from a skill (remove from user's library)")
-    def skills_unsubscribe(
-        self,
-        skill_path: str,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Unsubscribe from a skill - delegates to SkillService."""
-        was_subscribed = self.skill_service.unsubscribe(skill_path, context)
-        return {
-            "success": True,
-            "skill_path": skill_path,
-            "was_subscribed": was_subscribed,
-        }
-
-    @rpc_expose(description="Get skill metadata for system prompt injection")
-    def skills_get_prompt_context(
-        self,
-        max_skills: int = 50,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Get prompt context - delegates to SkillService."""
-        prompt_context = self.skill_service.get_prompt_context(context, max_skills)
-        return prompt_context.to_dict()
-
-    @rpc_expose(description="Load full skill content on-demand")
-    def skills_load(
-        self,
-        skill_path: str,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Load skill content - delegates to SkillService."""
-        content = self.skill_service.load(skill_path, context)
-        return content.to_dict()
-
-    @rpc_expose(description="Export a skill as a .skill (ZIP) package")
-    def skills_export(
-        self,
-        skill_path: str | None = None,
-        skill_name: str | None = None,
-        output_path: str | None = None,
-        format: str = "generic",
-        include_dependencies: bool = False,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Export a skill - delegates to SkillService."""
-        return self.skill_service.export(
-            skill_path=skill_path,
-            skill_name=skill_name,
-            output_path=output_path,
-            format=format,
-            include_dependencies=include_dependencies,
-            context=context,
-        )
-
-    @rpc_expose(description="Import a skill from a .skill (ZIP) package")
-    def skills_import(
-        self,
-        source_path: str | None = None,
-        zip_bytes: bytes | str | None = None,
-        zip_data: str | None = None,
-        target_path: str | None = None,
-        allow_overwrite: bool = False,
-        context: OperationContext | None = None,
-        tier: str | None = None,
-    ) -> dict[str, Any]:
-        """Import a skill - delegates to SkillService."""
-        return self.skill_service.import_skill(
-            source_path=source_path,
-            zip_bytes=zip_bytes,
-            zip_data=zip_data,
-            target_path=target_path,
-            allow_overwrite=allow_overwrite,
-            context=context,
-            tier=tier,
-        )
-
-    @rpc_expose(description="Validate a .skill (ZIP) package")
-    def skills_validate_zip(
-        self,
-        source_path: str | None = None,
-        zip_bytes: bytes | str | None = None,
-        zip_data: str | None = None,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Validate a skill package - delegates to SkillService."""
-        return self.skill_service.validate_zip(
-            source_path=source_path,
-            zip_bytes=zip_bytes,
-            zip_data=zip_data,
-            context=context,
-        )
+    def __getattr__(self, name: str) -> Any:
+        """Backward compat for skills_* methods (Issue #2035, Follow-up 1)."""
+        mapping = type(self)._SKILLS_COMPAT_MAP.get(name)
+        if mapping is not None:
+            svc_attr, method_name = mapping
+            svc = self.__dict__.get(svc_attr)
+            if svc is not None:
+                return getattr(svc, method_name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     # -------------------------------------------------------------------------
     # LLMService Delegation Methods (4 methods)

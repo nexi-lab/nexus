@@ -25,12 +25,13 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from nexus.bricks.governance.protocols import AnomalyDetectorProtocol
 from nexus.rebac.namespace_manager import NamespaceMount
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
-from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
+from nexus.services.protocols.filesystem import NexusFilesystem
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -63,10 +64,13 @@ from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
+from nexus.services.protocols.rpc import rpc_expose
 from nexus.services.protocols.sandbox import SandboxProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
+from nexus.services.protocols.skill_deps import SkillFilesystemProtocol, SkillPermissionProtocol
+from nexus.services.protocols.skill_doc import SkillDocGenerator, generate_skill_md
 from nexus.services.protocols.skills import SkillsProtocol
 from nexus.services.protocols.sync import SyncContext, SyncResult, SyncServiceProtocol
 from nexus.services.protocols.sync_job import SyncJobProtocol
@@ -129,8 +133,14 @@ __all__ = [
     "SearchBrickProtocol",
     "SearchProtocol",
     "ShareLinkProtocol",
+    "NexusFilesystem",
+    "SkillDocGenerator",
+    "SkillFilesystemProtocol",
+    "SkillPermissionProtocol",
     "SkillsProtocol",
     "SyncContext",
+    "generate_skill_md",
+    "rpc_expose",
     "SyncJobProtocol",
     "SyncResult",
     "SyncServiceProtocol",

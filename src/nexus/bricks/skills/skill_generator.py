@@ -6,7 +6,7 @@ This module handles:
 - Replacing {mount_path} placeholders with actual mount paths
 
 Example:
-    >>> from nexus.skills.skill_generator import SkillGenerator
+    >>> from nexus.bricks.skills.skill_generator import SkillGenerator
     >>>
     >>> generator = SkillGenerator()
     >>>

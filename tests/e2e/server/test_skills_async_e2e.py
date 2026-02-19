@@ -245,7 +245,7 @@ class TestSkillsExportE2E:
         result = rpc_result(
             test_app,
             "skills_export",
-            {"skill_name": "exportable"},
+            {"skill_path": skill_dir},
         )
         # Export returns dict with zip_data (base64) or file path
         assert isinstance(result, dict)

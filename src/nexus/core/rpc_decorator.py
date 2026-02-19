@@ -1,6 +1,9 @@
 """RPC exposure decorator for marking methods to be exposed via RPC.
 
 This module is separate to avoid circular imports between core and server modules.
+
+The decorator is also re-exported from ``nexus.services.protocols.rpc``
+so that bricks can import it without depending on nexus.core (Issue #2035).
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ def rpc_expose(
 ) -> Callable[[F], F]:
     """Mark a method for RPC exposure.
 
-    This decorator marks methods in NexusFS that should be automatically
+    This decorator marks methods that should be automatically
     exposed via RPC. The RPC server will auto-discover all decorated methods
     and make them available as endpoints.
 
@@ -28,15 +31,10 @@ def rpc_expose(
         description: Optional description for API docs
         version: API version (for versioning support)
         admin_only: If True, only admin callers can invoke this method.
-            Non-admin callers receive NexusPermissionError (HTTP 403).
 
     Example:
         @rpc_expose(description="Read file content")
         def read(self, path: str) -> bytes:
-            ...
-
-        @rpc_expose(description="Admin maintenance op", admin_only=True)
-        def backfill(self, prefix: str) -> dict:
             ...
     """
 

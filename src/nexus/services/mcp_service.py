@@ -491,7 +491,7 @@ class MCPService:
         from typing import cast
 
         from nexus.mcp.mount import MCPMountManager
-        from nexus.skills.protocols import NexusFilesystem
+        from nexus.services.protocols.filesystem import NexusFilesystem
 
         if self.nexus_fs is None:
             raise RuntimeError("NexusFS not configured for MCPService")

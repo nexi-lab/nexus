@@ -44,9 +44,9 @@ class TaskManager:
     Parameters
     ----------
     store:
-        A ``TaskStoreProtocol`` implementation.  When *None* an
-        ``InMemoryTaskStore`` is used (useful for testing and embedded
-        mode).
+        A ``TaskStoreProtocol`` implementation.  When *None* a
+        ``CacheBackedTaskStore(InMemoryCacheStore())`` is used (useful
+        for testing and embedded mode).
     stream_registry:
         A ``StreamRegistry`` for managing active SSE streams.  When
         *None* a default instance is created.
@@ -60,9 +60,10 @@ class TaskManager:
         if store is not None:
             self._store: TaskStoreProtocol = store
         else:
-            from nexus.bricks.a2a.stores.in_memory import InMemoryTaskStore
+            from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
+            from nexus.cache.inmemory import InMemoryCacheStore
 
-            self._store = InMemoryTaskStore()
+            self._store = CacheBackedTaskStore(InMemoryCacheStore())
 
         if stream_registry is not None:
             self._stream_registry = stream_registry

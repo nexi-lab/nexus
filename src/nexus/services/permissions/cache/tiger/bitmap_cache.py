@@ -91,6 +91,7 @@ class TigerCache:
         resource_map: TigerResourceMap | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         dragonfly_cache: TigerCacheProtocol | None = None,
+        l2_max_workers: int = 4,
     ):
         """Initialize Tiger Cache.
 
@@ -99,6 +100,8 @@ class TigerCache:
             resource_map: Resource mapping service (created if not provided)
             rebac_manager: ReBAC manager for permission computation
             dragonfly_cache: Optional Dragonfly cache for L2 distributed caching
+            l2_max_workers: Thread pool size for L2 dragonfly operations.
+                Sourced from ProfileTuning.cache.tiger_max_workers.
         """
         from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap as _TRM
 
@@ -121,6 +124,7 @@ class TigerCache:
 
         # Persistent thread pool for L2 operations (avoid per-operation creation)
         self._l2_executor: Any | None = None
+        self._l2_max_workers = l2_max_workers
 
     @property
     def resource_map(self) -> TigerResourceMap:
@@ -146,7 +150,7 @@ class TigerCache:
 
             if self._l2_executor is None:
                 self._l2_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=4, thread_name_prefix="tiger-l2"
+                    max_workers=self._l2_max_workers, thread_name_prefix="tiger-l2"
                 )
             logger.info("[TIGER] Dragonfly L2 cache enabled")
         else:

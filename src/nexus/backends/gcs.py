@@ -86,6 +86,8 @@ class GCSBackend(Backend):
         bucket_name: str,
         project_id: str | None = None,
         credentials_path: str | None = None,
+        operation_timeout: float = 60.0,
+        upload_timeout: float = 300.0,
     ):
         """
         Initialize GCS backend.
@@ -102,6 +104,10 @@ class GCSBackend(Backend):
             bucket_name: GCS bucket name
             project_id: Optional GCP project ID (inferred from credentials if not provided)
             credentials_path: Optional path to service account credentials JSON file
+            operation_timeout: Timeout for standard blob operations (seconds).
+                Sourced from ProfileTuning.connector.blob_operation_timeout.
+            upload_timeout: Timeout for large file uploads (seconds).
+                Sourced from ProfileTuning.connector.large_upload_timeout.
                             If not provided, uses Application Default Credentials (gcloud auth)
         """
         try:
@@ -120,6 +126,8 @@ class GCSBackend(Backend):
 
             self.bucket = self.client.bucket(bucket_name)
             self.bucket_name = bucket_name
+            self._operation_timeout = operation_timeout
+            self._upload_timeout = upload_timeout
 
             # Verify bucket exists
             if not self.bucket.exists():
@@ -200,7 +208,9 @@ class GCSBackend(Backend):
         try:
             blob = self.bucket.blob(meta_path)
             blob.upload_from_string(
-                json.dumps(metadata), content_type="application/json", timeout=60
+                json.dumps(metadata),
+                content_type="application/json",
+                timeout=self._operation_timeout,
             )
         except Exception as e:
             raise BackendError(
@@ -231,7 +241,7 @@ class GCSBackend(Backend):
                 return content_hash
 
             # Content doesn't exist - write it
-            blob.upload_from_string(content, timeout=60)
+            blob.upload_from_string(content, timeout=self._operation_timeout)
 
             # Create metadata
             metadata = {"ref_count": 1, "size": len(content)}
@@ -263,7 +273,7 @@ class GCSBackend(Backend):
             if not blob.exists():
                 raise NexusFileNotFoundError(content_hash)
 
-            content = blob.download_as_bytes(timeout=60)
+            content = blob.download_as_bytes(timeout=self._operation_timeout)
 
             # Verify hash
             actual_hash = self._compute_hash(content)
@@ -443,7 +453,7 @@ class GCSBackend(Backend):
 
                 # Upload from temp file
                 tmp.seek(0)
-                blob.upload_from_file(tmp, timeout=300)
+                blob.upload_from_file(tmp, timeout=self._upload_timeout)
 
                 # Create metadata
                 metadata = {"ref_count": 1, "size": total_size}
@@ -474,11 +484,11 @@ class GCSBackend(Backend):
 
             if ref_count <= 1:
                 # Last reference - delete file and metadata
-                blob.delete(timeout=60)
+                blob.delete(timeout=self._operation_timeout)
 
                 meta_blob = self.bucket.blob(self._get_meta_path(content_hash))
                 if meta_blob.exists():
-                    meta_blob.delete(timeout=60)
+                    meta_blob.delete(timeout=self._operation_timeout)
             else:
                 # Decrement reference count
                 metadata["ref_count"] = ref_count - 1
@@ -593,7 +603,9 @@ class GCSBackend(Backend):
                     raise FileNotFoundError(f"Parent directory not found: {parent}")
 
             # Create directory marker
-            blob.upload_from_string("", content_type="application/x-directory", timeout=60)
+            blob.upload_from_string(
+                "", content_type="application/x-directory", timeout=self._operation_timeout
+            )
 
         except (FileExistsError, FileNotFoundError):
             raise
@@ -625,7 +637,10 @@ class GCSBackend(Backend):
                 # List objects with this prefix (excluding the marker itself)
                 blobs = list(
                     self.client.list_blobs(
-                        self.bucket_name, prefix=dir_path, max_results=2, timeout=60
+                        self.bucket_name,
+                        prefix=dir_path,
+                        max_results=2,
+                        timeout=self._operation_timeout,
                     )
                 )
                 # If there's more than just the marker, directory is not empty
@@ -633,13 +648,15 @@ class GCSBackend(Backend):
                     raise OSError(f"Directory not empty: {path}")
 
             # Delete directory marker
-            blob.delete(timeout=60)
+            blob.delete(timeout=self._operation_timeout)
 
             if recursive:
                 # Delete all objects with this prefix
-                blobs = self.client.list_blobs(self.bucket_name, prefix=dir_path, timeout=60)
+                blobs = self.client.list_blobs(
+                    self.bucket_name, prefix=dir_path, timeout=self._operation_timeout
+                )
                 for blob in blobs:
-                    blob.delete(timeout=60)
+                    blob.delete(timeout=self._operation_timeout)
 
         except NotFound as e:
             raise NexusFileNotFoundError(path) from e

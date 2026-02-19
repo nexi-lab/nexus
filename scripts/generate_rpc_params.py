@@ -101,6 +101,9 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.services.oauth_service",
     "nexus.services.rebac_service",
     "nexus.services.skill_service",
+    # Brick services with @rpc_expose (Issue #2035, Follow-up 1)
+    "nexus.skills.service",
+    "nexus.skills.package_service",
 ]
 
 # Types that signal "operation context" — parameters with these types are

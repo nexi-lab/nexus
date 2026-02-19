@@ -54,7 +54,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
     # Issue #625: Stop workflow dispatch consumer
-    wds = getattr(app.state.nexus_fs, "_workflow_dispatch", None) if app.state.nexus_fs else None
+    wds = getattr(app.state, "workflow_dispatch", None)
     if wds is not None:
         try:
             await wds.stop()
@@ -160,10 +160,11 @@ def _startup_agent_registry(app: FastAPI) -> None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
 
+            _bg = getattr(getattr(app.state, "profile_tuning", None), "background_task", None)
             app.state.agent_registry = AgentRegistry(
                 session_factory=app.state.nexus_fs.SessionLocal,
                 entity_registry=getattr(app.state.nexus_fs, "_entity_registry", None),
-                flush_interval=60,
+                flush_interval=_bg.heartbeat_flush_interval if _bg else 60,
             )
             # Inject into NexusFS for RPC methods
             app.state.nexus_fs._agent_registry = app.state.agent_registry
@@ -408,11 +409,18 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
         stale_agent_detection_task,
     )
 
+    _bg_tuning = app.state.profile_tuning.background_task
     app.state._heartbeat_task = asyncio.create_task(
-        heartbeat_flush_task(app.state.agent_registry, interval_seconds=60)
+        heartbeat_flush_task(
+            app.state.agent_registry,
+            interval_seconds=_bg_tuning.heartbeat_flush_interval,
+        )
     )
     app.state._stale_detection_task = asyncio.create_task(
-        stale_agent_detection_task(app.state.agent_registry, interval_seconds=300)
+        stale_agent_detection_task(
+            app.state.agent_registry,
+            interval_seconds=_bg_tuning.stale_agent_check_interval,
+        )
     )
     logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
@@ -435,7 +443,12 @@ async def _startup_scheduler(app: FastAPI) -> None:
 
         # Convert SQLAlchemy URL to asyncpg DSN
         pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-        pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+        _pool_tuning = app.state.profile_tuning.pool
+        pool = await asyncpg.create_pool(
+            pg_dsn,
+            min_size=_pool_tuning.asyncpg_min_size,
+            max_size=_pool_tuning.asyncpg_max_size,
+        )
         app.state._scheduler_pool = pool
 
         # Create scheduled_tasks table if it doesn't exist
@@ -536,11 +549,12 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
 
             from nexus.tasks.runner import AsyncTaskRunner
 
-            runner = AsyncTaskRunner(engine=engine, max_workers=4)
+            _task_workers = app.state.profile_tuning.concurrency.task_runner_workers
+            runner = AsyncTaskRunner(engine=engine, max_workers=_task_workers)
             service.set_runner(runner)
             app.state.task_runner = runner
             task = asyncio.create_task(runner.run())
-            logger.info("Task Queue runner started (4 workers)")
+            logger.info("Task Queue runner started (%d workers)", _task_workers)
             return task
         else:
             logger.debug("Task Queue: nexus_tasks Rust extension not available")
@@ -567,7 +581,7 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
     app.state.workflow_engine = engine
 
     # Issue #625: Start workflow dispatch consumer (DT_PIPE → workflow engine)
-    wds = getattr(app.state.nexus_fs, "_workflow_dispatch", None)
+    wds = getattr(app.state, "workflow_dispatch", None)
     if wds is not None:
         try:
             await wds.start()

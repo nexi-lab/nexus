@@ -5,15 +5,16 @@ Interested observers implement ``PostMutationHook`` and register via
 ``NexusFS.register_mutation_hook()``. The kernel iterates the hook list
 once — it does NOT know which specific observers are registered.
 
-This replaces the per-attribute observer pattern (``_cache_observer``,
-``_workflow_dispatch``) that required a new kernel attribute + call site
-for every new observer. Now adding a new post-mutation observer is:
+This replaces the per-attribute observer pattern that required a new
+kernel attribute + call site for every new observer. Now adding a
+new post-mutation observer is:
     1. Implement ``PostMutationHook``
     2. Call ``nexus_fs.register_mutation_hook(my_hook)``
 
 Error policy: fire-and-forget. Hook failures are logged but never abort
 the mutation. For audit-critical observers that CAN abort operations,
-use ``_notify_observer`` / ``_write_observer`` instead.
+use ``_write_observer.on_write()`` / ``on_delete()`` / ``on_rename()`` instead.
+Observer and hook are independent kernel subsystems (cf. Linux LSM vs notifier chains).
 
 Issue #625 partial.
 """

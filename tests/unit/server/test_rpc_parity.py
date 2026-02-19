@@ -232,10 +232,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "write_batch",  # Exposed via different RPC endpoint
         "list_memories",  # Handled manually by dispatcher, calls memory.list() instead
         # Tiger Cache internal methods - server-side optimization only
-        "grant_traverse_on_implicit_dirs",  # Internal - grants TRAVERSE on implicit dirs during init
-        "process_tiger_cache_queue",  # Internal - background worker processes cache updates
         "stop_tiger_cache_worker",  # Internal - stops background worker thread
-        "warm_tiger_cache",  # Internal - pre-computes permissions for cache warming
         # Directory Visibility Cache internal methods - server-side optimization only
         "get_dir_visibility_cache_metrics",  # Internal - returns cache metrics for monitoring
         # Phase 2 Service Composition - Async delegation methods (Issue #988)
@@ -246,15 +243,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "alist_versions",  # Delegates to version_service.list_versions()
         "arollback",  # Delegates to version_service.rollback()
         "adiff_versions",  # Delegates to version_service.diff_versions()
-        # ReBACService delegation (8 methods)
-        "arebac_create",  # Delegates to rebac_service.rebac_create()
-        "arebac_delete",  # Delegates to rebac_service.rebac_delete()
-        "arebac_check",  # Delegates to rebac_service.rebac_check()
-        "arebac_check_batch",  # Delegates to rebac_service.rebac_check_batch()
-        "arebac_expand",  # Delegates to rebac_service.rebac_expand()
-        "arebac_explain",  # Delegates to rebac_service.rebac_explain()
-        "arebac_list_tuples",  # Delegates to rebac_service.rebac_list_tuples()
-        "aget_namespace",  # Delegates to rebac_service.get_namespace()
+        # ReBACService async delegation — sync methods removed, async removed in earlier extraction
         # LLMService delegation (4 methods) — Issue #1287 Phase B: mixin removed
         "create_llm_reader",  # Delegates to llm_service.create_llm_reader()
         "llm_read",  # Delegates to llm_service.llm_read()

@@ -34,10 +34,13 @@ def mock_fs():
     fs.metadata.delete = MagicMock()
     fs.metadata.delete_batch = MagicMock()
     fs.metadata.delete_directory_entries_recursive = MagicMock(return_value=5)
-    fs.rebac_create = MagicMock(return_value={"tuple_id": "t1"})
-    fs.rebac_check = MagicMock(return_value=True)
-    fs.rebac_delete_object_tuples = MagicMock(return_value=3)
-    fs.rebac_list_tuples = MagicMock(return_value=[])
+    fs.rebac_service = MagicMock()
+    fs.rebac_service.rebac_create_sync = MagicMock(return_value={"tuple_id": "t1"})
+    fs.rebac_service.rebac_check_sync = MagicMock(return_value=True)
+    fs.rebac_service.rebac_list_tuples_sync = MagicMock(return_value=[
+        {"tuple_id": "t1"}, {"tuple_id": "t2"}, {"tuple_id": "t3"},
+    ])
+    fs.rebac_service.rebac_delete_sync = MagicMock(return_value=True)
     fs._rebac_manager = MagicMock()
     fs._rebac_manager.rebac_delete = MagicMock()
     fs._hierarchy_manager = MagicMock()
@@ -202,10 +205,10 @@ class TestMetadataOperations:
 
 
 class TestReBACOperations:
-    """Tests for ReBAC permission delegation."""
+    """Tests for ReBAC permission delegation via ReBACService."""
 
     def test_rebac_create(self, gateway, mock_fs):
-        """rebac_create delegates to NexusFS."""
+        """rebac_create delegates to rebac_service."""
         result = gateway.rebac_create(
             subject=("user", "alice"),
             relation="viewer",
@@ -213,9 +216,16 @@ class TestReBACOperations:
             zone_id="z1",
         )
         assert result == {"tuple_id": "t1"}
+        mock_fs.rebac_service.rebac_create_sync.assert_called_once_with(
+            subject=("user", "alice"),
+            relation="viewer",
+            object=("file", "/test"),
+            zone_id="z1",
+            context=None,
+        )
 
     def test_rebac_check(self, gateway, mock_fs):
-        """rebac_check delegates to NexusFS."""
+        """rebac_check delegates to rebac_service."""
         result = gateway.rebac_check(
             subject=("user", "alice"),
             permission="read",
@@ -223,28 +233,32 @@ class TestReBACOperations:
             zone_id="z1",
         )
         assert result is True
+        mock_fs.rebac_service.rebac_check_sync.assert_called_once()
 
     def test_rebac_delete_object_tuples(self, gateway, mock_fs):
-        """rebac_delete_object_tuples delegates to NexusFS."""
+        """rebac_delete_object_tuples lists then deletes each tuple."""
         result = gateway.rebac_delete_object_tuples(object=("file", "/test"), zone_id="z1")
         assert result == 3
+        mock_fs.rebac_service.rebac_list_tuples_sync.assert_called_once()
+        assert mock_fs.rebac_service.rebac_delete_sync.call_count == 3
 
     def test_rebac_list_tuples(self, gateway, mock_fs):
-        """rebac_list_tuples delegates to NexusFS."""
+        """rebac_list_tuples delegates to rebac_service."""
         gateway.rebac_list_tuples(subject=("user", "alice"), relation="viewer")
-        mock_fs.rebac_list_tuples.assert_called_once()
+        mock_fs.rebac_service.rebac_list_tuples_sync.assert_called()
 
     def test_rebac_delete(self, gateway, mock_fs):
-        """rebac_delete delegates to rebac_manager."""
+        """rebac_delete delegates to rebac_service."""
         result = gateway.rebac_delete("tuple-123")
         assert result is True
-        mock_fs._rebac_manager.rebac_delete.assert_called_once_with("tuple-123")
+        mock_fs.rebac_service.rebac_delete_sync.assert_called_with("tuple-123")
 
     def test_rebac_delete_no_manager(self, mock_fs):
-        """rebac_delete returns False without rebac_manager."""
+        """rebac_delete delegates to rebac_service even without rebac_manager."""
         mock_fs._rebac_manager = None
         gw = NexusFSGateway(mock_fs)
-        assert gw.rebac_delete("tuple-123") is False
+        result = gw.rebac_delete("tuple-123")
+        assert result is True
 
     def test_rebac_manager_property(self, gateway, mock_fs):
         """rebac_manager property returns the manager."""

@@ -14,6 +14,7 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.dependencies import (
     _get_require_auth,
     get_write_back_service,
@@ -59,7 +60,7 @@ async def push_mount(
         )
 
     backend_name = mount_info["backend_name"]
-    zone_id = mount_info.get("zone_id", "root")
+    zone_id = mount_info.get("zone_id", ROOT_ZONE_ID)
 
     # Snapshot metrics before push
     before = service.get_metrics_snapshot()

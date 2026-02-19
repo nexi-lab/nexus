@@ -21,6 +21,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
 from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.core.rpc_decorator import rpc_expose
@@ -115,7 +116,7 @@ class EventsService:
             return context.zone_id
         if self._zone_id:
             return self._zone_id
-        return "root"
+        return ROOT_ZONE_ID
 
     # =========================================================================
     # System Readiness

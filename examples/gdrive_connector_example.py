@@ -23,7 +23,7 @@ from pathlib import Path
 
 from nexus.backends import GoogleDriveConnectorBackend
 from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.server.auth import TokenManager
 
 

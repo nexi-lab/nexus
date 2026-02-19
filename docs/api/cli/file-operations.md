@@ -102,7 +102,7 @@ content = nx.read("/data/config.json")
 data = json.loads(content.decode())
 
 # Time-travel read
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(at_operation="op_abc123")
 content = nx.read("/workspace/file.txt", context=ctx)
 ```
@@ -138,7 +138,7 @@ nexus rm /workspace/file.txt --force
 nx.delete("/workspace/file.txt")
 
 # Delete with specific user context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["eng-team"])
 nx.delete("/workspace/file.txt", context=ctx)
 ```
@@ -199,7 +199,7 @@ nexus move /old/path.txt /new/path.txt
 nx.move("/old/path.txt", "/new/path.txt")
 
 # Move with specific user context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["eng-team"])
 nx.move("/old/path.txt", "/new/path.txt", context=ctx)
 ```

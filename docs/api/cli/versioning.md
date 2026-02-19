@@ -170,7 +170,7 @@ nexus ls /workspace --at-operation op_abc123
 
 **Python API:**
 ```python
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Read at specific operation
 ctx = OperationContext(at_operation="op_abc123")

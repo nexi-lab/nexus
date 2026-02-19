@@ -28,6 +28,7 @@ from nexus.backends.cache_models import (
     CachedReadResult,
     CacheEntry,
 )
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.exceptions import ConflictError
 from nexus.core.hash_fast import hash_content
@@ -94,7 +95,7 @@ class CacheService:
 
     def _get_cache_zone(self) -> str:
         """Get cache zone from connector (consolidates 3 duplicated getattr calls)."""
-        return getattr(self._connector, "zone_id", None) or "root"
+        return getattr(self._connector, "zone_id", None) or ROOT_ZONE_ID
 
     def _get_cache_ttl(self) -> int:
         """Get cache TTL from connector (consolidates 3 duplicated getattr calls)."""
@@ -439,7 +440,7 @@ class CacheService:
         content_hash = hash_content(content)
         original_size = len(content)
         now = datetime.now(UTC)
-        cache_zone = zone_id or "root"
+        cache_zone = zone_id or ROOT_ZONE_ID
 
         # Determine text content
         if content_text is None:
@@ -604,7 +605,7 @@ class CacheService:
 
                 cached_size = len(content_text) if content_text else 0
 
-                cache_zone = entry_zone_id or "root"
+                cache_zone = entry_zone_id or ROOT_ZONE_ID
                 if original_size <= MAX_CACHE_FILE_SIZE:
                     try:
                         file_cache.write(cache_zone, path, content, text_content=content_text)

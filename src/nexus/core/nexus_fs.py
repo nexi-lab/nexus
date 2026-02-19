@@ -175,7 +175,8 @@ class NexusFS(  # type: ignore[misc]
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
         self._enforce_permissions = permissions.enforce
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
-        self._audit_strict_mode = permissions.audit_strict_mode
+        # _audit_strict_mode removed (Issue #55) — error policy now owned by
+        # WriteObserverProtocol implementations (e.g. RecordStoreWriteObserver).
         self.allow_admin_bypass = permissions.allow_admin_bypass
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin

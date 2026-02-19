@@ -1,32 +1,16 @@
-"""Zone ID normalization and ReBAC zone group utilities.
+"""ReBAC zone group utilities.
 
 Provides:
-- normalize_zone_id: Canonical default zone fallback
 - Zone group naming helpers: zone_group_id, parse_zone_from_group, is_zone_group
 - Zone role checks: is_zone_owner, is_zone_admin, can_invite_to_zone
+
+.. versionchanged:: Issue #194
+    ``normalize_zone_id`` and ``DEFAULT_ZONE`` moved to ``nexus.lib.zone``.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-from nexus.constants import ROOT_ZONE_ID
-
-DEFAULT_ZONE: str = ROOT_ZONE_ID
-
-
-def normalize_zone_id(zone_id: str | None) -> str:
-    """Return *zone_id* if truthy, otherwise the default zone sentinel.
-
-    >>> normalize_zone_id("tenant-1")
-    'tenant-1'
-    >>> normalize_zone_id(None)
-    'root'
-    >>> normalize_zone_id("")
-    'root'
-    """
-    return zone_id or DEFAULT_ZONE
-
 
 # ==============================================================================
 # ReBAC Group Naming Helpers

@@ -1901,7 +1901,7 @@ class ReBACService(ReBACShareMixin):
         zone_id: str | None = None,
     ) -> bool:
         """Check if user has READ access to any descendant of path."""
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.lib.zone import normalize_zone_id
 
         prefix = path if path.endswith("/") else path + "/"
         if path == "/":

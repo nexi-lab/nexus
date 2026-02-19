@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.lib.zone import normalize_zone_id
 from nexus.rebac.batch.bulk_checker import BulkPermissionChecker
 from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.cache.tiger.facade import TigerFacade
@@ -80,7 +81,6 @@ from nexus.rebac.utils.fast import (
     check_permissions_bulk_with_fallback,
     is_rust_available,
 )
-from nexus.rebac.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine

@@ -25,6 +25,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import SnapshotId
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -42,18 +43,6 @@ class TransactionState(StrEnum):
     COMMITTED = "COMMITTED"
     ROLLED_BACK = "ROLLED_BACK"
     EXPIRED = "EXPIRED"
-
-
-# ---------------------------------------------------------------------------
-# Data models
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class SnapshotId:
-    """Opaque identifier for a transactional snapshot."""
-
-    id: str
 
 
 @dataclass(frozen=True, slots=True)

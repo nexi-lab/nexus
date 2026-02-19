@@ -38,6 +38,8 @@ from typing import Any
 
 from cachetools import TTLCache
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -446,7 +448,7 @@ class ReBACPermissionCache:
         if not self._enable_revision_quantization:
             return 0
 
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         current_time = time.time()
 
         # Check local revision cache
@@ -477,7 +479,7 @@ class ReBACPermissionCache:
         Returns:
             Current revision number, or 0 if unavailable
         """
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         current_time = time.time()
 
         # Check local revision cache first
@@ -519,7 +521,7 @@ class ReBACPermissionCache:
         Returns:
             Cache key string with revision bucket for distributed cache sharing
         """
-        zone_part = zone_id if zone_id else "root"
+        zone_part = zone_id if zone_id else ROOT_ZONE_ID
         revision_bucket = self._get_revision_bucket(zone_id)
         return f"{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{zone_part}:r{revision_bucket}"
 
@@ -626,7 +628,7 @@ class ReBACPermissionCache:
             # After a write, check with read-your-writes guarantee
             result, revision = cache.get_with_revision_check(
                 "user", "alice", "read", "file", "/doc.txt",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 min_revision=write_result.revision
             )
             if result is None:
@@ -713,7 +715,7 @@ class ReBACPermissionCache:
                 Inherited permissions use shorter TTL since they depend on parent.
         """
         key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
-        zone_part = zone_id if zone_id else "root"
+        zone_part = zone_id if zone_id else ROOT_ZONE_ID
 
         with self._lock:
             # Issue #1077: Get tiered TTL based on relation type
@@ -1133,7 +1135,7 @@ class ReBACPermissionCache:
         Returns:
             Number of entries invalidated
         """
-        zone_part = zone_id if zone_id else "root"
+        zone_part = zone_id if zone_id else ROOT_ZONE_ID
 
         with self._lock:
             # Issue #1077: Use secondary index for O(1) lookup if in targeted mode
@@ -1189,7 +1191,7 @@ class ReBACPermissionCache:
         Returns:
             Number of entries invalidated
         """
-        zone_part = zone_id if zone_id else "root"
+        zone_part = zone_id if zone_id else ROOT_ZONE_ID
 
         with self._lock:
             # Issue #1077: Use secondary index for O(1) lookup if in targeted mode
@@ -1250,7 +1252,7 @@ class ReBACPermissionCache:
         Returns:
             Number of entries invalidated
         """
-        zone_part = zone_id if zone_id else "root"
+        zone_part = zone_id if zone_id else ROOT_ZONE_ID
 
         with self._lock:
             # Issue #1077: Use intersection of indexes for precise O(1) lookup
@@ -1311,7 +1313,7 @@ class ReBACPermissionCache:
         Returns:
             Number of entries invalidated
         """
-        zone_part = zone_id if zone_id else "root"
+        zone_part = zone_id if zone_id else ROOT_ZONE_ID
 
         with self._lock:
             # Issue #1077: Use path prefix index for O(affected) lookup

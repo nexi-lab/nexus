@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
 from nexus.rebac.entity_registry import EntityRegistry
@@ -519,14 +520,15 @@ class Memory:
             relationships_json: JSON string of extracted relationships
         """
         import json
-        import os
 
         from nexus.core.sync_bridge import run_sync
+
+        # Get database URL from session's engine
+        from nexus.lib.env import get_database_url
         from nexus.search.graph_store import GraphStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        # Get database URL from session's engine
-        db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+        db_url = get_database_url() or ""
         if not db_url:
             # Try to get from the session's engine bind
             try:
@@ -542,7 +544,7 @@ class Memory:
             return
 
         # Use default zone if not provided
-        effective_zone_id = zone_id or "root"
+        effective_zone_id = zone_id or ROOT_ZONE_ID
 
         async def _do_store() -> None:
             _store = SQLAlchemyRecordStore(db_url=db_url)

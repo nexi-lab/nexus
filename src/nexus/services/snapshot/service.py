@@ -21,6 +21,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.protocols.snapshot import (
     ConflictInfo,
     SnapshotEntry,
@@ -413,7 +414,7 @@ class TransactionalSnapshotService:
             if meta_dict.get("modified_at")
             else datetime.now(UTC),
             version=meta_dict.get("version", 1),
-            zone_id=meta_dict.get("zone_id", "root"),
+            zone_id=meta_dict.get("zone_id", ROOT_ZONE_ID),
             owner_id=meta_dict.get("owner_id"),
         )
 

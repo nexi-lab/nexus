@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     ConflictError,
     ConnectorError,
     DatabaseError,

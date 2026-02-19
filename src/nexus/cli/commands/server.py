@@ -39,6 +39,7 @@ def _register_extracted_services(server: Any, nx: NexusFilesystem) -> None:
         ("agent_rpc_service", getattr(nx, "_agent_rpc_service", None)),
         ("user_provisioning_service", getattr(nx, "_user_provisioning_service", None)),
         ("sandbox_rpc_service", getattr(nx, "_sandbox_rpc_service", None)),
+        ("metadata_export_service", getattr(nx, "_metadata_export_service", None)),
         ("mount_service", getattr(nx, "mount_service", None)),
         ("search_service", getattr(nx, "search_service", None)),
         ("share_link_service", getattr(nx, "share_link_service", None)),

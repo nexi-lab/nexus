@@ -90,6 +90,25 @@ class CacheStoreABC(ABC):
         """
         ...
 
+    @abstractmethod
+    async def keys_by_pattern(self, pattern: str) -> list[str]:
+        """Return all keys matching a glob pattern.
+
+        Supports ``*`` as wildcard. Examples:
+        - ``a2a:task:zone1:*`` — all zone1 task keys
+        - ``perm:*:user:alice:*`` — permission keys for alice across zones
+
+        Companion to ``delete_by_pattern`` — same pattern syntax, but returns
+        the matching key names instead of deleting them.  Enables enumeration
+        of cached entries for listing/filtering operations.
+
+        Drivers:
+        - InMemoryCacheStore: ``fnmatch`` over dict keys (same as delete_by_pattern)
+        - DragonflyCacheStore: ``SCAN`` cursor (same as delete_by_pattern)
+        - NullCacheStore: always returns ``[]``
+        """
+        ...
+
     # --- Batch KV operations ---
 
     async def get_many(self, keys: list[str]) -> dict[str, bytes | None]:
@@ -175,6 +194,9 @@ class NullCacheStore(CacheStoreABC):
 
     async def delete_by_pattern(self, pattern: str) -> int:
         return 0
+
+    async def keys_by_pattern(self, pattern: str) -> list[str]:
+        return []
 
     async def publish(self, channel: str, message: bytes) -> int:
         return 0

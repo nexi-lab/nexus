@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,7 +95,7 @@ async def graph_enhanced_search(
     from nexus.search.graph_store import GraphStore
 
     async with async_session_factory() as session:
-        graph_store = GraphStore(record_store, session, zone_id="root")
+        graph_store = GraphStore(record_store, session, zone_id=ROOT_ZONE_ID)
 
         semantic_wrapper = DaemonSemanticSearchWrapper(search_daemon)
         embedding_provider = getattr(search_daemon, "_embedding_provider", None)

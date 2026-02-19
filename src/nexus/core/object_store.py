@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 

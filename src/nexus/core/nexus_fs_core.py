@@ -21,11 +21,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import Permission
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
 from nexus.core.mutation_hooks import MutationOp
-from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ SYSTEM_PATH_PREFIX = "/__sys__/"
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
 
@@ -1001,7 +1001,7 @@ class NexusFSCoreMixin:
             read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             read_context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
@@ -1157,7 +1157,7 @@ class NexusFSCoreMixin:
             try:
                 # Use the existing bulk permission check from list()
                 # Note: filter_list assumes READ permission, which is what we want
-                from nexus.core.permissions import OperationContext
+                from nexus.contracts.types import OperationContext
 
                 ctx = context if context is not None else self._default_context
                 assert isinstance(ctx, OperationContext), "Context must be OperationContext"
@@ -1952,7 +1952,7 @@ class NexusFSCoreMixin:
             context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
@@ -3613,7 +3613,7 @@ class NexusFSCoreMixin:
             allowed_set = set(validated_paths)
         else:
             try:
-                from nexus.core.permissions import OperationContext
+                from nexus.contracts.types import OperationContext
 
                 ctx = context if context is not None else self._default_context
                 assert isinstance(ctx, OperationContext), "Context must be OperationContext"

@@ -2,7 +2,7 @@
 
 import pytest
 
-from nexus.core.permissions import (
+from nexus.contracts.types import (
     OperationContext,
     Permission,
 )

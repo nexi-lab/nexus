@@ -888,13 +888,19 @@ async def lifespan(_app: FastAPI) -> Any:
     if _app.state.nexus_fs and _app.state.agent_registry:
         try:
             from nexus.bricks.sandbox.auth_service import SandboxAuthService
-            from nexus.bricks.sandbox.events import AgentEventLog
             from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
             session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
-                # Create AgentEventLog for sandbox lifecycle audit
-                _app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
+                # Get AgentEventLog from factory (preferred) or create fallback
+                _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
+                _factory_event_log = getattr(_brk, "agent_event_log", None) if _brk else None
+                if _factory_event_log is not None:
+                    _app.state.agent_event_log = _factory_event_log
+                else:
+                    from nexus.bricks.sandbox.events import AgentEventLog
+
+                    _app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
                 # Create SandboxManager for SandboxAuthService
                 # (separate from NexusFS's lazy sandbox manager — different layers)

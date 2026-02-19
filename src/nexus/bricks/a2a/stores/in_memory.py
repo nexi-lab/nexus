@@ -1,34 +1,66 @@
-"""In-memory task store for testing and embedded mode.
+"""CacheStoreABC-backed task store for dev/test and embedded mode.
 
-Tasks are stored as ``Task`` objects directly (no JSON round-trip)
-with defensive copies on read.  Data is lost when the process
-terminates.  This is the default store when no persistent backend is
-configured.
+Tasks are serialized as JSON bytes and stored in a ``CacheStoreABC``
+driver.  When backed by ``InMemoryCacheStore`` the behavior is
+equivalent to the old dict-backed store; when backed by
+``DragonflyCacheStore`` the tasks become distributed.
+
+Data is ephemeral (no disk persistence) — use ``VFSTaskStore`` for
+durable storage.
+
+Cache key layout::
+
+    a2a:task:{zone_id}:{task_id}  →  JSON { task, agent_id, created_at }
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
 from datetime import UTC, datetime
+from typing import Any, Protocol, runtime_checkable
 
 from nexus.bricks.a2a.models import Task, TaskState
 
-
-@dataclass(slots=True)
-class _TaskRecord:
-    """Internal storage record wrapping a Task with metadata."""
-
-    task: Task
-    zone_id: str
-    agent_id: str | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+_KEY_PREFIX = "a2a:task"
 
 
-class InMemoryTaskStore:
-    """Dict-backed task store using direct Task objects."""
+@runtime_checkable
+class _CacheKV(Protocol):
+    """Subset of CacheStoreABC used by CacheBackedTaskStore.
 
-    def __init__(self) -> None:
-        self._store: dict[str, _TaskRecord] = {}
+    Bricks cannot import nexus.core.cache_store directly (LEGO §1.2).
+    This protocol captures the exact contract we rely on, satisfied by
+    InMemoryCacheStore, DragonflyCacheStore, and NullCacheStore.
+    """
+
+    async def get(self, key: str) -> bytes | None: ...
+    async def set(self, key: str, value: bytes, ttl: int | None = None) -> None: ...
+    async def delete(self, key: str) -> bool: ...
+    async def keys_by_pattern(self, pattern: str) -> list[str]: ...
+    async def get_many(self, keys: list[str]) -> dict[str, bytes | None]: ...
+
+
+def _key(zone_id: str, task_id: str) -> str:
+    return f"{_KEY_PREFIX}:{zone_id}:{task_id}"
+
+
+def _zone_pattern(zone_id: str) -> str:
+    return f"{_KEY_PREFIX}:{zone_id}:*"
+
+
+class CacheBackedTaskStore:
+    """CacheStoreABC-backed implementation of ``TaskStoreProtocol``.
+
+    Replaces the old ``InMemoryTaskStore`` (plain dict) with proper
+    Four-Pillar storage: all ephemeral KV goes through CacheStoreABC.
+
+    Args:
+        cache: Any ``CacheStoreABC`` driver (InMemoryCacheStore,
+            DragonflyCacheStore, NullCacheStore, ...).
+    """
+
+    def __init__(self, cache: _CacheKV) -> None:
+        self._cache = cache
 
     async def save(
         self,
@@ -37,29 +69,32 @@ class InMemoryTaskStore:
         zone_id: str,
         agent_id: str | None = None,
     ) -> None:
-        key = self._key(task.id, zone_id)
-        existing = self._store.get(key)
-        created_at = existing.created_at if existing is not None else datetime.now(UTC).isoformat()
-        self._store[key] = _TaskRecord(
-            task=task,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            created_at=created_at,
-        )
+        k = _key(zone_id, task.id)
+        # Preserve created_at from existing record when updating
+        existing_raw = await self._cache.get(k)
+        if existing_raw is not None:
+            existing: dict[str, Any] = json.loads(existing_raw)
+            created_at: str = existing.get("created_at", datetime.now(UTC).isoformat())
+        else:
+            created_at = datetime.now(UTC).isoformat()
+
+        record: dict[str, Any] = {
+            "task": task.model_dump(mode="json"),
+            "zone_id": zone_id,
+            "agent_id": agent_id,
+            "created_at": created_at,
+        }
+        await self._cache.set(k, json.dumps(record).encode())
 
     async def get(self, task_id: str, *, zone_id: str) -> Task | None:
-        record = self._store.get(self._key(task_id, zone_id))
-        if record is None:
+        raw = await self._cache.get(_key(zone_id, task_id))
+        if raw is None:
             return None
-        # Defensive copy to prevent caller mutation
-        return record.task.model_copy()
+        record: dict[str, Any] = json.loads(raw)
+        return Task.model_validate(record["task"])
 
     async def delete(self, task_id: str, *, zone_id: str) -> bool:
-        key = self._key(task_id, zone_id)
-        if key not in self._store:
-            return False
-        del self._store[key]
-        return True
+        return await self._cache.delete(_key(zone_id, task_id))
 
     async def list_tasks(
         self,
@@ -70,22 +105,25 @@ class InMemoryTaskStore:
         limit: int = 50,
         offset: int = 0,
     ) -> list[Task]:
+        keys = await self._cache.keys_by_pattern(_zone_pattern(zone_id))
+        if not keys:
+            return []
+
+        values = await self._cache.get_many(keys)
+
         results: list[tuple[str, Task]] = []
-        for record in self._store.values():
-            if record.zone_id != zone_id:
+        for raw in values.values():
+            if raw is None:
                 continue
-            if agent_id is not None and record.agent_id != agent_id:
+            record: dict[str, Any] = json.loads(raw)
+            if agent_id is not None and record.get("agent_id") != agent_id:
                 continue
-            if state is not None and record.task.status.state != state:
+            task = Task.model_validate(record["task"])
+            if state is not None and task.status.state != state:
                 continue
-            results.append((record.created_at, record.task.model_copy()))
+            results.append((record.get("created_at", ""), task))
 
         # Sort by created_at descending (newest first)
         results.sort(key=lambda pair: pair[0], reverse=True)
         tasks = [task for _, task in results]
         return tasks[offset : offset + limit]
-
-    @staticmethod
-    def _key(task_id: str, zone_id: str) -> str:
-        """Composite key ensuring zone isolation."""
-        return f"{zone_id}:{task_id}"

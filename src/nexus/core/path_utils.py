@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from nexus.core.exceptions import InvalidPathError
+from nexus.contracts.exceptions import InvalidPathError
 
 # Pre-compiled regex for normalizing consecutive slashes
 _MULTI_SLASH = re.compile(r"/+")

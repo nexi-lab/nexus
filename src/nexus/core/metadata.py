@@ -107,7 +107,7 @@ class FileMetadata:
         Raises:
             ValidationError: If validation fails with clear message.
         """
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         if not self.path:
             raise ValidationError("path is required")

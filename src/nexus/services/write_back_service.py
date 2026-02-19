@@ -22,6 +22,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.services.conflict_resolution import (
@@ -168,7 +169,7 @@ class WriteBackService:
         self._backlog_store.enqueue(
             path=event.path,
             backend_name=mount_info["backend_name"],
-            zone_id=event.zone_id or "root",
+            zone_id=event.zone_id or ROOT_ZONE_ID,
             operation_type=op_type,
             content_hash=event.etag,
             new_path=event.old_path if event_type == FileEventType.FILE_RENAME else None,

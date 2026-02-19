@@ -2,11 +2,16 @@
 
 Moved from ``nexus.services.permissions.utils.zone`` (Issue #194) so that
 kernel code can call ``normalize_zone_id`` without importing from services/.
+
+Replaces the 48+ inline ``zone_id or ROOT_ZONE_ID`` occurrences with a single
+canonical function so the default zone sentinel is defined in one place.
 """
 
 from __future__ import annotations
 
-DEFAULT_ZONE: str = "root"
+from nexus.constants import ROOT_ZONE_ID
+
+DEFAULT_ZONE: str = ROOT_ZONE_ID
 
 
 def normalize_zone_id(zone_id: str | None) -> str:

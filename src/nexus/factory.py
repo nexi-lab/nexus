@@ -1766,10 +1766,10 @@ def _create_distributed_infra(
                 dist.nats_url,
             )
         elif dist.enable_events:
-            import os
+            from nexus.lib.env import get_dragonfly_url, get_redis_url
 
-            coordination_url_resolved = coordination_url or os.getenv("NEXUS_REDIS_URL")
-            event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
+            coordination_url_resolved = coordination_url or get_redis_url()
+            event_url_resolved = coordination_url_resolved or get_dragonfly_url()
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
                 from nexus.services.event_bus.redis import RedisEventBus

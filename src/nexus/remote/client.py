@@ -60,6 +60,7 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
+from nexus.remote.negative_cache import NegativeCache
 from nexus.remote.rpc_proxy import RPCProxyBase
 from nexus.server.protocol import RPCRequest, RPCResponse
 
@@ -165,6 +166,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         pool_maxsize: int = 20,
         negative_cache_capacity: int = 100_000,
         negative_cache_fp_rate: float = 0.01,
+        negative_cache: NegativeCache | None = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.api_key = api_key
@@ -208,10 +210,11 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             except Exception as e:
                 logger.warning(f"Failed to fetch auth info: {e}")
 
-        self._negative_cache_capacity = negative_cache_capacity
-        self._negative_cache_fp_rate = negative_cache_fp_rate
-        self._negative_bloom: Any = None
-        self._init_negative_cache()
+        self._init_negative_cache(
+            negative_cache=negative_cache,
+            capacity=negative_cache_capacity,
+            fp_rate=negative_cache_fp_rate,
+        )
 
     def _fetch_auth_info(self) -> None:
         """Fetch authenticated user info from server."""
@@ -406,7 +409,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     def read(
         self,
         path: str,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
         return_metadata: bool = False,
     ) -> bytes | dict[str, Any]:
         if self._negative_cache_check(path):
@@ -418,7 +421,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             raise
         return self._parse_read_response(result, return_metadata)
 
-    def stat(self, path: str, context: Any = None) -> dict[str, Any]:  # noqa: ARG002
+    def stat(self, path: str, _context: Any = None) -> dict[str, Any]:
         if self._negative_cache_check(path):
             raise NexusFileNotFoundError(path)
         try:
@@ -428,7 +431,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             raise
         return result  # type: ignore[no-any-return]
 
-    def exists(self, path: str, context: Any = None) -> bool:  # noqa: ARG002
+    def exists(self, path: str, _context: Any = None) -> bool:
         if self._negative_cache_check(path):
             return False
         result = self._call_rpc("exists", {"path": path})
@@ -458,7 +461,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         path: str,
         start: int,
         end: int,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> bytes:
         result = self._call_rpc("read_range", {"path": path, "start": start, "end": end})
         return self._decode_bytes_field(result)
@@ -467,7 +470,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         chunk_size: int = 8192,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> Any:
         info = self.stat(path)
         file_size = info.get("size") or 0
@@ -486,7 +489,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         start: int,
         end: int,
         chunk_size: int = 8192,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> Any:
         offset = start
         while offset <= end:
@@ -501,7 +504,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         content: bytes | str,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
@@ -529,7 +532,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         chunks: Iterator[bytes],
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> dict[str, Any]:
         content = b"".join(chunks)
         result = self._call_rpc("write_stream", {"path": path, "chunks": content})
@@ -539,7 +542,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     def write_batch(
         self,
         files: builtins.list[tuple[str, bytes]],
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
         result = self._call_rpc("write_batch", {"files": files})
         if files:
@@ -550,7 +553,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         content: bytes | str,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
         if_match: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
@@ -567,7 +570,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self,
         path: str,
         edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
         if_match: str | None = None,
         fuzzy_threshold: float = 0.85,
         preview: bool = False,
@@ -610,7 +613,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         client_content: bytes | None = None,
         client_hash: str | None = None,
         max_delta_ratio: float = 0.8,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"path": path, "max_delta_ratio": max_delta_ratio}
         if client_hash is not None:
@@ -626,7 +629,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         delta: bytes,
         base_hash: str,
         if_match: str | None = None,
-        context: Any = None,  # noqa: ARG002
+        _context: Any = None,
     ) -> dict[str, Any]:
         result = self._call_rpc(
             "delta_write",
@@ -635,7 +638,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self._negative_cache_invalidate(path)
         return result  # type: ignore[no-any-return]
 
-    def delete(self, path: str, context: Any = None) -> bool:  # noqa: ARG002
+    def delete(self, path: str, _context: Any = None) -> bool:
         self._call_rpc("delete", {"path": path})
         self._negative_cache_invalidate(path)
         return True
@@ -650,7 +653,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             self._negative_cache_invalidate_bulk(paths)
         return result  # type: ignore[no-any-return]
 
-    def rename(self, old_path: str, new_path: str, context: Any = None) -> dict[str, Any]:  # noqa: ARG002
+    def rename(self, old_path: str, new_path: str, _context: Any = None) -> dict[str, Any]:
         result = self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
         self._negative_cache_invalidate(old_path)
         return result if isinstance(result, dict) else {}

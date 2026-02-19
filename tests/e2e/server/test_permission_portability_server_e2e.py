@@ -121,7 +121,7 @@ def e2e_env():
 
     Yields server info dict for test methods.
     """
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.portability import export_zone_bundle, import_zone_bundle
 
     with tempfile.TemporaryDirectory(prefix="nexus_perm_e2e_") as tmpdir:

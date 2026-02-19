@@ -22,7 +22,7 @@ from nexus.storage.content_cache import ContentCache
 if TYPE_CHECKING:
     from nexus_fast import BloomFilter
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

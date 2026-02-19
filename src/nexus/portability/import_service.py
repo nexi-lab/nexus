@@ -30,8 +30,8 @@ from nexus.portability.models import (
 )
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def _create_import_context() -> OperationContext:
 
     Import is a privileged system operation that bypasses normal permission checks.
     """
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     return OperationContext(
         user_id="system",

@@ -348,7 +348,9 @@ class TestOfflineQueuePendingCount:
 
         assert await queue.pending_count() == 2
 
-    async def test_pending_count_includes_failed_but_not_dead_lettered(self, queue: OfflineQueue):
+    async def test_pending_count_includes_failed_but_not_dead_lettered(
+        self, queue: OfflineQueue
+    ):
         """Failed ops that haven't hit max retries are still pending."""
         op_id = await queue.enqueue("flaky", ())
         await queue.mark_failed(op_id)  # retry_count=1, max=3 -> still pending

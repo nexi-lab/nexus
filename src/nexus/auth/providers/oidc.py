@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 ALLOWED_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
 CLOCK_SKEW_SECONDS = 300  # +/- 5 minutes
 JWKS_CACHE_TTL = 3600  # 1 hour
+OIDC_REQUEST_TIMEOUT = 10  # HTTP request timeout for JWKS/discovery fetches
 
 
 class OIDCAuth(AuthProvider):
@@ -78,7 +79,7 @@ class OIDCAuth(AuthProvider):
 
         try:
             logger.info("Fetching JWKS from %s", self.jwks_uri)
-            response = requests.get(self.jwks_uri, timeout=10)
+            response = requests.get(self.jwks_uri, timeout=OIDC_REQUEST_TIMEOUT)
             response.raise_for_status()
             jwks = response.json()
 
@@ -105,7 +106,9 @@ class OIDCAuth(AuthProvider):
 
         try:
             logger.info("Fetching JWKS (async) from %s", self.jwks_uri)
-            response = await asyncio.to_thread(requests.get, self.jwks_uri, timeout=10)
+            response = await asyncio.to_thread(
+                requests.get, self.jwks_uri, timeout=OIDC_REQUEST_TIMEOUT
+            )
             response.raise_for_status()
             jwks = response.json()
 

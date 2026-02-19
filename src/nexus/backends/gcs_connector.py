@@ -140,6 +140,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         access_token: str | None = None,
         # Session factory for caching support
         session_factory: "type[Session] | None" = None,
+        operation_timeout: float = 60.0,
+        upload_timeout: float = 300.0,
     ):
         """
         Initialize GCS connector backend.
@@ -152,6 +154,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             access_token: OAuth access token (alternative to credentials_path)
             session_factory: Optional session factory (e.g., metadata_store.session_factory)
                            for caching support.
+            operation_timeout: Timeout for standard blob operations (seconds).
+            upload_timeout: Timeout for large file uploads (seconds).
         """
         try:
             # Priority: access_token > credentials_path > ADC
@@ -170,6 +174,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 self.client = storage.Client(project=project_id)
 
             self.bucket = self.client.bucket(bucket_name)
+            self._operation_timeout = operation_timeout
+            self._upload_timeout = upload_timeout
 
             # Verify bucket exists and check versioning status
             if not self.bucket.exists():
@@ -310,7 +316,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             blob.upload_from_string(
                 content,
                 content_type=content_type,
-                timeout=60,
+                timeout=self._operation_timeout,
                 retry=retry.Retry(deadline=120),  # Retry for up to 2 minutes
             )
 
@@ -366,7 +372,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 raise NexusFileNotFoundError(blob_path)
 
             content = blob.download_as_bytes(
-                timeout=60,
+                timeout=self._operation_timeout,
                 retry=retry.Retry(deadline=120),  # Retry for up to 2 minutes
             )
 
@@ -538,7 +544,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             if not blob.exists():
                 raise NexusFileNotFoundError(blob_path)
 
-            blob.delete(timeout=60, retry=retry.Retry(deadline=120))
+            blob.delete(timeout=self._operation_timeout, retry=retry.Retry(deadline=120))
 
         except NotFound as e:
             raise NexusFileNotFoundError(blob_path) from e
@@ -657,7 +663,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             blob.upload_from_string(
                 "",
                 content_type="application/x-directory",
-                timeout=60,
+                timeout=self._operation_timeout,
                 retry=retry.Retry(deadline=120),
             )
 
@@ -743,7 +749,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             buffer = io.BytesIO()
             blob.download_to_file(
                 buffer,
-                timeout=60,
+                timeout=self._operation_timeout,
                 retry=retry.Retry(deadline=120),
             )
             buffer.seek(0)

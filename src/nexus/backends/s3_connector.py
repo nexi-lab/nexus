@@ -143,6 +143,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         session_token: str | None = None,
         # Session factory for caching support
         session_factory: "type[Session] | None" = None,
+        # DI: ProfileTuning.connector (Issue #2071)
+        connector_max_workers: int = 20,
     ):
         """
         Initialize S3 connector backend.
@@ -245,6 +247,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
 
             # Store session info for caching support (CacheConnectorMixin)
             self.session_factory = session_factory
+            # Issue #2071: DI for connector max workers
+            self._connector_max_workers = connector_max_workers
 
         except Exception as e:
             if isinstance(e, BackendError):
@@ -726,7 +730,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                 return (backend_path, None)
 
         # Parallel head_object calls
-        with ThreadPoolExecutor(max_workers=20) as executor:
+        with ThreadPoolExecutor(max_workers=self._connector_max_workers) as executor:
             futures = {executor.submit(get_one_version, path): path for path in backend_paths}
 
             for future in as_completed(futures):
@@ -742,7 +746,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         self,
         blob_paths: list[str],
         version_ids: dict[str, str] | None = None,
-        max_workers: int = 20,
+        max_workers: int | None = None,
     ) -> dict[str, bytes]:
         """
         Download multiple blobs in parallel with S3-optimized settings.
@@ -772,6 +776,9 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
 
         if not blob_paths:
             return {}
+
+        if max_workers is None:
+            max_workers = self._connector_max_workers
 
         results: dict[str, bytes] = {}
 
@@ -1076,10 +1083,10 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             path=blob_path,
         )
 
-    # Default: 20 concurrent workers for S3 batch reads.
-    # S3 tolerates higher concurrency than GCS (HTTP/1.1, high per-prefix throughput).
-    # max_pool_connections in boto3 Config is set to 25 to match.
-    batch_read_workers: int = 20
+    @property
+    def batch_read_workers(self) -> int:
+        """Concurrent workers for S3 batch reads (Issue #2071: DI from ProfileTuning)."""
+        return self._connector_max_workers
 
     def batch_read_content(
         self,

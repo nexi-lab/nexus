@@ -68,16 +68,16 @@ class RevisionNotifier:
 class NullRevisionNotifier:
     """No-op fallback used when RevisionNotifier construction fails."""
 
-    def notify_revision(self, zone_id: str, revision: int) -> None:  # noqa: ARG002
+    def notify_revision(self, _zone_id: str, revision: int) -> None:
         pass
 
-    def get_latest_revision(self, zone_id: str) -> int:  # noqa: ARG002
+    def get_latest_revision(self, _zone_id: str) -> int:
         return 0
 
     def wait_for_revision(
         self,
-        zone_id: str,  # noqa: ARG002
-        min_revision: int,  # noqa: ARG002
-        timeout_ms: int,  # noqa: ARG002
+        _zone_id: str,
+        _min_revision: int,
+        _timeout_ms: int,
     ) -> bool:
         return False

@@ -10,7 +10,8 @@ from typing import Any, BinaryIO
 
 from nexus.skills.exceptions import SkillExportError
 from nexus.skills.models import Skill
-from nexus.skills.registry import SkillNotFoundError, SkillRegistry
+from nexus.skills.protocols import NexusFilesystem, SkillRegistryProtocol
+from nexus.skills.registry import SkillNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +30,22 @@ class SkillExporter:
         ... )
     """
 
-    def __init__(self, registry: SkillRegistry):
+    def __init__(
+        self,
+        registry: SkillRegistryProtocol,
+        filesystem: NexusFilesystem | None = None,
+    ):
         """Initialize skill exporter.
 
         Args:
-            registry: SkillRegistry instance
+            registry: Skill registry (any SkillRegistryProtocol implementation).
+            filesystem: Optional filesystem for reading skill files.
+                        If not provided, falls back to registry._filesystem (if available).
         """
         self._registry = registry
+        self._filesystem: NexusFilesystem | None = filesystem or getattr(
+            registry, "_filesystem", None
+        )
 
     async def export_skill(
         self,
@@ -171,10 +181,10 @@ class SkillExporter:
         logger.debug(f"Exporting skill '{skill_name}' from directory: {skill_dir_path}")
 
         # Get filesystem from registry
-        if not self._registry._filesystem:
+        if not self._filesystem:
             raise SkillExportError(f"Cannot export skill '{skill_name}': filesystem not available")
 
-        filesystem = self._registry._filesystem
+        filesystem = self._filesystem
 
         # List all files in skill directory recursively
         try:
@@ -460,12 +470,12 @@ class SkillExporter:
         skill_dir_path = str(Path(skill.metadata.file_path).parent)
 
         # Get filesystem from registry
-        if not self._registry._filesystem:
+        if not self._filesystem:
             # Fallback to SKILL.md only if filesystem not available
             content = self._reconstruct_skill_md(skill)
             return len(content.encode("utf-8"))
 
-        filesystem = self._registry._filesystem
+        filesystem = self._filesystem
 
         # List all files in skill directory recursively
         try:

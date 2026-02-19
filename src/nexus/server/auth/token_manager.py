@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.cache.cache_store import CacheStoreABC
 
 from nexus.auth.oauth.crypto import OAuthCrypto
 from nexus.constants import ROOT_ZONE_ID

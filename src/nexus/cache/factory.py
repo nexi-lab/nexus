@@ -1,5 +1,11 @@
 """Cache factory for creating cache instances based on configuration.
 
+.. deprecated::
+    CacheFactory is superseded by CacheBrick (Issue #1524).
+    Use ``from nexus.cache import CacheBrick`` for new code.
+    CacheFactory is retained for backward compatibility with PostgreSQL
+    fallback paths and existing tests.
+
 NOTE: This is the SYSTEMD LAYER (service manager), NOT kernel code.
     The kernel (NexusFS) only knows CacheStoreABC + NullCacheStore.
     This factory creates service-level domain caches on top of CacheStoreABC.
@@ -43,6 +49,7 @@ from nexus.cache.base import (
     ResourceMapCacheProtocol,
     TigerCacheProtocol,
 )
+from nexus.cache.cache_store import CacheStoreABC, NullCacheStore
 from nexus.cache.domain import (
     EmbeddingCache,
     PermissionCache,
@@ -50,11 +57,10 @@ from nexus.cache.domain import (
     TigerCache,
 )
 from nexus.cache.settings import CacheSettings
-from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.storage.record_store import RecordStoreABC
 
@@ -63,6 +69,9 @@ logger = logging.getLogger(__name__)
 
 class CacheFactory:
     """Factory for creating cache instances based on configuration.
+
+    .. deprecated::
+        Use :class:`~nexus.cache.brick.CacheBrick` instead.
 
     Owns a CacheStoreABC driver and builds domain caches on top.
     When no driver is injected, creates one from settings or falls back to NullCacheStore.
@@ -312,7 +321,7 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
 
         effective_config = config or CacheWrapperConfig()
 

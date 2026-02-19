@@ -22,8 +22,8 @@ from nexus.cache.base import (
     ResourceMapCacheProtocol,
     TigerCacheProtocol,
 )
+from nexus.cache.cache_store import CacheStoreABC, NullCacheStore
 from nexus.cache.settings import CacheSettings
-from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 # ---------------------------------------------------------------------------
 # Helpers

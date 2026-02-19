@@ -18,8 +18,6 @@ Architecture::
     ├── ResourceMapCache
     ├── EmbeddingCache
     └── CachingBackendWrapper factory
-
-NOTE: L2 async write-behind is a follow-up (Decision #14).
 """
 
 from __future__ import annotations
@@ -34,6 +32,7 @@ from nexus.cache.base import (
     ResourceMapCacheProtocol,
     TigerCacheProtocol,
 )
+from nexus.cache.cache_store import NullCacheStore
 from nexus.cache.domain import (
     EmbeddingCache,
     PermissionCache,
@@ -43,7 +42,7 @@ from nexus.cache.domain import (
 from nexus.cache.settings import CacheSettings
 
 if TYPE_CHECKING:
-    from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -79,23 +78,7 @@ class CacheBrick:
             settings: Cache configuration. If None, defaults are used.
             record_store: Optional RecordStoreABC for PostgreSQL cache fallback.
         """
-        # Lazy import to avoid circular deps — NullCacheStore is in core
-        from nexus.cache.inmemory import InMemoryCacheStore
-
-        # Import NullCacheStore without importing nexus.core at module level
-        _NullCacheStore: type | None = None
-        try:
-            from nexus.core.cache_store import NullCacheStore as _NS
-
-            _NullCacheStore = _NS
-        except ImportError:
-            pass
-
-        self._store = (
-            cache_store
-            if cache_store is not None
-            else (_NullCacheStore() if _NullCacheStore else InMemoryCacheStore())
-        )
+        self._store = cache_store if cache_store is not None else NullCacheStore()
         self._settings = settings or CacheSettings(dragonfly_url=None)
         self._record_store = record_store
         self._started = False
@@ -116,11 +99,8 @@ class CacheBrick:
             ttl=self._settings.embedding_ttl,
         )
 
-        # SHA-256 hash cache (Decision #16) — keyed by (id, len)
-        self._hash_cache: dict[tuple[int, int], str] = {}
-
     # ------------------------------------------------------------------
-    # Lifecycle (Decision #4) — satisfies BrickLifecycleProtocol
+    # Lifecycle — satisfies BrickLifecycleProtocol
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
@@ -150,6 +130,15 @@ class CacheBrick:
         self._started = False
         logger.info("[CacheBrick] stopped")
 
+    # Backward-compat aliases for CacheFactory API
+    async def initialize(self) -> None:
+        """Alias for start() — backward compat with CacheFactory."""
+        await self.start()
+
+    async def shutdown(self) -> None:
+        """Alias for stop() — backward compat with CacheFactory."""
+        await self.stop()
+
     async def health_check(self) -> bool:
         """Check if the cache backend is healthy.
 
@@ -162,7 +151,7 @@ class CacheBrick:
             return False
 
     # ------------------------------------------------------------------
-    # Protocol-typed accessors
+    # Protocol-typed accessors (properties)
     # ------------------------------------------------------------------
 
     @property
@@ -195,6 +184,23 @@ class CacheBrick:
         """Cache configuration."""
         return self._settings
 
+    # Backward-compat method aliases for CacheFactory API
+    def get_permission_cache(self) -> PermissionCacheProtocol:
+        """Alias for .permission_cache — backward compat with CacheFactory."""
+        return self._permission_cache
+
+    def get_tiger_cache(self) -> TigerCacheProtocol:
+        """Alias for .tiger_cache — backward compat with CacheFactory."""
+        return self._tiger_cache
+
+    def get_resource_map_cache(self) -> ResourceMapCacheProtocol:
+        """Alias for .resource_map_cache — backward compat with CacheFactory."""
+        return self._resource_map_cache
+
+    def get_embedding_cache(self) -> EmbeddingCacheProtocol:
+        """Alias for .embedding_cache — backward compat with CacheFactory."""
+        return self._embedding_cache
+
     # ------------------------------------------------------------------
     # Status / reporting
     # ------------------------------------------------------------------
@@ -207,7 +213,7 @@ class CacheBrick:
     @property
     def has_cache_store(self) -> bool:
         """Whether a real (non-Null) CacheStoreABC driver is active."""
-        return type(self._store).__name__ != "NullCacheStore"
+        return not isinstance(self._store, NullCacheStore)
 
     # ------------------------------------------------------------------
     # CachingBackendWrapper factory
@@ -230,8 +236,8 @@ class CacheBrick:
         Returns:
             CachingBackendWrapper wrapping the inner backend.
         """
-        from nexus.cache.backend_wrapper import CacheWrapperConfig as CWC
-        from nexus.cache.backend_wrapper import CachingBackendWrapper
+        from nexus.backends.caching_wrapper import CacheWrapperConfig as CWC
+        from nexus.backends.caching_wrapper import CachingBackendWrapper
 
         effective_config = config or CWC()
 
@@ -250,11 +256,11 @@ class CacheBrick:
         )
 
     # ------------------------------------------------------------------
-    # SHA-256 hash caching (Decision #16)
+    # SHA-256 hash utility
     # ------------------------------------------------------------------
 
     def compute_content_hash(self, data: bytes) -> str:
-        """Compute SHA-256 hash, caching by (id, len) for repeated calls.
+        """Compute SHA-256 hash of content.
 
         Args:
             data: Binary content to hash.
@@ -262,10 +268,17 @@ class CacheBrick:
         Returns:
             64-character hex digest string.
         """
-        cache_key = (id(data), len(data))
-        cached = self._hash_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        digest = hashlib.sha256(data).hexdigest()
-        self._hash_cache[cache_key] = digest
-        return digest
+        return hashlib.sha256(data).hexdigest()
+
+    # ------------------------------------------------------------------
+    # Async context manager
+    # ------------------------------------------------------------------
+
+    async def __aenter__(self) -> CacheBrick:
+        """Async context manager entry."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        """Async context manager exit."""
+        await self.stop()

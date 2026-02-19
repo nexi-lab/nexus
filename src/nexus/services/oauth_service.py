@@ -24,7 +24,7 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.cache.cache_store import CacheStoreABC
     from nexus.core.permissions import OperationContext
 
 

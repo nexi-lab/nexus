@@ -31,7 +31,9 @@ async def startup_permissions(app: FastAPI) -> list[asyncio.Task]:
     bg_tasks: list[asyncio.Task] = []
 
     await _startup_async_rebac(app)
-    await _startup_cache_factory(app)
+    # NOTE: Cache factory / CacheBrick initialization is handled by
+    # fastapi_server.py startup (Issue #1524). Removed redundant
+    # _startup_cache_factory() that was overwriting the CacheBrick alias.
     bg_tasks.extend(_startup_tiger_cache(app))
     bg_tasks.extend(_startup_backfill(app))
     _startup_cache_warmup(app)
@@ -121,42 +123,6 @@ async def _startup_async_rebac(app: FastAPI) -> None:
 
     except Exception as e:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
-
-
-async def _startup_cache_factory(app: FastAPI) -> None:
-    """Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)."""
-    try:
-        from nexus.cache.factory import CacheFactory
-        from nexus.cache.settings import CacheSettings
-
-        cache_settings = CacheSettings.from_env()
-
-        # Pass RecordStore for SQL-backed cache fallback
-        record_store = getattr(app.state.nexus_fs, "_record_store", None)
-
-        cache_factory = CacheFactory(cache_settings, record_store=record_store)
-        await cache_factory.initialize()
-        app.state.cache_factory = cache_factory
-        logger.info(
-            f"Cache factory initialized with {app.state.cache_factory.backend_name} backend"
-        )
-
-        # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
-        if app.state.cache_factory.has_cache_store:
-            tiger_cache = getattr(
-                getattr(app.state.nexus_fs, "_rebac_manager", None),
-                "_tiger_cache",
-                None,
-            )
-            if tiger_cache:
-                dragonfly_tiger = app.state.cache_factory.get_tiger_cache()
-                tiger_cache.set_dragonfly_cache(dragonfly_tiger)
-                logger.info(
-                    "[TIGER] Dragonfly L2 cache wired up - "
-                    "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
-                )
-    except Exception as e:
-        logger.warning("Failed to initialize cache factory: %s", e, exc_info=True)
 
 
 def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:

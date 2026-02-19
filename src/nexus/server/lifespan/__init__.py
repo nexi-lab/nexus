@@ -181,12 +181,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if hasattr(app.state.nexus_fs, "close"):
             app.state.nexus_fs.close()
 
-    # Shutdown cache factory (Issue #1075)
+    # Shutdown CacheBrick (Issue #1524, replaces #1075 CacheFactory)
     if hasattr(app.state, "cache_factory") and app.state.cache_factory:
         try:
-            await app.state.cache_factory.shutdown()
-            logger.info("Cache factory stopped")
+            await app.state.cache_factory.stop()
+            logger.info("CacheBrick stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down cache factory: {e}")
+            logger.warning(f"Error shutting down CacheBrick: {e}")
 
     await shutdown_observability()

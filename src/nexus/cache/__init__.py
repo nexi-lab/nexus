@@ -20,7 +20,7 @@ Usage:
     tiger_cache = brick.tiger_cache
 """
 
-from nexus.cache.backend_wrapper import (
+from nexus.backends.caching_wrapper import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,
@@ -32,17 +32,19 @@ from nexus.cache.base import (
     TigerCacheProtocol,
 )
 from nexus.cache.brick import CacheBrick
+from nexus.cache.cache_store import CacheStoreABC, NullCacheStore
 from nexus.cache.dragonfly import DragonflyCacheStore
-from nexus.cache.factory import CacheFactory
 from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.cache.settings import CacheSettings
 
 __all__ = [
     # Brick facade (Issue #1524)
     "CacheBrick",
-    # Factory + config (kept temporarily, will be absorbed by CacheBrick)
-    "CacheFactory",
+    # Configuration
     "CacheSettings",
+    # CacheStoreABC pillar (canonical location)
+    "CacheStoreABC",
+    "NullCacheStore",
     # CachingBackendWrapper — transparent caching decorator for any Backend (#1392)
     "CachingBackendWrapper",
     "CacheStrategy",

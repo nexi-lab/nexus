@@ -486,21 +486,17 @@ class CachedEmbeddingProvider(EmbeddingProvider):
     - Batch deduplication (dedupe before API call)
 
     Usage:
-        from nexus.cache import CacheFactory, CacheSettings
+        from nexus.cache import CacheBrick, CacheSettings
 
         # Initialize cache
-        settings = CacheSettings.from_env()
-        factory = CacheFactory(settings)
-        await factory.initialize()
+        brick = CacheBrick(cache_store=my_store, settings=CacheSettings.from_env())
+        await brick.start()
 
         # Wrap any embedding provider
         base_provider = create_embedding_provider("openai")
-        embedding_cache = factory.get_embedding_cache()
+        embedding_cache = brick.embedding_cache
 
-        if embedding_cache:
-            provider = CachedEmbeddingProvider(base_provider, embedding_cache)
-        else:
-            provider = base_provider  # Fallback to uncached
+        provider = CachedEmbeddingProvider(base_provider, embedding_cache)
     """
 
     def __init__(

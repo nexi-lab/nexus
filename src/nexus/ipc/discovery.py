@@ -19,7 +19,7 @@ from nexus.ipc.conventions import AGENTS_ROOT, agent_card_path
 from nexus.ipc.storage.protocol import IPCStorageDriver
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.cache.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 

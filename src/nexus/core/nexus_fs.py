@@ -20,7 +20,7 @@ from nexus.core.hash_fast import hash_content
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
-from nexus.core.cache_store import CacheStoreABC, NullCacheStore
+from nexus.cache.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     BrickServices,
     CacheConfig,

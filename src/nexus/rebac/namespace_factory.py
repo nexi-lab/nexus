@@ -39,7 +39,7 @@ def create_namespace_manager(
     persistent_store = None
     if record_store is not None:
         try:
-            from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
+            from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 
             persistent_store = PostgresPersistentViewStore(record_store)
             logger.info("[NAMESPACE] L3 persistent view store enabled (RecordStore)")

@@ -28,7 +28,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from fnmatch import fnmatch
 
-from nexus.core.cache_store import CacheStoreABC
+from nexus.cache.cache_store import CacheStoreABC
 
 
 class InMemoryCacheStore(CacheStoreABC):

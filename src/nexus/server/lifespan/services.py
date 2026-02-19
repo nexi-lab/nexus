@@ -31,8 +31,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
     _startup_agent_registry(app)
     _startup_key_service(app)
-    _startup_reputation_service(app)
-    _startup_delegation_service(app)
+    _startup_reputation_delegation_from_bricks(app)
     _startup_sandbox_auth(app)
     _startup_transactional_snapshot(app)
     _startup_rlm_service(app)
@@ -230,55 +229,34 @@ def _startup_key_service(app: FastAPI) -> None:
         app.state.key_service = None
 
 
-def _startup_reputation_service(app: FastAPI) -> None:
-    """Initialize ReputationService singleton for trust routing (#1619)."""
-    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
+def _startup_reputation_delegation_from_bricks(app: FastAPI) -> None:
+    """Expose ReputationService and DelegationService from factory brick_dict (Issue #2131).
+
+    These services are now created in ``factory._boot_brick_services()`` and
+    stored in ``BrickServices``. This function wires them onto ``app.state``
+    for backward-compatible access by routers and dependencies.
+    """
+    nx = app.state.nexus_fs
+    if nx is None:
         app.state.reputation_service = None
-        return
-
-    try:
-        from nexus.services.reputation.reputation_service import ReputationService
-
-        app.state.reputation_service = ReputationService(
-            session_factory=app.state.nexus_fs.SessionLocal,
-        )
-        logger.info("[REPUTATION] ReputationService initialized (singleton)")
-    except Exception as e:
-        logger.warning("[REPUTATION] Failed to initialize: %s", e, exc_info=True)
-        app.state.reputation_service = None
-
-
-def _startup_delegation_service(app: FastAPI) -> None:
-    """Initialize DelegationService for agent delegation (Issue #1618)."""
-    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
         app.state.delegation_service = None
         return
 
-    rebac_manager = getattr(app.state.nexus_fs, "_rebac_manager", None)
-    if rebac_manager is None:
-        app.state.delegation_service = None
-        return
+    # Get from BrickServices (created by factory)
+    brk = getattr(nx, "_brick_services", None)
+    app.state.reputation_service = getattr(brk, "reputation_service", None) if brk else None
+    app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
 
-    try:
-        from nexus.services.delegation.service import DelegationService
-
-        namespace_manager = getattr(app.state.nexus_fs, "_namespace_manager", None)
-        entity_registry = getattr(app.state.nexus_fs, "_entity_registry", None)
-        agent_registry = getattr(app.state, "agent_registry", None)
-        reputation_service = getattr(app.state, "reputation_service", None)
-
-        app.state.delegation_service = DelegationService(
-            session_factory=app.state.nexus_fs.SessionLocal,
-            rebac_manager=rebac_manager,
-            namespace_manager=namespace_manager,
-            entity_registry=entity_registry,
-            agent_registry=agent_registry,
-            reputation_service=reputation_service,
-        )
-        logger.info("[DELEGATION] DelegationService initialized and wired")
-    except Exception as e:
-        logger.warning("[DELEGATION] Failed to initialize DelegationService: %s", e, exc_info=True)
-        app.state.delegation_service = None
+    if app.state.reputation_service is not None:
+        logger.info("[REPUTATION] ReputationService wired from brick_dict")
+    if app.state.delegation_service is not None:
+        # Wire system-tier dependencies that weren't available during factory boot
+        deleg = app.state.delegation_service
+        if getattr(deleg, "_namespace_manager", None) is None:
+            deleg._namespace_manager = getattr(nx, "_namespace_manager", None)
+        if getattr(deleg, "_agent_registry", None) is None:
+            deleg._agent_registry = getattr(app.state, "agent_registry", None)
+        logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
 
 def _startup_sandbox_auth(app: FastAPI) -> None:

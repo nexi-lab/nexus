@@ -291,7 +291,7 @@ def get_trust_score(
         )
 
     # Per-dimension score from alpha/beta
-    from nexus.services.reputation.reputation_math import compute_beta_score, compute_confidence
+    from nexus.bricks.reputation.reputation_math import compute_beta_score, compute_confidence
 
     alpha = getattr(score, f"{dimension}_alpha")
     beta = getattr(score, f"{dimension}_beta")
@@ -325,7 +325,7 @@ def submit_feedback(
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
 ) -> FeedbackSubmitResponse:
     """Submit feedback for an exchange."""
-    from nexus.services.reputation.reputation_service import DuplicateFeedbackError
+    from nexus.bricks.reputation.reputation_service import DuplicateFeedbackError
 
     reputation_service, _dispute_service, auth_ctx = deps
     zone_id = auth_ctx.get("zone_id", ROOT_ZONE_ID) or ROOT_ZONE_ID
@@ -371,7 +371,7 @@ def file_dispute(
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
 ) -> DisputeResponse:
     """File a dispute for an exchange."""
-    from nexus.services.reputation.dispute_service import DuplicateDisputeError
+    from nexus.bricks.reputation.dispute_service import DuplicateDisputeError
 
     _reputation_service, dispute_service, auth_ctx = deps
     zone_id = auth_ctx.get("zone_id", ROOT_ZONE_ID) or ROOT_ZONE_ID
@@ -415,7 +415,7 @@ def resolve_dispute(
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
 ) -> DisputeResponse:
     """Resolve a dispute (admin/auto-mediation)."""
-    from nexus.services.reputation.dispute_service import (
+    from nexus.bricks.reputation.dispute_service import (
         DisputeNotFoundError,
         InvalidTransitionError,
     )

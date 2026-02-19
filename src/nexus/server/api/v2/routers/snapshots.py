@@ -239,7 +239,7 @@ async def commit_transaction(
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionResponse:
     """Commit a transaction (with conflict detection)."""
-    from nexus.services.snapshot.service import (
+    from nexus.bricks.snapshot.errors import (
         TransactionConflictError,
         TransactionNotActiveError,
         TransactionNotFoundError,
@@ -281,7 +281,7 @@ async def rollback_transaction(
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionResponse:
     """Rollback a transaction to pre-transaction state."""
-    from nexus.services.snapshot.service import (
+    from nexus.bricks.snapshot.errors import (
         TransactionNotActiveError,
         TransactionNotFoundError,
     )

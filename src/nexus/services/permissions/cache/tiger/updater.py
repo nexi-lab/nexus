@@ -44,6 +44,8 @@ class TigerCacheUpdater:
         engine: Engine,
         tiger_cache: TigerCache,
         rebac_manager: EnhancedReBACManager | None = None,
+        *,
+        is_postgresql: bool = False,
     ):
         """Initialize the updater.
 
@@ -55,7 +57,7 @@ class TigerCacheUpdater:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._rebac_manager = rebac_manager
-        self._is_postgresql = "postgresql" in str(engine.url)
+        self._is_postgresql = is_postgresql
         self._last_processed_revision = 0
 
     def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:

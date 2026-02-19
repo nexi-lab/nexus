@@ -57,9 +57,12 @@ class TupleRepository:
                     Defaults to ``engine`` when not provided.
     """
 
-    def __init__(self, engine: Engine, read_engine: Engine | None = None) -> None:
+    def __init__(
+        self, engine: Engine, read_engine: Engine | None = None, *, is_postgresql: bool = False
+    ) -> None:
         self.engine = engine
         self.read_engine = read_engine or engine
+        self._is_postgresql = is_postgresql
 
         # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
         # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
@@ -184,7 +187,7 @@ class TupleRepository:
         Returns:
             SQL query with appropriate placeholders for the database dialect
         """
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             return sql.replace("?", "%s")
         return sql
 
@@ -197,7 +200,7 @@ class TupleRepository:
         Returns:
             True if PostgreSQL 18+, False otherwise
         """
-        if self.engine.dialect.name != "postgresql":
+        if not self._is_postgresql:
             return False
 
         if self._pg_version is None:
@@ -255,7 +258,7 @@ class TupleRepository:
         effective_zone = zone_id or "root"
         cursor = self.create_cursor(conn)
 
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             cursor.execute(
                 "INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at) "
                 "VALUES (%(zone_id)s, 1, NOW()) "
@@ -327,7 +330,7 @@ class TupleRepository:
         cursor = self.create_cursor(conn)
         max_depth = 50
 
-        if self.engine.dialect.name == "postgresql":
+        if self._is_postgresql:
             query = (
                 "WITH RECURSIVE ancestors AS ("
                 "  SELECT object_type as ancestor_type, object_id as ancestor_id, 1 as depth"
@@ -599,7 +602,7 @@ class TupleRepository:
 
         CHUNK_SIZE = 100
         existing: set[tuple[Any, ...]] = set()
-        is_pg = self.engine.dialect.name == "postgresql"
+        is_pg = self._is_postgresql
 
         for chunk_start in range(0, len(parsed_tuples), CHUNK_SIZE):
             chunk = parsed_tuples[chunk_start : chunk_start + CHUNK_SIZE]

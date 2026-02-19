@@ -36,9 +36,9 @@ class TigerResourceMap:
     See: Issue #979 - Cross-zone resource map optimization
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, *, is_postgresql: bool = False):
         self._engine = engine
-        self._is_postgresql = "postgresql" in str(engine.url)
+        self._is_postgresql = is_postgresql
 
         # In-memory cache for frequently accessed mappings
         # Key is (type, id) - zone excluded for cross-zone compatibility

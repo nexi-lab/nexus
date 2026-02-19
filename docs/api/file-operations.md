@@ -233,7 +233,7 @@ nx.delete("/documents/old.txt")
 assert not nx.exists("/documents/old.txt")
 
 # Delete with specific user context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.delete("/workspace/alice/temp.txt", context=ctx)
 ```
@@ -307,7 +307,7 @@ if not nx.exists("/cache/data.json"):
     nx.write("/cache/data.json", b"{}")
 
 # Check with specific user context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="charlie", groups=["project-beta"])
 if nx.exists("/workspace/alice/secret.txt", context=ctx):
     print("Charlie can see this file")
@@ -417,7 +417,7 @@ nx.rename("/documents/old.txt", "/documents/new.txt")
 nx.rename("/temp/data.csv", "/archive/data.csv")
 
 # Rename with specific user context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.rename("/workspace/alice/draft.txt", "/workspace/alice/final.txt", context=ctx)
 ```

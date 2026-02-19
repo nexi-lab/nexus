@@ -92,6 +92,16 @@ class RecordStoreABC(ABC):
             "Override this property to enable async database access."
         )
 
+    @property
+    def async_engine(self) -> Any:
+        """Async SQLAlchemy engine, or None if async is not supported.
+
+        Concrete drivers that lazily create an async engine (e.g.
+        SQLAlchemyRecordStore) should override this property.
+        Used by cache brick and other consumers that need non-blocking I/O.
+        """
+        return None
+
     # -- Read replica properties (Issue #725) --
 
     @property
@@ -427,6 +437,15 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     )
 
         return self._async_session_factory_instance
+
+    @property
+    def async_engine(self) -> Any:
+        """Async SQLAlchemy engine (lazily created on first async_session_factory access).
+
+        Returns None if async_session_factory has not been accessed yet.
+        Accessing async_session_factory triggers lazy creation of this engine.
+        """
+        return self._async_engine
 
     # -- Read replica properties (Issue #725) --
 

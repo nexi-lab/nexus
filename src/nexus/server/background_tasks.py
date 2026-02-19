@@ -337,6 +337,31 @@ async def stale_agent_detection_task(
             logger.exception("[HEARTBEAT] Failed to detect stale agents")
 
 
+async def agent_eviction_task(
+    eviction_manager: Any,
+    interval_seconds: int = 300,
+) -> None:
+    """Periodically run eviction cycle under resource pressure (Issue #2170).
+
+    Args:
+        eviction_manager: EvictionManager instance with run_cycle() method
+        interval_seconds: How often to check for eviction (default: 300)
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            result = await eviction_manager.run_cycle()
+            if result.evicted > 0:
+                logger.info(
+                    "[EVICTION] Evicted %d agents (reason=%s, post_pressure=%s)",
+                    result.evicted,
+                    result.reason,
+                    result.post_pressure,
+                )
+        except Exception:
+            logger.exception("[EVICTION] Eviction cycle failed")
+
+
 def start_background_tasks(
     session_factory: Any,
     sandbox_manager: Any | None = None,

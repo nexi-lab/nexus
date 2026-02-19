@@ -710,6 +710,27 @@ def _boot_system_services(
     if not _on("agent_registry"):
         logger.debug("[BOOT:SYSTEM] AgentRegistry disabled by profile")
 
+    # --- Eviction Manager (Issue #2170) ---
+    eviction_manager: Any = None
+    if agent_registry is not None:
+        try:
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
+
+            eviction_tuning = ctx.profile_tuning.eviction
+            resource_monitor = ResourceMonitor(tuning=eviction_tuning)
+            eviction_policy = LRUEvictionPolicy()
+            eviction_manager = EvictionManager(
+                registry=agent_registry,
+                monitor=resource_monitor,
+                policy=eviction_policy,
+                tuning=eviction_tuning,
+            )
+            logger.debug("[BOOT:SYSTEM] EvictionManager created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
+
     # --- Namespace Manager (Issue #1502) ---
     namespace_manager: Any = None
     async_namespace_manager: Any = None
@@ -849,6 +870,7 @@ def _boot_system_services(
         "context_branch_service": context_branch_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
         "scoped_hook_engine": scoped_hook_engine,
+        "eviction_manager": eviction_manager,
     }
 
     elapsed = time.perf_counter() - t0
@@ -972,11 +994,11 @@ def _boot_brick_services(
             try:
                 from nexus.bricks.context_manifest.executors.snapshot_lookup_db import (
                     CASManifestReader,
-                    DatabaseSnapshotLookup,
                 )
                 from nexus.bricks.context_manifest.executors.workspace_snapshot import (
                     WorkspaceSnapshotExecutor,
                 )
+                from nexus.storage.repositories.snapshot_lookup import DatabaseSnapshotLookup
 
                 snapshot_lookup = DatabaseSnapshotLookup(session_factory=ctx.session_factory)
                 cas_reader = CASManifestReader(backend=ctx.backend)
@@ -1692,6 +1714,7 @@ def create_nexus_services(
         delivery_worker=system_dict["delivery_worker"],
         observability_subsystem=system_dict["observability_subsystem"],
         resiliency_manager=system_dict["resiliency_manager"],
+        eviction_manager=system_dict.get("eviction_manager"),
     )
 
     brick_services = _BrickServices(

@@ -54,7 +54,7 @@ from pathlib import Path
 sys.path.insert(0, 'src')
 
 from nexus import LocalBackend, NexusFS
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 PASS = "\033[92m✓\033[0m"
 FAIL = "\033[91m✗\033[0m"

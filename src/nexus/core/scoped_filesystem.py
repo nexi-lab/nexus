@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import builtins
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -169,8 +169,11 @@ class ScopedFilesystem(ScopedPathMixin):
         """List files in a directory."""
         result = self._fs.list(self._scope_path(path), recursive, details, show_parsed, context)
         if details:
-            return [self._unscope_dict(r, ["path", "virtual_path"]) for r in result]  # type: ignore
-        return self._unscope_paths(result)  # type: ignore
+            return [
+                self._unscope_dict(r, ["path", "virtual_path"])
+                for r in cast(builtins.list[dict[str, Any]], result)
+            ]
+        return self._unscope_paths(cast(builtins.list[str], result))
 
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
         """Find files matching a glob pattern."""

@@ -2873,9 +2873,7 @@ class ReBACManager:
 
         Delegates to consistency.revision module (Issue #1459).
         """
-        return increment_version_token(
-            self.engine, self._repo, zone_id, is_postgresql=self._is_postgresql
-        )
+        return increment_version_token(self.engine, zone_id, is_postgresql=self._is_postgresql)
 
     def _get_cached_check_zone_aware_bounded(
         self,

@@ -266,7 +266,7 @@ def test_all_nexus_error_subclasses_have_is_expected() -> None:
     Uses introspection to auto-discover all subclasses so new exceptions
     added in the future are automatically covered.
     """
-    import nexus.core.exceptions as exc_module
+    import nexus.contracts.exceptions as exc_module
 
     for name, cls in inspect.getmembers(exc_module, inspect.isclass):
         if issubclass(cls, NexusError) and cls is not NexusError:
@@ -331,7 +331,7 @@ def test_path_not_mounted_error() -> None:
 
 def test_not_found_error_alias_removed() -> None:
     """NotFoundError alias must be removed from exceptions module (Issue #1460)."""
-    import nexus.core.exceptions as exc_module
+    import nexus.contracts.exceptions as exc_module
 
     assert not hasattr(exc_module, "NotFoundError"), (
         "NotFoundError alias should be removed; use NexusFileNotFoundError directly"
@@ -405,7 +405,7 @@ def test_all_nexus_error_subclasses_have_status_code() -> None:
     Uses introspection to auto-discover all subclasses so new exceptions
     added in the future are automatically covered (Issue #1519, option 7A).
     """
-    import nexus.core.exceptions as exc_module
+    import nexus.contracts.exceptions as exc_module
 
     for name, cls in inspect.getmembers(exc_module, inspect.isclass):
         if issubclass(cls, NexusError) and cls is not NexusError:

@@ -606,7 +606,7 @@ researcher = Agent(
 ```python
 from langgraph.prebuilt import create_react_agent
 from nexus import connect
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 nx = connect()
 

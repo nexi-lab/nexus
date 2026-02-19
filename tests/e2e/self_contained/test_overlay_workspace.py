@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.core.metadata import FileMetadata
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.services.overlay_resolver import (
     OverlayConfig,
     OverlayResolver,

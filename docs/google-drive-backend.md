@@ -93,7 +93,7 @@ backend = GoogleDriveConnectorBackend(
 nx = NexusFS(backend=backend)
 
 # Write file (with user context)
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 context = OperationContext(
     user_id="alice@example.com",  # User's email
@@ -436,7 +436,7 @@ nexus oauth setup-gdrive \
 from nexus import NexusFS
 from nexus.backends import GoogleDriveConnectorBackend
 from nexus.server.auth import TokenManager
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Setup
 token_manager = TokenManager(db_path="~/.nexus/nexus.db")

@@ -278,6 +278,50 @@ def test_all_public_methods_are_exposed_or_excluded():
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
         # Workflow event queue - server-side background task (Issue #1522)
         "ensure_workflow_consumer",  # Internal - starts bounded workflow event queue consumer
+        # ====================================================================
+        # Issue #2033: Facade removal — methods now served by services
+        # ====================================================================
+        # These methods were extracted from NexusFS into services (registered
+        # via register_service()). The base class NexusFilesystem still defines
+        # them as concrete stubs. NexusFS.__getattr__ forwards at runtime.
+        # RPC dispatch uses @rpc_expose on the service objects, not NexusFS.
+        #
+        # Search operations — thin forwarders to SearchService
+        "list",  # Forwarded to search_service.list()
+        "glob",  # Forwarded to search_service.glob()
+        "grep",  # Forwarded to search_service.grep()
+        # Sync operations — delegate to SyncService / SyncJobService
+        "sync_mount",  # Delegates to _sync_service.sync_mount()
+        "sync_mount_async",  # Delegates to _sync_job_service.create_job()
+        "cancel_sync_job",  # Delegates to _sync_job_service.cancel_job()
+        # WorkspaceRPCService (inherited stubs from NexusFilesystem)
+        "workspace_snapshot",  # Served by _workspace_rpc_service
+        "workspace_restore",  # Served by _workspace_rpc_service
+        "workspace_log",  # Served by _workspace_rpc_service
+        "workspace_diff",  # Served by _workspace_rpc_service
+        "register_workspace",  # Served by _workspace_rpc_service
+        "unregister_workspace",  # Served by _workspace_rpc_service
+        "list_workspaces",  # Served by _workspace_rpc_service
+        "get_workspace_info",  # Served by _workspace_rpc_service
+        "register_memory",  # Served by _workspace_rpc_service
+        "unregister_memory",  # Served by _workspace_rpc_service
+        "get_memory_info",  # Served by _workspace_rpc_service
+        # SandboxRPCService (inherited stubs from NexusFilesystem)
+        "sandbox_create",  # Served by _sandbox_rpc_service
+        "sandbox_get_or_create",  # Served by _sandbox_rpc_service
+        "sandbox_run",  # Served by _sandbox_rpc_service
+        "sandbox_pause",  # Served by _sandbox_rpc_service
+        "sandbox_resume",  # Served by _sandbox_rpc_service
+        "sandbox_stop",  # Served by _sandbox_rpc_service
+        "sandbox_list",  # Served by _sandbox_rpc_service
+        "sandbox_status",  # Served by _sandbox_rpc_service
+        "sandbox_connect",  # Served by _sandbox_rpc_service
+        "sandbox_disconnect",  # Served by _sandbox_rpc_service
+        # MountCoreService (inherited stubs from NexusFilesystem)
+        "add_mount",  # Served by _mount_core_service
+        "remove_mount",  # Served by _mount_core_service
+        "list_mounts",  # Served by _mount_core_service
+        "get_mount",  # Served by _mount_core_service
     }
 
     # Get all public methods

@@ -308,6 +308,31 @@ class NexusFilesystem(ABC):
     # Lifecycle Management
     # ============================================================
 
+    # === Workspace Versioning ===
+
+    # === Workspace Registry ===
+
+    # === Memory Registry ===
+
+    # === Sandbox Operations ===
+
+    @property
+    def sandbox_available(self) -> bool:
+        """Whether sandbox execution is available.
+
+        Returns True if at least one sandbox provider is configured.
+        Subclasses should override this to check their sandbox manager.
+        """
+        return False
+
+    # NOTE: sandbox_validate() removed from kernel ABC — it's a service-level
+    # linting/validation pipeline, not a kernel primitive. The implementation
+    # remains on NexusFS via @rpc_expose for RPC dispatch.
+
+    # ============================================================
+    # Mount Management Operations
+    # ============================================================
+
     @abstractmethod
     def close(self) -> None:
         """Close the filesystem and release resources."""

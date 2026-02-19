@@ -2239,26 +2239,155 @@ class NexusFS(  # type: ignore[misc]
 
         return directories
 
-    # === Metadata Export/Import (delegated to MetadataExportService) ===
+    # =========================================================================
+    # Service Forwarding (Issue #2033: Facade Removal)
+    # =========================================================================
+    # Methods below were removed from NexusFS and forwarded to services.
+    # Callers continue using nx.method_name() — __getattr__ routes to
+    # the correct service transparently.
 
-    def export_metadata(
-        self,
-        output_path: str | Path,
-        filter: ExportFilter | None = None,
-        prefix: str = "",
-    ) -> int:
-        """Export metadata to JSONL file. Delegates to MetadataExportService."""
-        return self._metadata_export_service.export_metadata(output_path, filter, prefix)
+    _SERVICE_METHODS: dict[str, str] = {
+        # WorkspaceRPCService
+        'workspace_snapshot': '_workspace_rpc_service',
+        'workspace_restore': '_workspace_rpc_service',
+        'workspace_log': '_workspace_rpc_service',
+        'workspace_diff': '_workspace_rpc_service',
+        'snapshot_begin': '_workspace_rpc_service',
+        'snapshot_commit': '_workspace_rpc_service',
+        'snapshot_rollback': '_workspace_rpc_service',
+        'load_workspace_memory_config': '_workspace_rpc_service',
+        'register_workspace': '_workspace_rpc_service',
+        'unregister_workspace': '_workspace_rpc_service',
+        'update_workspace': '_workspace_rpc_service',
+        'list_workspaces': '_workspace_rpc_service',
+        'get_workspace_info': '_workspace_rpc_service',
+        'register_memory': '_workspace_rpc_service',
+        'unregister_memory': '_workspace_rpc_service',
+        'list_registered_memories': '_workspace_rpc_service',
+        'get_memory_info': '_workspace_rpc_service',
+        # AgentRPCService
+        'register_agent': '_agent_rpc_service',
+        'update_agent': '_agent_rpc_service',
+        'list_agents': '_agent_rpc_service',
+        'get_agent': '_agent_rpc_service',
+        'delete_agent': '_agent_rpc_service',
+        # UserProvisioningService
+        'provision_user': '_user_provisioning_service',
+        'deprovision_user': '_user_provisioning_service',
+        # SandboxRPCService
+        'sandbox_create': '_sandbox_rpc_service',
+        'sandbox_run': '_sandbox_rpc_service',
+        'sandbox_validate': '_sandbox_rpc_service',
+        'sandbox_pause': '_sandbox_rpc_service',
+        'sandbox_resume': '_sandbox_rpc_service',
+        'sandbox_stop': '_sandbox_rpc_service',
+        'sandbox_list': '_sandbox_rpc_service',
+        'sandbox_status': '_sandbox_rpc_service',
+        'sandbox_get_or_create': '_sandbox_rpc_service',
+        'sandbox_connect': '_sandbox_rpc_service',
+        'sandbox_disconnect': '_sandbox_rpc_service',
+        # MetadataExportService
+        'export_metadata': '_metadata_export_service',
+        'import_metadata': '_metadata_export_service',
+        # MountCoreService
+        'add_mount': '_mount_core_service',
+        'remove_mount': '_mount_core_service',
+        'list_connectors': '_mount_core_service',
+        'list_mounts': '_mount_core_service',
+        'get_mount': '_mount_core_service',
+        'has_mount': '_mount_core_service',
+        # MountPersistService
+        'save_mount': '_mount_persist_service',
+        'list_saved_mounts': '_mount_persist_service',
+        'load_mount': '_mount_persist_service',
+        'delete_saved_mount': '_mount_persist_service',
+        # SearchService (list/glob/grep are thin forwarders, not __getattr__)
+        # asemantic_search* are in _SERVICE_ALIASES (name transformation: a-prefix removed)
+        'glob_batch': 'search_service',
+        # TaskQueueService
+        'get_task': 'task_queue_service',
+        'cancel_task': 'task_queue_service',
+    }
 
-    def import_metadata(
+    # Special aliases where service method name differs
+    _SERVICE_ALIASES: dict[str, tuple[str, str]] = {
+        'list_memories': ('_workspace_rpc_service', 'list_registered_memories'),
+        'sandbox_available': ('_sandbox_rpc_service', 'sandbox_available'),
+        'get_sync_job': ('_sync_job_service', 'get_job'),
+        'list_sync_jobs': ('_sync_job_service', 'list_jobs'),
+        'load_all_saved_mounts': ('_mount_persist_service', 'load_all_mounts'),
+        # Dir visibility cache: NexusFS method names → cache method names
+        'get_dir_visibility_cache_metrics': ('_dir_visibility_cache', 'get_metrics'),
+        'clear_dir_visibility_cache': ('_dir_visibility_cache', 'clear'),
+        # SearchService async methods: a-prefix removed when calling service
+        'asemantic_search': ('search_service', 'semantic_search'),
+        'asemantic_search_index': ('search_service', 'semantic_search_index'),
+        'asemantic_search_stats': ('search_service', 'semantic_search_stats'),
+    }
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward extracted facade methods to their service objects.
+
+        This enables callers to continue using nx.method_name() after
+        facade methods were removed from NexusFS (Issue #2033).
+        """
+        # Check aliases first (method name differs on service)
+        alias = NexusFS._SERVICE_ALIASES.get(name)
+        if alias is not None:
+            svc_attr, svc_method = alias
+            svc = self.__dict__.get(svc_attr)
+            if svc is not None:
+                return getattr(svc, svc_method)
+
+        # Standard forwarding (same method name on service)
+        svc_attr = NexusFS._SERVICE_METHODS.get(name)
+        if svc_attr is not None:
+            svc = self.__dict__.get(svc_attr)
+            if svc is not None:
+                return getattr(svc, name)
+
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    # =========================================================================
+    # Thin forwarders for abstract base class methods (kernel operations)
+    # =========================================================================
+    # list/glob/grep are @abstractmethod on NexusFilesystem so they need
+    # real method definitions. __getattr__ alone doesn't satisfy ABCMeta.
+
+    def list(
         self,
-        input_path: str | Path,
-        options: ImportOptions | None = None,
-        overwrite: bool = False,
-        skip_existing: bool = True,
-    ) -> ImportResult:
-        """Import metadata from JSONL file. Delegates to MetadataExportService."""
-        return self._metadata_export_service.import_metadata(input_path, options, overwrite, skip_existing)
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        show_parsed: bool = True,
+        context: Any = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
+        return self.search_service.list(
+            path=path, recursive=recursive, details=details,
+            show_parsed=show_parsed, context=context,
+            limit=limit, cursor=cursor,
+        )
+
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
+        return self.search_service.glob(pattern=pattern, path=path, context=context)
+
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 100,
+        search_mode: str = "auto",
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        return self.search_service.grep(
+            pattern=pattern, path=path, file_pattern=file_pattern,
+            ignore_case=ignore_case, max_results=max_results,
+            search_mode=search_mode, context=context,
+        )
 
     @rpc_expose(description="Batch get content IDs for multiple paths")
     def batch_get_content_ids(self, paths: builtins.list[str]) -> dict[str, str | None]:
@@ -2372,302 +2501,12 @@ class NexusFS(  # type: ignore[misc]
 
         return result
 
-    # === Workspace / Memory / Snapshot — delegated to WorkspaceRPCService ===
-    # RPC discovery uses register_service(self._workspace_rpc_service).
-    # These thin stubs exist for ScopedFilesystem and internal callers.
-
-    def workspace_snapshot(
-        self, workspace_path: str | None = None, description: str | None = None,
-        tags: list[str] | None = None, created_by: str | None = None,
-        context: dict | None = None,
-    ) -> dict[str, Any]:
-        """Create workspace snapshot (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.workspace_snapshot(
-            workspace_path, description, tags, created_by, context,
-        )
-
-    def workspace_restore(
-        self, snapshot_number: int, workspace_path: str | None = None,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Restore workspace snapshot (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.workspace_restore(snapshot_number, workspace_path, context)
-
-    def workspace_log(
-        self, workspace_path: str | None = None, limit: int = 100,
-        context: OperationContext | None = None,
-    ) -> list[dict[str, Any]]:
-        """List workspace snapshots (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.workspace_log(workspace_path, limit, context)
-
-    def workspace_diff(
-        self, snapshot_1: int, snapshot_2: int,
-        workspace_path: str | None = None, context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Compare workspace snapshots (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.workspace_diff(snapshot_1, snapshot_2, workspace_path, context)
-
-    def snapshot_begin(
-        self, paths: list[str], agent_id: str | None = None,
-        zone_id: str = "root", context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Begin transactional snapshot (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.snapshot_begin(paths, agent_id, zone_id, context)
-
-    def snapshot_commit(self, snapshot_id: str, context: OperationContext | None = None) -> dict[str, str]:
-        """Commit transactional snapshot (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.snapshot_commit(snapshot_id, context)
-
-    def snapshot_rollback(self, snapshot_id: str, context: OperationContext | None = None) -> dict[str, Any]:
-        """Rollback transactional snapshot (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.snapshot_rollback(snapshot_id, context)
-
-    def load_workspace_memory_config(
-        self, workspaces: list[dict] | None = None, memories: list[dict] | None = None,
-    ) -> dict[str, Any]:
-        """Load workspace/memory config (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.load_workspace_memory_config(workspaces, memories)
-
-    def register_workspace(
-        self, path: str, name: str | None = None, description: str | None = None,
-        created_by: str | None = None, tags: list[str] | None = None,
-        metadata: dict[str, Any] | None = None, session_id: str | None = None,
-        ttl: timedelta | None = None, context: Any | None = None,
-    ) -> dict[str, Any]:
-        """Register workspace (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.register_workspace(
-            path, name, description, created_by, tags, metadata, session_id, ttl, context,
-        )
-
-    def unregister_workspace(self, path: str) -> bool:
-        """Unregister workspace (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.unregister_workspace(path)
-
-    def update_workspace(
-        self, path: str, name: str | None = None,
-        description: str | None = None, metadata: dict | None = None,
-    ) -> dict:
-        """Update workspace (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.update_workspace(path, name, description, metadata)
-
-    def list_workspaces(self, context: Any | None = None) -> list[dict]:
-        """List workspaces (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.list_workspaces(context)
-
-    def get_workspace_info(self, path: str) -> dict | None:
-        """Get workspace info (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.get_workspace_info(path)
-
-    def register_memory(
-        self, path: str, name: str | None = None, description: str | None = None,
-        created_by: str | None = None, tags: list[str] | None = None,
-        metadata: dict[str, Any] | None = None, session_id: str | None = None,
-        ttl: timedelta | None = None, context: Any | None = None,
-    ) -> dict[str, Any]:
-        """Register memory (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.register_memory(
-            path, name, description, created_by, tags, metadata, session_id, ttl, context,
-        )
-
-    def unregister_memory(self, path: str) -> bool:
-        """Unregister memory (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.unregister_memory(path)
-
-    def list_registered_memories(self) -> list[dict]:
-        """List registered memories (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.list_registered_memories()
-
-    def list_memories(self) -> list[dict]:
-        """Alias for list_registered_memories()."""
-        return self.list_registered_memories()
-
-    def get_memory_info(self, path: str) -> dict | None:
-        """Get memory info (delegates to WorkspaceRPCService)."""
-        return self._workspace_rpc_service.get_memory_info(path)
-
-    # ===== Agent Management (v0.5.0) — delegates to AgentRPCService =====
-
-    def register_agent(
-        self,
-        agent_id: str,
-        name: str,
-        description: str | None = None,
-        generate_api_key: bool = False,
-        metadata: dict | None = None,
-        capabilities: list[str] | None = None,
-        context: dict | None = None,
-    ) -> dict:
-        """Register an AI agent (delegates to AgentRPCService)."""
-        return self._agent_rpc_service.register_agent(
-            agent_id, name, description, generate_api_key, metadata, capabilities, context,
-        )
-
-    def update_agent(
-        self,
-        agent_id: str,
-        name: str | None = None,
-        description: str | None = None,
-        metadata: dict | None = None,
-        context: dict | None = None,
-    ) -> dict:
-        """Update agent configuration (delegates to AgentRPCService)."""
-        return self._agent_rpc_service.update_agent(agent_id, name, description, metadata, context)
-
-    def list_agents(self, _context: dict | None = None) -> list[dict]:
-        """List all registered agents (delegates to AgentRPCService)."""
-        return self._agent_rpc_service.list_agents(_context)
-
-    def get_agent(self, agent_id: str, _context: dict | None = None) -> dict | None:
-        """Get agent information (delegates to AgentRPCService)."""
-        return self._agent_rpc_service.get_agent(agent_id, _context)
-
-    def delete_agent(self, agent_id: str, _context: dict | None = None) -> bool:
-        """Delete a registered agent (delegates to AgentRPCService)."""
-        return self._agent_rpc_service.delete_agent(agent_id, _context)
-
-    # ===== User Provisioning API (Issue #820) — delegates to UserProvisioningService =====
-
-    def provision_user(
-        self,
-        user_id: str,
-        email: str,
-        display_name: str | None = None,
-        zone_id: str | None = None,
-        zone_name: str | None = None,
-        create_api_key: bool = True,
-        api_key_name: str | None = None,
-        api_key_expires_at: datetime | None = None,
-        create_agents: bool = True,
-        import_skills: bool = True,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Provision a new user (delegates to UserProvisioningService)."""
-        return self._user_provisioning_service.provision_user(
-            user_id, email, display_name, zone_id, zone_name,
-            create_api_key, api_key_name, api_key_expires_at,
-            create_agents, import_skills, context,
-        )
-
-    def deprovision_user(
-        self,
-        user_id: str,
-        zone_id: str | None = None,
-        delete_user_record: bool = False,
-        force: bool = False,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Deprovision a user (delegates to UserProvisioningService)."""
-        return self._user_provisioning_service.deprovision_user(
-            user_id, zone_id, delete_user_record, force, context,
-        )
-
-    # ========================================================================
-    # Sandbox Management (Issue #372) — delegates to SandboxRPCService
-    # ========================================================================
-
-    @property
-    def sandbox_available(self) -> bool:
-        """Whether sandbox execution is available."""
-        return self._sandbox_rpc_service.sandbox_available
-
     @staticmethod
     def _run_async(coro: Any) -> Any:
         """Run async coroutine safely (Issue #1300)."""
         from nexus.core.sync_bridge import run_sync
 
         return run_sync(coro)
-
-    async def sandbox_create(self, name: str, ttl_minutes: int = 10, provider: str | None = None,
-                             template_id: str | None = None, context: dict | None = None) -> dict:
-        """Create a new sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_create(name, ttl_minutes, provider, template_id, context)
-
-    async def sandbox_run(self, sandbox_id: str, language: str, code: str, timeout: int = 300,
-                          nexus_url: str | None = None, nexus_api_key: str | None = None,
-                          context: dict | None = None, as_script: bool = False) -> dict:
-        """Run code in sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_run(sandbox_id, language, code, timeout, nexus_url, nexus_api_key, context, as_script)
-
-    async def sandbox_validate(self, sandbox_id: str, workspace_path: str = "/workspace",
-                               context: dict | None = None) -> dict:
-        """Validate code in sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_validate(sandbox_id, workspace_path, context)
-
-    async def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:
-        """Pause sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_pause(sandbox_id, context)
-
-    async def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:
-        """Resume sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_resume(sandbox_id, context)
-
-    async def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:
-        """Stop sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_stop(sandbox_id, context)
-
-    async def sandbox_list(self, context: dict | None = None, verify_status: bool = False,
-                           user_id: str | None = None, zone_id: str | None = None,
-                           agent_id: str | None = None, status: str | None = None) -> dict:
-        """List sandboxes (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_list(context, verify_status, user_id, zone_id, agent_id, status)
-
-    async def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:
-        """Get sandbox status (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_status(sandbox_id, context)
-
-    async def sandbox_get_or_create(self, name: str, ttl_minutes: int = 10,
-                                    provider: str | None = None, template_id: str | None = None,
-                                    verify_status: bool = True, context: dict | None = None) -> dict:
-        """Get or create sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_get_or_create(name, ttl_minutes, provider, template_id, verify_status, context)
-
-    async def sandbox_connect(self, sandbox_id: str, provider: str = "e2b",
-                              sandbox_api_key: str | None = None, mount_path: str = "/mnt/nexus",
-                              nexus_url: str | None = None, nexus_api_key: str | None = None,
-                              agent_id: str | None = None, context: dict | None = None) -> dict:
-        """Connect to sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_connect(sandbox_id, provider, sandbox_api_key, mount_path, nexus_url, nexus_api_key, agent_id, context)
-
-    async def sandbox_disconnect(self, sandbox_id: str, provider: str = "e2b",
-                                 sandbox_api_key: str | None = None,
-                                 context: dict | None = None) -> dict:
-        """Disconnect from sandbox (delegates to SandboxRPCService)."""
-        return await self._sandbox_rpc_service.sandbox_disconnect(sandbox_id, provider, sandbox_api_key, context)
-
-    # =========================================================================
-    # Issue #919: Directory Visibility Cache Metrics
-    # =========================================================================
-
-    def get_dir_visibility_cache_metrics(self) -> dict:
-        """Get directory visibility cache metrics for monitoring.
-
-        Returns:
-            Dict with cache performance metrics:
-            - hits: Number of cache hits (O(1) lookups)
-            - misses: Number of cache misses
-            - hit_rate: Cache hit rate (0.0-1.0)
-            - bitmap_computes: Number of Tiger bitmap computations
-            - cache_size: Current number of cached entries
-            - max_entries: Maximum cache capacity
-            - ttl: Cache entry TTL in seconds
-
-        Example:
-            >>> metrics = nx.get_dir_visibility_cache_metrics()
-            >>> print(f"Hit rate: {metrics['hit_rate']:.2%}")
-            Hit rate: 85.23%
-        """
-        if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
-            return self._dir_visibility_cache.get_metrics()
-        return {
-            "hits": 0,
-            "misses": 0,
-            "hit_rate": 0.0,
-            "bitmap_computes": 0,
-            "cache_size": 0,
-            "max_entries": 0,
-            "ttl": 0,
-        }
-
     @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
     def backfill_directory_index(
         self,
@@ -2691,20 +2530,6 @@ class NexusFS(  # type: ignore[misc]
         """
         created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
-
-    # =========================================================================
-    # Phase 2.2: Service Delegation Methods
-    # =========================================================================
-    # These methods delegate to independent service instances for better
-    # separation of concerns, testability, and maintainability.
-    # Eventually, the mixin methods will be removed in favor of these.
-    # =========================================================================
-
-    # -------------------------------------------------------------------------
-    # VersionService Delegation Methods (4 methods)
-    # Replaces NexusFSVersionsMixin (Phase 2.3)
-    # Sync methods wrap async methods for backward compatibility
-    # -------------------------------------------------------------------------
 
     async def aget_version(
         self,
@@ -2917,41 +2742,6 @@ class NexusFS(  # type: ignore[misc]
     # MountService async delegation removed —
     # served via register_service(mount_service).
 
-    # Mount/Sync thin delegators (RPC via register_service(mount_service))
-    # -------------------------------------------------------------------------
-
-    def add_mount(
-        self, mount_point: str, backend_type: str, backend_config: dict[str, Any],
-        priority: int = 0, readonly: bool = False, io_profile: str = "balanced",
-        context: OperationContext | None = None,
-    ) -> str:
-        """Add a dynamic backend mount."""
-        return self._mount_core_service.add_mount(
-            mount_point=mount_point, backend_type=backend_type,
-            backend_config=backend_config, priority=priority,
-            readonly=readonly, io_profile=io_profile, context=context,
-        )
-
-    def remove_mount(self, mount_point: str, context: OperationContext | None = None) -> dict[str, Any]:
-        """Remove a backend mount."""
-        return self._mount_core_service.remove_mount(mount_point=mount_point, context=context)
-
-    def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
-        """List available connector types."""
-        return self._mount_core_service.list_connectors(category)
-
-    def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
-        """List all active backend mounts."""
-        return self._mount_core_service.list_mounts(context)
-
-    def get_mount(self, mount_point: str, context: OperationContext | None = None) -> dict[str, Any] | None:
-        """Get mount details."""
-        return self._mount_core_service.get_mount(mount_point, context)
-
-    def has_mount(self, mount_point: str) -> bool:
-        """Check if a mount exists."""
-        return self._mount_core_service.has_mount(mount_point)
-
     def sync_mount(
         self, mount_point: str | None = None, path: str | None = None,
         recursive: bool = True, dry_run: bool = False, sync_content: bool = True,
@@ -2989,11 +2779,6 @@ class NexusFS(  # type: ignore[misc]
         job_id = self._sync_job_service.create_job(mount_point, params, user_id)
         self._sync_job_service.start_job(job_id)
         return {"job_id": job_id, "status": "pending", "mount_point": mount_point}
-
-    def get_sync_job(self, job_id: str) -> dict[str, Any] | None:
-        """Get sync job status."""
-        return self._sync_job_service.get_job(job_id)
-
     def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a running sync job."""
         success = self._sync_job_service.cancel_job(job_id)
@@ -3003,135 +2788,6 @@ class NexusFS(  # type: ignore[misc]
         if not job:
             return {"success": False, "job_id": job_id, "message": "Job not found"}
         return {"success": False, "job_id": job_id, "message": f"Cannot cancel job with status: {job['status']}"}
-
-    def list_sync_jobs(
-        self, mount_point: str | None = None, status: str | None = None, limit: int = 50,
-    ) -> list[dict[str, Any]]:
-        """List sync jobs with optional filters."""
-        return self._sync_job_service.list_jobs(mount_point=mount_point, status=status, limit=limit)
-
-    def save_mount(
-        self, mount_point: str, backend_type: str, backend_config: dict[str, Any],
-        priority: int = 0, readonly: bool = False, io_profile: str = "balanced",
-        owner_user_id: str | None = None, zone_id: str | None = None,
-        description: str | None = None, context: OperationContext | None = None,
-    ) -> str:
-        """Save mount configuration to database."""
-        return self._mount_persist_service.save_mount(
-            mount_point=mount_point, backend_type=backend_type,
-            backend_config=backend_config, priority=priority, readonly=readonly,
-            io_profile=io_profile, owner_user_id=owner_user_id,
-            zone_id=zone_id, description=description, context=context,
-        )
-
-    def list_saved_mounts(
-        self, owner_user_id: str | None = None, zone_id: str | None = None,
-        context: OperationContext | None = None,
-    ) -> list[dict[str, Any]]:
-        """List saved mount configurations."""
-        return self._mount_persist_service.list_saved_mounts(
-            owner_user_id=owner_user_id, zone_id=zone_id, context=context,
-        )
-
-    def load_mount(self, mount_point: str) -> str:
-        """Load saved mount configuration and activate it."""
-        return self._mount_persist_service.load_mount(mount_point)
-
-    def delete_saved_mount(self, mount_point: str) -> bool:
-        """Delete saved mount configuration."""
-        return self._mount_persist_service.delete_saved_mount(mount_point)
-
-    def load_all_saved_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
-        """Load all saved mount configurations."""
-        return self._mount_persist_service.load_all_mounts(auto_sync)
-
-    def _matches_patterns(
-        self, file_path: str, include_patterns: list[str] | None,
-        exclude_patterns: list[str] | None,
-    ) -> bool:
-        """Check if file path matches include/exclude patterns."""
-        from nexus.services.sync_service import SyncContext
-
-        ctx = SyncContext(mount_point=None, include_patterns=include_patterns, exclude_patterns=exclude_patterns)
-        return self._sync_service._matches_patterns(file_path, ctx)
-
-    def _grant_mount_owner_permission(self, mount_point: str, context: OperationContext | None) -> None:
-        """Grant direct_owner permission to mount creator."""
-        self._mount_core_service._grant_owner_permission(mount_point, context)
-
-    # -------------------------------------------------------------------------
-    # Search thin delegators (RPC via register_service(search_service))
-    # -------------------------------------------------------------------------
-
-    def list(
-        self, path: str = "/", recursive: bool = True, details: bool = False,
-        show_parsed: bool = True, context: Any = None,
-        limit: int | None = None, cursor: str | None = None,
-    ) -> list[str] | list[dict[str, Any]] | Any:
-        """List files in a directory."""
-        return self.search_service.list(
-            path=path, recursive=recursive, details=details,
-            show_parsed=show_parsed, context=context, limit=limit, cursor=cursor,
-        )
-
-    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        """Find files matching a glob pattern."""
-        return self.search_service.glob(pattern=pattern, path=path, context=context)
-
-    def glob_batch(
-        self, patterns: builtins.list[str], path: str = "/", context: Any = None,
-    ) -> dict[str, builtins.list[str]]:
-        """Execute multiple glob patterns in a single call."""
-        return self.search_service.glob_batch(patterns=patterns, path=path, context=context)
-
-    def grep(
-        self, pattern: str, path: str = "/", file_pattern: str | None = None,
-        ignore_case: bool = False, max_results: int = 100,
-        search_mode: str = "auto", context: Any = None,
-    ) -> builtins.list[dict[str, Any]]:
-        """Search file contents using regex patterns."""
-        return self.search_service.grep(
-            pattern=pattern, path=path, file_pattern=file_pattern,
-            ignore_case=ignore_case, max_results=max_results,
-            search_mode=search_mode, context=context,
-        )
-
-    # =========================================================================
-    # SearchService Delegation Methods (Semantic Search)
-    # =========================================================================
-
-    async def asemantic_search(
-        self,
-        query: str,
-        path: str = "/",
-        limit: int = 10,
-        filters: dict[str, Any] | None = None,
-        search_mode: str = "semantic",
-    ) -> builtins.list[dict[str, Any]]:
-        """Search documents using natural language queries - delegates to SearchService."""
-        return await self.search_service.semantic_search(
-            query=query,
-            path=path,
-            limit=limit,
-            filters=filters,
-            search_mode=search_mode,
-        )
-
-    async def asemantic_search_index(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-    ) -> dict[str, int]:
-        """Index documents for semantic search - delegates to SearchService."""
-        return await self.search_service.semantic_search_index(
-            path=path,
-            recursive=recursive,
-        )
-
-    async def asemantic_search_stats(self) -> dict[str, Any]:
-        """Get semantic search indexing statistics - delegates to SearchService."""
-        return await self.search_service.semantic_search_stats()
-
     async def ainitialize_semantic_search(
         self,
         embedding_provider: str | None = None,
@@ -3167,19 +2823,6 @@ class NexusFS(  # type: ignore[misc]
         # Wire search engine into LLMService (Issue #684: DI instead of kernel access)
         if hasattr(self, "llm_service") and self._semantic_search is not None:
             self.llm_service._semantic_search_engine = self._semantic_search
-
-    # -------------------------------------------------------------------------
-    # TaskQueue thin delegators (RPC via register_service(task_queue_service))
-    # Only get_task and cancel_task kept — called by a2a module.
-    # -------------------------------------------------------------------------
-
-    def get_task(self, task_id: int, context: OperationContext | None = None) -> dict[str, Any] | None:  # noqa: ARG002
-        """Get task status, progress, and result."""
-        return self.task_queue_service.get_task(task_id)
-
-    def cancel_task(self, task_id: int, context: OperationContext | None = None) -> dict[str, Any]:  # noqa: ARG002
-        """Cancel a pending or running task."""
-        return self.task_queue_service.cancel_task(task_id)
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

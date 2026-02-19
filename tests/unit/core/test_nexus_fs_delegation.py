@@ -179,17 +179,14 @@ class TestSearchServiceDelegation:
         )
 
     def test_asemantic_search_delegates(self, mock_fs):
-        """asemantic_search forwards all args."""
+        """asemantic_search forwards all args to search_service.semantic_search."""
         hits = [{"path": "/doc.txt", "score": 0.95}]
         mock_fs.search_service.semantic_search = AsyncMock(return_value=hits)
         result = asyncio.run(mock_fs.asemantic_search("find errors", path="/logs", limit=5))
         assert result == hits
+        # __getattr__ pass-through: args forwarded as-is, service handles defaults
         mock_fs.search_service.semantic_search.assert_called_once_with(
-            query="find errors",
-            path="/logs",
-            limit=5,
-            filters=None,
-            search_mode="semantic",
+            "find errors", path="/logs", limit=5,
         )
 
     def test_asemantic_search_index_delegates(self, mock_fs):

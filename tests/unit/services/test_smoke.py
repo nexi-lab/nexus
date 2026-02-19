@@ -106,8 +106,8 @@ class TestMCPServiceSmoke:
         """Test MCPService can be instantiated."""
         from nexus.services.mcp_service import MCPService
 
-        service = MCPService(nexus_fs=None)
-        assert service.nexus_fs is None
+        service = MCPService(filesystem=None)
+        assert service._filesystem is None
 
     @pytest.mark.asyncio
     async def test_mcp_mount_validation(self):
@@ -115,7 +115,7 @@ class TestMCPServiceSmoke:
         from nexus.core.exceptions import ValidationError
         from nexus.services.mcp_service import MCPService
 
-        service = MCPService(nexus_fs=None)
+        service = MCPService(filesystem=None)
 
         # Should fail without command or url
         with pytest.raises(ValidationError, match="Either command or url is required"):
@@ -360,7 +360,7 @@ class TestServiceIntegrationSmoke:
             cas_store=mock_cas,
             router=mock_router,
         )
-        mcp_svc = MCPService(nexus_fs=None)
+        mcp_svc = MCPService(filesystem=None)
         llm_svc = LLMService(nexus_fs=None)
         oauth_svc = OAuthService(oauth_factory=None, token_manager=None)
         search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)

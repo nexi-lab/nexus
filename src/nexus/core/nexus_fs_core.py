@@ -21,11 +21,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+from nexus.contracts.types import Permission
 from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
 from nexus.core.mutation_hooks import MutationOp
-from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ SYSTEM_PATH_PREFIX = "/__sys__/"
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
 
@@ -294,11 +294,11 @@ class NexusFSCoreMixin:
         """
         if self._revision_notifier is None:
             try:
-                from nexus.core.revision_notifier import RevisionNotifier
+                from nexus.services.revision_notifier import RevisionNotifier
 
                 NexusFSCoreMixin._revision_notifier = RevisionNotifier()
             except Exception:
-                from nexus.core.revision_notifier import NullRevisionNotifier
+                from nexus.services.revision_notifier import NullRevisionNotifier
 
                 logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
@@ -593,7 +593,7 @@ class NexusFSCoreMixin:
                 "Ensure NexusFS is initialized with enable_distributed_locks=True."
             )
 
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         # Run async lock in sync context
         # Check if we're in an async context - if so, user should use locked() instead
@@ -928,7 +928,7 @@ class NexusFSCoreMixin:
             )
 
         # Fix #332: Handle virtual parsed views (e.g., report_parsed.pdf.md)
-        from nexus.core.virtual_views import get_parsed_content, parse_virtual_path
+        from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
             return self.metadata.exists(check_path)
@@ -1001,7 +1001,7 @@ class NexusFSCoreMixin:
             read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             read_context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
@@ -1157,7 +1157,7 @@ class NexusFSCoreMixin:
             try:
                 # Use the existing bulk permission check from list()
                 # Note: filter_list assumes READ permission, which is what we want
-                from nexus.core.permissions import OperationContext
+                from nexus.contracts.types import OperationContext
 
                 ctx = context if context is not None else self._default_context
                 assert isinstance(ctx, OperationContext), "Context must be OperationContext"
@@ -1952,7 +1952,7 @@ class NexusFSCoreMixin:
             context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
@@ -2317,7 +2317,7 @@ class NexusFSCoreMixin:
             if if_match is not None and not force:
                 current_etag = result.get("etag")
                 if current_etag != if_match:
-                    from nexus.core.exceptions import ConflictError
+                    from nexus.contracts.exceptions import ConflictError
 
                     raise ConflictError(
                         path=path,
@@ -2327,7 +2327,7 @@ class NexusFSCoreMixin:
         except Exception as e:
             # If file doesn't exist, treat as empty (will create new file)
             # Permission errors on non-existent files are OK - write() will check parent permissions
-            from nexus.core.exceptions import NexusFileNotFoundError
+            from nexus.contracts.exceptions import NexusFileNotFoundError
 
             if not isinstance(e, (NexusFileNotFoundError, PermissionError)):
                 # Re-raise unexpected errors
@@ -2693,6 +2693,22 @@ class NexusFSCoreMixin:
                 items=items,
                 zone_id=zone_id,
                 agent_id=agent_id,
+            )
+
+        # Issue #625: Fire post-mutation hooks for each file in the batch
+        new_revision = self._increment_zone_revision()
+        for metadata in metadata_list:
+            is_new = existing_metadata.get(metadata.path) is None
+            self._fire_post_mutation_hooks(
+                MutationOp.WRITE,
+                metadata.path,
+                zone_id or ROOT_ZONE_ID,
+                new_revision,
+                agent_id=agent_id,
+                etag=metadata.etag,
+                size=metadata.size,
+                version=metadata.version,
+                is_new=is_new,
             )
 
         # Issue #548: Create parent tuples and grant direct_owner for new files
@@ -3597,7 +3613,7 @@ class NexusFSCoreMixin:
             allowed_set = set(validated_paths)
         else:
             try:
-                from nexus.core.permissions import OperationContext
+                from nexus.contracts.types import OperationContext
 
                 ctx = context if context is not None else self._default_context
                 assert isinstance(ctx, OperationContext), "Context must be OperationContext"

@@ -1,9 +1,9 @@
 """PostgreSQL implementation of PersistentViewStore (Issue #1265).
 
 L3 cache layer — persists namespace views for instant agent reconnection.
-Routes through RecordStoreABC (the RecordStore pillar) for engine access.
+Routes through RecordStoreProtocol (the RecordStore pillar) for engine access.
 
-Storage Affinity: **RecordStore** — relational upsert via RecordStoreABC.engine.
+Storage Affinity: **RecordStore** — relational upsert via RecordStoreProtocol.engine.
 
 Upsert semantics: DELETE + INSERT (portable across PostgreSQL and SQLite).
 """
@@ -18,10 +18,11 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.protocols import PersistentView
 
 if TYPE_CHECKING:
-    from nexus.storage.record_store import RecordStoreABC
+    from nexus.bricks.cache.protocols import RecordStoreProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,10 @@ class PostgresPersistentViewStore:
     """PostgreSQL-backed persistent namespace view store.
 
     Implements PersistentViewStore protocol via structural subtyping.
-    Routes through RecordStoreABC for engine access (Four Pillars compliance).
+    Routes through RecordStoreProtocol for engine access (Four Pillars compliance).
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: RecordStoreProtocol) -> None:
         self._engine = record_store.engine
 
     def save_view(
@@ -85,7 +86,7 @@ class PostgresPersistentViewStore:
         revision_bucket: int,
     ) -> None:
         """Persist a namespace view (upsert via DELETE + INSERT)."""
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
         now = datetime.now(UTC)
         view_id = str(uuid.uuid4())
 
@@ -117,7 +118,7 @@ class PostgresPersistentViewStore:
         zone_id: str | None,
     ) -> PersistentView | None:
         """Load a persisted namespace view."""
-        effective_zone = zone_id or "root"
+        effective_zone = zone_id or ROOT_ZONE_ID
 
         with self._engine.connect() as conn:
             result = conn.execute(
@@ -147,7 +148,7 @@ class PostgresPersistentViewStore:
         return PersistentView(
             subject_type=row.subject_type,
             subject_id=row.subject_id,
-            zone_id=row.zone_id if row.zone_id != "root" else None,
+            zone_id=row.zone_id if row.zone_id != ROOT_ZONE_ID else None,
             mount_paths=mount_paths,
             grants_hash=row.grants_hash,
             revision_bucket=int(row.revision_bucket),

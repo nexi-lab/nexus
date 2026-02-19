@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from nexus.core.exceptions import ValidationError
+from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, TimestampMixin, uuid_pk
 
 

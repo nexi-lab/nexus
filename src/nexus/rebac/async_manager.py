@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.rebac.types import WriteResult
 
 
@@ -94,7 +95,7 @@ class AsyncReBACManager:
     async def rebac_check_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Async bulk permission check."""
         return await asyncio.to_thread(self._sync.rebac_check_bulk, checks, zone_id)
@@ -155,7 +156,7 @@ class AsyncReBACManager:
     async def get_transitive_groups(
         self,
         subject: tuple[str, str],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> set[tuple[str, str]]:
         """Async transitive group lookup."""
         return await asyncio.to_thread(self._sync.get_transitive_groups, subject, zone_id)
@@ -205,7 +206,7 @@ class AsyncReBACManager:
         """
 
         def _delete_by_components() -> bool:
-            from nexus.rebac.utils.zone import normalize_zone_id
+            from nexus.lib.zone import normalize_zone_id
 
             nz = normalize_zone_id(zone_id)
             with self._sync._connection() as conn:
@@ -243,26 +244,3 @@ class AsyncReBACManager:
     def enforce_zone_isolation(self) -> bool:
         """Delegate to sync manager's zone isolation setting."""
         return self._sync.enforce_zone_isolation  # type: ignore[no-any-return]
-
-
-# ── Utility ─────────────────────────────────────────────────────────
-
-
-def create_async_engine_from_url(database_url: str) -> Any:
-    """Create async SQLAlchemy engine from database URL via RecordStoreABC.
-
-    Delegates to SQLAlchemyRecordStore which handles URL conversion and pool
-    settings internally (Issue #592).
-
-    Args:
-        database_url: Standard database URL
-
-    Returns:
-        AsyncEngine instance
-    """
-    from nexus.storage.record_store import SQLAlchemyRecordStore
-
-    store = SQLAlchemyRecordStore(db_url=database_url)
-    # Trigger lazy async engine creation and return it
-    _ = store.async_session_factory
-    return store._async_engine

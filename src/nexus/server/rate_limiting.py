@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.token_utils import parse_sk_token
 
 # Rate limit tiers (configurable via environment variables)
@@ -49,7 +50,7 @@ def _get_rate_limit_key(request: Request) -> str:
         token = auth_header[7:]
         parsed = parse_sk_token(token)
         if parsed is not None:
-            zone = parsed.zone or "root"
+            zone = parsed.zone or ROOT_ZONE_ID
             user = parsed.user or "unknown"
             return f"user:{zone}:{user}"
         # For other tokens, use hash as key

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.bricks.sandbox.events import AgentEventLog
+    from nexus.bricks.sandbox.protocols import AgentEventLogProtocol
     from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class SandboxAuthService:
         sandbox_manager: SandboxManager,
         namespace_manager: Any = None,
         nexus_pay: Any = None,
-        event_log: AgentEventLog | None = None,
+        event_log: AgentEventLogProtocol | None = None,
         budget_enforcement: bool = False,
     ) -> None:
         self._registry = agent_registry

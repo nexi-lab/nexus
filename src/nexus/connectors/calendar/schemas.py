@@ -31,7 +31,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from nexus.contracts.validators import EmailAddress, ISODateTimeStr
+from nexus.lib.validators import EmailAddress, ISODateTimeStr
 
 
 class TimeSlot(BaseModel):

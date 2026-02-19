@@ -53,6 +53,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal
 
+from nexus.lib.env import get_dragonfly_url
+
 
 @dataclass(frozen=True)
 class CacheSettings:
@@ -62,7 +64,7 @@ class CacheSettings:
     """
 
     # Dragonfly cache connection (optional - if not set, use PostgreSQL)
-    dragonfly_url: str | None = field(default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_URL"))
+    dragonfly_url: str | None = field(default_factory=lambda: get_dragonfly_url())
 
     # Backend selection: auto, dragonfly, postgres
     cache_backend: Literal["auto", "dragonfly", "postgres"] = field(

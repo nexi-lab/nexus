@@ -321,6 +321,7 @@ class TestSystemServices:
         expected_fields = {
             "agent_registry",
             "async_agent_registry",
+            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "context_branch_service",
@@ -400,6 +401,7 @@ class TestBrickServices:
             "ipc_storage_driver",
             "ipc_vfs_driver",
             "ipc_provisioner",
+            "agent_event_log",
             "skill_service",
             "skill_package_service",
         }

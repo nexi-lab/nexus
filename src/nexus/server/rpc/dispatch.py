@@ -19,6 +19,8 @@ import dataclasses
 import logging
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,18 +87,6 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_semantic_search_index,
         handle_write,
     )
-    from nexus.server.rpc.handlers.memory import (
-        handle_approve_memory,
-        handle_approve_memory_batch,
-        handle_deactivate_memory,
-        handle_deactivate_memory_batch,
-        handle_delete_memory,
-        handle_delete_memory_batch,
-        handle_list_memories,
-        handle_query_memories,
-        handle_retrieve_memory,
-        handle_store_memory,
-    )
 
     return {
         # Core filesystem operations
@@ -126,17 +116,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "delta_write": DispatchEntry(handle_delta_write),
         # Semantic search
         "semantic_search_index": DispatchEntry(handle_semantic_search_index, is_async=True),
-        # Memory API
-        "store_memory": DispatchEntry(handle_store_memory),
-        "list_memories": DispatchEntry(handle_list_memories),
-        "query_memories": DispatchEntry(handle_query_memories),
-        "retrieve_memory": DispatchEntry(handle_retrieve_memory),
-        "delete_memory": DispatchEntry(handle_delete_memory),
-        "approve_memory": DispatchEntry(handle_approve_memory),
-        "deactivate_memory": DispatchEntry(handle_deactivate_memory),
-        "approve_memory_batch": DispatchEntry(handle_approve_memory_batch),
-        "deactivate_memory_batch": DispatchEntry(handle_deactivate_memory_batch),
-        "delete_memory_batch": DispatchEntry(handle_delete_memory_batch),
+        # Memory API — moved to MemoryService @rpc_expose (Issue #12)
         # Admin API
         "admin_create_key": DispatchEntry(handle_admin_create_key, pass_auth_provider=True),
         "admin_list_keys": DispatchEntry(handle_admin_list_keys, pass_auth_provider=True),
@@ -168,7 +148,7 @@ async def fire_rpc_event(
         return
 
     try:
-        zone_id = getattr(context, "zone_id", None) or "root"
+        zone_id = getattr(context, "zone_id", None) or ROOT_ZONE_ID
         data: dict[str, Any] = {"file_path": path}
         if old_path:
             data["old_path"] = old_path

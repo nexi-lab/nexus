@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from nexus.contracts.exceptions import ConflictError, NexusFileNotFoundError
 from nexus.core.async_nexus_fs import AsyncNexusFS
-from nexus.core.exceptions import ConflictError, NexusFileNotFoundError
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 pytestmark = [
@@ -562,8 +562,8 @@ async def test_batch_read_permission_filter(tmp_path: Path) -> None:
     """Test batch_read uses batch permission filter, denied paths return None."""
     from unittest.mock import AsyncMock, MagicMock
 
+    from nexus.contracts.types import OperationContext
     from nexus.core.metadata import FileMetadata
-    from nexus.core.permissions import OperationContext
 
     mock_enforcer = AsyncMock()
     mock_enforcer.filter_paths_by_permission = AsyncMock(
@@ -623,7 +623,7 @@ async def test_batch_read_all_denied(tmp_path: Path) -> None:
     """Test batch_read when all paths are denied returns all None, no exception."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     mock_enforcer = AsyncMock()
     mock_enforcer.filter_paths_by_permission = AsyncMock(return_value=[])
@@ -698,7 +698,7 @@ async def test_batch_read_permissions_disabled(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_path_must_be_absolute(async_fs: AsyncNexusFS) -> None:
     """Test that paths must be absolute."""
-    from nexus.core.exceptions import InvalidPathError
+    from nexus.contracts.exceptions import InvalidPathError
 
     with pytest.raises(InvalidPathError):
         await async_fs.write("relative/path.txt", b"Content")

@@ -380,7 +380,7 @@ def main():
 
     # Import after path setup
     from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     # Create backend
     db_path = Path(args.db).expanduser()

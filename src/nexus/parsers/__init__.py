@@ -35,7 +35,7 @@ def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
     """Create a parse callback using MarkItDownParser.
 
     Returns a ``(content, path) -> bytes | None`` callable suitable for
-    passing as ``parse_fn`` to :func:`nexus.core.virtual_views.get_parsed_content`.
+    passing as ``parse_fn`` to :func:`nexus.lib.virtual_views.get_parsed_content`.
 
     .. deprecated::
         Prefer ``ParsersBrick().create_parse_fn()`` which shares registries.

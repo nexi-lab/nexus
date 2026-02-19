@@ -213,11 +213,9 @@ class SearchGrepMixin:
         # Try mmap-accelerated grep first (Issue #893)
         if grep_fast.is_mmap_available():
             try:
-                from nexus.storage.file_cache import get_file_cache
-
                 zone_id, _, _ = self._extract_zone_info(context)
-                if zone_id:
-                    file_cache = get_file_cache()
+                if zone_id and self._file_cache is not None:
+                    file_cache = self._file_cache
                     disk_paths = file_cache.get_disk_paths_bulk(zone_id, files_needing_raw)
                     if disk_paths:
                         disk_to_virtual = {dp: vp for vp, dp in disk_paths.items()}

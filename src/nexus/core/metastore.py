@@ -59,7 +59,7 @@ class MetastoreABC(ABC):
         """
         pass
 
-    def is_committed(self, token: int) -> str | None:  # noqa: ARG002
+    def is_committed(self, _token: int) -> str | None:
         """Check if an EC write token has been replicated to a majority.
 
         Args:
@@ -108,18 +108,24 @@ class MetastoreABC(ABC):
         prefix: str = "",
         recursive: bool = True,
         limit: int = 1000,
-        cursor: str | None = None,  # noqa: ARG002
-        zone_id: str | None = None,  # noqa: ARG002
+        cursor: str | None = None,
+        _zone_id: str | None = None,
     ) -> PaginatedResult:
         """List files with cursor-based pagination.
 
         Uses keyset pagination for O(log n) performance regardless of page depth.
+        Subclasses may override for zone-aware queries via the ``_zone_id`` param.
         """
         all_items = self.list(prefix, recursive)
+        if cursor:
+            all_items = [item for item in all_items if item.path > cursor]
+        page = all_items[:limit]
+        has_more = len(all_items) > limit
+        next_cursor = page[-1].path if has_more and page else None
         return PaginatedResult(
-            items=all_items[:limit],
-            next_cursor=None,
-            has_more=len(all_items) > limit,
+            items=page,
+            next_cursor=next_cursor,
+            has_more=has_more,
             total_count=len(all_items),
         )
 

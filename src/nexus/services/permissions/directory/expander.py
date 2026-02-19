@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.permissions.consistency.revision import get_zone_revision_for_grant
 
 if TYPE_CHECKING:
@@ -317,7 +318,7 @@ class DirectoryExpander:
                 FilePathModel.deleted_at.is_(None),
                 or_(
                     FilePathModel.zone_id == zone_id,
-                    FilePathModel.zone_id == "root",
+                    FilePathModel.zone_id == ROOT_ZONE_ID,
                     FilePathModel.zone_id.is_(None),
                 ),
             )

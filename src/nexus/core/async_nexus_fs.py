@@ -19,19 +19,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.async_local import AsyncLocalBackend
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.contracts.types import OperationContext, Permission
 from nexus.core.metadata import (
     DT_DIR,
     DT_REG,
     FileMetadata,
 )
 from nexus.core.metastore import AsyncMetastoreWrapper
-from nexus.core.permissions import OperationContext, Permission
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:

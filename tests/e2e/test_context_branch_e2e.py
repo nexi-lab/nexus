@@ -19,14 +19,14 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BranchConflictError,
     BranchProtectedError,
     BranchStateError,
     NexusPermissionError,
 )
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.core.response import HandlerResponse
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel

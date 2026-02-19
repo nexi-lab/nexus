@@ -66,7 +66,7 @@ if TYPE_CHECKING:
     from nexus.backends.gcs import GCSBackend
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
-    from nexus.core.exceptions import (
+    from nexus.contracts.exceptions import (
         BackendError,
         InvalidPathError,
         MetadataError,
@@ -96,7 +96,7 @@ if TYPE_CHECKING:
 # =============================================================================
 # Lightweight imports (always loaded) - these are fast
 # =============================================================================
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BackendError,
     InvalidPathError,
     MetadataError,

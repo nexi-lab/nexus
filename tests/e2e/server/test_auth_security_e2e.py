@@ -27,9 +27,9 @@ from starlette.testclient import TestClient
 
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.backends.local import LocalBackend
+from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.raft import _HAS_METASTORE
 from nexus.storage.models import Base
@@ -571,8 +571,8 @@ class TestStaleSessionDetection:
 
     def test_stale_jwt_rejected_by_permission_enforcer(self, nexus_fs_enforced: NexusFS):
         """Agent JWT with outdated generation is rejected during permission check."""
-        from nexus.core.exceptions import StaleSessionError
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.exceptions import StaleSessionError
+        from nexus.contracts.types import OperationContext
 
         nx = nexus_fs_enforced
 
@@ -626,7 +626,7 @@ class TestStaleSessionDetection:
 
     def test_current_jwt_generation_passes(self, nexus_fs_enforced: NexusFS):
         """Agent JWT with current generation is NOT rejected."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         nx = nexus_fs_enforced
 
@@ -675,8 +675,8 @@ class TestStaleSessionDetection:
 
     def test_deleted_agent_jwt_rejected(self, nexus_fs_enforced: NexusFS):
         """Agent deleted from registry but JWT still valid should be rejected."""
-        from nexus.core.exceptions import StaleSessionError
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.exceptions import StaleSessionError
+        from nexus.contracts.types import OperationContext
 
         nx = nexus_fs_enforced
 

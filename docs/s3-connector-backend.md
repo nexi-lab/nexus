@@ -392,7 +392,7 @@ backend.versioning_enabled      # True/False
 ### Operations
 
 ```python
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 context = OperationContext(user="agent", groups=[], backend_path="file.txt")
 

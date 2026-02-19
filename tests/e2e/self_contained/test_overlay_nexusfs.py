@@ -16,10 +16,10 @@ from typing import Any
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.services.overlay_resolver import OverlayResolver
 
 

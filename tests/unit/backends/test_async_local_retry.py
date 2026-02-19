@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus.backends.async_local import AsyncLocalBackend
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 
 # ---------------------------------------------------------------------------
 # Helpers

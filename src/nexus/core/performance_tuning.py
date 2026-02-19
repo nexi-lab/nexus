@@ -2,7 +2,7 @@
 
 Migrates scattered hardcoded performance thresholds to deployment profiles.
 Each DeploymentProfile maps to a ProfileTuning frozen dataclass composed
-of 9 domain-specific tuning slices.
+of 10 domain-specific tuning slices.
 
 Pattern follows IOProfile (Issue #1413): frozen dataclasses, profile-selected,
 wired via DI in factory.py.
@@ -17,6 +17,7 @@ Domain configs:
 - ResiliencyTuning: retry counts, circuit breaker thresholds
 - ConnectorTuning: blob operation / upload timeouts, max workers
 - PoolTuning: asyncpg, httpx, remote pool sizing
+- EvictionTuning: agent eviction watermarks, batch sizes (Issue #2170)
 
 Profile hierarchy matches DeploymentProfile:
     embedded ⊂ lite ⊂ full ⊆ cloud
@@ -198,6 +199,33 @@ class ConnectorTuning:
 
 
 @dataclass(frozen=True)
+class EvictionTuning:
+    """Agent eviction thresholds under resource pressure (Issue #2170).
+
+    Consumers: services/agents/eviction_manager, services/agents/resource_monitor,
+    server/background_tasks, server/lifespan/services.
+    """
+
+    memory_high_watermark_pct: int
+    """Start evicting when memory usage exceeds this percentage."""
+
+    memory_low_watermark_pct: int
+    """Stop evicting when memory usage drops below this percentage."""
+
+    max_active_agents: int
+    """Hard cap on concurrently CONNECTED agents."""
+
+    eviction_batch_size: int
+    """Number of agents to evict per cycle."""
+
+    checkpoint_timeout_seconds: float
+    """Maximum time (seconds) allowed for checkpoint writes."""
+
+    eviction_cooldown_seconds: int
+    """Minimum seconds between eviction cycles."""
+
+
+@dataclass(frozen=True)
 class PoolTuning:
     """Connection pool sizing for asyncpg, httpx, and remote stores.
 
@@ -219,7 +247,7 @@ class PoolTuning:
 
 
 # ---------------------------------------------------------------------------
-# Composite tuning (all 9 domains)
+# Composite tuning (all 10 domains)
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +255,7 @@ class PoolTuning:
 class ProfileTuning:
     """Composite performance tuning for a deployment profile.
 
-    Composed of 9 domain-specific slices.  Each brick receives only
+    Composed of 10 domain-specific slices.  Each brick receives only
     the slice it needs via constructor injection in factory.py.
     """
 
@@ -240,6 +268,7 @@ class ProfileTuning:
     resiliency: ResiliencyTuning
     connector: ConnectorTuning
     pool: PoolTuning
+    eviction: EvictionTuning
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +329,14 @@ _EMBEDDED_TUNING = ProfileTuning(
         httpx_max_connections=10,
         remote_pool_maxsize=5,
     ),
+    eviction=EvictionTuning(
+        memory_high_watermark_pct=90,
+        memory_low_watermark_pct=85,
+        max_active_agents=50,
+        eviction_batch_size=5,
+        checkpoint_timeout_seconds=5.0,
+        eviction_cooldown_seconds=120,
+    ),
 )
 
 _LITE_TUNING = ProfileTuning(
@@ -355,6 +392,14 @@ _LITE_TUNING = ProfileTuning(
         asyncpg_max_size=5,
         httpx_max_connections=50,
         remote_pool_maxsize=10,
+    ),
+    eviction=EvictionTuning(
+        memory_high_watermark_pct=85,
+        memory_low_watermark_pct=80,
+        max_active_agents=200,
+        eviction_batch_size=10,
+        checkpoint_timeout_seconds=5.0,
+        eviction_cooldown_seconds=90,
     ),
 )
 
@@ -412,6 +457,14 @@ _FULL_TUNING = ProfileTuning(
         httpx_max_connections=100,
         remote_pool_maxsize=20,
     ),
+    eviction=EvictionTuning(
+        memory_high_watermark_pct=85,
+        memory_low_watermark_pct=75,
+        max_active_agents=1000,
+        eviction_batch_size=20,
+        checkpoint_timeout_seconds=10.0,
+        eviction_cooldown_seconds=60,
+    ),
 )
 
 _CLOUD_TUNING = ProfileTuning(
@@ -468,6 +521,14 @@ _CLOUD_TUNING = ProfileTuning(
         httpx_max_connections=200,
         remote_pool_maxsize=50,
     ),
+    eviction=EvictionTuning(
+        memory_high_watermark_pct=80,
+        memory_low_watermark_pct=70,
+        max_active_agents=10000,
+        eviction_batch_size=50,
+        checkpoint_timeout_seconds=10.0,
+        eviction_cooldown_seconds=30,
+    ),
 )
 
 
@@ -490,7 +551,7 @@ def resolve_profile_tuning(profile: DeploymentProfile) -> ProfileTuning:
         profile: The deployment profile.
 
     Returns:
-        Frozen ProfileTuning with all 9 domain slices.
+        Frozen ProfileTuning with all 10 domain slices.
     """
     mapping = _get_profile_tuning_map()
     tuning = mapping.get(profile)

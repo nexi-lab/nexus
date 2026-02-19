@@ -9,7 +9,7 @@ from typing import Any
 
 from fuse import FuseOSError
 
-from nexus.core.filters import is_os_metadata_file
+from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
     check_namespace_visible,
@@ -35,7 +35,7 @@ class MutationHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def create(self, path: str, mode: int, fi: Any = None) -> int:  # noqa: ARG002
+    def create(self, path: str, _mode: int, _fi: Any = None) -> int:
         """Create a new file."""
         ctx = self._ctx
 
@@ -96,7 +96,7 @@ class MutationHandler:
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.FILE_DELETE, original_path)
 
-    def mkdir(self, path: str, mode: int) -> None:  # noqa: ARG002
+    def mkdir(self, path: str, _mode: int) -> None:
         """Create a directory."""
         ctx = self._ctx
 

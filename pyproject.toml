@@ -1,3 +1,4 @@
+# Nexus AI Filesystem
 [project]
 name = "nexus-ai-fs"
 version = "0.7.2.dev0"
@@ -143,6 +144,11 @@ compression = [
     # zstd compression for CompressedStorage wrapper (Issue #1705)
     # Python 3.14+ has native compression.zstd; this is the fallback for 3.12/3.13
     "zstandard>=0.22.0",
+]
+
+monitoring = [
+    # System resource monitoring for agent eviction (Issue #2170)
+    "psutil>=5.9",
 ]
 
 mobile = [

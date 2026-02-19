@@ -90,7 +90,7 @@ def get_db_url_from_docker():
 def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
     """Test Gmail connector with real API calls."""
     from nexus.backends.gmail_connector import GmailConnectorBackend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     try:
         # Get database URL from docker

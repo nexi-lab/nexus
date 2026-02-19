@@ -18,8 +18,8 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.core.response import HandlerResponse
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
@@ -370,7 +370,7 @@ class TestFinishExploreValidation:
             service.finish_explore("/ws", "branch", outcome="rebase")
 
     def test_finish_nonexistent_branch_raises(self, service):
-        from nexus.core.exceptions import BranchNotFoundError
+        from nexus.contracts.exceptions import BranchNotFoundError
 
         with pytest.raises(BranchNotFoundError):
             service.finish_explore("/ws", "ghost", outcome="merge")

@@ -203,6 +203,9 @@ class SystemServices:
     # Resiliency policies (Issue #1366)
     resiliency_manager: Any = None
 
+    # Agent eviction under resource pressure (Issue #2170)
+    eviction_manager: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure
@@ -243,6 +246,9 @@ class BrickServices:
     ipc_storage_driver: Any = None  # IPCStorageDriver (RecordStore or VFS)
     ipc_vfs_driver: Any = None  # IPCVFSDriver (Backend mounted at /agents)
     ipc_provisioner: Any = None  # AgentProvisioner
+
+    # --- Sandbox Brick (Issue #1307) ---
+    agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
 
     # --- Skills Brick (Issue #2035) ---
     skill_service: Any = None  # SkillService (protocol-based)

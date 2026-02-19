@@ -27,7 +27,7 @@ Each FUSE mount is associated with a specific Nexus user identity. All file oper
 ```python
 from nexus import connect
 from nexus.fuse import mount_nexus
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Connect to Nexus
 nx = connect(config={"data_dir": "./nexus-data"})
@@ -65,7 +65,7 @@ For true multi-user FUSE filesystems, you can map OS user IDs to Nexus identitie
 ```python
 from nexus import connect
 from nexus.fuse import mount_nexus
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Connect to Nexus
 nx = connect(config={"data_dir": "./nexus-data"})

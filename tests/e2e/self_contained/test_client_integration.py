@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
-from nexus.core.exceptions import NexusError, NexusFileNotFoundError, NexusPermissionError
+from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, NexusPermissionError
 from nexus.remote.client import RemoteNexusFS
 from nexus.server.protocol import RPCErrorCode
 

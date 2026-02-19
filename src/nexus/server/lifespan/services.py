@@ -81,16 +81,18 @@ async def shutdown_services(app: FastAPI) -> None:
             logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
         app.state._scheduler_pool = None
 
-    # Cancel agent background tasks and final flush (Issue #1240)
+    # Cancel agent background tasks and final flush (Issue #1240, #2170)
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
     stale_detection_task = getattr(app.state, "_stale_detection_task", None)
-    for task_ref in (heartbeat_task, stale_detection_task):
+    eviction_task = getattr(app.state, "_eviction_task", None)
+    for task_ref in (heartbeat_task, stale_detection_task, eviction_task):
         if task_ref and not task_ref.done():
             task_ref.cancel()
             with suppress(asyncio.CancelledError):
                 await task_ref
     app.state._heartbeat_task = None
     app.state._stale_detection_task = None
+    app.state._eviction_task = None
 
     if app.state.agent_registry:
         try:
@@ -290,15 +292,24 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
 
     try:
         from nexus.bricks.sandbox.auth_service import SandboxAuthService
-        from nexus.bricks.sandbox.events import AgentEventLog
         from nexus.bricks.sandbox.sandbox_manager import SandboxManager
+        from nexus.storage.repositories.agent_event_log import (
+            SQLAlchemyAgentEventLog as AgentEventLog,
+        )
 
         session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
         if not (session_factory and callable(session_factory)):
             return
 
-        # Create AgentEventLog for sandbox lifecycle audit
-        app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
+        # Get AgentEventLog from factory (preferred) or create fallback
+        _brk = getattr(app.state.nexus_fs, "_brick_services", None)
+        _factory_event_log = getattr(_brk, "agent_event_log", None) if _brk else None
+        if _factory_event_log is not None:
+            app.state.agent_event_log = _factory_event_log
+        else:
+            from nexus.bricks.sandbox.events import AgentEventLog
+
+            app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
         # Create SandboxManager
         sandbox_config = getattr(app.state.nexus_fs, "config", None)
@@ -420,11 +431,44 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
         stale_agent_detection_task(
             app.state.agent_registry,
             interval_seconds=_bg_tuning.stale_agent_check_interval,
+            threshold_seconds=_bg_tuning.stale_agent_threshold,
         )
     )
     logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
-    return [app.state._heartbeat_task, app.state._stale_detection_task]
+    tasks = [app.state._heartbeat_task, app.state._stale_detection_task]
+
+    # Agent eviction under resource pressure (Issue #2170)
+    app.state.eviction_manager = None
+    app.state._eviction_task = None
+    _eviction_tuning = getattr(app.state.profile_tuning, "eviction", None)
+    if _eviction_tuning is not None:
+        try:
+            from nexus.server.background_tasks import agent_eviction_task
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
+
+            resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
+            eviction_policy = LRUEvictionPolicy()
+            app.state.eviction_manager = EvictionManager(
+                registry=app.state.agent_registry,
+                monitor=resource_monitor,
+                policy=eviction_policy,
+                tuning=_eviction_tuning,
+            )
+            app.state._eviction_task = asyncio.create_task(
+                agent_eviction_task(
+                    app.state.eviction_manager,
+                    interval_seconds=_eviction_tuning.eviction_cooldown_seconds,
+                )
+            )
+            tasks.append(app.state._eviction_task)
+            logger.info("[EVICTION] Background agent eviction task started")
+        except Exception:
+            logger.warning("[EVICTION] Failed to initialize eviction manager", exc_info=True)
+
+    return tasks
 
 
 async def _startup_scheduler(app: FastAPI) -> None:

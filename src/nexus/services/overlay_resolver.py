@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from cachetools import LRUCache
 
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 
 if TYPE_CHECKING:
     from nexus.core.metadata import FileMetadata

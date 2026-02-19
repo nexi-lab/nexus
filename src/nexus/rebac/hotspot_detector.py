@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.rebac.cache.tiger import TigerCache, TigerCacheUpdater
 
@@ -116,7 +118,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         """Record a permission check access.
 
@@ -220,7 +222,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> int:
         """Get current access count for a specific key within the window.
 
@@ -249,7 +251,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> bool:
         """Check if a specific key is currently hot.
 

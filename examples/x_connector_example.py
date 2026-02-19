@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from nexus.backends import XConnectorBackend  # noqa: E402
-from nexus.core.exceptions import AuthenticationError, BackendError  # noqa: E402
+from nexus.contracts.exceptions import AuthenticationError, BackendError  # noqa: E402
 from nexus.core.permissions import OperationContext  # noqa: E402
 
 

@@ -326,8 +326,26 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
                     nx.close()
                     return
 
-            # Perform undo based on operation type
-            _undo_operation(nx, logger, last_op)
+            # Perform undo via service layer (S24: Operations Undo)
+            from nexus.services.operation_undo_service import OperationUndoService
+
+            # Bind to Any — undo needs concrete NexusFS attrs (router, backend)
+            # not on the NexusFilesystem protocol.
+            _nx: Any = nx
+            undo_service = OperationUndoService(
+                router=_nx.router,
+                write_fn=nx.write,
+                delete_fn=nx.delete,
+                rename_fn=nx.rename,
+                exists_fn=nx.exists,
+                fallback_backend=getattr(nx, "backend", None),
+            )
+            result = undo_service.undo_operation(last_op)
+
+            if result.success:
+                console.print(f"  {result.message}")
+            else:
+                console.print(f"  [yellow]Warning: {result.message}[/yellow]")
 
             console.print(f"\n[green]✓[/green] Undid operation: {last_op.operation_type}")
 
@@ -335,88 +353,3 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
 
     except Exception as e:
         handle_error(e)
-
-
-def _undo_operation(nx: Any, logger: Any, operation: Any) -> None:
-    """Undo a specific operation.
-
-    Args:
-        nx: NexusFS instance
-        logger: OperationLogger instance
-        operation: OperationLogModel to undo
-    """
-    if operation.operation_type == "write":
-        # Restore previous version if exists, otherwise delete
-        if operation.snapshot_hash:
-            # Read old content from correct backend (route to find backend for this path)
-            try:
-                route = nx.router.route(operation.path)
-                old_content = route.backend.read_content(operation.snapshot_hash).unwrap()
-            except Exception:
-                # Fallback: try default backend (for backward compatibility)
-                old_content = nx.backend.read_content(operation.snapshot_hash).unwrap()
-            nx.write(operation.path, old_content)
-            console.print(f"  Restored previous version of {operation.path}")
-        else:
-            # File didn't exist before, so delete it
-            nx.delete(operation.path)
-            console.print(f"  Deleted {operation.path} (was newly created)")
-
-    elif operation.operation_type == "delete":
-        # Restore deleted file from snapshot
-        if operation.snapshot_hash:
-            # Read content from correct backend (route to find backend for this path)
-            try:
-                route = nx.router.route(operation.path)
-                content = route.backend.read_content(operation.snapshot_hash).unwrap()
-            except Exception:
-                # Fallback: try default backend (for backward compatibility)
-                content = nx.backend.read_content(operation.snapshot_hash).unwrap()
-            nx.write(operation.path, content)
-
-            # Restore metadata if available
-            if operation.metadata_snapshot:
-                metadata = logger.get_metadata_snapshot(operation)
-                if metadata and (
-                    metadata.get("owner") or metadata.get("group") or metadata.get("mode")
-                ):
-                    # Restore permissions
-                    from nexus.contracts.types import OperationContext
-
-                    context = OperationContext(
-                        user_id=nx._default_context.agent_id or "system",
-                        groups=[],
-                        is_admin=True,
-                        is_system=True,
-                    )
-                    if metadata.get("owner"):
-                        nx.chown(operation.path, metadata["owner"], context=context)
-                    if metadata.get("group"):
-                        nx.chgrp(operation.path, metadata["group"], context=context)
-                    if metadata.get("mode") is not None:
-                        nx.chmod(operation.path, metadata["mode"], context=context)
-
-            console.print(f"  Restored deleted file: {operation.path}")
-        else:
-            console.print(
-                f"  [yellow]Warning: Cannot restore {operation.path} (no snapshot)[/yellow]"
-            )
-
-    elif operation.operation_type == "rename":
-        # Rename back to original path
-        if operation.new_path:
-            # Check if new path still exists
-            if nx.exists(operation.new_path):
-                nx.rename(operation.new_path, operation.path)
-                console.print(f"  Renamed {operation.new_path} back to {operation.path}")
-            else:
-                console.print(
-                    f"  [yellow]Warning: Cannot undo rename - {operation.new_path} no longer exists[/yellow]"
-                )
-        else:
-            console.print("  [yellow]Warning: Cannot undo rename - missing new_path[/yellow]")
-
-    else:
-        console.print(
-            f"  [yellow]Warning: Undo not implemented for {operation.operation_type}[/yellow]"
-        )

@@ -349,7 +349,7 @@ class E2BSandboxProvider(SandboxProvider):
             logger.error(f"Code execution failed in sandbox {sandbox_id}: {e}")
             raise
 
-    async def pause(self, sandbox_id: str) -> None:  # noqa: ARG002
+    async def pause(self, _sandbox_id: str) -> None:
         """Pause E2B sandbox.
 
         Note: E2B doesn't support pause/resume. This is a no-op.
@@ -364,7 +364,7 @@ class E2BSandboxProvider(SandboxProvider):
             "E2B doesn't support pause/resume. Use stop to destroy the sandbox."
         )
 
-    async def resume(self, sandbox_id: str) -> None:  # noqa: ARG002
+    async def resume(self, _sandbox_id: str) -> None:
         """Resume E2B sandbox.
 
         Note: E2B doesn't support pause/resume. This is a no-op.

@@ -45,8 +45,8 @@ class MypyValidator(Validator):
     def parse_output(
         self,
         stdout: str,
-        stderr: str,  # noqa: ARG002
-        exit_code: int,  # noqa: ARG002
+        _stderr: str,
+        _exit_code: int,
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
 

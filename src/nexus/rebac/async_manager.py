@@ -243,26 +243,3 @@ class AsyncReBACManager:
     def enforce_zone_isolation(self) -> bool:
         """Delegate to sync manager's zone isolation setting."""
         return self._sync.enforce_zone_isolation  # type: ignore[no-any-return]
-
-
-# ── Utility ─────────────────────────────────────────────────────────
-
-
-def create_async_engine_from_url(database_url: str) -> Any:
-    """Create async SQLAlchemy engine from database URL via RecordStoreABC.
-
-    Delegates to SQLAlchemyRecordStore which handles URL conversion and pool
-    settings internally (Issue #592).
-
-    Args:
-        database_url: Standard database URL
-
-    Returns:
-        AsyncEngine instance
-    """
-    from nexus.storage.record_store import SQLAlchemyRecordStore
-
-    store = SQLAlchemyRecordStore(db_url=database_url)
-    # Trigger lazy async engine creation and return it
-    _ = store.async_session_factory
-    return store._async_engine

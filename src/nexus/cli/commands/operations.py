@@ -381,7 +381,7 @@ def _undo_operation(nx: Any, logger: Any, operation: Any) -> None:
                     metadata.get("owner") or metadata.get("group") or metadata.get("mode")
                 ):
                     # Restore permissions
-                    from nexus.core.permissions import OperationContext
+                    from nexus.contracts.types import OperationContext
 
                     context = OperationContext(
                         user_id=nx._default_context.agent_id or "system",

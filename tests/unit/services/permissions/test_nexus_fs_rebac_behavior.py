@@ -196,7 +196,7 @@ class TestCheckSharePermission:
 
     def test_admin_context_bypasses_check(self):
         """Bypasses permission check for admin context."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         fs = MockNexusFS()
         resource = ("file", "/test/doc.txt")
@@ -212,7 +212,7 @@ class TestCheckSharePermission:
 
     def test_system_context_bypasses_check(self):
         """Bypasses permission check for system context."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         fs = MockNexusFS()
         resource = ("file", "/test/doc.txt")
@@ -228,7 +228,7 @@ class TestCheckSharePermission:
 
     def test_non_file_resource_checks_rebac_owner(self):
         """Checks ReBAC 'owner' permission for non-file resources."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
@@ -251,7 +251,7 @@ class TestCheckSharePermission:
 
     def test_non_file_resource_raises_when_not_owner(self):
         """Raises PermissionError when user is not owner of non-file resource."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)

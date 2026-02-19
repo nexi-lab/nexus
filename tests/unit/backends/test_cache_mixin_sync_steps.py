@@ -28,7 +28,7 @@ from nexus.backends.cache_mixin import (
     SyncResult,
 )
 from nexus.backends.sync_pipeline import SyncPipelineService
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import Base, FilePathModel
 

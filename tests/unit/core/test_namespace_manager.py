@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.contracts.types import OperationContext, Permission, PermissionEnforcer
 from nexus.rebac.namespace_manager import (
     MountEntry,
     NamespaceManager,

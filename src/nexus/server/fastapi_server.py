@@ -1985,7 +1985,7 @@ def _register_routes(app: FastAPI) -> None:
         try:
             full_path = f"/{path}"
 
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             context = OperationContext(
                 user_id="system",

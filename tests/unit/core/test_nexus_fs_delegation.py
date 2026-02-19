@@ -9,7 +9,6 @@ Covers:
 - ReBACService: 8 async methods (parameter renaming: zone_id→_zone_id)
 - SkillService: direct service method calls (no __getattr__ compat)
 - SearchService: 4 sync + 2 async (direct pass-through)
-- ShareLinkService: 6 async methods (direct pass-through)
 """
 
 from __future__ import annotations
@@ -40,7 +39,6 @@ def mock_fs():
     fs.skill_service = MagicMock()
     fs.skill_package_service = MagicMock()
     fs.search_service = MagicMock()
-    fs.share_link_service = MagicMock()
     return fs
 
 
@@ -333,109 +331,3 @@ class TestSearchServiceDelegation:
         result = asyncio.run(mock_fs.asemantic_search_index(path="/data", recursive=False))
         assert result == stats
 
-
-# =============================================================================
-# ShareLinkService Delegation (6 async methods)
-# =============================================================================
-
-
-class TestShareLinkServiceDelegation:
-    """Tests for NexusFS → ShareLinkService delegation."""
-
-    def test_create_share_link_delegates(self, mock_fs, context):
-        """create_share_link forwards all args."""
-        link = MagicMock()
-        mock_fs.share_link_service.create_share_link = AsyncMock(return_value=link)
-        result = asyncio.run(
-            mock_fs.create_share_link(
-                path="/data/file.txt",
-                permission_level="editor",
-                expires_in_hours=24,
-                password="secret",
-                context=context,
-            )
-        )
-        assert result is link
-        mock_fs.share_link_service.create_share_link.assert_called_once_with(
-            path="/data/file.txt",
-            permission_level="editor",
-            expires_in_hours=24,
-            max_access_count=None,
-            password="secret",
-            context=context,
-        )
-
-    def test_get_share_link_delegates(self, mock_fs, context):
-        """get_share_link forwards link_id and context."""
-        link = MagicMock()
-        mock_fs.share_link_service.get_share_link = AsyncMock(return_value=link)
-        result = asyncio.run(mock_fs.get_share_link("link-abc", context))
-        assert result is link
-        mock_fs.share_link_service.get_share_link.assert_called_once_with(
-            link_id="link-abc",
-            context=context,
-        )
-
-    def test_list_share_links_delegates(self, mock_fs, context):
-        """list_share_links forwards all args."""
-        links = MagicMock()
-        mock_fs.share_link_service.list_share_links = AsyncMock(return_value=links)
-        result = asyncio.run(
-            mock_fs.list_share_links(
-                path="/data",
-                include_revoked=True,
-                context=context,
-            )
-        )
-        assert result is links
-        mock_fs.share_link_service.list_share_links.assert_called_once_with(
-            path="/data",
-            include_revoked=True,
-            include_expired=False,
-            context=context,
-        )
-
-    def test_revoke_share_link_delegates(self, mock_fs, context):
-        """revoke_share_link forwards link_id and context."""
-        mock_fs.share_link_service.revoke_share_link = AsyncMock(return_value=MagicMock())
-        asyncio.run(mock_fs.revoke_share_link("link-abc", context))
-        mock_fs.share_link_service.revoke_share_link.assert_called_once_with(
-            link_id="link-abc",
-            context=context,
-        )
-
-    def test_access_share_link_delegates(self, mock_fs, context):
-        """access_share_link forwards all args."""
-        access_result = MagicMock()
-        mock_fs.share_link_service.access_share_link = AsyncMock(return_value=access_result)
-        result = asyncio.run(
-            mock_fs.access_share_link(
-                link_id="link-abc",
-                password="secret",
-                ip_address="1.2.3.4",
-                user_agent="Mozilla/5.0",
-                context=context,
-            )
-        )
-        assert result is access_result
-        mock_fs.share_link_service.access_share_link.assert_called_once_with(
-            link_id="link-abc",
-            password="secret",
-            ip_address="1.2.3.4",
-            user_agent="Mozilla/5.0",
-            context=context,
-        )
-
-    def test_get_share_link_access_logs_delegates(self, mock_fs, context):
-        """get_share_link_access_logs forwards all args."""
-        logs = MagicMock()
-        mock_fs.share_link_service.get_share_link_access_logs = AsyncMock(return_value=logs)
-        result = asyncio.run(
-            mock_fs.get_share_link_access_logs("link-abc", limit=50, context=context)
-        )
-        assert result is logs
-        mock_fs.share_link_service.get_share_link_access_logs.assert_called_once_with(
-            link_id="link-abc",
-            limit=50,
-            context=context,
-        )

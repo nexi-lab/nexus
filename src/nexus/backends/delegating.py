@@ -169,6 +169,10 @@ class DelegatingBackend(Backend):
             return HandlerResponse.error(
                 message=f"{self.__class__.__name__} read transform failed: {e}"
             )
+        # Identity transform (default): return original response to preserve
+        # backend_name and object identity for pass-through wrappers.
+        if transformed is response.data:
+            return response
         return HandlerResponse.ok(data=transformed, backend_name=self.name)
 
     def batch_read_content(

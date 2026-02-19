@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.core.config import (
         BrickServices,
         CacheConfig,
@@ -59,7 +60,6 @@ if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
     from nexus.storage.record_store import RecordStoreABC
-    from nexus.workflows.protocol import WorkflowProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ def _create_wallet_provisioner() -> Any:
         """Create TigerBeetle account for agent. Idempotent."""
         import tigerbeetle as tb
 
-        from nexus.pay.constants import (
+        from nexus.bricks.pay.constants import (
             ACCOUNT_CODE_WALLET,
             LEDGER_CREDITS,
             make_tb_account_id,
@@ -1295,11 +1295,11 @@ def _create_workflow_engine(
         logger.warning("Workflows require record_store, skipping")
         return None
     try:
+        from nexus.bricks.workflows.engine import WorkflowEngine
+        from nexus.bricks.workflows.protocol import WorkflowServices
+        from nexus.bricks.workflows.storage import WorkflowStore
         from nexus.raft.zone_manager import ROOT_ZONE_ID
         from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
-        from nexus.workflows.engine import WorkflowEngine
-        from nexus.workflows.protocol import WorkflowServices
-        from nexus.workflows.storage import WorkflowStore
 
         workflow_store = WorkflowStore(
             session_factory=record_store.async_session_factory,

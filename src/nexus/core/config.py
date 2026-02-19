@@ -27,9 +27,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
+    from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.core.cache_invalidation import CacheInvalidationObserver
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-    from nexus.workflows.protocol import WorkflowProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)

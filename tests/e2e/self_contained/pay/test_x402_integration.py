@@ -17,8 +17,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.pay.x402 import X402Client, X402PaymentVerification
+from nexus.bricks.pay.x402 import X402Client, X402PaymentVerification
 from nexus.server.api.v2.routers.x402 import router as x402_router
+from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_router
+from nexus.server.dependencies import require_auth
 from nexus.server.middleware.x402 import X402PaymentMiddleware
 
 # =============================================================================
@@ -52,8 +54,13 @@ def app(x402_client, mock_credits_service):
     """Create full FastAPI app with x402 integration."""
     app = FastAPI(title="Nexus x402 Integration Test")
 
-    # Add x402 router
+    # Add x402 routers (public webhook + auth'd topup/config)
+    app.include_router(x402_webhook_router, prefix="/api/v2")
     app.include_router(x402_router, prefix="/api/v2")
+
+    # Override require_auth for functional tests (simulate authenticated user)
+    _auth_result = {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
+    app.dependency_overrides[require_auth] = lambda: _auth_result
 
     # Add middleware for protected endpoints
     app.add_middleware(
@@ -426,3 +433,63 @@ class TestErrorHandling:
         )
 
         assert response.status_code == 422
+
+
+# =============================================================================
+# Auth Enforcement Tests (Issue #2048)
+# =============================================================================
+
+
+class TestAuthRequired:
+    """Verify auth enforcement on x402 endpoints."""
+
+    @pytest.fixture
+    def auth_app(self, x402_client, mock_credits_service):
+        """App with real auth (api_key set, no auth override)."""
+        app = FastAPI(title="Nexus x402 Auth Test")
+        app.include_router(x402_webhook_router, prefix="/api/v2")
+        app.include_router(x402_router, prefix="/api/v2")
+        app.state.x402_client = x402_client
+        app.state.credits_service = mock_credits_service
+        # Set api_key to trigger real auth checks
+        app.state.api_key = "test-secret-key"
+        app.state.auth_provider = None
+        return app
+
+    @pytest.fixture
+    def unauthed_client(self, auth_app):
+        return TestClient(auth_app)
+
+    def test_topup_requires_auth(self, unauthed_client):
+        """Topup endpoint should return 401 without auth."""
+        resp = unauthed_client.post(
+            "/api/v2/x402/topup",
+            json={"agent_id": "test", "amount": "10.00"},
+        )
+        assert resp.status_code == 401
+
+    def test_config_requires_auth(self, unauthed_client):
+        """Config endpoint should return 401 without auth."""
+        resp = unauthed_client.get("/api/v2/x402/config")
+        assert resp.status_code == 401
+
+    def test_webhook_remains_public(self, unauthed_client, x402_client):
+        """Webhook endpoint should NOT require auth (external facilitator calls it)."""
+        x402_client._verify_webhook_signature = MagicMock(return_value=True)
+        resp = unauthed_client.post(
+            "/api/v2/x402/webhook",
+            json={
+                "event": "payment.confirmed",
+                "tx_hash": "0x" + "ab" * 32,
+                "network": "eip155:8453",
+                "amount": "1000000",
+                "currency": "USDC",
+                "from": "0x" + "ab" * 20,
+                "to": "0x" + "cd" * 20,
+                "timestamp": "2025-01-15T12:00:00Z",
+                "metadata": {"agent_id": "test-agent"},
+                "signature": "valid",
+            },
+        )
+        # Should NOT be 401 — webhook is public
+        assert resp.status_code != 401

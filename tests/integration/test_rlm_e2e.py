@@ -20,10 +20,14 @@ from fastapi.testclient import TestClient
 from nexus.rlm.types import RLMInferenceResult, RLMStatus, SSEEvent, SSEEventType
 from nexus.server.api.v2.routers.rlm import router
 from nexus.server.api.v2.versioning import VersionHeaderMiddleware
+from nexus.server.dependencies import require_auth
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+_auth_result = {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
 
 
 @pytest.fixture
@@ -33,6 +37,7 @@ def app_no_rlm() -> FastAPI:
     app.state.rlm_service = None
     app.include_router(router)
     app.add_middleware(VersionHeaderMiddleware)
+    app.dependency_overrides[require_auth] = lambda: _auth_result
     return app
 
 
@@ -76,6 +81,7 @@ def app_with_rlm() -> FastAPI:
     app.state.rlm_service = mock_service
     app.include_router(router)
     app.add_middleware(VersionHeaderMiddleware)
+    app.dependency_overrides[require_auth] = lambda: _auth_result
     return app
 
 
@@ -208,3 +214,28 @@ class TestRLMRequestValidation:
             },
         )
         assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Tests: Auth enforcement (Issue #2048)
+# ---------------------------------------------------------------------------
+
+
+class TestRLMAuthRequired:
+    """Verify RLM endpoint rejects unauthenticated requests."""
+
+    def test_infer_requires_auth(self) -> None:
+        """POST /api/v2/rlm/infer returns 401 without auth."""
+        app = FastAPI()
+        app.include_router(router)
+        app.state.rlm_service = MagicMock()
+        # Set api_key to trigger real auth checks
+        app.state.api_key = "test-secret-key"
+        app.state.auth_provider = None
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/v2/rlm/infer",
+            json={"query": "test"},
+        )
+        assert response.status_code == 401

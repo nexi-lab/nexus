@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from nexus_backend import NexusBackend
 
 import nexus
-from nexus.workflows import WorkflowAPI
+from nexus.bricks.workflows import WorkflowAPI
 
 try:
     from deepagents import create_deep_agent

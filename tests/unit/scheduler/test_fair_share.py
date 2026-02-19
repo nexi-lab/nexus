@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.scheduler.policies.fair_share import FairShareCounter, FairShareSnapshot
+from nexus.bricks.scheduler.policies.fair_share import FairShareCounter, FairShareSnapshot
 
 
 class TestFairShareSnapshot:

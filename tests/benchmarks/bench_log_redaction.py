@@ -28,7 +28,7 @@ SECRET_LINE = (
 
 # A log line with multiple secrets (worst case)
 MULTI_SECRET_LINE = (
-    "2024-01-15 12:00:00 - nexus.sandbox - ERROR - "
+    "2024-01-15 12:00:00 - nexus.bricks.sandbox - ERROR - "
     "Mount failed: nexus_url=postgresql://admin:secret@db:5432/prod, "
     "api_key=sk-abcdefghijklmnopqrstuvwxyz12345, "
     "password=my_super_secret_password_value"

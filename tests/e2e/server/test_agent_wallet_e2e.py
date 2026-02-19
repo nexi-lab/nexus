@@ -234,7 +234,11 @@ class TestWalletProvisioningE2E:
 
     def test_register_agent_creates_tigerbeetle_wallet(self, nexus_server_with_pay, tb_client):
         """Registering an agent via RPC auto-provisions a TigerBeetle wallet."""
-        from nexus.pay.constants import ACCOUNT_CODE_WALLET, LEDGER_CREDITS, make_tb_account_id
+        from nexus.bricks.pay.constants import (
+            ACCOUNT_CODE_WALLET,
+            LEDGER_CREDITS,
+            make_tb_account_id,
+        )
 
         api_key = nexus_server_with_pay["api_key"]
         if not api_key:
@@ -298,7 +302,7 @@ class TestWalletProvisioningE2E:
 
     def test_wallet_idempotent_on_re_register(self, nexus_server_with_pay, tb_client):
         """Re-registering an existing agent doesn't fail (wallet is idempotent)."""
-        from nexus.pay.constants import make_tb_account_id
+        from nexus.bricks.pay.constants import make_tb_account_id
 
         api_key = nexus_server_with_pay["api_key"]
         if not api_key:
@@ -339,7 +343,7 @@ class TestWalletProvisioningE2E:
 
     def test_delete_agent_with_wallet(self, nexus_server_with_pay, tb_client):
         """Deleting an agent with wallet completes without error."""
-        from nexus.pay.constants import make_tb_account_id
+        from nexus.bricks.pay.constants import make_tb_account_id
 
         api_key = nexus_server_with_pay["api_key"]
         if not api_key:
@@ -378,7 +382,7 @@ class TestWalletProvisioningE2E:
 
     def test_register_agent_wallet_has_zero_balance(self, nexus_server_with_pay, tb_client):
         """Newly provisioned wallet starts with zero balance."""
-        from nexus.pay.constants import make_tb_account_id
+        from nexus.bricks.pay.constants import make_tb_account_id
 
         api_key = nexus_server_with_pay["api_key"]
         if not api_key:
@@ -527,7 +531,11 @@ class TestWalletProvisioningWithPermissions:
 
     def test_non_admin_registers_agent_with_wallet(self, nexus_server_permissions, tb_client):
         """Non-admin user (alice) can register an agent and get a wallet provisioned."""
-        from nexus.pay.constants import ACCOUNT_CODE_WALLET, LEDGER_CREDITS, make_tb_account_id
+        from nexus.bricks.pay.constants import (
+            ACCOUNT_CODE_WALLET,
+            LEDGER_CREDITS,
+            make_tb_account_id,
+        )
 
         srv = nexus_server_permissions
         agent_id = "alice,PermWalletAgent"
@@ -568,7 +576,7 @@ class TestWalletProvisioningWithPermissions:
 
     def test_non_admin_delete_agent_with_wallet(self, nexus_server_permissions, tb_client):
         """Non-admin user can delete their own agent (wallet stays in TB)."""
-        from nexus.pay.constants import make_tb_account_id
+        from nexus.bricks.pay.constants import make_tb_account_id
 
         srv = nexus_server_permissions
         agent_id = "alice,PermDeleteAgent"

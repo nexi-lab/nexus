@@ -13,19 +13,19 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.server.api.v2.routers.workflows import (
-    _get_require_auth,
-    _get_workflow_engine,
-    router,
-)
-from nexus.workflows.engine import WorkflowEngine
-from nexus.workflows.types import (
+from nexus.bricks.workflows.engine import WorkflowEngine
+from nexus.bricks.workflows.types import (
     TriggerType,
     WorkflowAction,
     WorkflowDefinition,
     WorkflowExecution,
     WorkflowStatus,
     WorkflowTrigger,
+)
+from nexus.server.api.v2.routers.workflows import (
+    _get_require_auth,
+    _get_workflow_engine,
+    router,
 )
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ class TestListWorkflows:
 class TestCreateWorkflow:
     """Test POST /api/v2/workflows."""
 
-    @patch("nexus.workflows.loader.WorkflowLoader")
+    @patch("nexus.bricks.workflows.loader.WorkflowLoader")
     def test_create_workflow(self, mock_loader):
         """Test creating a workflow."""
         definition = WorkflowDefinition(
@@ -155,7 +155,7 @@ class TestCreateWorkflow:
         assert data["enabled"] is True
         _mock_engine.load_workflow.assert_called_once()
 
-    @patch("nexus.workflows.loader.WorkflowLoader")
+    @patch("nexus.bricks.workflows.loader.WorkflowLoader")
     def test_create_workflow_invalid(self, mock_loader):
         """Test creating a workflow with invalid definition."""
         mock_loader.load_from_dict.side_effect = ValueError("bad definition")
@@ -171,7 +171,7 @@ class TestCreateWorkflow:
         assert resp.status_code == 400
         assert "Invalid workflow definition" in resp.json()["detail"]
 
-    @patch("nexus.workflows.loader.WorkflowLoader")
+    @patch("nexus.bricks.workflows.loader.WorkflowLoader")
     def test_create_workflow_load_failure(self, mock_loader):
         """Test creating a workflow when engine load fails."""
         definition = WorkflowDefinition(

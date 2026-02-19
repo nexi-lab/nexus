@@ -22,9 +22,9 @@ import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
-from nexus.pay.credits import CreditsService
-from nexus.pay.sdk import Balance, BudgetExceededError, NexusPay, NexusPayError, Receipt
-from nexus.pay.x402 import X402Client, X402PaymentVerification
+from nexus.bricks.pay.credits import CreditsService
+from nexus.bricks.pay.sdk import Balance, BudgetExceededError, NexusPay, NexusPayError, Receipt
+from nexus.bricks.pay.x402 import X402Client, X402PaymentVerification
 
 # We import middleware directly from its module to avoid the heavy
 # nexus.server.__init__ import chain (which requires litellm etc.)
@@ -221,7 +221,7 @@ class TestTransferThroughServer:
 
     def test_external_transfer_routes_to_x402(self, client, x402_client):
         """Wallet address destination should route to x402."""
-        from nexus.pay.x402 import X402Receipt
+        from nexus.bricks.pay.x402 import X402Receipt
 
         x402_client.pay = AsyncMock(
             return_value=X402Receipt(
@@ -669,10 +669,10 @@ class TestPayRestApiFlows:
 
 
 class TestModuleExports:
-    """Verify NexusPay is properly exported from nexus.pay."""
+    """Verify NexusPay is properly exported from nexus.bricks.pay."""
 
     def test_sdk_exports_from_pay_package(self):
-        from nexus.pay import (
+        from nexus.bricks.pay import (
             Balance,
             BudgetContext,
             BudgetExceededError,

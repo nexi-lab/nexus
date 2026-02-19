@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.a2a import a2a_pb2
-from nexus.a2a.models import (
+from nexus.bricks.a2a import a2a_pb2
+from nexus.bricks.a2a.models import (
     Artifact,
     DataPart,
     FileContent,
@@ -29,7 +29,7 @@ from nexus.a2a.models import (
     TaskStatus,
     TextPart,
 )
-from nexus.a2a.proto_converter import (
+from nexus.bricks.a2a.proto_converter import (
     artifact_from_proto,
     artifact_to_proto,
     message_from_proto,

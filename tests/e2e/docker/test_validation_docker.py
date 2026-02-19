@@ -20,7 +20,7 @@ except Exception:
     DOCKER_AVAILABLE = True  # Intentionally True — individual tests gate properly
 
 try:
-    from nexus.sandbox.sandbox_docker_provider import DockerSandboxProvider
+    from nexus.bricks.sandbox.sandbox_docker_provider import DockerSandboxProvider
 
     DOCKER_PROVIDER_AVAILABLE = True
 except ImportError:

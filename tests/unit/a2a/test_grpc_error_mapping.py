@@ -9,7 +9,7 @@ from __future__ import annotations
 import grpc
 import pytest
 
-from nexus.a2a.exceptions import (
+from nexus.bricks.a2a.exceptions import (
     A2AError,
     ContentTypeNotSupportedError,
     InternalError,

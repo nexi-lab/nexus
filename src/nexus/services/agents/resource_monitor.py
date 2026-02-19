@@ -74,5 +74,9 @@ class ResourceMonitor:
         if not _HAS_PSUTIL:
             return -1.0
 
-        mem = await asyncio.to_thread(psutil.virtual_memory)
-        return float(mem.percent)
+        try:
+            mem = await asyncio.to_thread(psutil.virtual_memory)
+            return float(mem.percent)
+        except Exception:
+            logger.warning("[RESOURCE] psutil.virtual_memory() failed, falling back to NORMAL")
+            return -1.0

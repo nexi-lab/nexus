@@ -8,6 +8,8 @@ Tests cover:
 - StaleAgentError caught gracefully (skipped)
 - InvalidTransitionError caught gracefully (agent reconnected)
 - Watermark band stops eviction at low pressure
+- Manual eviction via evict_agent()
+- _build_checkpoint produces correct data
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.contracts.agent_types import AgentRecord, AgentState
+from nexus.contracts.agent_types import AgentRecord, AgentState, EvictionReason
 from nexus.core.performance_tuning import EvictionTuning
 from nexus.services.agents.eviction_manager import EvictionManager
 from nexus.services.agents.eviction_policy import LRUEvictionPolicy
@@ -56,6 +58,7 @@ def tuning():
         eviction_batch_size=5,
         checkpoint_timeout_seconds=5.0,
         eviction_cooldown_seconds=60,
+        max_concurrent_transitions=10,
     )
 
 
@@ -106,7 +109,7 @@ class TestEvictionManager:
         result = await manager.run_cycle()
 
         assert result.evicted == 0
-        assert result.reason == "normal_pressure"
+        assert result.reason is EvictionReason.NORMAL_PRESSURE
 
     @pytest.mark.asyncio
     async def test_eviction_at_critical_pressure(self, manager, mock_registry, mock_monitor):
@@ -118,7 +121,7 @@ class TestEvictionManager:
         result = await manager.run_cycle()
 
         assert result.evicted == 3
-        assert "critical" in result.reason
+        assert result.reason is EvictionReason.PRESSURE_CRITICAL
         assert mock_registry.batch_checkpoint.call_count == 1
         assert mock_registry.transition.call_count == 3
 
@@ -136,7 +139,7 @@ class TestEvictionManager:
         # Second cycle hits cooldown
         result2 = await manager.run_cycle()
         assert result2.evicted == 0
-        assert result2.reason == "cooldown"
+        assert result2.reason is EvictionReason.COOLDOWN
 
     @pytest.mark.asyncio
     async def test_checkpoint_written_before_transition(self, manager, mock_registry, mock_monitor):
@@ -201,6 +204,24 @@ class TestEvictionManager:
         assert result.skipped == 1
 
     @pytest.mark.asyncio
+    async def test_unexpected_exception_caught(self, manager, mock_registry, mock_monitor):
+        """Unexpected Exception in transition is caught and agent is skipped."""
+        mock_monitor.check_pressure.return_value = PressureLevel.CRITICAL
+        agents = [_make_agent("agent-1"), _make_agent("agent-2")]
+        mock_registry.list_eviction_candidates.return_value = agents
+
+        # First agent raises unexpected error, second succeeds
+        mock_registry.transition.side_effect = [
+            RuntimeError("DB connection lost"),
+            MagicMock(),
+        ]
+
+        result = await manager.run_cycle()
+
+        assert result.evicted == 1
+        assert result.skipped == 1
+
+    @pytest.mark.asyncio
     async def test_no_candidates_returns_early(self, manager, mock_registry, mock_monitor):
         """When no eviction candidates are found, returns early."""
         mock_monitor.check_pressure.return_value = PressureLevel.CRITICAL
@@ -209,7 +230,7 @@ class TestEvictionManager:
         result = await manager.run_cycle()
 
         assert result.evicted == 0
-        assert result.reason == "no_candidates"
+        assert result.reason is EvictionReason.NO_CANDIDATES
 
     @pytest.mark.asyncio
     async def test_warning_pressure_triggers_eviction(self, manager, mock_registry, mock_monitor):
@@ -221,7 +242,7 @@ class TestEvictionManager:
         result = await manager.run_cycle()
 
         assert result.evicted == 1
-        assert "warning" in result.reason
+        assert result.reason is EvictionReason.PRESSURE_WARNING
 
     @pytest.mark.asyncio
     async def test_over_cap_triggers_eviction(self, manager, mock_registry, mock_monitor):
@@ -235,25 +256,32 @@ class TestEvictionManager:
         result = await manager.run_cycle()
 
         assert result.evicted == 1
-        assert result.reason == "over_agent_cap"
+        assert result.reason is EvictionReason.OVER_AGENT_CAP
+
+    @pytest.mark.asyncio
+    async def test_over_cap_skips_pressure_recheck(self, manager, mock_registry, mock_monitor):
+        """Over-cap eviction skips post-eviction pressure re-check."""
+        mock_monitor.check_pressure.return_value = PressureLevel.NORMAL
+        mock_registry.count_connected_agents.return_value = 101
+        agents = [_make_agent("agent-1")]
+        mock_registry.list_eviction_candidates.return_value = agents
+
+        result = await manager.run_cycle()
+
+        assert result.post_pressure == "normal"
+        # check_pressure called once (initial), not twice (no re-check)
+        assert mock_monitor.check_pressure.call_count == 1
 
     @pytest.mark.asyncio
     async def test_checkpoint_timeout_aborts_cycle(self, manager, mock_registry, mock_monitor):
         """Checkpoint timeout returns early without evicting."""
-        import asyncio
+        import time
 
         mock_monitor.check_pressure.return_value = PressureLevel.CRITICAL
         agents = [_make_agent("agent-1")]
         mock_registry.list_eviction_candidates.return_value = agents
 
-        # Simulate slow checkpoint by making batch_checkpoint block
-        async def _slow_checkpoint(*_a, **_kw):
-            await asyncio.sleep(60)
-
-        # batch_checkpoint is called via asyncio.to_thread, but since we mock it,
-        # we need to make the sync version sleep — use side_effect with time.sleep
-        import time
-
+        # batch_checkpoint is called via asyncio.to_thread, mock blocks
         mock_registry.batch_checkpoint.side_effect = lambda *a, **kw: time.sleep(60)
 
         # Override tuning to have very short timeout
@@ -264,11 +292,97 @@ class TestEvictionManager:
             eviction_batch_size=5,
             checkpoint_timeout_seconds=0.01,  # 10ms timeout
             eviction_cooldown_seconds=60,
+            max_concurrent_transitions=10,
         )
 
         result = await manager.run_cycle()
 
         assert result.evicted == 0
-        assert result.reason == "checkpoint_timeout"
+        assert result.reason is EvictionReason.CHECKPOINT_TIMEOUT
         # Transition should NOT have been called
         mock_registry.transition.assert_not_called()
+
+
+class TestBuildCheckpoint:
+    """Tests for EvictionManager._build_checkpoint() (Issue #12A)."""
+
+    def test_build_checkpoint_all_fields(self):
+        """_build_checkpoint produces all 4 required fields."""
+        now = datetime.now(UTC)
+        agent = _make_agent("agent-1", last_heartbeat=now, generation=5)
+
+        checkpoint = EvictionManager._build_checkpoint(agent)
+
+        assert checkpoint["state"] == "CONNECTED"
+        assert checkpoint["generation"] == 5
+        assert checkpoint["last_heartbeat"] == now.isoformat()
+        assert isinstance(checkpoint["evicted_at"], float)
+        assert len(checkpoint) == 4
+
+    def test_build_checkpoint_none_heartbeat(self):
+        """_build_checkpoint handles None last_heartbeat."""
+        now = datetime.now(UTC)
+        agent = AgentRecord(
+            agent_id="agent-1",
+            owner_id="test-owner",
+            zone_id=None,
+            name=None,
+            state=AgentState.CONNECTED,
+            generation=1,
+            last_heartbeat=None,
+            metadata=types.MappingProxyType({}),
+            created_at=now,
+            updated_at=now,
+        )
+
+        checkpoint = EvictionManager._build_checkpoint(agent)
+
+        assert checkpoint["last_heartbeat"] is None
+        assert checkpoint["state"] == "CONNECTED"
+        assert checkpoint["generation"] == 1
+
+
+class TestManualEviction:
+    """Tests for EvictionManager.evict_agent()."""
+
+    @pytest.mark.asyncio
+    async def test_evict_connected_agent(self, manager, mock_registry):
+        """evict_agent() checkpoints and transitions a CONNECTED agent."""
+        agent = _make_agent("agent-1")
+        mock_registry.get.return_value = agent
+
+        result = await manager.evict_agent("agent-1")
+
+        assert result.evicted == 1
+        assert result.reason is EvictionReason.MANUAL
+        mock_registry.checkpoint.assert_called_once()
+        mock_registry.transition.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_evict_nonexistent_agent_raises(self, manager, mock_registry):
+        """evict_agent() raises ValueError for nonexistent agent."""
+        mock_registry.get.return_value = None
+
+        with pytest.raises(ValueError, match="not found"):
+            await manager.evict_agent("no-such")
+
+    @pytest.mark.asyncio
+    async def test_evict_non_connected_agent_raises(self, manager, mock_registry):
+        """evict_agent() raises ValueError for non-CONNECTED agent."""
+        now = datetime.now(UTC)
+        agent = AgentRecord(
+            agent_id="agent-1",
+            owner_id="test-owner",
+            zone_id=None,
+            name=None,
+            state=AgentState.IDLE,
+            generation=1,
+            last_heartbeat=now,
+            metadata=types.MappingProxyType({}),
+            created_at=now,
+            updated_at=now,
+        )
+        mock_registry.get.return_value = agent
+
+        with pytest.raises(ValueError, match="not CONNECTED"):
+            await manager.evict_agent("agent-1")

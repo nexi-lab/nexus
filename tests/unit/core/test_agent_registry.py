@@ -761,13 +761,13 @@ class TestCheckpoint:
     """Tests for checkpoint/restore_checkpoint/batch_checkpoint."""
 
     def test_checkpoint_saves_data(self, registry):
-        """checkpoint() stores data in agent_metadata under _checkpoint key."""
+        """checkpoint() stores data in agent_metadata under _nexus_checkpoint key."""
         registry.register("agent-1", "alice")
         registry.checkpoint("agent-1", {"key": "value", "count": 42})
 
         record = registry.get("agent-1")
         assert record is not None
-        assert record.metadata.get("_checkpoint") == {"key": "value", "count": 42}
+        assert record.metadata.get("_nexus_checkpoint") == {"key": "value", "count": 42}
 
     def test_restore_checkpoint_returns_data(self, registry):
         """restore_checkpoint() returns the saved checkpoint data."""
@@ -788,9 +788,9 @@ class TestCheckpoint:
         data = registry.restore_checkpoint("agent-1")
         assert data is None
 
-        # Metadata should not have _checkpoint key
+        # Metadata should not have _nexus_checkpoint key
         record = registry.get("agent-1")
-        assert "_checkpoint" not in record.metadata
+        assert "_nexus_checkpoint" not in record.metadata
 
     def test_restore_checkpoint_no_data(self, registry):
         """restore_checkpoint() returns None when no checkpoint exists."""
@@ -824,10 +824,10 @@ class TestCheckpoint:
         assert written == 2
 
         r1 = registry.get("a1")
-        assert r1.metadata.get("_checkpoint") == {"state": "connected"}
+        assert r1.metadata.get("_nexus_checkpoint") == {"state": "connected"}
 
         r2 = registry.get("a2")
-        assert r2.metadata.get("_checkpoint") == {"state": "idle"}
+        assert r2.metadata.get("_nexus_checkpoint") == {"state": "idle"}
 
     def test_batch_checkpoint_skips_nonexistent(self, registry):
         """batch_checkpoint() skips nonexistent agents and still writes others."""

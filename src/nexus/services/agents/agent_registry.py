@@ -682,10 +682,10 @@ class AgentRegistry:
             return result
 
     def checkpoint(self, agent_id: str, checkpoint_data: dict[str, Any]) -> None:
-        """Save checkpoint data to agent_metadata['_checkpoint'] before eviction.
+        """Save checkpoint data to agent_metadata['_nexus_checkpoint'] before eviction.
 
         Stores checkpoint in the existing agent_metadata JSON column under
-        the '_checkpoint' key (no migration needed).
+        the '_nexus_checkpoint' key to avoid collision with user metadata.
 
         Args:
             agent_id: Agent identifier.
@@ -703,7 +703,7 @@ class AgentRegistry:
                 raise ValueError(f"Agent '{agent_id}' not found")
 
             metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
-            metadata["_checkpoint"] = checkpoint_data
+            metadata["_nexus_checkpoint"] = checkpoint_data
 
             now = datetime.now(UTC)
             stmt = (
@@ -738,7 +738,7 @@ class AgentRegistry:
                 raise ValueError(f"Agent '{agent_id}' not found")
 
             metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
-            checkpoint_data = metadata.pop("_checkpoint", None)
+            checkpoint_data = metadata.pop("_nexus_checkpoint", None)
 
             if checkpoint_data is not None:
                 now = datetime.now(UTC)
@@ -757,6 +757,12 @@ class AgentRegistry:
 
         Uses a single SELECT ... WHERE agent_id IN (...) to fetch all models,
         then individual UPDATEs within the same session (avoids N+1 SELECTs).
+
+        Note: We use N individual UPDATEs (not a single bulk UPDATE) because
+        each agent's metadata JSON must be merged individually. A single
+        executemany would require identical SET shapes, but each agent may have
+        different existing metadata. The single-session approach keeps this
+        within one transaction and one DB round-trip for the SELECT.
 
         Args:
             checkpoints: Mapping of agent_id -> checkpoint_data.
@@ -781,7 +787,7 @@ class AgentRegistry:
                     continue
 
                 metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
-                metadata["_checkpoint"] = checkpoint_data
+                metadata["_nexus_checkpoint"] = checkpoint_data
 
                 upd = (
                     update(AgentRecordModel)
@@ -794,6 +800,58 @@ class AgentRegistry:
             session.flush()
 
         return written
+
+    def cleanup_stale_checkpoints(self, max_age_seconds: int = 86400) -> int:
+        """Remove stale checkpoint data from SUSPENDED agents.
+
+        Scans SUSPENDED agents with _nexus_checkpoint data and removes
+        checkpoints older than max_age_seconds. This prevents unbounded
+        growth of checkpoint data for agents that never reconnect.
+
+        Args:
+            max_age_seconds: Maximum checkpoint age in seconds before removal.
+
+        Returns:
+            Number of stale checkpoints cleaned up.
+        """
+        import time
+
+        cleaned = 0
+        cutoff = time.time() - max_age_seconds
+
+        with self._get_session() as session:
+            stmt = select(AgentRecordModel).where(
+                AgentRecordModel.state == AgentState.SUSPENDED.value,
+            )
+            models = list(session.execute(stmt).scalars().all())
+
+            now = datetime.now(UTC)
+            for model in models:
+                metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", model.agent_id)
+                checkpoint = metadata.get("_nexus_checkpoint")
+                if checkpoint is None:
+                    continue
+
+                evicted_at = checkpoint.get("evicted_at", 0)
+                if evicted_at < cutoff:
+                    del metadata["_nexus_checkpoint"]
+                    upd = (
+                        update(AgentRecordModel)
+                        .where(AgentRecordModel.agent_id == model.agent_id)
+                        .values(agent_metadata=json.dumps(metadata), updated_at=now)
+                    )
+                    session.execute(upd)
+                    cleaned += 1
+
+            session.flush()
+
+        if cleaned > 0:
+            logger.info(
+                "[AGENT-REG] Cleaned up %d stale checkpoints (max_age=%ds)",
+                cleaned,
+                max_age_seconds,
+            )
+        return cleaned
 
     @staticmethod
     def _model_to_record(model: AgentRecordModel) -> AgentRecord:

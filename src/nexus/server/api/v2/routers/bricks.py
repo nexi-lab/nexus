@@ -63,6 +63,35 @@ class BrickActionResponse(BaseModel):
     error: str | None = None
 
 
+class DriftReportItem(BaseModel):
+    """Single brick drift report."""
+
+    brick_name: str
+    spec_state: str
+    actual_state: str
+    action: str
+    detail: str = ""
+
+
+class DriftReportResponse(BaseModel):
+    """Aggregated drift report from reconciliation."""
+
+    total_bricks: int
+    drifted: int
+    actions_taken: int
+    errors: int
+    drifts: list[DriftReportItem]
+
+
+class ResetBrickResponse(BaseModel):
+    """Response for brick reset action."""
+
+    name: str
+    action: str = "reset"
+    state: str
+    retry_count: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
@@ -85,9 +114,57 @@ def _get_lifecycle_manager(request: Request) -> Any:
     return manager
 
 
+def _get_reconciler(request: Request) -> Any:
+    """Get BrickReconciler from app state (may be None)."""
+    nx = getattr(request.app.state, "nexus_fs", None)
+    if nx is None:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    _sys = getattr(nx, "_system_services", None)
+    if _sys is None:
+        raise HTTPException(status_code=503, detail="System services not available")
+
+    reconciler = getattr(_sys, "brick_reconciler", None)
+    if reconciler is None:
+        raise HTTPException(status_code=503, detail="Brick reconciler not available")
+
+    return reconciler
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+# NOTE: /drift must be registered BEFORE /{name} to avoid path parameter capture.
+
+
+@router.get("/drift", response_model=DriftReportResponse)
+async def brick_drift(
+    reconciler: Any = Depends(_get_reconciler),
+) -> DriftReportResponse:
+    """Current drift report: compare spec vs status for all bricks.
+
+    Read-only: no corrective actions taken, no state transitions.
+    The reconciler's periodic loop handles auto-healing separately.
+    """
+    result = reconciler.detect_drift()
+    return DriftReportResponse(
+        total_bricks=result.total_bricks,
+        drifted=result.drifted,
+        actions_taken=result.actions_taken,
+        errors=result.errors,
+        drifts=[
+            DriftReportItem(
+                brick_name=d.brick_name,
+                spec_state=d.spec_state,
+                actual_state=d.actual_state.value,
+                action=d.action,
+                detail=d.detail,
+            )
+            for d in result.drifts
+        ],
+    )
 
 
 @health_router.get("/health", response_model=BrickHealthResponse)
@@ -182,4 +259,30 @@ async def unmount_brick(
         action="unmount",
         state=new_status.state.value if new_status else "unknown",
         error=new_status.error if new_status else None,
+    )
+
+
+@router.post("/{name}/reset", response_model=ResetBrickResponse)
+async def reset_brick(
+    name: str,
+    manager: Any = Depends(_get_lifecycle_manager),
+) -> ResetBrickResponse:
+    """Reset a FAILED brick to REGISTERED for retry.
+
+    Clears error, timestamps, and retry counter. The reconciler will
+    automatically attempt to remount the brick on its next pass.
+    """
+    status = manager.get_status(name)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Brick {name!r} not found")
+
+    try:
+        manager.reset(name)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    new_status = manager.get_status(name)
+    return ResetBrickResponse(
+        name=name,
+        state=new_status.state.value if new_status else "unknown",
     )

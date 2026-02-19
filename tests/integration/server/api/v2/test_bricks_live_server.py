@@ -1,4 +1,4 @@
-"""Live server E2E test for brick lifecycle API (Issue #1704).
+"""Live server E2E test for brick lifecycle API (Issue #1704, #2060).
 
 Builds the real FastAPI app with v2 router registry, wires a real
 BrickLifecycleManager with permissions-aware NexusFS mock, and tests
@@ -10,6 +10,7 @@ This validates:
 - No permission issues for admin/unauthenticated access
 - No performance regressions
 - Lifecycle events in logs
+- Drift detection and reset through live stack (Issue #2060)
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ from nexus.server.api.v2.versioning import (
     build_v2_registry,
     register_v2_routers,
 )
+from nexus.server.dependencies import require_admin
 from nexus.services.brick_lifecycle import BrickLifecycleManager
+from nexus.services.brick_reconciler import BrickReconciler
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,7 +47,11 @@ def _make_lifecycle_brick(name: str) -> MagicMock:
     return brick
 
 
-def _build_live_app(manager: BrickLifecycleManager) -> FastAPI:
+def _build_live_app(
+    manager: BrickLifecycleManager,
+    *,
+    reconciler: BrickReconciler | None = None,
+) -> FastAPI:
     """Build a realistic FastAPI app with the full v2 router registry.
 
     Mirrors what create_app() does for router registration, but skips
@@ -52,11 +59,19 @@ def _build_live_app(manager: BrickLifecycleManager) -> FastAPI:
     """
     app = FastAPI(title="nexus-test")
 
-    # Wire up minimal app state that the bricks router dependency expects
+    # Wire up minimal app state that the bricks router dependency expects.
+    # The _get_lifecycle_manager dependency accesses:
+    #   request.app.state.nexus_fs._system_services.brick_lifecycle_manager
+    _sys_mock = MagicMock()
+    _sys_mock.brick_lifecycle_manager = manager
+    _sys_mock.brick_reconciler = reconciler
+
     nexus_fs_mock = MagicMock()
-    nexus_fs_mock.services = MagicMock()
-    nexus_fs_mock.services.brick_lifecycle_manager = manager
+    nexus_fs_mock._system_services = _sys_mock
     app.state.nexus_fs = nexus_fs_mock
+
+    # Override admin auth so endpoints are accessible without real auth
+    app.dependency_overrides[require_admin] = lambda: {"is_admin": True}
 
     # Build the REAL v2 registry — same as production
     v2_registry = build_v2_registry()
@@ -82,7 +97,7 @@ class TestLiveServerBricksRouter:
         assert "bricks" in names
 
         bricks_entry = next(e for e in registry.entries if e.name == "bricks")
-        assert bricks_entry.endpoint_count == 4
+        assert bricks_entry.endpoint_count == 5
         assert bricks_entry.router.prefix == "/api/v2/bricks"
 
     @pytest.mark.asyncio
@@ -245,6 +260,34 @@ class TestLiveServerPerformance:
         assert resp.json()["total"] == 50
         assert health_ms < 100, f"Health after 50-brick boot: {health_ms:.1f}ms exceeds 100ms"
 
+    @pytest.mark.asyncio
+    async def test_drift_endpoint_latency(self) -> None:
+        """Drift detection with 20 bricks should respond under 50ms."""
+        manager = BrickLifecycleManager()
+        for i in range(20):
+            b = _make_lifecycle_brick(f"b{i}")
+            manager.register(f"b{i}", b, protocol_name=f"P{i}")
+        await manager.mount_all()
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        app = _build_live_app(manager, reconciler=reconciler)
+        client = TestClient(app)
+
+        # Warm up
+        client.get("/api/v2/bricks/drift")
+
+        # Measure
+        times = []
+        for _ in range(10):
+            start = time.perf_counter()
+            resp = client.get("/api/v2/bricks/drift")
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            assert resp.status_code == 200
+            times.append(elapsed_ms)
+
+        avg_ms = sum(times) / len(times)
+        assert avg_ms < 50, f"Avg drift latency {avg_ms:.1f}ms exceeds 50ms"
+
 
 class TestLiveServerLogsAndDiagnostics:
     """Verify log output through the live server stack."""
@@ -290,3 +333,92 @@ class TestLiveServerLogsAndDiagnostics:
         data = resp.json()
         assert data["failed"] == 1
         assert data["bricks"][0]["error"] == "connection refused"
+
+
+class TestLiveServerDriftAndReset:
+    """Test drift detection and reset through live server stack (Issue #2060)."""
+
+    @pytest.mark.asyncio
+    async def test_drift_through_middleware(self) -> None:
+        """GET /drift works through real middleware stack."""
+        manager = BrickLifecycleManager()
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=RuntimeError("fail"))
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount_all()
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        app = _build_live_app(manager, reconciler=reconciler)
+        client = TestClient(app)
+
+        resp = client.get("/api/v2/bricks/drift")
+        assert resp.status_code == 200
+        assert resp.headers.get("x-api-version") == "2.0"
+
+        data = resp.json()
+        assert data["drifted"] == 1
+        assert data["drifts"][0]["brick_name"] == "search"
+        assert data["drifts"][0]["action"] == "reset"
+
+    @pytest.mark.asyncio
+    async def test_reset_through_middleware(self) -> None:
+        """POST /reset works through real middleware stack."""
+        manager = BrickLifecycleManager()
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=RuntimeError("fail"))
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount_all()
+
+        app = _build_live_app(manager)
+        client = TestClient(app)
+
+        resp = client.post("/api/v2/bricks/search/reset")
+        assert resp.status_code == 200
+        assert resp.headers.get("x-api-version") == "2.0"
+        assert resp.json()["state"] == "registered"
+
+    @pytest.mark.asyncio
+    async def test_full_self_healing_flow(self) -> None:
+        """Full E2E flow: fail → drift detected → reset → remount succeeds."""
+        manager = BrickLifecycleManager()
+        call_count = 0
+
+        async def _flaky_start() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("transient")
+
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=_flaky_start)
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount_all()
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        app = _build_live_app(manager, reconciler=reconciler)
+        client = TestClient(app)
+
+        # 1. Verify brick is failed
+        resp = client.get("/api/v2/bricks/search")
+        assert resp.json()["state"] == "failed"
+
+        # 2. Drift shows the problem
+        resp = client.get("/api/v2/bricks/drift")
+        assert resp.json()["drifted"] == 1
+
+        # 3. Reset via API
+        resp = client.post("/api/v2/bricks/search/reset")
+        assert resp.json()["state"] == "registered"
+
+        # 4. Remount succeeds
+        resp = client.post("/api/v2/bricks/search/mount")
+        assert resp.json()["state"] == "active"
+
+        # 5. No more drift
+        resp = client.get("/api/v2/bricks/drift")
+        assert resp.json()["drifted"] == 0
+
+        # 6. Health is green
+        resp = client.get("/api/v2/bricks/health")
+        assert resp.json()["active"] == 1
+        assert resp.json()["failed"] == 0

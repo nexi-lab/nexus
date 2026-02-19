@@ -9271,31 +9271,22 @@ class NexusFS(  # type: ignore[misc]
 
         # Read the file content WITHOUT dynamic_viewer filtering
         # We need the raw content to apply filtering here
-        if (
-            hasattr(self, "metadata")
-            and hasattr(self, "router")
-            and hasattr(self, "_get_routing_params")
-        ):
-            zone_id, _agent_id, is_admin = self._get_routing_params(context)
-            route = self.router.route(
-                file_path,
-                zone_id=zone_id,
-                is_admin=is_admin,
-                check_write=False,
-            )
-            meta = self.metadata.get(file_path)
-            if meta is None or meta.etag is None:
-                raise RuntimeError(f"File not found: {file_path}")
+        zone_id, _agent_id, is_admin = self._get_routing_params(context)
+        route = self.router.route(
+            file_path,
+            zone_id=zone_id,
+            is_admin=is_admin,
+            check_write=False,
+        )
+        meta = self.metadata.get(file_path)
+        if meta is None or meta.etag is None:
+            raise RuntimeError(f"File not found: {file_path}")
 
-            # Read raw content from backend
-            content_bytes = route.backend.read_content(meta.etag, context=context).unwrap()
-            content = (
-                content_bytes.decode("utf-8") if isinstance(content_bytes, bytes) else content_bytes
-            )
-        else:
-            # Fallback: read from filesystem
-            with open(file_path, encoding="utf-8") as f:
-                content = f.read()
+        # Read raw content from backend
+        content_bytes = route.backend.read_content(meta.etag, context=context).unwrap()
+        content = (
+            content_bytes.decode("utf-8") if isinstance(content_bytes, bytes) else content_bytes
+        )
 
         # If no dynamic viewer config, return full content
         if not column_config:

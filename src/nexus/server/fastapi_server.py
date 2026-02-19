@@ -1379,8 +1379,17 @@ def create_app(
     )
 
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
+    # Services with @rpc_expose override kernel stubs (later sources win).
     _brick_sources: list[Any] = []
-    for _attr_name in ("skill_service", "skill_package_service", "task_queue_service"):
+    for _attr_name in (
+        "skill_service",
+        "skill_package_service",
+        "task_queue_service",
+        "mcp_service",
+        "llm_service",
+        "oauth_service",
+        "mount_service",
+    ):
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:
             _brick_sources.append(_brick_svc)

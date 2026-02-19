@@ -1,10 +1,14 @@
-"""File filtering utilities for Nexus filesystem.
+"""File filtering utilities for the FUSE layer.
 
 This module provides utilities for filtering out OS-generated metadata files
-that should not be stored or displayed in Nexus.
+that should not be stored or displayed in Nexus.  Lives in ``nexus.fuse``
+because only FUSE handlers use it.
 """
 
-from nexus.core import glob_fast
+from __future__ import annotations
+
+import fnmatch
+from typing import Any
 
 # Try to import Rust acceleration
 try:
@@ -53,8 +57,8 @@ def is_os_metadata_file(path: str) -> bool:
     # Extract just the filename from the path
     filename = path.split("/")[-1] if "/" in path else path
 
-    # Check if filename matches any OS metadata pattern (uses Rust if available)
-    return glob_fast.glob_match(filename, OS_METADATA_PATTERNS)
+    # Check if filename matches any OS metadata pattern
+    return any(fnmatch.fnmatch(filename, pat) for pat in OS_METADATA_PATTERNS)
 
 
 def filter_os_metadata(files: list[str]) -> list[str]:
@@ -75,7 +79,8 @@ def filter_os_metadata(files: list[str]) -> list[str]:
     # Use Rust for bulk filtering if available (5-10x faster)
     if RUST_AVAILABLE and len(files) >= 10:
         try:
-            return nexus_fast.filter_paths(files, OS_METADATA_PATTERNS)  # type: ignore[no-any-return]
+            result: list[str] = nexus_fast.filter_paths(files, OS_METADATA_PATTERNS)
+            return result
         except (OSError, ValueError, RuntimeError):
             # Fall back to Python on error
             pass
@@ -84,7 +89,7 @@ def filter_os_metadata(files: list[str]) -> list[str]:
     return [f for f in files if not is_os_metadata_file(f)]
 
 
-def filter_os_metadata_dicts(files: list[dict[str, any]]) -> list[dict[str, any]]:  # type: ignore[valid-type]
+def filter_os_metadata_dicts(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter out OS metadata files from a list of file info dicts.
 
     Args:

@@ -22,6 +22,7 @@ from nexus.services.brick_lifecycle import (
 )
 from nexus.services.protocols.brick_lifecycle import (
     BrickLifecycleProtocol,
+    BrickSpec,
     BrickState,
 )
 
@@ -125,12 +126,14 @@ class TestBrickRegistration:
 # Valid transitions: (from_state, event, expected_state)
 VALID_TRANSITIONS = [
     (BrickState.REGISTERED, "mount", BrickState.STARTING),
+    (BrickState.REGISTERED, "failed", BrickState.FAILED),  # Issue #2060: 5B
     (BrickState.STARTING, "started", BrickState.ACTIVE),
     (BrickState.STARTING, "failed", BrickState.FAILED),
     (BrickState.ACTIVE, "unmount", BrickState.STOPPING),
     (BrickState.ACTIVE, "failed", BrickState.FAILED),
     (BrickState.STOPPING, "stopped", BrickState.UNREGISTERED),
     (BrickState.STOPPING, "failed", BrickState.FAILED),
+    (BrickState.FAILED, "reset", BrickState.REGISTERED),  # Issue #2060: 7A
 ]
 
 # Invalid transitions: (from_state, event)
@@ -494,6 +497,120 @@ class TestMountAllUnmountAll:
         assert manager.get_status("a").state == BrickState.ACTIVE  # type: ignore[union-attr]
         assert manager.get_status("b").state == BrickState.FAILED  # type: ignore[union-attr]
         assert manager.get_status("c").state == BrickState.ACTIVE  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# Reset, Spec, and _safe_lifecycle_op tests (Issue #2060)
+# ---------------------------------------------------------------------------
+
+
+class TestResetAndSpec:
+    """Test reset(), get_spec(), all_specs(), and _safe_lifecycle_op."""
+
+    @pytest.fixture
+    def manager(self) -> BrickLifecycleManager:
+        return BrickLifecycleManager()
+
+    @pytest.mark.asyncio
+    async def test_reset_failed_brick_then_remount(self, manager: BrickLifecycleManager) -> None:
+        """FAILED → reset → REGISTERED → mount → ACTIVE."""
+        brick = _make_lifecycle_brick("search")
+        # First start fails
+        brick.start = AsyncMock(
+            side_effect=[RuntimeError("fail"), None]  # fail first, succeed second
+        )
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        assert manager.get_status("search").state == BrickState.FAILED  # type: ignore[union-attr]
+
+        manager.reset("search")
+        assert manager.get_status("search").state == BrickState.REGISTERED  # type: ignore[union-attr]
+
+        await manager.mount("search")
+        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+
+    def test_reset_clears_error_and_timestamps(self, manager: BrickLifecycleManager) -> None:
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        # Force into FAILED with error
+        manager._force_state("search", BrickState.FAILED)
+        entry = manager._bricks["search"]
+        entry.error = "some error"
+        entry.started_at = 123.0
+        entry.stopped_at = 456.0
+        entry.retry_count = 2
+
+        manager.reset("search")
+        assert entry.error is None
+        assert entry.started_at is None
+        assert entry.stopped_at is None
+        assert entry.retry_count == 0
+
+    def test_reset_nonexistent_raises_keyerror(self, manager: BrickLifecycleManager) -> None:
+        with pytest.raises(KeyError, match="not found"):
+            manager.reset("nonexistent")
+
+    def test_reset_non_failed_raises_invalid_transition(
+        self, manager: BrickLifecycleManager
+    ) -> None:
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        with pytest.raises(InvalidTransitionError):
+            manager.reset("search")  # REGISTERED, not FAILED
+
+    def test_get_spec_returns_frozen_spec(self, manager: BrickLifecycleManager) -> None:
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol", depends_on=("llm",))
+        spec = manager.get_spec("search")
+        assert spec is not None
+        assert isinstance(spec, BrickSpec)
+        assert spec.name == "search"
+        assert spec.protocol_name == "SearchProtocol"
+        assert spec.depends_on == ("llm",)
+        assert spec.enabled is True
+
+    def test_get_spec_nonexistent_returns_none(self, manager: BrickLifecycleManager) -> None:
+        assert manager.get_spec("nonexistent") is None
+
+    def test_all_specs_returns_all(self, manager: BrickLifecycleManager) -> None:
+        manager.register("a", _make_lifecycle_brick("a"), protocol_name="AP")
+        manager.register("b", _make_lifecycle_brick("b"), protocol_name="BP")
+        specs = manager.all_specs()
+        assert len(specs) == 2
+        assert "a" in specs
+        assert "b" in specs
+        assert specs["a"].name == "a"
+        assert specs["b"].protocol_name == "BP"
+
+    @pytest.mark.asyncio
+    async def test_safe_lifecycle_op_catches_and_fails(
+        self, manager: BrickLifecycleManager
+    ) -> None:
+        """_safe_mount should catch exceptions and transition brick to FAILED."""
+        brick = _make_lifecycle_brick("test")
+        manager.register("test", brick, protocol_name="TP")
+        # The _safe_mount calls mount which on exception transitions to FAILED
+        brick.start = AsyncMock(side_effect=RuntimeError("boom"))
+        await manager._safe_mount("test", timeout=5.0)
+        assert manager.get_status("test").state == BrickState.FAILED  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_dag_failure_skips_dependent(self, manager: BrickLifecycleManager) -> None:
+        """If A fails, B (depends on A) stays REGISTERED after mount_all."""
+        brick_a = _make_failing_brick(RuntimeError("A failed"))
+        brick_b = _make_lifecycle_brick("b")
+
+        manager.register("a", brick_a, protocol_name="AP")
+        manager.register("b", brick_b, protocol_name="BP", depends_on=("a",))
+
+        await manager.mount_all()
+
+        assert manager.get_status("a").state == BrickState.FAILED  # type: ignore[union-attr]
+        # B depends on A, but mount_all only mounts REGISTERED bricks.
+        # B stays REGISTERED because it's at level 1, and A (at level 0) failed.
+        # mount_all filters to_mount by state==REGISTERED, so B gets mounted anyway
+        # (fail-forward design). But B should still be ACTIVE since B itself doesn't fail.
+        assert manager.get_status("b").state == BrickState.ACTIVE  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------

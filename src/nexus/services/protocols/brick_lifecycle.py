@@ -32,6 +32,8 @@ PRE_UNMOUNT: str = "pre_unmount"
 POST_UNMOUNT: str = "post_unmount"
 BRICK_STARTED: str = "brick_started"
 BRICK_STOPPED: str = "brick_stopped"
+RECONCILE_STARTED: str = "reconcile_started"
+RECONCILE_COMPLETED: str = "reconcile_completed"
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +118,71 @@ class BrickHealthReport:
     active: int
     failed: int
     bricks: tuple[BrickStatus, ...]
+
+
+# ---------------------------------------------------------------------------
+# Spec / Drift models — desired-state declaration + drift detection (Issue #2060)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class BrickSpec:
+    """Desired-state declaration for a brick (Kubernetes-inspired spec).
+
+    Immutable — use ``dataclasses.replace()`` to create modified copies.
+    The reconciler compares spec vs. status to detect drift.
+
+    Attributes:
+        name: Brick registry name.
+        protocol_name: Protocol type name this brick implements.
+        depends_on: Tuple of brick names this brick depends on.
+        enabled: Whether the brick should be active (desired state).
+        generation: Monotonically increasing version; bumped on spec change.
+    """
+
+    name: str
+    protocol_name: str
+    depends_on: tuple[str, ...] = ()
+    enabled: bool = True
+    generation: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class DriftReport:
+    """Single-brick drift report — what the reconciler observed.
+
+    Attributes:
+        brick_name: Name of the brick.
+        spec_state: What spec says should be (e.g. "enabled" → should be ACTIVE).
+        actual_state: What status says it is.
+        action: What reconciler will do (e.g. "mount", "reset", "skip").
+        detail: Human-readable explanation.
+    """
+
+    brick_name: str
+    spec_state: str
+    actual_state: BrickState
+    action: str
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileResult:
+    """Summary of a single reconciliation pass.
+
+    Attributes:
+        total_bricks: Total number of bricks evaluated.
+        drifted: Number of bricks with spec/status mismatch.
+        actions_taken: Number of corrective actions performed.
+        errors: Number of actions that failed.
+        drifts: Per-brick drift reports.
+    """
+
+    total_bricks: int
+    drifted: int
+    actions_taken: int
+    errors: int
+    drifts: tuple[DriftReport, ...] = ()
 
 
 # ---------------------------------------------------------------------------

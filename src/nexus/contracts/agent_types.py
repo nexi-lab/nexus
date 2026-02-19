@@ -12,8 +12,24 @@ from __future__ import annotations
 import types
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
+
+
+class EvictionReason(StrEnum):
+    """Reason for agent eviction (Issue #2170).
+
+    Used in EvictionResult to distinguish why an eviction cycle ran.
+    """
+
+    NORMAL_PRESSURE = "normal_pressure"
+    PRESSURE_WARNING = "pressure_warning"
+    PRESSURE_CRITICAL = "pressure_critical"
+    OVER_AGENT_CAP = "over_agent_cap"
+    MANUAL = "manual"
+    COOLDOWN = "cooldown"
+    NO_CANDIDATES = "no_candidates"
+    CHECKPOINT_TIMEOUT = "checkpoint_timeout"
 
 
 class AgentState(Enum):
@@ -158,4 +174,4 @@ class AgentRecord:
             Empty list if no capabilities are set.
         """
         caps = self.metadata.get("capabilities", [])
-        return list(caps) if isinstance(caps, (list, tuple)) else []
+        return list(caps) if isinstance(caps, list | tuple) else []

@@ -51,7 +51,6 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
-from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -60,6 +59,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 
 # --- Extracted modules (re-exported for backward compatibility) ---
 from nexus.server.dependencies import (  # noqa: F401, E402

@@ -26,7 +26,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class BaseRegistry(Generic[T]):
 
     Example::
 
-        from nexus.contracts.registry import BaseRegistry
+        from nexus.lib.registry import BaseRegistry
         reg: BaseRegistry[int] = BaseRegistry("counters")
         reg.register("hits", 0)
         assert reg.get("hits") == 0
@@ -151,7 +151,7 @@ class BaseRegistry(Generic[T]):
                 if issubclass(obj, base_class) and obj is not base_class and obj.__module__ == fqn:
                     try:
                         instance = obj()
-                        self.register(_key_fn(obj), instance, allow_overwrite=True)  # type: ignore[arg-type]
+                        self.register(_key_fn(obj), cast(T, instance), allow_overwrite=True)
                         count += 1
                         logger.debug("Discovered %s from %s", attr_name, fqn)
                     except (TypeError, RuntimeError, ValueError):

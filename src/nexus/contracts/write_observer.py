@@ -1,9 +1,10 @@
 """WriteObserverProtocol — kernel write-mutation observer interface.
 
 Defines the contract for write observers injected into NexusFS kernel.
-The kernel calls on_write()/on_delete()/on_rename()/on_write_batch()
-after Metastore mutations. Observers handle side-effects (audit trail,
-version recording, etc.) and own their own error policy.
+The kernel calls on_write()/on_delete()/on_rename()/on_write_batch()/
+on_mkdir()/on_rmdir() after Metastore mutations. Observers handle
+side-effects (audit trail, version recording, etc.) and own their
+own error policy.
 
 Current implementations:
 - RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode)
@@ -83,4 +84,25 @@ class WriteObserverProtocol(Protocol):
         metadata_snapshot: dict[str, Any] | None = ...,
     ) -> None:
         """Called after a file delete completes in Metastore."""
+        ...
+
+    def on_mkdir(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = ...,
+        agent_id: str | None = ...,
+    ) -> None:
+        """Called after a directory creation completes in Metastore."""
+        ...
+
+    def on_rmdir(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = ...,
+        agent_id: str | None = ...,
+        recursive: bool = ...,
+    ) -> None:
+        """Called after a directory removal completes in Metastore."""
         ...

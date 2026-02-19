@@ -21,20 +21,16 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 @pytest.fixture
 def nx_with_mount():
-    """Create NexusFS instance with mount manager support."""
-    from nexus import NexusFS
+    """Create NexusFS instance with mount manager support via factory."""
     from nexus.backends.local import LocalBackend
+    from nexus.factory import create_nexus_fs
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create root backend
         root_backend = LocalBackend(root_path=tmpdir)
-
-        # Use unique SQLite database file to avoid parallel test conflicts
         db_file = Path(tmpdir) / "metadata.db"
-
-        # Create NexusFS with metadata store
         metadata_store = RaftMetadataStore.embedded(str(db_file).replace(".db", ""))
-        nx = NexusFS(
+
+        nx = create_nexus_fs(
             backend=root_backend,
             metadata_store=metadata_store,
             permissions=PermissionConfig(enforce=False),

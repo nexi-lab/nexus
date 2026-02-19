@@ -153,7 +153,7 @@ class TestChunkedStorageBackwardCompatibility:
         assert nexus_fs.read("/large.bin") == large_content
 
         # List directory
-        files = nexus_fs.list("/")
+        files = nexus_fs.search_service.list("/")
         assert "/small.txt" in files or "small.txt" in files
         assert "/large.bin" in files or "large.bin" in files
 

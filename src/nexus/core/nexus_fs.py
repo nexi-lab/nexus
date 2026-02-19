@@ -29,7 +29,6 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
     SystemServices,
-    WiredServices,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
@@ -37,6 +36,10 @@ from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
+
+if TYPE_CHECKING:
+    from nexus.parsers.registry import ParserRegistry
+
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -79,6 +82,11 @@ class NexusFS(  # type: ignore[misc]
         kernel_services: KernelServices | None = None,
         system_services: SystemServices | None = None,
         brick_services: BrickServices | None = None,
+        parse_fn: Any | None = None,
+        content_cache: Any | None = None,
+        parser_registry: ParserRegistry | None = None,
+        provider_registry: Any | None = None,
+        vfs_lock_manager: Any | None = None,
     ):
         """Initialize NexusFS kernel."""
         # Config defaults
@@ -112,9 +120,9 @@ class NexusFS(  # type: ignore[misc]
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
 
-        # Content cache (Issue #2134: from BrickServices)
-        if brk_svc.content_cache is not None:
-            backend.content_cache = brk_svc.content_cache
+        # Content cache
+        if content_cache is not None:
+            backend.content_cache = content_cache
 
         # Four pillars: backend, metadata, record store, cache store
         self.backend = backend
@@ -143,24 +151,24 @@ class NexusFS(  # type: ignore[misc]
                     self.router.register_namespace(ns_config)
         self.router.add_mount("/", self.backend, priority=0)
 
-        # Parser registries (Issue #2134: from BrickServices, fallback for tests)
-        if brk_svc.parser_registry is not None:
-            self.parser_registry = brk_svc.parser_registry
+        # Parser registries (injected by ParsersBrick, fallback for tests)
+        if parser_registry is not None:
+            self.parser_registry = parser_registry
         else:
             from nexus.parsers.markitdown_parser import MarkItDownParser as _MkD
             from nexus.parsers.registry import ParserRegistry as _PR
 
             self.parser_registry = _PR()
             self.parser_registry.register(_MkD())
-        if brk_svc.provider_registry is not None:
-            self.provider_registry = brk_svc.provider_registry
+        if provider_registry is not None:
+            self.provider_registry = provider_registry
         else:
             from nexus.parsers.providers.registry import ProviderRegistry as _PvR
 
             self.provider_registry = _PvR()
             self.provider_registry.auto_discover()
 
-        self._virtual_view_parse_fn = brk_svc.parse_fn
+        self._virtual_view_parse_fn = parse_fn
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
@@ -201,8 +209,6 @@ class NexusFS(  # type: ignore[misc]
         self._async_agent_registry = sys_svc.async_agent_registry
         self._async_namespace_manager = sys_svc.async_namespace_manager
         self._context_branch_service = sys_svc.context_branch_service
-        # Zone lifecycle — write gating during deprovisioning (Issue #2061)
-        self._zone_lifecycle = getattr(sys_svc, "zone_lifecycle", None)
 
         # =====================================================================
         # Tier 2: BRICK services (Issue #2034: from BrickServices)
@@ -231,9 +237,9 @@ class NexusFS(  # type: ignore[misc]
         self._coordination_client: Any = None
         self._event_client: Any = None
 
-        # VFS lock manager (Issue #2134: from BrickServices)
-        if brk_svc.vfs_lock_manager is not None:
-            self._vfs_lock_manager = brk_svc.vfs_lock_manager
+        # VFS lock manager
+        if vfs_lock_manager is not None:
+            self._vfs_lock_manager = vfs_lock_manager
         else:
             from nexus.core.lock_fast import create_vfs_lock_manager
 
@@ -241,8 +247,8 @@ class NexusFS(  # type: ignore[misc]
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
         # Service attributes — set to None by default.
-        # Wired by factory via _bind_wired_services() after construction.
-        # Issue #643/#2133: kernel never imports or creates services.
+        # Wired by service_wiring.wire_services() during __init__.
+        # Issue #643: kernel no longer creates services.
         self.rebac_service: Any = None
         self.mount_service: Any = None
         self._gateway: Any = None
@@ -272,18 +278,9 @@ class NexusFS(  # type: ignore[misc]
         )
         self._post_mutation_hooks: builtins.list[Any] = []
 
-        # Register VFS hooks (services wired by factory via _bind_wired_services)
+        # Wire self-dependent services, then register hooks
+        self._wire_services()
         self._register_vfs_hooks()
-
-        # PermissionChecker: core module, safe to create here (Issue #2133)
-        from nexus.core.permission_checker import PermissionChecker
-
-        self._permission_checker = PermissionChecker(
-            permission_enforcer=self._permission_enforcer,
-            metadata_store=self.metadata,
-            default_context=self._default_context,
-            enforce_permissions=self._enforce_permissions,
-        )
 
         # Read-set-aware cache (Issue #1169)
         self._read_set_cache = None
@@ -307,22 +304,26 @@ class NexusFS(  # type: ignore[misc]
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
-        # Tiger Cache (Issue #2133: injected via SystemServices, fallback for tests)
-        ssvc = self._system_services
-        _injected_tcm = getattr(ssvc, "tiger_cache_manager", None) if ssvc else None
-        if _injected_tcm is not None:
-            self._tiger_cache_manager = _injected_tcm
-        else:
-            from nexus.services.tiger_cache_manager import TigerCacheManager
+        # Tiger Cache
+        from nexus.services.tiger_cache_manager import TigerCacheManager
 
-            self._tiger_cache_manager = TigerCacheManager(
-                rebac_manager=self._rebac_manager,
-                metadata_store=self.metadata,
-                default_zone_id=self._default_context.zone_id or "root",
-                process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
-                warm_cache_fn=getattr(self, "warm_tiger_cache", None),
-            )
-            self._tiger_cache_manager.initialize()
+        self._tiger_cache_manager = TigerCacheManager(
+            rebac_manager=self._rebac_manager,
+            metadata_store=self.metadata,
+            default_zone_id=self._default_context.zone_id or "root",
+            process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
+            warm_cache_fn=getattr(self, "warm_tiger_cache", None),
+        )
+        self._tiger_cache_manager.initialize()
+
+    def _wire_services(self) -> None:
+        """Wire services that require a reference to self (NexusFS).
+
+        Delegates to nexus.core.service_wiring.wire_services() (Issue #2033).
+        """
+        from nexus.core.service_wiring import wire_services
+
+        wire_services(self)
 
     def _register_vfs_hooks(self) -> None:
         """Register VFS hook implementations on the pipeline."""
@@ -380,68 +381,30 @@ class NexusFS(  # type: ignore[misc]
                 )
             )
 
-    def _bind_wired_services(self, wired: WiredServices | dict[str, Any]) -> None:
+    def _bind_wired_services(self, wired: dict[str, Any]) -> None:
         """Bind wired services from factory two-phase init.
 
         Args:
-            wired: WiredServices dataclass (from _boot_wired_services).
-                   Also accepts dict for backward compatibility with tests.
-
-        Issue #2133: Accepts WiredServices frozen dataclass.
+            wired: Dict of service_name -> instance (from _boot_wired_services).
         """
-        if isinstance(wired, dict):
-            # Backward compat for tests that pass a dict
-            self.rebac_service = wired.get("rebac_service")
-            self.mount_service = wired.get("mount_service")
-            self._gateway = wired.get("gateway")
-            self._mount_core_service = wired.get("mount_core_service")
-            self._sync_service = wired.get("sync_service")
-            self._sync_job_service = wired.get("sync_job_service")
-            self._mount_persist_service = wired.get("mount_persist_service")
-            self.mcp_service = wired.get("mcp_service")
-            self.llm_service = wired.get("llm_service")
-            self._llm_subsystem = wired.get("llm_subsystem")
-            self.oauth_service = wired.get("oauth_service")
-            self.skill_service = wired.get("skill_service")
-            self.skill_package_service = wired.get("skill_package_service")
-            self.search_service = wired.get("search_service")
-            self.share_link_service = wired.get("share_link_service")
-            self.events_service = wired.get("events_service")
-            self.task_queue_service = wired.get("task_queue_service")
-            self._workspace_rpc_service = wired.get("workspace_rpc_service")
-            self._agent_rpc_service = wired.get("agent_rpc_service")
-            self._user_provisioning_service = wired.get("user_provisioning_service")
-            self._sandbox_rpc_service = wired.get("sandbox_rpc_service")
-            self._metadata_export_service = wired.get("metadata_export_service")
-            self._ace_rpc_service = wired.get("ace_rpc_service")
-            self._descendant_checker = wired.get("descendant_checker")
-            self._memory_provider = wired.get("memory_provider")
-            return
-        self.rebac_service = wired.rebac_service
-        self.mount_service = wired.mount_service
-        self._gateway = wired.gateway
-        self._mount_core_service = wired.mount_core_service
-        self._sync_service = wired.sync_service
-        self._sync_job_service = wired.sync_job_service
-        self._mount_persist_service = wired.mount_persist_service
-        self.mcp_service = wired.mcp_service
-        self.llm_service = wired.llm_service
-        self._llm_subsystem = wired.llm_subsystem
-        self.oauth_service = wired.oauth_service
-        self.skill_service = wired.skill_service
-        self.skill_package_service = wired.skill_package_service
-        self.search_service = wired.search_service
-        self.share_link_service = wired.share_link_service
-        self.events_service = wired.events_service
-        self.task_queue_service = wired.task_queue_service
-        self._workspace_rpc_service = wired.workspace_rpc_service
-        self._agent_rpc_service = wired.agent_rpc_service
-        self._user_provisioning_service = wired.user_provisioning_service
-        self._sandbox_rpc_service = wired.sandbox_rpc_service
-        self._metadata_export_service = wired.metadata_export_service
-        self._ace_rpc_service = wired.ace_rpc_service
-        self._descendant_checker = wired.descendant_checker
-        self._memory_provider = wired.memory_provider
+        # version_service removed (Issue #2034) — now set from BrickServices in __init__
+        self.rebac_service = wired.get("rebac_service")
+        self.mount_service = wired.get("mount_service")
+        self._gateway = wired.get("gateway")
+        self._mount_core_service = wired.get("mount_core_service")
+        self._sync_service = wired.get("sync_service")
+        self._sync_job_service = wired.get("sync_job_service")
+        self._mount_persist_service = wired.get("mount_persist_service")
+        self.mcp_service = wired.get("mcp_service")
+        self.llm_service = wired.get("llm_service")
+        self._llm_subsystem = wired.get("llm_subsystem")
+        self.oauth_service = wired.get("oauth_service")
+        self.skill_service = wired.get("skill_service")
+        self.skill_package_service = wired.get("skill_package_service")
+        self.search_service = wired.get("search_service")
+        self.share_link_service = wired.get("share_link_service")
+        self.events_service = wired.get("events_service")
+        self.task_queue_service = wired.get("task_queue_service")
 
     @property
     def _service_extras(self) -> dict[str, Any]:
@@ -790,19 +753,6 @@ class NexusFS(  # type: ignore[misc]
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
 
-    def _check_zone_writable(self, context: OperationContext | dict | None = None) -> None:
-        """Raise ZoneTerminatingError if the zone is being deprovisioned.
-
-        Issue #2061: Write-gating during zone finalization (Decision #4A).
-        """
-        if self._zone_lifecycle is None:
-            return
-        zone_id, _, _ = self._get_routing_params(context)
-        if zone_id and self._zone_lifecycle.is_zone_terminating(zone_id):
-            from nexus.contracts.exceptions import ZoneTerminatingError
-
-            raise ZoneTerminatingError(zone_id)
-
     @property
     def zone_id(self) -> str | None:
         """Default zone_id from the instance context."""
@@ -966,9 +916,6 @@ class NexusFS(  # type: ignore[misc]
 
         # Use provided context or default
         ctx = context if context is not None else self._default_context
-
-        # Block writes during zone deprovisioning (Issue #2061)
-        self._check_zone_writable(ctx)
 
         # Check write permission on the appropriate ancestor directory
         # - parents=False: check immediate parent (must exist)
@@ -1138,9 +1085,6 @@ class NexusFS(  # type: ignore[misc]
         import errno
 
         path = self._validate_path(path)
-
-        # Block writes during zone deprovisioning (Issue #2061)
-        self._check_zone_writable(context)
 
         # P0 Fixes: Create OperationContext
         if context is not None:
@@ -1539,9 +1483,12 @@ class NexusFS(  # type: ignore[misc]
         "list_saved_mounts": "_mount_persist_service",
         "load_mount": "_mount_persist_service",
         "delete_saved_mount": "_mount_persist_service",
-        # SearchService (list/glob/grep are thin forwarders, not __getattr__)
+        # SearchService (list/glob/grep/glob_batch delegated via __getattr__)
         # asemantic_search* are in _SERVICE_ALIASES (name transformation: a-prefix removed)
+        "list": "search_service",
+        "glob": "search_service",
         "glob_batch": "search_service",
+        "grep": "search_service",
         # TaskQueueService
         "get_task": "task_queue_service",
         "cancel_task": "task_queue_service",
@@ -1962,60 +1909,6 @@ class NexusFS(  # type: ignore[misc]
             exclude_patterns and any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns)
         )
 
-    # --- Search (list/glob/grep already have concrete impls below) ---
-
-    def list(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-        details: bool = False,
-        show_parsed: bool = True,
-        context: Any = None,
-        limit: int | None = None,
-        cursor: str | None = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
-        if self.search_service is not None:
-            return self.search_service.list(
-                path=path,
-                recursive=recursive,
-                details=details,
-                show_parsed=show_parsed,
-                context=context,
-                limit=limit,
-                cursor=cursor,
-            )
-        # Kernel-only fallback: delegate directly to metadata store
-        prefix = path if path != "/" else ""
-        if prefix and not prefix.endswith("/"):
-            prefix = prefix + "/"
-        entries = self.metadata.list(prefix=prefix, recursive=recursive)
-        if details:
-            return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
-        return [e.path for e in entries]
-
-    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        return self.search_service.glob(pattern=pattern, path=path, context=context)
-
-    def grep(
-        self,
-        pattern: str,
-        path: str = "/",
-        file_pattern: str | None = None,
-        ignore_case: bool = False,
-        max_results: int = 100,
-        search_mode: str = "auto",
-        context: Any = None,
-    ) -> builtins.list[dict[str, Any]]:
-        return self.search_service.grep(
-            pattern=pattern,
-            path=path,
-            file_pattern=file_pattern,
-            ignore_case=ignore_case,
-            max_results=max_results,
-            search_mode=search_mode,
-            context=context,
-        )
-
     @staticmethod
     def _run_async(coro: Any) -> Any:
         """Run async coroutine safely, handling both running and non-running event loops.
@@ -2276,17 +2169,17 @@ class NexusFS(  # type: ignore[misc]
 
     @staticmethod
     def _extract_zone_id(context: dict | Any | None) -> str | None:
-        """Extract zone_id from context."""
-        from nexus.contracts.agent_utils import extract_zone_id
+        """Extract zone_id from context — delegates to AgentRPCService."""
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
 
-        return extract_zone_id(context)
+        return AgentRPCService._extract_zone_id(context)
 
     @staticmethod
     def _extract_user_id(context: dict | Any | None) -> str | None:
-        """Extract user_id from context."""
-        from nexus.contracts.agent_utils import extract_user_id
+        """Extract user_id from context — delegates to AgentRPCService."""
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
 
-        return extract_user_id(context)
+        return AgentRPCService._extract_user_id(context)
 
     @staticmethod
     def _create_agent_config_data(
@@ -2298,10 +2191,10 @@ class NexusFS(  # type: ignore[misc]
         metadata: dict | None = None,
         api_key: str | None = None,
     ) -> dict[str, Any]:
-        """Create agent config data."""
-        from nexus.contracts.agent_utils import create_agent_config_data
+        """Create agent config data — delegates to AgentRPCService."""
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
 
-        return create_agent_config_data(
+        return AgentRPCService._create_agent_config_data(
             agent_id=agent_id,
             name=name,
             user_id=user_id,

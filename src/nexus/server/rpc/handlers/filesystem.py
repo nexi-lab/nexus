@@ -247,7 +247,7 @@ def handle_list(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
         kwargs["cursor"] = cursor
 
     _list_start = _time.time()
-    result = nexus_fs.list(params.path, **kwargs)
+    result = nexus_fs.search_service.list(params.path, **kwargs)
     _list_elapsed = (_time.time() - _list_start) * 1000
 
     # Result is PaginatedResult when limit is provided
@@ -361,7 +361,7 @@ def handle_glob(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     if hasattr(params, "path") and params.path:
         kwargs["path"] = params.path
 
-    matches = nexus_fs.glob(params.pattern, **kwargs)
+    matches = nexus_fs.search_service.glob(params.pattern, **kwargs)
     matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 
@@ -380,7 +380,7 @@ def handle_grep(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     if hasattr(params, "search_mode") and params.search_mode is not None:
         kwargs["search_mode"] = params.search_mode
 
-    results = nexus_fs.grep(params.pattern, **kwargs)
+    results = nexus_fs.search_service.grep(params.pattern, **kwargs)
     results = [unscope_result(r) for r in results]
     return {"results": results}
 

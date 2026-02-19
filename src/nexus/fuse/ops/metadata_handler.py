@@ -192,7 +192,10 @@ class MetadataHandler:
 
         # Python path: list from filesystem
         list_start = time.time()
-        files_raw = ctx.nexus_fs.list(path, recursive=False, details=True, context=ctx.context)
+        _nx: Any = ctx.nexus_fs
+        files_raw = _nx.search_service.list(
+            path, recursive=False, details=True, context=ctx.context
+        )
         list_elapsed = time.time() - list_start
         files = files_raw if isinstance(files_raw, list) else []
         logger.info(

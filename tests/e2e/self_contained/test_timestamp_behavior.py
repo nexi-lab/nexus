@@ -174,7 +174,7 @@ class TestModifiedAtOnReads:
 
         # List parent directory multiple times
         for _ in range(5):
-            list(nexus_fs.list(parent))
+            list(nexus_fs.search_service.list(parent))
 
         meta_final = get_metadata(nexus_fs, path)
 

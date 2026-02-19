@@ -190,7 +190,8 @@ class MutationHandler:
         except Exception as e:
             logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
 
-        files = ctx.nexus_fs.list(old_path, recursive=True, details=True, context=ctx.context)
+        _nx: Any = ctx.nexus_fs
+        files = _nx.search_service.list(old_path, recursive=True, details=True, context=ctx.context)
 
         for file_info in files:
             if not isinstance(file_info, dict):

@@ -83,6 +83,9 @@ class TigerCache:
         resource_map: TigerResourceMap | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         dragonfly_cache: TigerCacheProtocol | None = None,
+        l2_max_workers: int = 4,
+        *,
+        is_postgresql: bool = False,
     ):
         """Initialize Tiger Cache.
 
@@ -91,13 +94,15 @@ class TigerCache:
             resource_map: Resource mapping service (created if not provided)
             rebac_manager: ReBAC manager for permission computation
             dragonfly_cache: Optional Dragonfly cache for L2 distributed caching
+            l2_max_workers: Thread pool size for L2 dragonfly operations.
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         from nexus.rebac.cache.tiger.resource_map import TigerResourceMap as _TRM
 
         self._engine = engine
-        self._resource_map = resource_map or _TRM(engine)
+        self._resource_map = resource_map or _TRM(engine, is_postgresql=is_postgresql)
         self._rebac_manager = rebac_manager
-        self._is_postgresql = "postgresql" in str(engine.url)
+        self._is_postgresql = is_postgresql
 
         # L2: Dragonfly distributed cache (optional)
         self._dragonfly: TigerCacheProtocol | None = dragonfly_cache
@@ -112,6 +117,7 @@ class TigerCache:
         self._lock = threading.RLock()
 
         # Persistent thread pool for L2 operations (avoid per-operation creation)
+        self._l2_max_workers = l2_max_workers
         self._l2_executor: Any | None = None
 
     def set_dragonfly_cache(self, dragonfly_cache: TigerCacheProtocol | None) -> None:
@@ -128,12 +134,12 @@ class TigerCache:
             # Cache URL for sync Redis operations
             _client = getattr(dragonfly_cache, "_client", None)
             self._dragonfly_url = getattr(_client, "_url", None) if _client else None
-            # Create persistent thread pool (max 4 workers for L2 ops)
+            # Create persistent thread pool for L2 ops
             import concurrent.futures
 
             if self._l2_executor is None:
                 self._l2_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=4, thread_name_prefix="tiger-l2"
+                    max_workers=self._l2_max_workers, thread_name_prefix="tiger-l2"
                 )
             logger.info("[TIGER] Dragonfly L2 cache enabled")
         else:
@@ -726,9 +732,7 @@ class TigerCache:
             return results
 
         # Bulk fetch from database (zone_id removed from cache key per Issue #979)
-        is_postgresql = "postgresql" in str(self._engine.url)
-
-        if is_postgresql:
+        if self._is_postgresql:
             query = text("""
                 SELECT subject_type, subject_id, permission, resource_type,
                        bitmap_data, revision

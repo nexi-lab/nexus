@@ -1,6 +1,6 @@
 """Base class for sync-related database stores.
 
-Provides shared session management and dialect detection for
+Provides shared session management and dialect-aware helpers for
 ChangeLogStore, SyncBacklogStore, and future sync stores.
 
 Extracted from ChangeLogStore (Issue #1127) during Phase 0 refactoring
@@ -10,7 +10,6 @@ for Issue #1129 (Bidirectional Sync).
 from __future__ import annotations
 
 import logging
-import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any
@@ -19,53 +18,35 @@ logger = logging.getLogger(__name__)
 
 
 class SyncStoreBase:
-    """Base class providing session management and dialect detection.
+    """Base class providing session management and dialect-aware helpers.
 
     Subclasses (ChangeLogStore, SyncBacklogStore) inherit:
     - _with_session(): Context manager for DB sessions (commit/rollback/close)
-    - _detect_dialect(): Cached, thread-safe PostgreSQL detection
+    - _dialect_insert(): Dialect-appropriate INSERT statement
+    - _dialect_upsert(): Dialect-aware INSERT ON CONFLICT DO UPDATE
     """
 
-    def __init__(self, session_factory: Callable[..., Any] | None) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[..., Any] | None,
+        *,
+        is_postgresql: bool = False,
+    ) -> None:
         """Initialize with a session factory for database access.
 
         Args:
             session_factory: SQLAlchemy session factory callable.
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
+                Determines dialect-specific INSERT/UPSERT behaviour.
         """
         self._session_factory = session_factory
-        self._is_postgres: bool | None = None
-        self._dialect_lock = threading.Lock()
+        self._is_postgres: bool = is_postgresql
 
     def _get_session(self) -> Any:
         """Get a database session from the session factory."""
         if self._session_factory is not None:
             return self._session_factory()
         return None
-
-    def _detect_dialect(self) -> bool:
-        """Detect if the database is PostgreSQL. Result is cached after first call.
-
-        Thread-safe: uses double-checked locking to avoid races.
-
-        Returns:
-            True if PostgreSQL, False for SQLite or unknown
-        """
-        if self._is_postgres is not None:
-            return self._is_postgres
-        with self._dialect_lock:
-            if self._is_postgres is not None:
-                return self._is_postgres
-            session = self._get_session()
-            if session is not None:
-                try:
-                    self._is_postgres = session.bind.dialect.name == "postgresql"
-                except Exception:
-                    self._is_postgres = False
-                finally:
-                    session.close()
-            else:
-                self._is_postgres = False
-            return self._is_postgres
 
     def _dialect_insert(self, model: type) -> Any:
         """Return dialect-appropriate INSERT statement for the given model.
@@ -78,7 +59,7 @@ class SyncStoreBase:
         Returns:
             Dialect-appropriate insert statement (pg_insert or sqlite_insert)
         """
-        if self._detect_dialect():
+        if self._is_postgres:
             from sqlalchemy.dialects.postgresql import insert as pg_insert
 
             return pg_insert(model)
@@ -109,7 +90,7 @@ class SyncStoreBase:
             update_set: Columns to update on conflict
         """
         stmt = self._dialect_insert(model).values(**values)
-        if self._detect_dialect():
+        if self._is_postgres:
             stmt = stmt.on_conflict_do_update(constraint=pg_constraint, set_=update_set)
         else:
             stmt = stmt.on_conflict_do_update(index_elements=sqlite_index_elements, set_=update_set)

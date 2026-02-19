@@ -8,7 +8,7 @@ routers be thin adapters with no business logic.
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +27,9 @@ class DaemonSemanticSearchWrapper:
         limit: int = 10,
         search_mode: str = "hybrid",
         alpha: float = 0.5,
+        **kwargs: Any,  # noqa: ARG002
     ) -> list[Any]:
-        from nexus.search.semantic import SemanticSearchResult
+        from nexus.search.results import BaseSearchResult
 
         results = await self.daemon.search(
             query=query,
@@ -38,7 +39,7 @@ class DaemonSemanticSearchWrapper:
             alpha=alpha,
         )
         return [
-            SemanticSearchResult(
+            BaseSearchResult(
                 path=r.path,
                 chunk_index=r.chunk_index,
                 chunk_text=r.chunk_text,
@@ -62,6 +63,7 @@ async def graph_enhanced_search(
     alpha: float,
     graph_mode: str,
     *,
+    record_store: Any,
     async_session_factory: Any,
     search_daemon: Any,
 ) -> list[Any]:
@@ -77,6 +79,7 @@ async def graph_enhanced_search(
         path_filter: Optional path prefix filter
         alpha: Semantic vs keyword weight
         graph_mode: Graph enhancement mode (low, high, dual)
+        record_store: RecordStoreABC instance (injected via app.state)
         async_session_factory: Async session factory from RecordStoreABC (injected via app.state)
         search_daemon: SearchDaemon instance (injected)
 
@@ -90,7 +93,7 @@ async def graph_enhanced_search(
     from nexus.search.graph_store import GraphStore
 
     async with async_session_factory() as session:
-        graph_store = GraphStore(session, zone_id="root")
+        graph_store = GraphStore(record_store, session, zone_id="root")
 
         semantic_wrapper = DaemonSemanticSearchWrapper(search_daemon)
         embedding_provider = getattr(search_daemon, "_embedding_provider", None)
@@ -101,10 +104,8 @@ async def graph_enhanced_search(
             neighbor_hops=2,
         )
 
-        from nexus.search.semantic import SemanticSearch
-
         retriever = GraphEnhancedRetriever(
-            semantic_search=cast(SemanticSearch, semantic_wrapper),
+            semantic_search=semantic_wrapper,
             graph_store=graph_store,
             embedding_provider=embedding_provider,
             config=config,

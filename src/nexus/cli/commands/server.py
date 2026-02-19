@@ -12,7 +12,6 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import click
 
@@ -26,35 +25,6 @@ from nexus.cli.utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _register_extracted_services(server: Any, nx: NexusFilesystem) -> None:
-    """Register extracted services for RPC discovery (Issue #2033).
-
-    Services that own @rpc_expose are registered directly — their methods
-    appear as RPC endpoints alongside NexusFS methods.
-    """
-    services: list[tuple[str, Any]] = [
-        ("workspace_rpc_service", getattr(nx, "_workspace_rpc_service", None)),
-        ("agent_rpc_service", getattr(nx, "_agent_rpc_service", None)),
-        ("user_provisioning_service", getattr(nx, "_user_provisioning_service", None)),
-        ("sandbox_rpc_service", getattr(nx, "_sandbox_rpc_service", None)),
-        ("metadata_export_service", getattr(nx, "_metadata_export_service", None)),
-        ("ace_rpc_service", getattr(nx, "_ace_rpc_service", None)),
-        ("mount_service", getattr(nx, "mount_service", None)),
-        ("search_service", getattr(nx, "search_service", None)),
-        ("share_link_service", getattr(nx, "share_link_service", None)),
-        ("task_queue_service", getattr(nx, "task_queue_service", None)),
-        ("rebac_service", getattr(nx, "rebac_service", None)),
-        ("mcp_service", getattr(nx, "mcp_service", None)),
-        ("skill_service", getattr(nx, "skill_service", None)),
-        ("llm_service", getattr(nx, "llm_service", None)),
-        ("oauth_service", getattr(nx, "oauth_service", None)),
-    ]
-    for name, svc in services:
-        if svc is not None:
-            server.register_service(svc)
-            logger.debug("Registered service for RPC: %s", name)
 
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:
@@ -547,12 +517,6 @@ def unmount(mount_point: str) -> None:
     help="Admin username for initialization (default: admin)",
 )
 @click.option(
-    "--async/--no-async",
-    "use_async",
-    default=True,
-    help="Use async FastAPI server (default: enabled, 10-50x throughput improvement)",
-)
-@click.option(
     "--enable-memory-paging/--no-memory-paging",
     "enable_memory_paging",
     default=True,
@@ -579,7 +543,6 @@ def serve(
     init: bool,
     reset: bool,
     admin_user: str,
-    use_async: bool,
     enable_memory_paging: bool,
     memory_main_capacity: int,
     memory_recall_max_age_hours: float,
@@ -711,9 +674,6 @@ def serve(
             console.print(f"[yellow]⚠️  Could not check port status: {e}[/yellow]")
 
         console.print()
-
-        # Import server components
-        from nexus.server.rpc_server import NexusRPCServer
 
         # Determine authentication configuration first (needed for permissions logic)
         has_auth = bool(auth_type or api_key)
@@ -926,7 +886,7 @@ def serve(
                                 if mount_point != "/":  # Skip root mount (already has permissions)
                                     try:
                                         # Grant direct_owner to admin for full access
-                                        nx.rebac_service.rebac_create_sync(
+                                        nx.rebac_create(
                                             subject=("user", admin_user),
                                             relation="direct_owner",
                                             object=("file", mount_point),
@@ -993,8 +953,8 @@ def serve(
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.server.auth.factory import DiscriminatingAuthProvider
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -1037,7 +997,7 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
@@ -1481,46 +1441,27 @@ def serve(
         console.print()
         console.print("[green]Press Ctrl+C to stop server[/green]")
 
-        if use_async:
-            # Use FastAPI async server
-            from nexus.server.fastapi_server import create_app, run_server
+        from nexus.server.fastapi_server import create_app, run_server
 
-            console.print()
-            console.print("[bold cyan]🚀 Using FastAPI async server[/bold cyan]")
-            console.print("  [dim]10-50x throughput improvement under concurrent load[/dim]")
+        console.print()
+        console.print("[bold cyan]🚀 Using FastAPI async server[/bold cyan]")
+        console.print("  [dim]10-50x throughput improvement under concurrent load[/dim]")
 
-            # Get database URL for async operations
-            database_url = os.getenv("NEXUS_DATABASE_URL")
+        # Get database URL for async operations
+        database_url = os.getenv("NEXUS_DATABASE_URL")
 
-            app = create_app(
-                nexus_fs=nx,  # type: ignore[arg-type]
-                api_key=api_key,
-                auth_provider=auth_provider,
-                database_url=database_url,
-                data_dir=backend_config.data_dir,
-            )
+        app = create_app(
+            nexus_fs=nx,  # type: ignore[arg-type]
+            api_key=api_key,
+            auth_provider=auth_provider,
+            database_url=database_url,
+            data_dir=backend_config.data_dir,
+        )
 
-            # Start background sync for connector mounts (non-blocking)
-            start_background_mount_sync(nx)
+        # Start background sync for connector mounts (non-blocking)
+        start_background_mount_sync(nx)
 
-            run_server(app, host=host, port=port, log_level="info")
-        else:
-            # Use traditional ThreadingHTTPServer
-            server = NexusRPCServer(
-                nexus_fs=nx,
-                host=host,
-                port=port,
-                api_key=api_key,
-                auth_provider=auth_provider,
-            )
-
-            # Register extracted services for RPC discovery (Issue #2033)
-            _register_extracted_services(server, nx)
-
-            # Start background sync for connector mounts (non-blocking)
-            start_background_mount_sync(nx)
-
-            server.serve_forever()
+        run_server(app, host=host, port=port, log_level="info")
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped by user[/yellow]")

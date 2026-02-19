@@ -5,6 +5,9 @@ This test ensures that whenever a method is decorated with @rpc_expose in the co
 implementation, it also has a corresponding client method in RemoteNexusFS.
 
 This prevents issues like #268 where methods are added to core but forgotten in remote client.
+
+Issue #2035, Follow-up 1: Also scans brick services (SkillService, SkillPackageService)
+for @rpc_expose methods, since skills RPC is now brick-native.
 """
 
 import inspect
@@ -37,6 +40,35 @@ def get_rpc_exposed_methods(cls):
     return exposed
 
 
+def get_all_rpc_exposed_methods():
+    """Get all @rpc_expose methods from NexusFS and brick services.
+
+    Issue #2035, Follow-up 1: Skills RPC methods live on brick services,
+    not on NexusFS. This scans all sources the server would scan.
+    """
+    exposed = get_rpc_exposed_methods(NexusFS)
+
+    # Brick services that expose RPC methods directly
+    _brick_classes: list[type] = []
+    try:
+        from nexus.skills.service import SkillService
+
+        _brick_classes.append(SkillService)
+    except ImportError:
+        pass
+    try:
+        from nexus.skills.package_service import SkillPackageService
+
+        _brick_classes.append(SkillPackageService)
+    except ImportError:
+        pass
+
+    for cls in _brick_classes:
+        exposed.update(get_rpc_exposed_methods(cls))
+
+    return exposed
+
+
 def get_remote_methods(cls):
     """Get all public methods from RemoteNexusFS.
 
@@ -65,7 +97,7 @@ def get_remote_methods(cls):
         from nexus.remote.rpc_proxy import RPCProxyBase
 
         if issubclass(cls, RPCProxyBase):
-            exposed = get_rpc_exposed_methods(NexusFS)
+            exposed = get_all_rpc_exposed_methods()
             for name, method in exposed.items():
                 if name not in methods:
                     methods[name] = method
@@ -90,8 +122,8 @@ def test_all_rpc_methods_have_remote_implementations():
         # All event methods now have remote implementations (Block 2, Issue #1106)
     }
 
-    # Get all exposed RPC methods from core
-    exposed_methods = get_rpc_exposed_methods(NexusFS)
+    # Get all exposed RPC methods from core + brick services
+    exposed_methods = get_all_rpc_exposed_methods()
 
     # Get all methods from RemoteNexusFS
     remote_methods = get_remote_methods(RemoteNexusFS)
@@ -154,7 +186,7 @@ def test_remote_methods_match_signatures():
     This is a best-effort check - signatures may differ slightly due to
     context parameters being handled server-side.
     """
-    exposed_methods = get_rpc_exposed_methods(NexusFS)
+    exposed_methods = get_all_rpc_exposed_methods()
     remote_methods = get_remote_methods(RemoteNexusFS)
 
     signature_mismatches = []
@@ -232,8 +264,12 @@ def test_all_public_methods_are_exposed_or_excluded():
         "write_batch",  # Exposed via different RPC endpoint
         "list_memories",  # Handled manually by dispatcher, calls memory.list() instead
         # Tiger Cache internal methods - server-side optimization only
+        "grant_traverse_on_implicit_dirs",  # Internal - grants TRAVERSE on implicit dirs during init
+        "process_tiger_cache_queue",  # Internal - background worker processes cache updates
         "stop_tiger_cache_worker",  # Internal - stops background worker thread
+        "warm_tiger_cache",  # Internal - pre-computes permissions for cache warming
         # Directory Visibility Cache internal methods - server-side optimization only
+        "clear_dir_visibility_cache",  # Internal - clears the directory visibility cache
         "get_dir_visibility_cache_metrics",  # Internal - returns cache metrics for monitoring
         # Phase 2 Service Composition - Async delegation methods (Issue #988)
         # These are internal async methods that delegate to services. The original
@@ -243,7 +279,15 @@ def test_all_public_methods_are_exposed_or_excluded():
         "alist_versions",  # Delegates to version_service.list_versions()
         "arollback",  # Delegates to version_service.rollback()
         "adiff_versions",  # Delegates to version_service.diff_versions()
-        # ReBACService async delegation — sync methods removed, async removed in earlier extraction
+        # ReBACService delegation (8 methods)
+        "arebac_create",  # Delegates to rebac_service.rebac_create()
+        "arebac_delete",  # Delegates to rebac_service.rebac_delete()
+        "arebac_check",  # Delegates to rebac_service.rebac_check()
+        "arebac_check_batch",  # Delegates to rebac_service.rebac_check_batch()
+        "arebac_expand",  # Delegates to rebac_service.rebac_expand()
+        "arebac_explain",  # Delegates to rebac_service.rebac_explain()
+        "arebac_list_tuples",  # Delegates to rebac_service.rebac_list_tuples()
+        "aget_namespace",  # Delegates to rebac_service.get_namespace()
         # LLMService delegation (4 methods) — Issue #1287 Phase B: mixin removed
         "create_llm_reader",  # Delegates to llm_service.create_llm_reader()
         "llm_read",  # Delegates to llm_service.llm_read()
@@ -276,52 +320,13 @@ def test_all_public_methods_are_exposed_or_excluded():
         "locked",  # Async context manager - distributed lock acquisition
         # Consistency migration - server-side orchestration only (Issue #1180)
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
+        # PostMutationHook infrastructure (Issue #625) - server-side hook registration
+        "register_mutation_hook",  # Internal - registers post-mutation hooks for workflow dispatch
         # Workflow event queue - server-side background task (Issue #1522)
         "ensure_workflow_consumer",  # Internal - starts bounded workflow event queue consumer
-        # ====================================================================
-        # Issue #2033: Facade removal — methods now served by services
-        # ====================================================================
-        # These methods were extracted from NexusFS into services (registered
-        # via register_service()). The base class NexusFilesystem still defines
-        # them as concrete stubs. NexusFS.__getattr__ forwards at runtime.
-        # RPC dispatch uses @rpc_expose on the service objects, not NexusFS.
-        #
-        # Search operations — thin forwarders to SearchService
-        "list",  # Forwarded to search_service.list()
-        "glob",  # Forwarded to search_service.glob()
-        "grep",  # Forwarded to search_service.grep()
-        # Sync operations — delegate to SyncService / SyncJobService
-        "sync_mount",  # Delegates to _sync_service.sync_mount()
-        "sync_mount_async",  # Delegates to _sync_job_service.create_job()
-        "cancel_sync_job",  # Delegates to _sync_job_service.cancel_job()
-        # WorkspaceRPCService (inherited stubs from NexusFilesystem)
-        "workspace_snapshot",  # Served by _workspace_rpc_service
-        "workspace_restore",  # Served by _workspace_rpc_service
-        "workspace_log",  # Served by _workspace_rpc_service
-        "workspace_diff",  # Served by _workspace_rpc_service
-        "register_workspace",  # Served by _workspace_rpc_service
-        "unregister_workspace",  # Served by _workspace_rpc_service
-        "list_workspaces",  # Served by _workspace_rpc_service
-        "get_workspace_info",  # Served by _workspace_rpc_service
-        "register_memory",  # Served by _workspace_rpc_service
-        "unregister_memory",  # Served by _workspace_rpc_service
-        "get_memory_info",  # Served by _workspace_rpc_service
-        # SandboxRPCService (inherited stubs from NexusFilesystem)
-        "sandbox_create",  # Served by _sandbox_rpc_service
-        "sandbox_get_or_create",  # Served by _sandbox_rpc_service
-        "sandbox_run",  # Served by _sandbox_rpc_service
-        "sandbox_pause",  # Served by _sandbox_rpc_service
-        "sandbox_resume",  # Served by _sandbox_rpc_service
-        "sandbox_stop",  # Served by _sandbox_rpc_service
-        "sandbox_list",  # Served by _sandbox_rpc_service
-        "sandbox_status",  # Served by _sandbox_rpc_service
-        "sandbox_connect",  # Served by _sandbox_rpc_service
-        "sandbox_disconnect",  # Served by _sandbox_rpc_service
-        # MountCoreService (inherited stubs from NexusFilesystem)
-        "add_mount",  # Served by _mount_core_service
-        "remove_mount",  # Served by _mount_core_service
-        "list_mounts",  # Served by _mount_core_service
-        "get_mount",  # Served by _mount_core_service
+        # Brick service references (Issue #2035) — object instances, not methods
+        "skill_service",  # SkillService instance — RPC methods auto-discovered from brick
+        "skill_package_service",  # SkillPackageService instance — RPC methods auto-discovered from brick
     }
 
     # Get all public methods
@@ -405,9 +410,20 @@ def test_all_public_methods_are_exposed_or_excluded():
     print("  - 0 missing (enforcement passed!)")
 
 
+def test_no_exposed_method_starts_with_underscore():
+    """Issue #2136: No exposed method name should start with '_'.
+
+    This ensures that even if a method has _rpc_name set to something
+    starting with '_', it won't bypass the discovery filter.
+    """
+    exposed_methods = get_all_rpc_exposed_methods()
+    private_methods = [name for name in exposed_methods if name.startswith("_")]
+    assert not private_methods, f"Exposed methods must not start with '_': {private_methods}"
+
+
 def test_list_all_exposed_methods():
     """List all @rpc_expose methods for documentation purposes."""
-    exposed_methods = get_rpc_exposed_methods(NexusFS)
+    exposed_methods = get_all_rpc_exposed_methods()
 
     print(f"\n{'=' * 60}")
     print(f"All @rpc_expose methods ({len(exposed_methods)} total):")

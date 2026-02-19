@@ -12,12 +12,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.core.rebac import Entity
+from nexus.rebac.domain import Entity
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from nexus.core.rebac import NamespaceConfig
+    from nexus.rebac.domain import NamespaceConfig
     from nexus.services.permissions.tuples.repository import TupleRepository
 
 logger = logging.getLogger(__name__)

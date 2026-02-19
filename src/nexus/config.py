@@ -134,7 +134,7 @@ class NexusConfig(BaseModel):
 
     # Local backend settings
     data_dir: str | None = Field(
-        default="./nexus-data", description="Data directory for local backend"
+        default=None, description="Data directory for local backend (default: ~/.nexus/data)"
     )
 
     # GCS backend settings
@@ -155,7 +155,16 @@ class NexusConfig(BaseModel):
     enable_vector_search: bool = Field(default=True, description="Enable vector search")
     enable_llm_cache: bool = Field(default=True, description="Enable LLM KV cache")
     db_path: str | None = Field(
-        default=None, description="SQLite database path (auto-generated if None)"
+        default=None,
+        description="(Deprecated) Legacy alias — sets metastore_path when unset.",
+    )
+    metastore_path: str | None = Field(
+        default=None,
+        description="Path for the redb metadata store (auto-derived from data_dir if None)",
+    )
+    record_store_path: str | None = Field(
+        default=None,
+        description="Path for the SQLAlchemy record store (SQLite). None = no record store (bare kernel).",
     )
 
     # In-memory metadata caching settings
@@ -339,9 +348,9 @@ class NexusConfig(BaseModel):
     def validate_profile(cls, v: str) -> str:
         """Validate deployment profile.
 
-        Valid profiles: embedded, lite, full, cloud
+        Valid profiles: embedded, lite, full, cloud, auto
         """
-        allowed = ["embedded", "lite", "full", "cloud"]
+        allowed = ["embedded", "lite", "full", "cloud", "auto"]
         if v not in allowed:
             raise ValueError(f"profile must be one of {allowed}, got '{v}'")
         return v
@@ -479,6 +488,8 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_ENABLE_VECTOR_SEARCH": "enable_vector_search",
         "NEXUS_ENABLE_LLM_CACHE": "enable_llm_cache",
         "NEXUS_DB_PATH": "db_path",
+        "NEXUS_METASTORE_PATH": "metastore_path",
+        "NEXUS_RECORD_STORE_PATH": "record_store_path",
         "NEXUS_ENABLE_METADATA_CACHE": "enable_metadata_cache",
         "NEXUS_CACHE_PATH_SIZE": "cache_path_size",
         "NEXUS_CACHE_LIST_SIZE": "cache_list_size",

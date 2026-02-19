@@ -56,11 +56,13 @@ class IPCVFSDriver(Backend):
         zone_id: str,
         event_publisher: Any | None = None,
         max_inbox_size: int = 1000,
+        timeout: float = 30,
     ) -> None:
         self._storage = storage
         self._zone_id = zone_id
         self._publisher = event_publisher
         self._max_inbox_size = max_inbox_size
+        self._timeout = timeout
         # Eagerly create sync-to-async bridge — immutable after init.
         # The Backend ABC is sync, but IPCStorageDriver is async.
         # A single background loop avoids per-call ThreadPoolExecutor overhead
@@ -72,6 +74,22 @@ class IPCVFSDriver(Backend):
             name="ipc-driver-loop",
         )
         self._bg_thread.start()
+
+    def close(self) -> None:
+        """Stop the background event loop and join the thread.
+
+        Safe to call multiple times. Must be called before discarding
+        the driver to prevent thread/loop leaks.
+        """
+        if self._bg_loop.is_running():
+            self._bg_loop.call_soon_threadsafe(self._bg_loop.stop)
+            self._bg_thread.join(timeout=5)
+            self._bg_loop.close()
+
+    def __del__(self) -> None:
+        """Safety net — stop the loop if close() was never called."""
+        if self._bg_loop.is_running():
+            self._bg_loop.call_soon_threadsafe(self._bg_loop.stop)
 
     # === Identity & Capability Flags ===
 
@@ -282,4 +300,4 @@ class IPCVFSDriver(Backend):
         time (immutable after init).
         """
         future = asyncio.run_coroutine_threadsafe(coro, self._bg_loop)
-        return future.result(timeout=30)
+        return future.result(timeout=self._timeout)

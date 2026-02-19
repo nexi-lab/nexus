@@ -182,15 +182,24 @@ def build_v2_registry(
         try:
             from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
 
-            tus_router = create_tus_uploads_router(
+            tus_public_router, tus_auth_router = create_tus_uploads_router(
                 get_upload_service=chunked_upload_service_getter,
+            )
+            # OPTIONS endpoint is public (CORS preflight); all others require auth
+            registry.add(
+                RouterEntry(
+                    router=tus_public_router,
+                    name="tus_uploads_public",
+                    prefix="/api/v2/uploads",
+                    endpoint_count=1,
+                )
             )
             registry.add(
                 RouterEntry(
-                    router=tus_router,
+                    router=tus_auth_router,
                     name="tus_uploads",
                     prefix="/api/v2/uploads",
-                    endpoint_count=5,
+                    endpoint_count=4,
                 )
             )
         except ImportError as e:
@@ -238,9 +247,14 @@ def build_v2_registry(
 
     # ---- Bricks lifecycle router (Issue #1704) ----
     try:
+        from nexus.server.api.v2.routers.bricks import health_router as bricks_health_router
         from nexus.server.api.v2.routers.bricks import router as bricks_router
 
-        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=4))
+        # Health endpoint is public (K8s probes); admin endpoints require auth
+        registry.add(
+            RouterEntry(router=bricks_health_router, name="bricks_health", endpoint_count=1)
+        )
+        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=3))
     except ImportError as e:
         logger.warning("Failed to import Bricks routes: %s", e)
 
@@ -259,6 +273,25 @@ def build_v2_registry(
         )
     except ImportError as e:
         logger.warning("Failed to import Batch routes: %s", e)
+
+    # ---- Governance router (Issue #1359) — admin auth required ----
+    try:
+        from nexus.server.api.v2.routers.governance import router as governance_router
+
+        registry.add(RouterEntry(router=governance_router, name="governance", endpoint_count=14))
+    except ImportError as e:
+        logger.warning("Failed to import Governance routes: %s", e)
+
+    # ---- x402 protocol router (Issue #1206) ----
+    try:
+        from nexus.server.api.v2.routers.x402 import router as x402_router
+        from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_router
+
+        # Webhook is public (called by external facilitator); topup/config require auth
+        registry.add(RouterEntry(router=x402_webhook_router, name="x402_webhook", endpoint_count=1))
+        registry.add(RouterEntry(router=x402_router, name="x402", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import x402 routes: %s", e)
 
     return registry
 

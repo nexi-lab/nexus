@@ -10,7 +10,7 @@ Performance improvements:
 - Non-blocking I/O
 - 10-50x throughput improvement under concurrent load
 
-The server maintains the same API contract as rpc_server.py:
+The server exposes the following API contract:
 - POST /api/nfs/{method} - JSON-RPC endpoints
 - GET /health - Health check
 - GET /api/auth/whoami - Authentication info
@@ -51,6 +51,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
+from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -59,7 +60,6 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 
 # --- Extracted modules (re-exported for backward compatibility) ---
 from nexus.server.dependencies import (  # noqa: F401, E402
@@ -278,6 +278,11 @@ async def lifespan(_app: FastAPI) -> Any:
     limiter.total_tokens = _app.state.thread_pool_size
     logger.info(f"Thread pool size set to {limiter.total_tokens}")
 
+    # Compute features info once at startup (Issue #1389 / #2071)
+    from nexus.server.lifespan import _compute_features_info
+
+    _compute_features_info(_app)
+
     # Initialize async ReBAC manager if database URL provided
     if _app.state.database_url:
         try:
@@ -366,10 +371,14 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize CacheBrick for Dragonfly/Redis or NullCacheStore fallback (Issue #1524)
     # CacheBrick owns all cache domain services with lifecycle management
     try:
-        cache_brick = getattr(_app.state.nexus_fs, "_cache_brick", None)
+        cache_brick = getattr(
+            getattr(_app.state.nexus_fs, "_brick_services", None),
+            "cache_brick",
+            None,
+        )
         if cache_brick is not None:
             await cache_brick.start()
-            _app.state.cache_factory = cache_brick  # Backward-compat alias
+            _app.state.cache_brick = cache_brick
             logger.info("CacheBrick started (Issue #1524)")
 
             # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
@@ -473,15 +482,16 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # ConflictLogStore is always available for the REST API,
             # even if the full write-back pipeline can't start (no event bus).
-            conflict_log_store = ConflictLogStore(gw.session_factory)
+            _is_pg = gw.is_postgresql
+            conflict_log_store = ConflictLogStore(gw.session_factory, is_postgresql=_is_pg)
             _app.state.conflict_log_store = conflict_log_store
 
             wb_event_bus = None
             if hasattr(_app.state.nexus_fs, "_event_bus"):
                 wb_event_bus = _app.state.nexus_fs._event_bus
             if wb_event_bus:
-                backlog_store = SyncBacklogStore(gw.session_factory)
-                change_log_store = ChangeLogStore(gw.session_factory)
+                backlog_store = SyncBacklogStore(gw.session_factory, is_postgresql=_is_pg)
+                change_log_store = ChangeLogStore(gw.session_factory, is_postgresql=_is_pg)
 
                 # Map env var to ConflictStrategy (backward compat)
                 _policy_map = {
@@ -537,6 +547,8 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             from nexus.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
 
+            # Issue #2071: source max_indexing_concurrency from profile tuning
+            _search_tuning = _app.state.profile_tuning.search
             config = DaemonConfig(
                 database_url=_app.state.database_url,
                 bm25s_index_dir=os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
@@ -553,6 +565,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 in ("true", "1", "yes"),
                 entropy_threshold=float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
                 entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
+                max_indexing_concurrency=_search_tuning.search_max_concurrency,
             )
 
             # Inject async_session_factory from RecordStoreABC (Issue #615)
@@ -687,7 +700,7 @@ async def lifespan(_app: FastAPI) -> Any:
             _nexus_fs_warmup = _app.state.nexus_fs  # Capture for closure
 
             async def _warmup_file_cache() -> None:
-                from nexus.cache.warmer import CacheWarmer, WarmupConfig
+                from nexus.server.cache_warmer import CacheWarmer, WarmupConfig
 
                 config = WarmupConfig(
                     max_files=warmup_max_files,
@@ -718,10 +731,11 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
 
+            _bg_t = getattr(getattr(_app.state, "profile_tuning", None), "background_task", None)
             _app.state.agent_registry = AgentRegistry(
                 session_factory=_app.state.nexus_fs.SessionLocal,
                 entity_registry=getattr(_app.state.nexus_fs, "_entity_registry", None),
-                flush_interval=60,
+                flush_interval=_bg_t.heartbeat_flush_interval if _bg_t else 60,
             )
             # Inject into NexusFS for RPC methods
             _app.state.nexus_fs._agent_registry = _app.state.agent_registry
@@ -783,7 +797,8 @@ async def lifespan(_app: FastAPI) -> Any:
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        _app.state.nexus_fs._service_extras.get("chunked_upload_service")
+        getattr(_app.state.nexus_fs, "_brick_services", None)
+        and _app.state.nexus_fs._brick_services.chunked_upload_service
         if _app.state.nexus_fs
         else None
     )
@@ -836,10 +851,11 @@ async def lifespan(_app: FastAPI) -> Any:
         _app.state.chunked_upload_service = None
 
     # Issue #726: Wire circuit breaker from factory for health endpoint access
+    # Issue #2130: Wire manifest_resolver to app.state for DI
     if _app.state.nexus_fs:
-        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
-            "rebac_circuit_breaker"
-        )
+        _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
+        _app.state.rebac_circuit_breaker = _brk.rebac_circuit_breaker if _brk else None
+        _app.state.manifest_resolver = getattr(_brk, "manifest_resolver", None) if _brk else None
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
@@ -850,11 +866,18 @@ async def lifespan(_app: FastAPI) -> Any:
             stale_agent_detection_task,
         )
 
+        _bg_t2 = getattr(getattr(_app.state, "profile_tuning", None), "background_task", None)
         _heartbeat_task = asyncio.create_task(
-            heartbeat_flush_task(_app.state.agent_registry, interval_seconds=60)
+            heartbeat_flush_task(
+                _app.state.agent_registry,
+                interval_seconds=_bg_t2.heartbeat_flush_interval if _bg_t2 else 60,
+            )
         )
         _stale_detection_task = asyncio.create_task(
-            stale_agent_detection_task(_app.state.agent_registry, interval_seconds=300)
+            stale_agent_detection_task(
+                _app.state.agent_registry,
+                interval_seconds=_bg_t2.stale_agent_check_interval if _bg_t2 else 300,
+            )
         )
         logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
@@ -865,9 +888,9 @@ async def lifespan(_app: FastAPI) -> Any:
         )
     if _app.state.nexus_fs and _app.state.agent_registry:
         try:
-            from nexus.sandbox.auth_service import SandboxAuthService
-            from nexus.sandbox.events import AgentEventLog
-            from nexus.sandbox.sandbox_manager import SandboxManager
+            from nexus.bricks.sandbox.auth_service import SandboxAuthService
+            from nexus.bricks.sandbox.events import AgentEventLog
+            from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
             session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
@@ -927,13 +950,18 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             import asyncpg
 
-            from nexus.pay.credits import CreditsService
-            from nexus.scheduler.queue import TaskQueue
-            from nexus.scheduler.service import SchedulerService
+            from nexus.bricks.pay.credits import CreditsService
+            from nexus.bricks.scheduler.queue import TaskQueue
+            from nexus.bricks.scheduler.service import SchedulerService
 
             # Convert SQLAlchemy URL to asyncpg DSN
             pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-            _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+            _pool_tuning = _app.state.profile_tuning.pool
+            _scheduler_pool = await asyncpg.create_pool(
+                pg_dsn,
+                min_size=_pool_tuning.asyncpg_min_size,
+                max_size=_pool_tuning.asyncpg_max_size,
+            )
 
             # Create scheduled_tasks table if it doesn't exist
             async with _scheduler_pool.acquire() as conn:
@@ -989,11 +1017,12 @@ async def lifespan(_app: FastAPI) -> Any:
 
                 from nexus.tasks.runner import AsyncTaskRunner
 
-                runner = AsyncTaskRunner(engine=engine, max_workers=4)
+                _task_workers = _app.state.profile_tuning.concurrency.task_runner_workers
+                runner = AsyncTaskRunner(engine=engine, max_workers=_task_workers)
                 service.set_runner(runner)
                 _app.state.task_runner = runner
                 task_runner_task = asyncio.create_task(runner.run())
-                logger.info("Task Queue runner started (4 workers)")
+                logger.info("Task Queue runner started (%d workers)", _task_workers)
             else:
                 logger.debug("Task Queue: nexus_tasks Rust extension not available")
         except Exception as e:
@@ -1155,13 +1184,13 @@ async def lifespan(_app: FastAPI) -> Any:
     if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
         _app.state.nexus_fs.close()
 
-    # Shutdown CacheBrick (Issue #1524, replaces #1075 cache_factory)
-    if hasattr(_app.state, "cache_factory") and _app.state.cache_factory:
+    # Shutdown CacheBrick (Issue #1524)
+    if hasattr(_app.state, "cache_brick") and _app.state.cache_brick:
         try:
-            await _app.state.cache_factory.stop()
+            await _app.state.cache_brick.stop()
             logger.info("CacheBrick stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down cache factory: {e}")
+            logger.warning(f"Error shutting down CacheBrick: {e}")
 
     # Shutdown Pyroscope continuous profiling (Issue #763)
     try:
@@ -1246,22 +1275,56 @@ def create_app(
     app.state.database_url = database_url
     app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
-    # Deployment profile (Issue #1389): resolve enabled bricks from NEXUS_PROFILE env
+    # Deployment profile (Issue #1389, #1708): resolve enabled bricks from NEXUS_PROFILE env
     from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
-    try:
-        _profile = DeploymentProfile(_profile_str)
-    except ValueError:
-        logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
-        _profile = DeploymentProfile.FULL
-    app.state.deployment_profile = _profile.value
-    app.state.enabled_bricks = resolve_enabled_bricks(_profile)
+    if _profile_str == "auto":
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
 
-    # Expose async_session_factory from RecordStoreABC (if available).
+        _caps = detect_capabilities()
+        _profile = suggest_profile(_caps)
+        logger.info(
+            "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
+            _profile,
+            _caps.memory_mb,
+            _caps.has_gpu,
+            _caps.cpu_cores,
+        )
+    else:
+        try:
+            _profile = DeploymentProfile(_profile_str)
+        except ValueError:
+            logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
+            _profile = DeploymentProfile.FULL
+        # Warn if explicit profile may exceed device capabilities
+        from nexus.core.device_capabilities import (
+            detect_capabilities as _detect_caps,
+        )
+        from nexus.core.device_capabilities import (
+            warn_if_profile_exceeds_device,
+        )
+
+        _caps = _detect_caps()
+        warn_if_profile_exceeds_device(_profile, _caps)
+
+    # Apply FeaturesConfig overrides (Issue #1389 — was unused in server)
+    _features_overrides: dict[str, bool] = {}
+    _nx_config = getattr(nexus_fs, "_config", None)
+    if _nx_config is not None and hasattr(_nx_config, "features") and _nx_config.features:
+        _features_overrides = _nx_config.features.to_overrides()
+
+    app.state.deployment_profile = _profile.value
+    app.state.enabled_bricks = resolve_enabled_bricks(_profile, overrides=_features_overrides)
+
+    # Performance tuning (Issue #2071): resolve per-profile thresholds
+    app.state.profile_tuning = _profile.tuning()
+
+    # Expose RecordStoreABC and its session factories on app.state (if available).
     # This is the canonical way for async endpoints to get database sessions
     # without bypassing the RecordStore abstraction with raw URLs.
     _record_store = getattr(nexus_fs, "_record_store", None)
+    app.state.record_store = _record_store
     if _record_store is not None:
         try:
             app.state.async_session_factory = _record_store.async_session_factory
@@ -1295,45 +1358,25 @@ def create_app(
     # Expose kernel services on app.state so routers never reach into
     # NexusFS private attributes (Issue #701).
     app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
-    app.state.rebac_service = getattr(nexus_fs, "rebac_service", None)  # Issue #2033: Strangler Fig
     app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
     app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
-    # Issue #2033 Phase 5: Expose more kernel services for Strangler Fig extraction
-    app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
-    app.state.version_service = getattr(nexus_fs, "version_service", None)
-    app.state.mount_service = getattr(nexus_fs, "mount_service", None)
-    app.state.hook_pipeline = getattr(nexus_fs, "_hook_pipeline", None)
-    app.state.workspace_manager = getattr(nexus_fs, "_workspace_manager", None)
-    app.state.hierarchy_manager = getattr(nexus_fs, "_hierarchy_manager", None)
-    app.state.audit_store = getattr(nexus_fs, "_audit_store", None)
-    app.state.record_store = getattr(nexus_fs, "_record_store", None)
-    app.state.snapshot_service = getattr(nexus_fs, "_snapshot_service", None)
-    app.state.task_queue_service = getattr(nexus_fs, "task_queue_service", None)
 
-    # Thread pool and timeout settings (Issue #932)
+    # Thread pool and timeout settings (Issue #932, #2071)
+    _tuning_pool_size = str(app.state.profile_tuning.concurrency.thread_pool_size)
     app.state.thread_pool_size = thread_pool_size or int(
-        os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
+        os.environ.get("NEXUS_THREAD_POOL_SIZE", _tuning_pool_size)
     )
     app.state.operation_timeout = operation_timeout or float(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
     )
 
-    # Discover exposed methods (include extracted services for RPC, Issue #2033)
-    _extra_services = [
-        svc for svc in [
-            getattr(nexus_fs, "_workspace_rpc_service", None),
-            getattr(nexus_fs, "_agent_rpc_service", None),
-            getattr(nexus_fs, "_user_provisioning_service", None),
-            getattr(nexus_fs, "_sandbox_rpc_service", None),
-            getattr(nexus_fs, "_metadata_export_service", None),
-            getattr(nexus_fs, "_ace_rpc_service", None),
-            getattr(nexus_fs, "mount_service", None),
-            getattr(nexus_fs, "search_service", None),
-            getattr(nexus_fs, "share_link_service", None),
-            getattr(nexus_fs, "task_queue_service", None),
-        ] if svc is not None
-    ]
-    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, _extra_services)
+    # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
+    _brick_sources: list[Any] = []
+    for _attr_name in ("skill_service", "skill_package_service"):
+        _brick_svc = getattr(nexus_fs, _attr_name, None)
+        if _brick_svc is not None:
+            _brick_sources.append(_brick_svc)
+    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)
     app.state.async_nexus_fs = None
@@ -1342,7 +1385,7 @@ def create_app(
     app.state.search_daemon = None
     app.state.search_daemon_enabled = False
     app.state.directory_grant_expander = None
-    app.state.cache_factory = None
+    app.state.cache_brick = None
     app.state.websocket_manager = None
     app.state.reactive_subscription_manager = None
     app.state.agent_registry = None
@@ -1358,6 +1401,7 @@ def create_app(
     app.state.delegation_service = None
     app.state.reputation_service = None
     app.state.rlm_service = None  # Issue #1306: RLM inference brick
+    app.state.manifest_resolver = None  # Issue #2130: context manifest brick
 
     # Initialize subscription manager if we have a metadata store
     try:
@@ -1367,9 +1411,16 @@ def create_app(
                 set_subscription_manager,
             )
 
-            app.state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
+            app.state.subscription_manager = SubscriptionManager(
+                nexus_fs.SessionLocal,
+                webhook_timeout=app.state.profile_tuning.network.webhook_timeout,
+            )
             nexus_fs.subscription_manager = app.state.subscription_manager
             set_subscription_manager(app.state.subscription_manager)
+            # Issue #625: Forward subscription_manager to workflow dispatch service
+            wds = getattr(app.state, "workflow_dispatch", None)
+            if wds is not None and hasattr(wds, "set_subscription_manager"):
+                wds.set_subscription_manager(app.state.subscription_manager)
             logger.info("Subscription manager initialized and injected into NexusFS")
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")
@@ -1507,13 +1558,28 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        _sys = getattr(nexus_fs, "_system_services", None)
+        obs_sub = getattr(_sys, "observability_subsystem", None)
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except ImportError:
         pass
     except Exception:
         logger.warning("Failed to register QueryObserverCollector", exc_info=True)
+
+    # Register WriteBuffer → Prometheus collector bridge (Issue #1370)
+    try:
+        from prometheus_client import REGISTRY
+
+        from nexus.server.wb_metrics_collector import WriteBufferCollector
+
+        _wo = getattr(nexus_fs, "_write_observer", None)
+        if _wo is not None and hasattr(_wo, "metrics"):
+            REGISTRY.register(WriteBufferCollector(_wo))
+    except ImportError:
+        pass
+    except Exception:
+        logger.warning("Failed to register WriteBufferCollector", exc_info=True)
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
@@ -1602,32 +1668,52 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     # (moved from here to avoid being gated on OAuth credentials)
 
 
-def _discover_exposed_methods(
-    nexus_fs: NexusFS,
-    extra_services: list[Any] | None = None,
-) -> dict[str, Any]:
+def _discover_exposed_methods(nexus_fs: NexusFS, *additional_sources: Any) -> dict[str, Any]:
     """Discover all methods marked with @rpc_expose decorator.
 
-    Scans NexusFS and any registered auxiliary service objects.
-    """
-    exposed = {}
+    Scans NexusFS and any additional sources (brick services) for methods
+    decorated with @rpc_expose. This allows bricks to expose RPC methods
+    directly without NexusFS delegation boilerplate (Issue #2035, Follow-up 1).
 
-    scan_targets: list[Any] = [nexus_fs, *(extra_services or [])]
-    for target in scan_targets:
-        for name in dir(target):
+    Args:
+        nexus_fs: The NexusFS kernel instance (always scanned).
+        *additional_sources: Brick service instances to scan for @rpc_expose.
+    """
+    exposed: dict[str, Any] = {}
+
+    for source in (nexus_fs, *additional_sources):
+        if source is None:
+            continue
+
+        source_name = type(source).__name__
+        for name in dir(source):
             if name.startswith("_"):
                 continue
 
             try:
-                attr = getattr(target, name)
+                attr = getattr(source, name)
                 if callable(attr) and hasattr(attr, "_rpc_exposed"):
                     method_name = getattr(attr, "_rpc_name", name)
+                    # Issue #2136: Block rpc_name bypass — skip private method names
+                    if method_name.startswith("_"):
+                        logger.warning(
+                            "Skipping RPC method with private rpc_name: %s -> %s",
+                            name,
+                            method_name,
+                        )
+                        continue
+                    if method_name in exposed:
+                        logger.debug(
+                            "RPC method %s from %s overrides previous source",
+                            method_name,
+                            source_name,
+                        )
                     exposed[method_name] = attr
-                    logger.debug(f"Discovered RPC method: {method_name}")
+                    logger.debug("Discovered RPC method: %s (from %s)", method_name, source_name)
             except Exception:
                 continue
 
-    logger.info(f"Auto-discovered {len(exposed)} RPC methods")
+    logger.info("Auto-discovered %d RPC methods", len(exposed))
     return exposed
 
 
@@ -1701,7 +1787,7 @@ def _register_routes(app: FastAPI) -> None:
 
     # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
     try:
-        from nexus.a2a import create_a2a_router
+        from nexus.bricks.a2a import create_a2a_router
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
@@ -1740,6 +1826,15 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
     except ImportError as e:
         logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+
+    # IPC Brick endpoints (Issue #1727, LEGO §8)
+    try:
+        from nexus.server.api.v2.routers.ipc import router as ipc_router
+
+        app.include_router(ipc_router)
+        logger.info("IPC endpoints registered (/api/v2/ipc/*)")
+    except ImportError as e:
+        logger.debug(f"IPC router unavailable: {e}")
 
     # Secrets audit log endpoints (Issue #997)
     try:
@@ -1893,7 +1988,7 @@ def _register_routes(app: FastAPI) -> None:
             from nexus.core.permissions import OperationContext
 
             context = OperationContext(
-                user="system",
+                user_id="system",
                 groups=[],
                 zone_id=zone_id,
                 subject_type="system",
@@ -2414,8 +2509,6 @@ def _get_memory_api_with_context(context: Any) -> Any:
             context_dict["zone_id"] = context.zone_id
         if hasattr(context, "user_id") and context.user_id:
             context_dict["user_id"] = context.user_id
-        elif hasattr(context, "user") and context.user:
-            context_dict["user_id"] = context.user
         if hasattr(context, "agent_id") and context.agent_id:
             context_dict["agent_id"] = context.agent_id
 

@@ -17,7 +17,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.rebac import Entity
+    from nexus.rebac.domain import Entity
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +282,7 @@ def find_related_objects(
     Returns:
         List of related Entity objects.
     """
-    from nexus.core.rebac import Entity as _Entity
+    from nexus.rebac.domain import Entity as _Entity
 
     related = []
     for tuple_data in tuples_graph:
@@ -307,7 +307,7 @@ def find_subjects(
     Returns:
         List of subject Entity objects.
     """
-    from nexus.core.rebac import Entity as _Entity
+    from nexus.rebac.domain import Entity as _Entity
 
     subjects = []
     for tuple_data in tuples_graph:

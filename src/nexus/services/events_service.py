@@ -24,14 +24,15 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.path_utils import validate_path
 from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.services.dedup_work_queue import DedupWorkQueue, ShutdownError
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.distributed_lock import LockManagerBase
-    from nexus.core.event_bus import EventBusBase
     from nexus.core.permissions import OperationContext
     from nexus.core.protocols.connector import ConnectorProtocol
+    from nexus.services.event_bus.base import EventBusBase
     from nexus.services.watch.file_watcher import FileWatcher
 
 
@@ -73,6 +74,7 @@ class EventsService:
         self._metadata_cache = metadata_cache
         self._cache_invalidation_started = False
         self._event_tasks: set[asyncio.Task[Any]] = set()
+        self._dedup_queue: DedupWorkQueue[str] | None = None
 
         logger.info("[EventsService] Initialized")
 
@@ -511,16 +513,43 @@ class EventsService:
         self._on_distributed_event(event)
 
     def _start_cache_invalidation(self) -> None:
-        """Start cache invalidation listeners for both Layer 1 and Layer 2."""
+        """Start cache invalidation listeners for both Layer 1 and Layer 2.
+
+        Layer 2 (distributed) uses a DedupWorkQueue (Issue #2062) to coalesce
+        rapid events for the same path.  10 writes to /data/file.txt → 10 events
+        recorded (audit intact) but only 1 cache invalidation run.
+        """
         if self._cache_invalidation_started:
             logger.debug("Cache invalidation already started, skipping")
             return
 
         self._cache_invalidation_started = True
 
-        # Layer 2: Distributed event bus
+        # Layer 2: Distributed event bus with dedup (Issue #2062)
         if self._has_distributed_events():
             zone_id = self._get_zone_id(None)
+            dedup_queue: DedupWorkQueue[str] = DedupWorkQueue()
+            self._dedup_queue = dedup_queue
+
+            async def _invalidation_worker() -> None:
+                """Worker that processes deduped paths for cache invalidation.
+
+                Captures ``dedup_queue`` as a local variable to avoid the
+                race where ``_stop_cache_invalidation`` nulls ``self._dedup_queue``
+                while the worker is between ``get()`` and ``done()``.
+                """
+                while True:
+                    try:
+                        path = await dedup_queue.get()
+                    except ShutdownError:
+                        logger.info("Cache invalidation worker stopped (dedup queue shut down)")
+                        return
+                    try:
+                        self._invalidate_cache_for_path(path)
+                    except Exception:
+                        logger.exception("Cache invalidation error for path: %s", path)
+                    finally:
+                        dedup_queue.done(path)
 
             async def _subscribe_loop() -> None:
                 try:
@@ -530,25 +559,37 @@ class EventsService:
                                 event_handler=self._async_handle_event,
                             )
                             if synced > 0:
-                                logger.info(f"Startup sync: processed {synced} missed events")
+                                logger.info("Startup sync: processed %d missed events", synced)
                         except Exception as e:
-                            logger.warning(f"Startup sync failed (continuing anyway): {e}")
+                            logger.warning("Startup sync failed (continuing anyway): %s", e)
 
-                    logger.info(f"Starting distributed cache invalidation for zone: {zone_id}")
-                    assert self._event_bus is not None
+                    logger.info("Starting distributed cache invalidation for zone: %s", zone_id)
+                    if self._event_bus is None:
+                        logger.error("Event bus became None before subscribe loop started")
+                        return
                     async for event in self._event_bus.subscribe(zone_id):
-                        self._on_distributed_event(event)
+                        # Enqueue path(s) for deduped invalidation instead of
+                        # invalidating directly.  Coalesces rapid writes to the
+                        # same path into a single invalidation.
+                        await dedup_queue.add(event.path)
+                        if event.old_path:
+                            await dedup_queue.add(event.old_path)
+                except ShutdownError:
+                    logger.info("Distributed cache invalidation stopped (dedup queue shut down)")
                 except asyncio.CancelledError:
                     logger.info("Distributed cache invalidation stopped")
                     raise
                 except Exception as e:
-                    logger.error(f"Distributed cache invalidation error: {e}")
+                    logger.error("Distributed cache invalidation error: %s", e)
 
             try:
                 loop = asyncio.get_running_loop()
-                task = loop.create_task(_subscribe_loop())
-                self._event_tasks.add(task)
-                task.add_done_callback(self._event_tasks.discard)
+                worker_task = loop.create_task(_invalidation_worker())
+                self._event_tasks.add(worker_task)
+                worker_task.add_done_callback(self._event_tasks.discard)
+                subscribe_task = loop.create_task(_subscribe_loop())
+                self._event_tasks.add(subscribe_task)
+                subscribe_task.add_done_callback(self._event_tasks.discard)
             except RuntimeError:
                 logger.debug("No running event loop, skipping distributed cache invalidation")
 
@@ -574,14 +615,56 @@ class EventsService:
             except Exception as e:
                 logger.warning(f"Could not start same-box cache invalidation: {e}")
 
-    def _stop_cache_invalidation(self) -> None:
-        """Stop all cache invalidation listeners."""
+    async def _stop_cache_invalidation_async(self) -> None:
+        """Stop all cache invalidation listeners (async version).
+
+        Shutdown order: cancel tasks first (stop new events), then shut down
+        the dedup queue (worker drains remaining items and exits).
+        """
+        # 1. Cancel tasks — stops subscribe loop (no new items) and worker
         for task in list(self._event_tasks):
             if not task.done():
                 task.cancel()
+        # Allow cancellations to propagate
+        if self._event_tasks:
+            await asyncio.gather(*self._event_tasks, return_exceptions=True)
+
+        # 2. Shut down dedup queue (worker already stopped via cancellation)
+        if self._dedup_queue is not None:
+            await self._dedup_queue.shutdown()
+            logger.debug("Dedup queue shut down: %s", self._dedup_queue.metrics)
 
         if self._file_watcher is not None:
             self._file_watcher.stop()
 
         self._cache_invalidation_started = False
+        self._dedup_queue = None
+        logger.debug("Cache invalidation stopped")
+
+    def _stop_cache_invalidation(self) -> None:
+        """Stop all cache invalidation listeners (sync version).
+
+        Cancels tasks first, then schedules dedup queue shutdown.
+        Does NOT null ``_dedup_queue`` immediately — the worker closure
+        captured it as a local variable, so it is safe to null here.
+        """
+        # 1. Cancel tasks first — stops subscribe loop and worker
+        for task in list(self._event_tasks):
+            if not task.done():
+                task.cancel()
+
+        # 2. Schedule dedup queue shutdown (tasks already cancelled)
+        if self._dedup_queue is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._dedup_queue.shutdown())
+            except RuntimeError:
+                pass  # No event loop — queue will be GC'd
+
+        if self._file_watcher is not None:
+            self._file_watcher.stop()
+
+        self._cache_invalidation_started = False
+        # Safe to null: worker captured dedup_queue as local variable
+        self._dedup_queue = None
         logger.debug("Cache invalidation stopped")

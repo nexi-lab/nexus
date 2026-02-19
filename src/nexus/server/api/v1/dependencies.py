@@ -103,6 +103,17 @@ def get_async_read_session_factory(request: Request) -> Any:
     return get_async_session_factory(request)
 
 
+def get_record_store(request: Request) -> Any:
+    """Get RecordStoreABC from app.state, raising 503 if not available."""
+    store = getattr(request.app.state, "record_store", None)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="RecordStore not available",
+        )
+    return store
+
+
 # =============================================================================
 # Optional service dependencies (return None instead of 503)
 # =============================================================================

@@ -264,7 +264,7 @@ class AgentRegistry:
     def transition(
         self,
         agent_id: str,
-        target_state: AgentState,
+        target_state: AgentState | str,
         expected_generation: int | None = None,
     ) -> AgentRecord:
         """Transition an agent to a new state with optimistic locking.
@@ -278,7 +278,7 @@ class AgentRegistry:
 
         Args:
             agent_id: Agent identifier.
-            target_state: Desired target state.
+            target_state: Desired target state (AgentState enum or string value).
             expected_generation: Expected generation for optimistic locking.
                 If None, locking check is skipped (state CAS still applies).
 
@@ -290,6 +290,9 @@ class AgentRegistry:
             InvalidTransitionError: If transition is not allowed.
             StaleAgentError: If expected_generation doesn't match (concurrent modification).
         """
+        if isinstance(target_state, str):
+            target_state = AgentState(target_state)
+
         with self._get_session() as session:
             model = session.execute(
                 select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)

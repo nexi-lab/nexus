@@ -272,9 +272,9 @@ Content for skill {i}.
         skill_path = result_v1["skill_paths"][0]
 
         # Try to import again without overwrite (should fail)
-        from nexus.core.exceptions import ValidationError
+        from nexus.bricks.skills.exceptions import SkillValidationError
 
-        with pytest.raises(ValidationError, match="already exists"):
+        with pytest.raises(SkillValidationError, match="already exists"):
             nexus_fs.skills_import(
                 zip_data=zip_base64_v1,
                 tier="user",

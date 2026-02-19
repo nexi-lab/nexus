@@ -113,13 +113,15 @@ class AuditStore:
     Provides append-only audit trail for all bypass attempts.
     """
 
-    def __init__(self, engine: Any):
+    def __init__(self, engine: Any, *, is_postgresql: bool = False):
         """Initialize audit store.
 
         Args:
             engine: SQLAlchemy database engine
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         self.engine = engine
+        self._is_postgresql = is_postgresql
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -130,7 +132,7 @@ class AuditStore:
         try:
             with self.engine.connect() as conn:
                 # Check if table exists
-                if self.engine.dialect.name == "sqlite":
+                if not self._is_postgresql:
                     result = conn.execute(
                         text(
                             "SELECT name FROM sqlite_master WHERE type='table' AND name='admin_bypass_audit'"
@@ -171,7 +173,7 @@ class AuditStore:
                             )
                         )
                         conn.commit()
-                elif self.engine.dialect.name == "postgresql":
+                else:
                     result = conn.execute(
                         text(
                             "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'admin_bypass_audit'"
@@ -238,8 +240,7 @@ class AuditStore:
 
     def _fix_sql_placeholders(self, sql: str) -> str:
         """Convert SQLite ? placeholders to PostgreSQL %s if needed."""
-        dialect_name = self.engine.dialect.name
-        if dialect_name == "postgresql":
+        if self._is_postgresql:
             return sql.replace("?", "%s")
         return sql
 

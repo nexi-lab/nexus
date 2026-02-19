@@ -28,10 +28,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from nexus.core.rebac import (
-    Entity,
-    NamespaceConfig,
-)
 from nexus.rebac.batch.bulk_checker import BulkPermissionChecker
 from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.cache.tiger.facade import TigerFacade
@@ -42,6 +38,10 @@ from nexus.rebac.consistency.revision import (
 from nexus.rebac.consistency.zone_manager import ZoneManager
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.directory.expander import DirectoryExpander
+from nexus.rebac.domain import (
+    Entity,
+    NamespaceConfig,
+)
 from nexus.rebac.graph.bulk_evaluator import (
     check_direct_relation as _check_direct_relation_in_graph,
 )
@@ -126,6 +126,7 @@ class ReBACManager:
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
         read_engine: Engine | None = None,
+        is_postgresql: bool = False,
     ):
         """Initialize ReBAC manager.
 
@@ -139,9 +140,11 @@ class ReBACManager:
             enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True)
             read_engine: Optional separate engine for read-only operations (Issue #725).
                         Defaults to ``engine`` when not provided.
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
+        self._is_postgresql = is_postgresql
         self.cache_ttl_seconds = cache_ttl_seconds
         self.max_depth = max_depth
         self._last_cleanup_time: datetime | None = None
@@ -149,7 +152,7 @@ class ReBACManager:
         self._tuple_version: int = 0
 
         # Compose TupleRepository for data access delegation (Issue #725: read/write split)
-        self._repo = TupleRepository(engine, read_engine=read_engine)
+        self._repo = TupleRepository(engine, read_engine=read_engine, is_postgresql=is_postgresql)
 
         # Compose graph traversal and expand engines
         self._computer = PermissionComputer(self._repo, self.get_namespace, max_depth)
@@ -201,29 +204,32 @@ class ReBACManager:
                 engine=engine,
                 cache_enabled=True,
                 cache_max_size=100_000,
+                is_postgresql=is_postgresql,
             )
 
         # Tiger Cache for materialized permissions (Issue #682)
         # Only enable on PostgreSQL - SQLite has lock contention issues
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
-        if enable_tiger_cache and engine.dialect.name == "postgresql":
+        if enable_tiger_cache and is_postgresql:
             from nexus.rebac.cache.tiger import (
                 TigerCache,
                 TigerCacheUpdater,
                 TigerResourceMap,
             )
 
-            resource_map = TigerResourceMap(engine)
+            resource_map = TigerResourceMap(engine, is_postgresql=is_postgresql)
             self._tiger_cache = TigerCache(
                 engine=engine,
                 resource_map=resource_map,
                 rebac_manager=self,
+                is_postgresql=is_postgresql,
             )
             self._tiger_updater = TigerCacheUpdater(
                 engine=engine,
                 tiger_cache=self._tiger_cache,
                 rebac_manager=self,
+                is_postgresql=is_postgresql,
             )
 
         # Issue #1459 Phase 12: Tiger Cache facade
@@ -236,6 +242,7 @@ class ReBACManager:
         self._directory_expander = DirectoryExpander(
             engine=engine,
             tiger_cache=self._tiger_cache,
+            is_postgresql=is_postgresql,
         )
 
         # Issue #1459 Phase 15+: Zone-aware graph traversal
@@ -263,6 +270,7 @@ class ReBACManager:
             rebac_check_single=self.rebac_check,
             cache_result=self._cache_check_result,
             tuple_version=getattr(self, "_tuple_version", 0),
+            is_postgresql=is_postgresql,
         )
 
         # Iterator cache for paginated list operations (Issue #722)
@@ -550,7 +558,7 @@ class ReBACManager:
         subject_type, subject_id = subject
         object_type, object_id = object
 
-        from nexus.core.rebac import WILDCARD_SUBJECT
+        from nexus.rebac.domain import WILDCARD_SUBJECT
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -1186,7 +1194,7 @@ class ReBACManager:
         Returns:
             List of wildcard tuples from other zones
         """
-        from nexus.core.rebac import WILDCARD_SUBJECT
+        from nexus.rebac.domain import WILDCARD_SUBJECT
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -2481,9 +2489,8 @@ class ReBACManager:
         visited: set[tuple[str, str]] = set()
         queue: list[tuple[str, str]] = [(subject_type, subject_id)]
 
-        # Determine SQL NOW function based on database type
-        is_postgresql = "postgresql" in str(self.engine.url)
-        now_sql = "NOW()" if is_postgresql else "datetime('now')"
+        # Determine SQL NOW function based on database type (config-time flag)
+        now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
 
         with self.engine.connect() as conn:
             while queue:
@@ -2865,7 +2872,9 @@ class ReBACManager:
 
         Delegates to consistency.revision module (Issue #1459).
         """
-        return increment_version_token(self.engine, self._repo, zone_id)
+        return increment_version_token(
+            self.engine, self._repo, zone_id, is_postgresql=self._is_postgresql
+        )
 
     def _get_cached_check_zone_aware_bounded(
         self,
@@ -3526,7 +3535,7 @@ class ReBACManager:
             cursor = self._create_cursor(conn)
 
             # Check if rebac_namespaces table exists
-            if self.engine.dialect.name == "sqlite":
+            if not self._is_postgresql:
                 cursor.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='rebac_namespaces'"
                 )
@@ -3677,7 +3686,7 @@ class ReBACManager:
         import json
         from datetime import datetime
 
-        from nexus.core.rebac import NamespaceConfig
+        from nexus.rebac.domain import NamespaceConfig
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -3931,7 +3940,7 @@ class ReBACManager:
         import uuid
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4217,7 +4226,7 @@ class ReBACManager:
         """
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
@@ -4226,7 +4235,7 @@ class ReBACManager:
             # PostgreSQL: Use DELETE...RETURNING to get deleted row in single query
             # This eliminates the SELECT+DELETE round-trip for better performance
             # Note: DELETE only has one row version, so no need for OLD prefix
-            if self.engine.dialect.name == "postgresql":
+            if self._is_postgresql:
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -4352,7 +4361,7 @@ class ReBACManager:
         import logging
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4792,7 +4801,7 @@ class ReBACManager:
         """
         import logging
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4956,7 +4965,7 @@ class ReBACManager:
             ... ])
             >>> # Returns: [True, False, True]
         """
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         if not checks:
             return []
@@ -5028,7 +5037,7 @@ class ReBACManager:
         """
         import logging
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -5114,7 +5123,7 @@ class ReBACManager:
         """Compute uncached checks using Python (original implementation)."""
         import time as time_module
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         for i, (subject, permission, obj) in uncached_checks:
             subject_entity = Entity(subject[0], subject[1])
@@ -5283,7 +5292,7 @@ class ReBACManager:
         import uuid
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         # Generate request ID and timestamp
         request_id = f"req_{uuid.uuid4().hex[:12]}"
@@ -5591,7 +5600,7 @@ class ReBACManager:
         """
         import logging
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -6114,7 +6123,7 @@ class ReBACManager:
         """
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)

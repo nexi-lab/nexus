@@ -44,12 +44,12 @@ first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 from __future__ import annotations
 
 import logging
+import os as _os
+from typing import TYPE_CHECKING, Any, cast
 
-__version__ = "0.7.2.dev0"
+__version__ = "0.7.2.dev0"  # bump to trigger CI quality checks
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
-
-from typing import TYPE_CHECKING, Any, cast
 
 # =============================================================================
 # LAZY IMPORTS for performance optimization
@@ -104,6 +104,9 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+
+# All mutable state (data, metastore, record store, etc.) lives under this directory.
+NEXUS_STATE_DIR = _os.path.expanduser("~/.nexus")
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +229,6 @@ def connect(
     from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
     from nexus.storage.raft_metadata_store import RaftMetadataStore
-    from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # Load configuration
     cfg = load_config(config)
@@ -283,11 +285,16 @@ def connect(
             project_id=cfg.gcs_project_id,
             credentials_path=cfg.gcs_credentials_path,
         )
-        metadata_path = cfg.db_path or str(Path("./nexus-gcs-metadata"))
+        nexus_root = NEXUS_STATE_DIR
+        data_dir = str(Path(nexus_root) / "data")
     else:
-        data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
+        data_dir = cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
+        nexus_root = str(Path(data_dir).parent)
         backend = LocalBackend(root_path=Path(data_dir).resolve())
-        metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
+
+    # Resolve paths — new fields take precedence, db_path is legacy fallback
+    metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
+    record_store_path = cfg.record_store_path or None
 
     # Create metadata store based on mode
     metadata_store: MetastoreABC
@@ -345,8 +352,16 @@ def connect(
     enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
     enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
 
-    # RecordStore (Four Pillars)
-    record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
+    # RecordStore (Four Pillars) — optional; only created when record_store_path
+    # is set.  Passing None gives a bare kernel (storage-only) where all
+    # service-layer features (audit log, versioning, ReBAC, etc.) are skipped.
+    # The factory handles record_store=None gracefully.
+    if record_store_path:
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        record_store = SQLAlchemyRecordStore(db_path=record_store_path)
+    else:
+        record_store = None
 
     # Build config objects from NexusConfig fields (Issue #1391)
     from nexus.core.config import (
@@ -381,6 +396,36 @@ def connect(
         providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
     )
 
+    # --- Profile resolution (Issue #1708) ---
+    from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+
+    if cfg.profile == "auto":
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
+
+        caps = detect_capabilities()
+        resolved_profile = suggest_profile(caps)
+        logger.info(
+            "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
+            resolved_profile,
+            caps.memory_mb,
+            caps.has_gpu,
+            caps.cpu_cores,
+        )
+    else:
+        resolved_profile = DeploymentProfile(cfg.profile)
+        # Warn if explicit profile may exceed device capabilities
+        from nexus.core.device_capabilities import (
+            detect_capabilities,
+            warn_if_profile_exceeds_device,
+        )
+
+        caps = detect_capabilities()
+        warn_if_profile_exceeds_device(resolved_profile, caps)
+
+    # Apply FeaturesConfig overrides (Issue #1389 — was unused in connect())
+    overrides = cfg.features.to_overrides() if cfg.features else {}
+    enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
+
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
@@ -394,6 +439,7 @@ def connect(
         permissions=perm_cfg,
         distributed=dist_cfg,
         parsing=parse_cfg,
+        enabled_bricks=enabled_bricks,
     )
 
     # Set memory config for Memory API

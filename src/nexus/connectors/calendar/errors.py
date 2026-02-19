@@ -1,47 +1,17 @@
-"""Error registry for Google Calendar connector.
+"""Error definitions for Google Calendar connector.
 
-Each error definition includes:
-- message: Human-readable error description
-- skill_section: SKILL.md section anchor for reference
-- fix_example: Example of how to fix the error
-
-These are used by SkillDocMixin to generate self-correcting error messages
-that help agents fix their requests.
+Shared trait/checkpoint errors are inherited from ``base_errors``.
+Domain-specific errors are defined here.
 """
 
 from __future__ import annotations
 
 from nexus.connectors.base import ErrorDef
+from nexus.connectors.base_errors import CHECKPOINT_ERRORS, TRAIT_ERRORS
 
-# Error registry for Calendar connector
-# Used by TraitBasedMixin and ValidatedMixin for error formatting
-ERROR_REGISTRY: dict[str, ErrorDef] = {
-    # ==========================================================================
-    # Trait Validation Errors
-    # ==========================================================================
-    "MISSING_AGENT_INTENT": ErrorDef(
-        message="Calendar operations require agent_intent explaining why you're performing this action",
-        skill_section="required-format",
-        fix_example="# agent_intent: User requested to schedule a team meeting for Monday",
-    ),
-    "AGENT_INTENT_TOO_SHORT": ErrorDef(
-        message="agent_intent must be at least 10 characters to provide meaningful context",
-        skill_section="required-format",
-        fix_example="# agent_intent: User asked to create weekly standup meeting with the team",
-    ),
-    "MISSING_CONFIRM": ErrorDef(
-        message="Delete operations require explicit confirmation",
-        skill_section="delete-operation",
-        fix_example="# agent_intent: User wants to cancel the meeting\n# confirm: true",
-    ),
-    "MISSING_USER_CONFIRMATION": ErrorDef(
-        message="This operation requires explicit user confirmation before proceeding",
-        skill_section="irreversible-operations",
-        fix_example="# agent_intent: <reason>\n# user_confirmed: true  # Only after user explicitly approves",
-    ),
-    # ==========================================================================
-    # Schema Validation Errors
-    # ==========================================================================
+# Domain-specific errors for Calendar operations
+_DOMAIN_ERRORS: dict[str, ErrorDef] = {
+    # Schema validation errors
     "INVALID_DATETIME_FORMAT": ErrorDef(
         message="Invalid datetime format. Use ISO 8601 with timezone offset",
         skill_section="time-format",
@@ -77,9 +47,7 @@ ERROR_REGISTRY: dict[str, ErrorDef] = {
         skill_section="time-format",
         fix_example="start:\n  dateTime: 2024-01-15T09:00:00-08:00\nend:\n  dateTime: 2024-01-15T10:00:00-08:00  # Must be after start",
     ),
-    # ==========================================================================
-    # Operation Errors
-    # ==========================================================================
+    # Operation errors
     "EVENT_NOT_FOUND": ErrorDef(
         message="Event not found. It may have been deleted or you may not have access",
         skill_section="operations",
@@ -100,64 +68,11 @@ ERROR_REGISTRY: dict[str, ErrorDef] = {
         skill_section="operations",
         fix_example="# Wait a few minutes before retrying",
     ),
-    # ==========================================================================
-    # Checkpoint Errors
-    # ==========================================================================
-    "CHECKPOINT_NOT_FOUND": ErrorDef(
-        message="Checkpoint not found. It may have expired or been cleared",
-        skill_section="rollback",
-        fix_example="# Checkpoints expire after the operation completes successfully",
-    ),
-    "ROLLBACK_NOT_POSSIBLE": ErrorDef(
-        message="Cannot rollback this operation",
-        skill_section="rollback",
-        fix_example="# Some operations (like notifications sent) cannot be undone",
-    ),
 }
 
-
-def get_error(code: str) -> ErrorDef | None:
-    """Get error definition by code.
-
-    Args:
-        code: Error code (e.g., "MISSING_AGENT_INTENT")
-
-    Returns:
-        ErrorDef if found, None otherwise
-    """
-    return ERROR_REGISTRY.get(code)
-
-
-def format_error_message(
-    code: str,
-    skill_path: str = "/skill/services/gcalendar/SKILL.md",
-    **context: str,
-) -> str:
-    """Format error message with skill reference.
-
-    Args:
-        code: Error code
-        skill_path: Path to SKILL.md
-        **context: Additional context to include in message
-
-    Returns:
-        Formatted error message with skill reference and fix example
-    """
-    error_def = ERROR_REGISTRY.get(code)
-    if not error_def:
-        return f"[{code}] Unknown error"
-
-    lines = [f"[{code}] {error_def.message}"]
-
-    # Add context
-    for key, value in context.items():
-        lines.append(f"  {key}: {value}")
-
-    # Add skill reference
-    lines.append(f"\nSee: {skill_path}#{error_def.skill_section}")
-
-    # Add fix example
-    if error_def.fix_example:
-        lines.append(f"\nFix:\n```yaml\n{error_def.fix_example}\n```")
-
-    return "\n".join(lines)
+# Merged registry: shared trait + checkpoint + domain-specific
+ERROR_REGISTRY: dict[str, ErrorDef] = {
+    **TRAIT_ERRORS,
+    **CHECKPOINT_ERRORS,
+    **_DOMAIN_ERRORS,
+}

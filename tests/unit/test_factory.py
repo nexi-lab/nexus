@@ -151,8 +151,8 @@ class TestBootKernelServices:
         ctx = _make_mock_ctx(enable_write_buffer=False)
         result = _boot_kernel_services(ctx)
         wo = result["write_observer"]
-        # RecordStoreSyncer doesn't have .start() called in kernel boot
-        # (only BufferedRecordStoreSyncer does, and only in _start_background_services)
+        # RecordStoreWriteObserver doesn't have .start() called in kernel boot
+        # (only BufferedRecordStoreWriteObserver does, and only in _start_background_services)
         assert wo is not None
 
     def test_deferred_buffer_created_when_enabled(self) -> None:
@@ -257,6 +257,11 @@ class TestBootBrickServices:
             "api_key_creator",
             "snapshot_service",
             "task_queue_service",
+            "ipc_storage_driver",
+            "ipc_vfs_driver",
+            "ipc_provisioner",
+            "skill_service",
+            "skill_package_service",
         }
         assert expected_keys == set(result.keys())
 
@@ -310,9 +315,9 @@ class TestStartBackgroundServices:
 
     def test_buffered_syncer_started(self) -> None:
         from nexus.factory import _start_background_services
-        from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
 
-        wo = MagicMock(spec=BufferedRecordStoreSyncer)
+        wo = MagicMock(spec=BufferedRecordStoreWriteObserver)
         kernel = {"deferred_permission_buffer": None, "write_observer": wo}
         system = {"delivery_worker": None}
         _start_background_services(kernel, system)
@@ -327,8 +332,8 @@ class TestStartBackgroundServices:
 class TestCreateNexusServicesIntegration:
     """Integration tests for create_nexus_services orchestrator."""
 
-    def test_full_boot_returns_kernel_services(self) -> None:
-        from nexus.core.config import KernelServices
+    def test_full_boot_returns_three_tier_tuple(self) -> None:
+        from nexus.core.config import BrickServices, KernelServices, SystemServices
         from nexus.factory import create_nexus_services
 
         record_store = MagicMock()
@@ -342,10 +347,15 @@ class TestCreateNexusServicesIntegration:
             backend=MagicMock(),
             router=MagicMock(),
         )
-        assert isinstance(result, KernelServices)
-        assert result.rebac_manager is not None
-        assert result.rebac_circuit_breaker is not None
-        assert result.permission_enforcer is not None
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        kernel, system, brick = result
+        assert isinstance(kernel, KernelServices)
+        assert isinstance(system, SystemServices)
+        assert isinstance(brick, BrickServices)
+        assert kernel.rebac_manager is not None
+        assert kernel.permission_enforcer is not None
+        assert brick.rebac_circuit_breaker is not None
 
     def test_kernel_failure_propagates_boot_error(self) -> None:
         from nexus.factory import create_nexus_services

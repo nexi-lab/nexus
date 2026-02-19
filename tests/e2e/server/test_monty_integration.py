@@ -28,8 +28,8 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not MONTY_AVAILABLE, reason="pydantic-monty not installed")
 
-from nexus.sandbox.sandbox_manager import SandboxManager  # noqa: E402
-from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
+from nexus.bricks.sandbox.sandbox_manager import SandboxManager  # noqa: E402
+from nexus.bricks.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
 from nexus.storage.models import Base  # noqa: E402
 
 # ---------------------------------------------------------------------------

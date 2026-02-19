@@ -24,13 +24,13 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from nexus.bricks.workflows.actions import _LLM_SYSTEM_PROMPT, BashAction, LLMAction
+from nexus.bricks.workflows.types import ActionResult, TriggerType, WorkflowContext
 from nexus.security.prompt_sanitizer import (
     detect_injection_patterns,
     sanitize_for_prompt,
     wrap_untrusted_data,
 )
-from nexus.workflows.actions import _LLM_SYSTEM_PROMPT, BashAction, LLMAction
-from nexus.workflows.types import ActionResult, TriggerType, WorkflowContext
 
 # =============================================================================
 # Helpers
@@ -198,7 +198,7 @@ class TestSanitizationPerformance:
         assert elapsed < 0.005, f"Wrapping took {elapsed * 1000:.2f}ms (limit: 5ms)"
 
     def test_safe_interpolate_100_calls_under_10ms(self):
-        from nexus.workflows.actions import BaseAction
+        from nexus.bricks.workflows.actions import BaseAction
 
         class _Action(BaseAction):
             async def execute(self, ctx: WorkflowContext) -> ActionResult:
@@ -229,8 +229,8 @@ class TestMemoSafetyInvariant:
 
     @pytest.mark.asyncio
     async def test_transfer_memo_with_injection_preserved_verbatim(self):
-        from nexus.pay.credits import CreditsService
-        from nexus.pay.sdk import NexusPay
+        from nexus.bricks.pay.credits import CreditsService
+        from nexus.bricks.pay.sdk import NexusPay
 
         service = CreditsService(enabled=False)
         pay = NexusPay(
@@ -293,7 +293,7 @@ def _make_pay_app(*, require_auth: bool = True) -> FastAPI:
 
 def _make_authenticated_pay_app() -> FastAPI:
     """Create a FastAPI app with auth that accepts requests."""
-    from nexus.pay.sdk import NexusPay
+    from nexus.bricks.pay.sdk import NexusPay
     from nexus.server.api.v2.routers.pay import (
         _register_pay_exception_handlers,
         get_nexuspay,
@@ -318,7 +318,7 @@ def _make_authenticated_pay_app() -> FastAPI:
     app.state.spending_policy_service = mock_policy_service
 
     # Override get_nexuspay to return a real NexusPay with mock credits
-    from nexus.pay.credits import CreditsService
+    from nexus.bricks.pay.credits import CreditsService
 
     service = CreditsService(enabled=False)
 

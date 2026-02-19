@@ -128,6 +128,8 @@ dependencies = [
     "structlog>=24.4.0",
     # Governance graphs: collusion detection, ring detection (Issue #1359)
     "networkx>=3.2",
+    # Governance: sparse matrices for EigenTrust (Issue #2129)
+    "scipy>=1.11.0",
 ]
 
 [project.optional-dependencies]
@@ -512,7 +514,7 @@ disable_error_code = ["attr-defined", "no-any-return"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.core.exceptions",
-    "nexus.a2a.stores.database",
+    "nexus.bricks.a2a.stores.database",
 ]
 # Pre-existing errors from develop merges (zone-id-default-root, a2a DI).
 # Suppressed to unblock mixin extraction PR.
@@ -570,13 +572,13 @@ disable_error_code = ["override", "attr-defined"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.workflows.loader",
+    "nexus.bricks.workflows.loader",
     "nexus.skills.skill_generator",
     "nexus.mcp.provider_registry",
     "nexus.mcp.oauth_mappings",
     "nexus.skills.parser",
     "nexus.server.auth.oauth_factory",
-    "nexus.workflows.storage",
+    "nexus.bricks.workflows.storage",
 ]
 # yaml/requests stubs handled at project level
 disable_error_code = ["import-untyped"]
@@ -643,8 +645,8 @@ module = [
     "nexus.raft.commands_pb2_grpc",
     "nexus.raft.transport_pb2",
     "nexus.raft.transport_pb2_grpc",
-    "nexus.a2a.a2a_pb2",
-    "nexus.a2a.a2a_pb2_grpc",
+    "nexus.bricks.a2a.a2a_pb2",
+    "nexus.bricks.a2a.a2a_pb2_grpc",
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
@@ -656,7 +658,7 @@ module = "nexus.raft.client"
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
-module = ["nexus.a2a.grpc_server", "nexus.a2a.proto_converter"]
+module = ["nexus.bricks.a2a.grpc_server", "nexus.bricks.a2a.proto_converter"]
 # gRPC server and proto converter interact with generated a2a_pb2 module
 disable_error_code = ["attr-defined"]
 
@@ -699,8 +701,8 @@ exclude = [
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
     "src/nexus/core/_compact_generated.py",    # Generated at install time
     "src/nexus/core/protocols/",               # Generated at install time
-    "src/nexus/a2a/a2a_pb2.py",               # Generated gRPC stub
-    "src/nexus/a2a/a2a_pb2_grpc.py",          # Generated gRPC stub
+    "src/nexus/bricks/a2a/a2a_pb2.py",         # Generated gRPC stub
+    "src/nexus/bricks/a2a/a2a_pb2_grpc.py",   # Generated gRPC stub
 ]
 
 [tool.ruff.lint]
@@ -738,6 +740,8 @@ ignore = [
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
 "src/nexus/core/distributed_lock.py" = ["ARG002"]  # Interface method signature
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
+"src/nexus/skills/__init__.py" = ["E402", "ARG002"]  # PEP 451 finder: import order + unused PEP 451 signature params
+"src/nexus/bricks/skills/testing.py" = ["ARG002"]  # Protocol stub implementations — unused args by design
 "src/nexus/raft/transport_pb2_grpc.py" = ["ARG002"]  # Auto-generated gRPC stubs
 "src/nexus/raft/client.py" = ["SIM105"]  # datetime parsing with fallback
 "src/nexus/storage/raft_metadata_store.py" = ["ARG002", "SIM105", "SIM108", "SIM102"]  # Interface + datetime parsing + style

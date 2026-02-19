@@ -27,7 +27,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 
 
 class SQLAlchemyDatabaseConnection:
@@ -1307,7 +1307,7 @@ def skills_diff(
             # Reconstruct SKILL.md content for both
             from nexus.skills.exporter import SkillExporter
 
-            exporter = SkillExporter(registry)
+            exporter = SkillExporter(registry, filesystem=nx)
 
             content1 = exporter._reconstruct_skill_md(skill_obj1)
             content2 = exporter._reconstruct_skill_md(skill_obj2)

@@ -22,7 +22,7 @@ from nexus.rebac.consistency.revision import get_zone_revision_for_grant
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +118,13 @@ class DirectoryExpander:
         engine: Engine,
         tiger_cache: TigerCache | None = None,
         metadata_store: Any | None = None,
+        *,
+        is_postgresql: bool = False,
     ) -> None:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._metadata_store = metadata_store
+        self._is_postgresql = is_postgresql
 
     def set_metadata_store(self, metadata_store: Any) -> None:
         """Set the metadata store reference for directory queries."""

@@ -28,7 +28,7 @@ from nexus.services.mount_service import MountService
 from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
-from nexus.services.skill_service import SkillService
+from nexus.services.skill_service import SkillService  # backward compat shim (Issue #2035)
 from nexus.services.subsystem import Subsystem
 from nexus.services.version_service import VersionService
 

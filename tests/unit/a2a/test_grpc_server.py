@@ -2,7 +2,7 @@
 
 Tests use an in-process gRPC server on an ephemeral port (port 0).
 All business logic goes through the real TaskManager with an
-InMemoryTaskStore, exercising the full gRPC transport path.
+CacheBackedTaskStore, exercising the full gRPC transport path.
 """
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ import grpc
 import grpc.aio
 import pytest
 
-from nexus.a2a import a2a_pb2, a2a_pb2_grpc
-from nexus.a2a.grpc_server import create_grpc_server, stop_grpc_server
-from nexus.a2a.models import TaskState
-from nexus.a2a.task_manager import TaskManager
+from nexus.bricks.a2a import a2a_pb2, a2a_pb2_grpc
+from nexus.bricks.a2a.grpc_server import create_grpc_server, stop_grpc_server
+from nexus.bricks.a2a.models import TaskState
+from nexus.bricks.a2a.task_manager import TaskManager
 
 
 @pytest.fixture

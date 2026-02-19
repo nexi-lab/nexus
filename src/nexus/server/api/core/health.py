@@ -196,11 +196,8 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
         health["unhealthy_backends"] = unhealthy_backends
 
     # Circuit breaker health (Issue #1366)
-    _resiliency_mgr = (
-        getattr(state.nexus_fs, "_service_extras", {}).get("resiliency_manager")
-        if state.nexus_fs
-        else None
-    )
+    _sys = getattr(state.nexus_fs, "_system_services", None) if state.nexus_fs else None
+    _resiliency_mgr = getattr(_sys, "resiliency_manager", None)
     if _resiliency_mgr is not None:
         health["components"]["resiliency"] = _resiliency_mgr.health_check()
         if health["components"]["resiliency"]["status"] == "degraded":
@@ -228,7 +225,7 @@ async def pool_metrics(request: Request) -> dict[str, Any]:
 
     # Redis/Dragonfly pool stats from CacheBrick (Issue #1524)
     try:
-        cache_brick = getattr(state, "cache_factory", None)
+        cache_brick = getattr(state, "cache_brick", None)
         if cache_brick is not None and cache_brick.has_cache_store:
             _store = cache_brick.cache_store
             dragonfly_stats = _store.get_pool_stats()

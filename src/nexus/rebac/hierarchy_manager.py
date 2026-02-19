@@ -136,7 +136,7 @@ class HierarchyManager:
         # We need to query the database directly since rebac_check
         # would recursively check, not just look for direct tuple
 
-        from nexus.core.rebac import Entity
+        from nexus.rebac.domain import Entity
 
         child_entity = Entity("file", child_path)
         parent_entity = Entity("file", parent_path)

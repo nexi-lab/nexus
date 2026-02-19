@@ -45,8 +45,8 @@ def verify_imports() -> dict[str, bool]:
 
     # Required modules
     for mod in [
-        "nexus.search.semantic",
-        "nexus.search.async_search",
+        "nexus.search.query_service",
+        "nexus.search.indexing_service",
         "nexus.search.fusion",
         "nexus.search.chunking",
         "nexus.search.embeddings",

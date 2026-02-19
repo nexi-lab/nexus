@@ -145,6 +145,8 @@ class SearchService(SemanticSearchMixin):
         record_store: Any | None = None,
         # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
         gateway: NexusFSGateway | None = None,
+        list_parallel_workers: int = LIST_PARALLEL_WORKERS,
+        grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
     ):
         """Initialize search service.
 
@@ -175,9 +177,11 @@ class SearchService(SemanticSearchMixin):
 
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
+        self._grep_parallel_workers = grep_parallel_workers
 
         # Shared thread pool for parallel directory listing (Issue #899)
         self._list_thread_pool: ThreadPoolExecutor | None = None
+        self._list_parallel_workers = list_parallel_workers
 
         # Lock for lazy thread pool initialization (prevents TOCTOU race)
         self._pool_lock = threading.Lock()
@@ -195,7 +199,7 @@ class SearchService(SemanticSearchMixin):
             with self._pool_lock:
                 if self._thread_pool is None:
                     self._thread_pool = ThreadPoolExecutor(
-                        max_workers=GREP_PARALLEL_WORKERS,
+                        max_workers=self._grep_parallel_workers,
                         thread_name_prefix="nexus-search",
                     )
         return self._thread_pool
@@ -206,10 +210,28 @@ class SearchService(SemanticSearchMixin):
             with self._pool_lock:
                 if self._list_thread_pool is None:
                     self._list_thread_pool = ThreadPoolExecutor(
-                        max_workers=LIST_PARALLEL_WORKERS,
+                        max_workers=self._list_parallel_workers,
                         thread_name_prefix="nexus-list",
                     )
         return self._list_thread_pool
+
+    def _get_namespace_prefixes(self) -> tuple[str, ...]:
+        """Get known namespace prefixes from router (dynamic) or fallback (static)."""
+        if self.router and hasattr(self.router, "_namespaces"):
+            return tuple(f"{ns}/" for ns in self.router._namespaces)
+        return ("workspace/", "shared/", "external/", "system/", "archives/")
+
+    def _should_prepend_recursive_wildcard(self, pattern: str) -> bool:
+        """Check if glob pattern needs **/ prefix for implicit recursive search.
+
+        Returns True when the pattern looks like a relative multi-level path
+        (e.g., "models/file.py") that should match anywhere in the tree.
+        Returns False when the pattern already specifies a root namespace
+        (e.g., "workspace/file.py") or is already recursive/absolute.
+        """
+        if "**" in pattern or pattern.startswith("/") or "/" not in pattern:
+            return False
+        return not pattern.startswith(self._get_namespace_prefixes())
 
     def close(self) -> None:
         """Release resources held by the search service."""
@@ -651,7 +673,7 @@ class SearchService(SemanticSearchMixin):
                     )
             if not has_permission:
                 raise PermissionDeniedError(
-                    f"Access denied: User '{context.user}' does not have "
+                    f"Access denied: User '{context.user_id}' does not have "
                     f"TRAVERSE permission for '{path}'"
                 )
 
@@ -664,7 +686,7 @@ class SearchService(SemanticSearchMixin):
             from nexus.core.permissions import OperationContext
 
             list_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path
+                user_id="anonymous", groups=[], backend_path=route.backend_path
             )
 
         # Issue #901: Parallel directory traversal for 5-10x speedup
@@ -1449,14 +1471,7 @@ class SearchService(SemanticSearchMixin):
             path = path + "/"
         if path == "/":
             full_pattern = pattern
-            if (
-                "**" not in full_pattern
-                and not full_pattern.startswith("/")
-                and not full_pattern.startswith(
-                    ("workspace/", "shared/", "external/")
-                )  # Issue #1572
-                and "/" in full_pattern
-            ):
+            if self._should_prepend_recursive_wildcard(full_pattern):
                 full_pattern = "**/" + full_pattern
         else:
             base_path = path[1:] if path.startswith("/") else path
@@ -1558,14 +1573,7 @@ class SearchService(SemanticSearchMixin):
                     search_path = search_path + "/"
                 if search_path == "/":
                     full_pattern = pattern
-                    if (
-                        "**" not in full_pattern
-                        and not full_pattern.startswith("/")
-                        and not full_pattern.startswith(
-                            ("workspace/", "shared/", "external/")
-                        )  # Issue #1572
-                        and "/" in full_pattern
-                    ):
+                    if self._should_prepend_recursive_wildcard(full_pattern):
                         full_pattern = "**/" + full_pattern
                 else:
                     base_path = search_path[1:] if search_path.startswith("/") else search_path
@@ -2085,7 +2093,7 @@ class SearchService(SemanticSearchMixin):
         timer = Timer()
         timer.__enter__()
 
-        chunk_size = max(1, len(files) // GREP_PARALLEL_WORKERS)
+        chunk_size = max(1, len(files) // self._grep_parallel_workers)
         file_chunks = [files[i : i + chunk_size] for i in range(0, len(files), chunk_size)]
 
         def search_chunk(chunk_files: builtins.list[str]) -> builtins.list[dict[str, Any]]:

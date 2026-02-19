@@ -53,6 +53,15 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
+    # Issue #625: Stop workflow dispatch consumer
+    wds = getattr(app.state, "workflow_dispatch", None)
+    if wds is not None:
+        try:
+            await wds.stop()
+            logger.info("Workflow dispatch service stopped")
+        except Exception as e:
+            logger.warning("Error stopping workflow dispatch service: %s", e, exc_info=True)
+
     # Stop Task Queue runner (Issue #574)
     task_runner = getattr(app.state, "task_runner", None)
     if task_runner:
@@ -151,10 +160,11 @@ def _startup_agent_registry(app: FastAPI) -> None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
 
+            _bg = getattr(getattr(app.state, "profile_tuning", None), "background_task", None)
             app.state.agent_registry = AgentRegistry(
                 session_factory=app.state.nexus_fs.SessionLocal,
                 entity_registry=getattr(app.state.nexus_fs, "_entity_registry", None),
-                flush_interval=60,
+                flush_interval=_bg.heartbeat_flush_interval if _bg else 60,
             )
             # Inject into NexusFS for RPC methods
             app.state.nexus_fs._agent_registry = app.state.agent_registry
@@ -279,9 +289,9 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         return
 
     try:
-        from nexus.sandbox.auth_service import SandboxAuthService
-        from nexus.sandbox.events import AgentEventLog
-        from nexus.sandbox.sandbox_manager import SandboxManager
+        from nexus.bricks.sandbox.auth_service import SandboxAuthService
+        from nexus.bricks.sandbox.events import AgentEventLog
+        from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
         session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
         if not (session_factory and callable(session_factory)):
@@ -399,11 +409,18 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
         stale_agent_detection_task,
     )
 
+    _bg_tuning = app.state.profile_tuning.background_task
     app.state._heartbeat_task = asyncio.create_task(
-        heartbeat_flush_task(app.state.agent_registry, interval_seconds=60)
+        heartbeat_flush_task(
+            app.state.agent_registry,
+            interval_seconds=_bg_tuning.heartbeat_flush_interval,
+        )
     )
     app.state._stale_detection_task = asyncio.create_task(
-        stale_agent_detection_task(app.state.agent_registry, interval_seconds=300)
+        stale_agent_detection_task(
+            app.state.agent_registry,
+            interval_seconds=_bg_tuning.stale_agent_check_interval,
+        )
     )
     logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
@@ -418,15 +435,20 @@ async def _startup_scheduler(app: FastAPI) -> None:
     try:
         import asyncpg
 
-        from nexus.pay.credits import CreditsService
-        from nexus.scheduler.events import AgentStateEmitter
-        from nexus.scheduler.policies.fair_share import FairShareCounter
-        from nexus.scheduler.queue import TaskQueue
-        from nexus.scheduler.service import SchedulerService
+        from nexus.bricks.pay.credits import CreditsService
+        from nexus.bricks.scheduler.events import AgentStateEmitter
+        from nexus.bricks.scheduler.policies.fair_share import FairShareCounter
+        from nexus.bricks.scheduler.queue import TaskQueue
+        from nexus.bricks.scheduler.service import SchedulerService
 
         # Convert SQLAlchemy URL to asyncpg DSN
         pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-        pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+        _pool_tuning = app.state.profile_tuning.pool
+        pool = await asyncpg.create_pool(
+            pg_dsn,
+            min_size=_pool_tuning.asyncpg_min_size,
+            max_size=_pool_tuning.asyncpg_max_size,
+        )
         app.state._scheduler_pool = pool
 
         # Create scheduled_tasks table if it doesn't exist
@@ -495,8 +517,8 @@ async def _startup_scheduler(app: FastAPI) -> None:
 
         # Wire hook cleanup handler into state emitter (Issue #1257)
         _nx = getattr(app.state, "nexus_fs", None)
-        _svc = getattr(_nx, "services", None) if _nx else None
-        scoped_hook_engine = getattr(_svc, "scoped_hook_engine", None) if _svc else None
+        _sys = getattr(_nx, "_system_services", None) if _nx else None
+        scoped_hook_engine = getattr(_sys, "scoped_hook_engine", None) if _sys else None
         if scoped_hook_engine is not None:
             from nexus.services.hook_engine import create_agent_cleanup_handler
 
@@ -527,11 +549,12 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
 
             from nexus.tasks.runner import AsyncTaskRunner
 
-            runner = AsyncTaskRunner(engine=engine, max_workers=4)
+            _task_workers = app.state.profile_tuning.concurrency.task_runner_workers
+            runner = AsyncTaskRunner(engine=engine, max_workers=_task_workers)
             service.set_runner(runner)
             app.state.task_runner = runner
             task = asyncio.create_task(runner.run())
-            logger.info("Task Queue runner started (4 workers)")
+            logger.info("Task Queue runner started (%d workers)", _task_workers)
             return task
         else:
             logger.debug("Task Queue: nexus_tasks Rust extension not available")
@@ -556,3 +579,12 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
 
     # Expose on app.state so routers can access without reaching into NexusFS
     app.state.workflow_engine = engine
+
+    # Issue #625: Start workflow dispatch consumer (DT_PIPE → workflow engine)
+    wds = getattr(app.state, "workflow_dispatch", None)
+    if wds is not None:
+        try:
+            await wds.start()
+            logger.info("Workflow dispatch service started")
+        except Exception as e:
+            logger.warning("Workflow dispatch service start failed (non-fatal): %s", e)

@@ -15,7 +15,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from nexus.a2a.router import build_router
+from nexus.bricks.a2a.router import build_router
 
 # ======================================================================
 # Fixtures

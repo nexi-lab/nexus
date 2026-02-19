@@ -5,9 +5,8 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from nexus.storage.models import Base, WorkflowExecutionModel, WorkflowModel
-from nexus.workflows.storage import WorkflowStore
-from nexus.workflows.types import (
+from nexus.bricks.workflows.storage import WorkflowStore
+from nexus.bricks.workflows.types import (
     TriggerType,
     WorkflowAction,
     WorkflowDefinition,
@@ -15,6 +14,7 @@ from nexus.workflows.types import (
     WorkflowStatus,
     WorkflowTrigger,
 )
+from nexus.storage.models import Base, WorkflowExecutionModel, WorkflowModel
 
 
 @pytest.fixture

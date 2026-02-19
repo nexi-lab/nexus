@@ -97,6 +97,7 @@ class AdminGetKeyParams:
     """Parameters for admin_get_key() method."""
 
     key_id: str
+    zone_id: str | None = None
 
 
 @dataclass
@@ -104,6 +105,7 @@ class AdminRevokeKeyParams:
     """Parameters for admin_revoke_key() method."""
 
     key_id: str
+    zone_id: str | None = None
 
 
 @dataclass
@@ -111,6 +113,7 @@ class AdminUpdateKeyParams:
     """Parameters for admin_update_key() method."""
 
     key_id: str
+    zone_id: str | None = None
     expires_days: int | None = None
     is_admin: bool | None = None
     name: str | None = None

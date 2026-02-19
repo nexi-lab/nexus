@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from nexus.a2a.models import (
+from nexus.bricks.a2a.models import (
     Artifact,
     DataPart,
     Message,
@@ -22,7 +22,7 @@ from nexus.a2a.models import (
     TaskStatus,
     TextPart,
 )
-from nexus.a2a.task_store import TaskStoreProtocol
+from nexus.bricks.a2a.task_store import TaskStoreProtocol
 
 # ======================================================================
 # Fakes / helpers
@@ -144,11 +144,12 @@ def _make_task_with_artifact(task_id: str = "task-art") -> Task:
 def store(request: pytest.FixtureRequest) -> TaskStoreProtocol:
     """Create a TaskStore instance for each backend."""
     if request.param == "in_memory":
-        from nexus.a2a.stores.in_memory import InMemoryTaskStore
+        from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
+        from nexus.cache.inmemory import InMemoryCacheStore
 
-        return InMemoryTaskStore()
+        return CacheBackedTaskStore(InMemoryCacheStore())
     elif request.param == "vfs":
-        from nexus.a2a.stores.vfs import VFSTaskStore
+        from nexus.bricks.a2a.stores.vfs import VFSTaskStore
 
         driver = InMemoryStorageDriver()
         return VFSTaskStore(storage=driver)
@@ -159,7 +160,7 @@ def store(request: pytest.FixtureRequest) -> TaskStoreProtocol:
 @pytest.fixture()
 def vfs_store() -> tuple[Any, Any]:
     """VFSTaskStore with exposed driver for index tests."""
-    from nexus.a2a.stores.vfs import VFSTaskStore
+    from nexus.bricks.a2a.stores.vfs import VFSTaskStore
 
     driver = InMemoryStorageDriver()
     store = VFSTaskStore(storage=driver, max_cache_size=5)

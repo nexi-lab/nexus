@@ -18,13 +18,15 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from nexus.server.dependencies import require_auth
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v2/rlm", tags=["rlm"])
+router = APIRouter(prefix="/api/v2/rlm", tags=["rlm"], dependencies=[Depends(require_auth)])
 
 
 # ---------------------------------------------------------------------------

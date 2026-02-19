@@ -28,13 +28,14 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker as AsyncSessionMaker
 
+from nexus.bricks.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
+from nexus.bricks.governance.collusion_service import CollusionService
+from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
+from nexus.bricks.governance.models import AgentBaseline
+from nexus.bricks.governance.response_service import ResponseService
+from nexus.contracts.db_base import Base
 from nexus.server.api.v2.routers.governance import router
-from nexus.services.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
-from nexus.services.governance.collusion_service import CollusionService
-from nexus.services.governance.governance_graph_service import GovernanceGraphService
-from nexus.services.governance.models import AgentBaseline
-from nexus.services.governance.response_service import ResponseService
-from nexus.storage.models._base import Base
+from nexus.server.dependencies import require_admin
 
 # =============================================================================
 # Fixtures — real async SQLite + real governance services
@@ -92,6 +93,10 @@ def governance_app(session_factory, detector) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
 
+    # Override require_admin for functional tests (simulate authenticated admin)
+    _admin_result = {"authenticated": True, "is_admin": True, "subject_id": "test-admin"}
+    app.dependency_overrides[require_admin] = lambda: _admin_result
+
     # Wire real services (no mocks)
     anomaly_service = AnomalyService(session_factory=session_factory, detector=detector)
     collusion_service = CollusionService(session_factory=session_factory)
@@ -127,6 +132,9 @@ def unwired_app() -> FastAPI:
     """FastAPI app WITHOUT governance services (for 503 tests)."""
     app = FastAPI()
     app.include_router(router)
+    # Override require_admin so 503 tests still reach the handlers
+    _admin_result = {"authenticated": True, "is_admin": True, "subject_id": "test-admin"}
+    app.dependency_overrides[require_admin] = lambda: _admin_result
     return app
 
 
@@ -709,3 +717,63 @@ class TestCrossServiceIntegration:
         resp = await client.get("/api/v2/governance/alerts?zone_id=default")
         assert resp.status_code == 200
         assert resp.json()["count"] >= 1
+
+
+# =============================================================================
+# Auth enforcement (Issue #2048)
+# =============================================================================
+
+
+class TestAuthRequired:
+    """Verify governance endpoints reject unauthenticated requests."""
+
+    @pytest.fixture
+    def auth_app(self) -> FastAPI:
+        """App with real auth (api_key set, no admin override)."""
+        app = FastAPI()
+        app.include_router(router)
+        app.state.api_key = "test-secret-key"
+        app.state.auth_provider = None
+        return app
+
+    @pytest.fixture
+    async def unauthed_client(self, auth_app: FastAPI):
+        async with AsyncClient(
+            transport=ASGITransport(app=auth_app),
+            base_url="http://test",
+        ) as c:
+            yield c
+
+    @pytest.mark.asyncio
+    async def test_alerts_requires_auth(self, unauthed_client: AsyncClient) -> None:
+        resp = await unauthed_client.get("/api/v2/governance/alerts")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_constraints_requires_auth(self, unauthed_client: AsyncClient) -> None:
+        resp = await unauthed_client.get("/api/v2/governance/constraints")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_suspensions_requires_auth(self, unauthed_client: AsyncClient) -> None:
+        resp = await unauthed_client.get("/api/v2/governance/suspensions")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_fraud_scores_requires_auth(self, unauthed_client: AsyncClient) -> None:
+        resp = await unauthed_client.get("/api/v2/governance/fraud-scores")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_write_endpoints_require_auth(self, unauthed_client: AsyncClient) -> None:
+        resp = await unauthed_client.post(
+            "/api/v2/governance/suspensions",
+            json={"agent_id": "a", "reason": "test"},
+        )
+        assert resp.status_code == 401
+
+        resp = await unauthed_client.post(
+            "/api/v2/governance/constraints",
+            json={"from_agent": "a", "to_agent": "b"},
+        )
+        assert resp.status_code == 401

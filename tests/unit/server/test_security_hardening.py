@@ -150,7 +150,7 @@ class TestWebhookSignatureFailClosed:
 
     def test_no_secret_returns_false(self) -> None:
         """When webhook_secret is None, verification returns False (reject)."""
-        from nexus.pay.x402 import X402Client
+        from nexus.bricks.pay.x402 import X402Client
 
         client = X402Client(webhook_secret=None)
         payload = {"event": "payment", "amount": "100", "signature": "abc123"}
@@ -162,7 +162,7 @@ class TestWebhookSignatureFailClosed:
         import hmac
         import json
 
-        from nexus.pay.x402 import X402Client
+        from nexus.bricks.pay.x402 import X402Client
 
         secret = "test-secret-key"
         client = X402Client(webhook_secret=secret)
@@ -176,7 +176,7 @@ class TestWebhookSignatureFailClosed:
 
     def test_invalid_signature_rejected(self) -> None:
         """Incorrectly signed payload is rejected."""
-        from nexus.pay.x402 import X402Client
+        from nexus.bricks.pay.x402 import X402Client
 
         client = X402Client(webhook_secret="real-secret")
         payload = {"event": "payment", "amount": "100", "signature": "bad-sig"}
@@ -184,7 +184,7 @@ class TestWebhookSignatureFailClosed:
 
     def test_missing_signature_rejected(self) -> None:
         """Payload without signature field is rejected."""
-        from nexus.pay.x402 import X402Client
+        from nexus.bricks.pay.x402 import X402Client
 
         client = X402Client(webhook_secret="real-secret")
         payload = {"event": "payment", "amount": "100"}
@@ -204,8 +204,8 @@ class TestPythonActionSandboxRequired:
         """PythonAction fails with clear error when no sandbox available."""
         import uuid
 
-        from nexus.workflows.actions import PythonAction
-        from nexus.workflows.types import TriggerType, WorkflowContext
+        from nexus.bricks.workflows.actions import PythonAction
+        from nexus.bricks.workflows.types import TriggerType, WorkflowContext
 
         action = PythonAction(name="test", config={"code": "result = 1 + 1"})
         context = WorkflowContext(
@@ -226,8 +226,8 @@ class TestPythonActionSandboxRequired:
         import uuid
         from dataclasses import dataclass
 
-        from nexus.workflows.actions import PythonAction
-        from nexus.workflows.types import TriggerType, WorkflowContext
+        from nexus.bricks.workflows.actions import PythonAction
+        from nexus.bricks.workflows.types import TriggerType, WorkflowContext
 
         @dataclass
         class MockCodeResult:
@@ -271,8 +271,8 @@ class TestWebhookActionErrorSanitization:
         """Exception details are logged but not returned to caller."""
         import uuid
 
-        from nexus.workflows.actions import WebhookAction
-        from nexus.workflows.types import TriggerType, WorkflowContext
+        from nexus.bricks.workflows.actions import WebhookAction
+        from nexus.bricks.workflows.types import TriggerType, WorkflowContext
 
         action = WebhookAction(
             name="test",

@@ -14,13 +14,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from nexus.server.dependencies import require_admin
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v2/governance", tags=["governance"])
+router = APIRouter(
+    prefix="/api/v2/governance", tags=["governance"], dependencies=[Depends(require_admin)]
+)
 
 
 # =============================================================================
@@ -115,7 +119,7 @@ async def list_alerts(
     """List anomaly alerts with optional filters."""
     service = _get_anomaly_service(request)
 
-    from nexus.services.governance.models import AnomalySeverity
+    from nexus.bricks.governance.models import AnomalySeverity
 
     sev = AnomalySeverity(severity) if severity else None
     alerts = await service.get_alerts(zone_id=zone_id, severity=sev, resolved=resolved)
@@ -145,8 +149,10 @@ async def resolve_alert(
     request: Request,
     alert_id: str,
     body: ResolveAlertRequest,
+    auth_result: dict = Depends(require_admin),
 ) -> JSONResponse:
     """Resolve an anomaly alert."""
+    logger.info("resolve_alert by subject=%s", auth_result.get("subject_id"))
     service = _get_anomaly_service(request)
     alert = await service.resolve_alert(alert_id=alert_id, resolved_by=body.resolved_by)
 
@@ -254,11 +260,13 @@ async def list_fraud_rings(
 async def add_constraint(
     request: Request,
     body: AddConstraintRequest,
+    auth_result: dict = Depends(require_admin),
 ) -> JSONResponse:
     """Add a governance constraint between two agents."""
+    logger.info("add_constraint by subject=%s", auth_result.get("subject_id"))
     service = _get_graph_service(request)
 
-    from nexus.services.governance.models import ConstraintType
+    from nexus.bricks.governance.models import ConstraintType
 
     try:
         ct = ConstraintType(body.constraint_type)
@@ -364,11 +372,13 @@ async def check_constraint(
 async def suspend_agent(
     request: Request,
     body: SuspendAgentRequest,
+    auth_result: dict = Depends(require_admin),
 ) -> JSONResponse:
     """Suspend an agent."""
+    logger.info("suspend_agent by subject=%s", auth_result.get("subject_id"))
     service = _get_response_service(request)
 
-    from nexus.services.governance.models import AnomalySeverity
+    from nexus.bricks.governance.models import AnomalySeverity
 
     try:
         sev = AnomalySeverity(body.severity)
@@ -461,8 +471,10 @@ async def decide_appeal(
     request: Request,
     suspension_id: str,
     body: DecideAppealRequest,
+    auth_result: dict = Depends(require_admin),
 ) -> JSONResponse:
     """Decide on a suspension appeal."""
+    logger.info("decide_appeal by subject=%s", auth_result.get("subject_id"))
     service = _get_response_service(request)
 
     try:

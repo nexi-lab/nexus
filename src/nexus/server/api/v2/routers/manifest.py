@@ -1,4 +1,4 @@
-"""Context Manifest REST API endpoints (Issue #1427).
+"""Context Manifest REST API endpoints (Issue #1427, #2130).
 
 Provides:
 - GET  /api/v2/agents/{agent_id}/manifest         — Get current manifest
@@ -15,7 +15,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from nexus.server.api.v2.dependencies import (
@@ -77,12 +77,34 @@ def _get_agent_registry(nexus_fs: Any) -> Any:
     return registry
 
 
-def _get_manifest_resolver(nexus_fs: Any) -> Any:
-    """Extract ManifestResolver from NexusFS server extras."""
-    resolver = getattr(nexus_fs, "_service_extras", {}).get("manifest_resolver")
+def _get_manifest_resolver_from_state(request: Request) -> Any:
+    """Extract ManifestResolver from app state (Issue #2130: DI pattern #4A)."""
+    resolver = getattr(request.app.state, "manifest_resolver", None)
     if resolver is None:
         raise HTTPException(status_code=503, detail="Manifest resolver not initialized")
     return resolver
+
+
+def _get_authorized_agent(
+    agent_id: str,
+    auth_result: dict[str, Any],
+    registry: Any,
+) -> Any:
+    """Fetch agent record and verify caller ownership (Issue #2130: DRY #5A).
+
+    Raises:
+        HTTPException: 404 if agent not found, 403 if not authorized.
+    """
+    record = registry.get(agent_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    context = _get_operation_context(auth_result)
+    owner_id = context.user_id or ""
+    if record.owner_id != owner_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this agent")
+
+    return record
 
 
 def _validate_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -93,7 +115,7 @@ def _validate_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     from pydantic import TypeAdapter, ValidationError
 
-    from nexus.services.context_manifest.models import ContextSource
+    from nexus.bricks.context_manifest.models import ContextSource
 
     adapter: TypeAdapter[ContextSource] = TypeAdapter(ContextSource)
     validated: list[dict[str, Any]] = []
@@ -122,16 +144,7 @@ def get_manifest(
 ) -> ManifestResponse:
     """Get the current context manifest for an agent."""
     registry = _get_agent_registry(nexus_fs)
-
-    record = registry.get(agent_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-
-    # Ownership check
-    context = _get_operation_context(auth_result)
-    owner_id = context.user_id or ""
-    if record.owner_id != owner_id:
-        raise HTTPException(status_code=403, detail="Not authorized for this agent")
+    record = _get_authorized_agent(agent_id, auth_result, registry)
 
     return ManifestResponse(
         agent_id=agent_id,
@@ -149,16 +162,7 @@ def set_manifest(
 ) -> ManifestResponse:
     """Replace the context manifest for an agent (full replace)."""
     registry = _get_agent_registry(nexus_fs)
-
-    record = registry.get(agent_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-
-    # Ownership check
-    context = _get_operation_context(auth_result)
-    owner_id = context.user_id or ""
-    if record.owner_id != owner_id:
-        raise HTTPException(status_code=403, detail="Not authorized for this agent")
+    _get_authorized_agent(agent_id, auth_result, registry)  # auth check only
 
     # Validate sources through Pydantic
     validated = _validate_sources(request.sources)
@@ -176,6 +180,7 @@ def set_manifest(
 @router.post("/api/v2/agents/{agent_id}/manifest/resolve")
 async def resolve_manifest(
     agent_id: str,
+    request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> ResolveResponse:
@@ -185,20 +190,11 @@ async def resolve_manifest(
     """
     from pydantic import TypeAdapter
 
-    from nexus.services.context_manifest.models import ContextSource, ManifestResolutionError
+    from nexus.bricks.context_manifest.models import ContextSource, ManifestResolutionError
 
     registry = _get_agent_registry(nexus_fs)
-    resolver = _get_manifest_resolver(nexus_fs)
-
-    record = registry.get(agent_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-
-    # Ownership check
-    context = _get_operation_context(auth_result)
-    owner_id = context.user_id or ""
-    if record.owner_id != owner_id:
-        raise HTTPException(status_code=403, detail="Not authorized for this agent")
+    resolver = _get_manifest_resolver_from_state(request)
+    record = _get_authorized_agent(agent_id, auth_result, registry)
 
     if not record.context_manifest:
         return ResolveResponse(
@@ -228,16 +224,14 @@ async def resolve_manifest(
 
     # Per-agent MemoryQueryExecutor wiring (Issue #1428: 1B)
     # Memory is per-agent (scoped by zone/user), so we bind at resolve-time.
-    # Use _memory_api (private field) to avoid triggering lazy initialization
-    # which may fail if the memory subsystem isn't fully configured.
     request_resolver = resolver
     memory = getattr(nexus_fs, "_memory_api", None)
     if memory is not None:
         try:
-            from nexus.services.context_manifest.executors.memory_query import (
+            from nexus.bricks.context_manifest.executors.memory_query import (
                 MemoryQueryExecutor,
             )
-            from nexus.services.context_manifest.executors.memory_search_adapter import (
+            from nexus.bricks.context_manifest.executors.memory_search_adapter import (
                 MemorySearchAdapter,
             )
 
@@ -245,7 +239,7 @@ async def resolve_manifest(
             mem_executor = MemoryQueryExecutor(memory_search=mem_adapter)
             request_resolver = resolver.with_executors({"memory_query": mem_executor})
         except Exception:
-            logger.debug("MemoryQueryExecutor wiring skipped", exc_info=True)
+            logger.warning("MemoryQueryExecutor wiring failed", exc_info=True)
 
     # Resolve — skip file writes since results are returned in-memory (15A)
     try:

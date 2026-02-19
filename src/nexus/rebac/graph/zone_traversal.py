@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity
+from nexus.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.rebac.types import (
     GraphLimitExceeded,
     GraphLimits,
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
 
-    from nexus.core.rebac import NamespaceConfig
     from nexus.rebac.consistency.zone_manager import ZoneManager
+    from nexus.rebac.domain import NamespaceConfig
 
 logger = logging.getLogger(__name__)
 

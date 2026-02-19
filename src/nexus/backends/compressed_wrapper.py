@@ -35,6 +35,7 @@ Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16 — Recursive Wrapping (Mechanism 2)
     - PART 6 §6.3 (zstd for bundle compression)
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
+    - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
 from __future__ import annotations
@@ -45,11 +46,9 @@ from typing import TYPE_CHECKING
 
 from nexus.backends.delegating import DelegatingBackend
 from nexus.backends.wrapper_metrics import WrapperMetrics
-from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +145,10 @@ class CompressedStorage(DelegatingBackend):
     Content below ``min_size`` bytes or where compression doesn't reduce
     size is stored uncompressed (no header prefix).
 
-    Inherits property delegation and ``__getattr__`` from DelegatingBackend.
-    Overrides content read/write operations to add compression/decompression.
+    Inherits property delegation, ``__getattr__``, and hook-based
+    ``read_content`` / ``write_content`` / ``batch_read_content`` from
+    DelegatingBackend. Overrides ``_transform_on_write`` and
+    ``_transform_on_read`` to add compression/decompression.
 
     Raises:
         RuntimeError: If zstd is not available at construction time.
@@ -172,6 +173,19 @@ class CompressedStorage(DelegatingBackend):
             ],
             enabled=self._config.metrics_enabled,
         )
+
+        # Cache compressor instance for reuse.
+        # ZstdCompressor.compress() is documented thread-safe (stateless per call).
+        # See: https://github.com/indygreg/python-zstandard/blob/main/README.rst
+        try:
+            import zstandard
+
+            self._cached_compressor: zstandard.ZstdCompressor | None = zstandard.ZstdCompressor(
+                level=self._config.level
+            )
+        except ImportError:
+            self._cached_compressor = None
+
         logger.info(
             "CompressedStorage initialized (zstd, level=%d, min_size=%d)",
             self._config.level,
@@ -188,55 +202,9 @@ class CompressedStorage(DelegatingBackend):
     def name(self) -> str:
         return f"compressed({self._inner.name})"
 
-    # === Compressed Content Operations ===
+    # === Transform Hooks ===
 
-    def write_content(
-        self, content: bytes, context: OperationContext | None = None
-    ) -> HandlerResponse[str]:
-        """Compress content and write to inner backend.
-
-        Skips compression if content is below min_size or if compressed
-        output is not smaller than the original.
-        """
-        data_to_write = self._compress(content)
-        return self._inner.write_content(data_to_write, context=context)
-
-    def read_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bytes]:
-        """Read from inner backend and decompress content."""
-        response = self._inner.read_content(content_hash, context=context)
-        if not response.success or response.data is None:
-            return response
-
-        return self._decompress_response(response.data)
-
-    def batch_read_content(
-        self,
-        content_hashes: list[str],
-        context: OperationContext | None = None,
-        *,
-        contexts: dict[str, OperationContext] | None = None,
-    ) -> dict[str, bytes | None]:
-        """Read batch from inner backend and decompress each item."""
-        raw_results = self._inner.batch_read_content(
-            content_hashes, context=context, contexts=contexts
-        )
-
-        decompressed: dict[str, bytes | None] = {}
-        for content_hash, data in raw_results.items():
-            if data is None:
-                decompressed[content_hash] = None
-                continue
-
-            resp = self._decompress_response(data)
-            decompressed[content_hash] = resp.data if resp.success else None
-
-        return decompressed
-
-    # === Compression / Decompression Internals ===
-
-    def _compress(self, content: bytes) -> bytes:
+    def _transform_on_write(self, content: bytes) -> bytes:
         """Compress content with magic header.
 
         Returns the content with NEXZ header if compressed, or the
@@ -246,13 +214,19 @@ class CompressedStorage(DelegatingBackend):
         - Content is smaller than min_size
         - Content is empty
         - Compressed output is not smaller than original
+
+        This is a soft-fallback transform: never raises, always returns
+        valid content (compressed or original).
         """
         if len(content) < self._config.min_size:
             self._metrics.increment("passthrough_ops")
             return content
 
         try:
-            compressed: bytes = _zstd_compress(content, level=self._config.level)  # type: ignore[misc, operator]
+            if self._cached_compressor is not None:
+                compressed = bytes(self._cached_compressor.compress(content))
+            else:
+                compressed = _zstd_compress(content, level=self._config.level)  # type: ignore[misc, operator]
 
             # Only use compressed version if it actually saves space
             if len(compressed) >= len(content):
@@ -271,30 +245,27 @@ class CompressedStorage(DelegatingBackend):
             logger.warning("Compression failed, storing uncompressed: %s", e)
             return content
 
-    def _decompress(self, data: bytes) -> bytes:
+    def _transform_on_read(self, data: bytes) -> bytes:
         """Decompress data with magic header detection.
 
         Content without the NEXZ header is returned as-is (was stored
         uncompressed due to threshold or negative ratio).
+
+        Raises on decompression failure (DelegatingBackend catches and
+        returns error response).
         """
         if not data.startswith(_COMPRESSED_HEADER):
             # Not compressed (below threshold, negative ratio, or empty)
             return data
 
         compressed = data[_HEADER_LEN:]
-        return bytes(_zstd_decompress(compressed))  # type: ignore[misc, operator]
-
-    def _decompress_response(self, data: bytes) -> HandlerResponse[bytes]:
-        """Decompress and return as HandlerResponse."""
         try:
-            content = self._decompress(data)
-            if data.startswith(_COMPRESSED_HEADER):
-                self._metrics.increment("decompress_ops")
-            return HandlerResponse.ok(data=content, backend_name=self.name)
+            result = bytes(_zstd_decompress(compressed))  # type: ignore[misc, operator]
+            self._metrics.increment("decompress_ops")
+            return result
         except Exception as e:
             self._metrics.increment("errors")
-            logger.warning("Decompression failed: %s", e)
-            return HandlerResponse.error(message=f"Decompression failed: {e}")
+            raise RuntimeError(f"Decompression failed: {e}") from e
 
     # === Stats ===
 

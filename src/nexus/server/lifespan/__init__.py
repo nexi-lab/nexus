@@ -30,7 +30,7 @@ def _compute_features_info(app: FastAPI) -> None:
     GET /api/v2/features with O(1) cost.
     """
     from nexus.core.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
-    from nexus.server.api.core.features import FeaturesResponse
+    from nexus.server.api.core.features import FeaturesResponse, PerformanceTuningInfo
 
     # Read profile from app state (set during server init)
     profile_str: str = getattr(app.state, "deployment_profile", "full")
@@ -56,12 +56,30 @@ def _compute_features_info(app: FastAPI) -> None:
 
     disabled = sorted(ALL_BRICK_NAMES - enabled)
 
+    # Issue #2071: include performance tuning summary
+    _pt = getattr(app.state, "profile_tuning", None)
+    _perf_info = None
+    if _pt is not None:
+        _perf_info = PerformanceTuningInfo(
+            thread_pool_size=_pt.concurrency.thread_pool_size,
+            default_workers=_pt.concurrency.default_workers,
+            task_runner_workers=_pt.concurrency.task_runner_workers,
+            default_http_timeout=_pt.network.default_http_timeout,
+            db_pool_size=_pt.storage.db_pool_size,
+            search_max_concurrency=_pt.search.search_max_concurrency,
+            heartbeat_flush_interval=_pt.background_task.heartbeat_flush_interval,
+            default_max_retries=_pt.resiliency.default_max_retries,
+            blob_operation_timeout=_pt.connector.blob_operation_timeout,
+            asyncpg_max_size=_pt.pool.asyncpg_max_size,
+        )
+
     features_info = FeaturesResponse(
         profile=profile.value,
         mode=mode,
         enabled_bricks=sorted(enabled),
         disabled_bricks=disabled,
         version=version,
+        performance_tuning=_perf_info,
     )
     app.state.features_info = features_info
 
@@ -74,6 +92,29 @@ def _compute_features_info(app: FastAPI) -> None:
     )
 
 
+def _wire_query_observer(app: FastAPI) -> None:
+    """Register QueryObserverComponent into the observability registry.
+
+    Called after startup_services so NexusFS._service_extras is available.
+    """
+    registry = getattr(app.state, "observability_registry", None)
+    nexus_fs = getattr(app.state, "nexus_fs", None)
+    if registry is None or nexus_fs is None:
+        return
+
+    obs_subsystem = getattr(nexus_fs, "_service_extras", {}).get("observability_subsystem")
+    if obs_subsystem is None:
+        return
+
+    try:
+        from nexus.server.observability.components import QueryObserverComponent
+
+        registry.register("query-observer", QueryObserverComponent(obs_subsystem), required=False)
+        logger.info("QueryObserverComponent registered in observability registry")
+    except Exception as exc:
+        logger.info("QueryObserverComponent registration skipped: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager.
@@ -82,6 +123,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     down in reverse order during shutdown.
     """
     from nexus.server.lifespan.a2a_grpc import shutdown_a2a_grpc, startup_a2a_grpc
+    from nexus.server.lifespan.bricks import shutdown_bricks, startup_bricks
+    from nexus.server.lifespan.ipc import shutdown_ipc, startup_ipc
     from nexus.server.lifespan.observability import (
         shutdown_observability,
         startup_observability,
@@ -97,14 +140,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # --- Startup (order matters: observability first, then core, then services) ---
 
-    startup_observability(app)
+    await startup_observability(app)
     _compute_features_info(app)
     bg_tasks.extend(await startup_permissions(app))
     bg_tasks.extend(await startup_realtime(app))
     bg_tasks.extend(await startup_search(app))
     bg_tasks.extend(await startup_services(app))
+    bg_tasks.extend(await startup_bricks(app))
     bg_tasks.extend(await startup_uploads(app))
+    bg_tasks.extend(await startup_ipc(app))
     bg_tasks.extend(await startup_a2a_grpc(app))
+
+    # Wire QueryObserverComponent into registry after services start (Issue #2072)
+    _wire_query_observer(app)
 
     yield
 
@@ -121,6 +169,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.debug(f"Cancelled {len(bg_tasks)} background tasks")
 
     await shutdown_a2a_grpc(app)
+    await shutdown_ipc(app)
+    await shutdown_bricks(app)
     await shutdown_services(app)
     await shutdown_realtime(app)
 
@@ -138,12 +188,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if hasattr(app.state.nexus_fs, "close"):
             app.state.nexus_fs.close()
 
-    # Shutdown cache factory (Issue #1075)
-    if hasattr(app.state, "cache_factory") and app.state.cache_factory:
+    # Shutdown CacheBrick (Issue #1524)
+    if hasattr(app.state, "cache_brick") and app.state.cache_brick:
         try:
-            await app.state.cache_factory.shutdown()
-            logger.info("Cache factory stopped")
+            await app.state.cache_brick.stop()
+            logger.info("CacheBrick stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down cache factory: {e}")
+            logger.warning(f"Error shutting down CacheBrick: {e}")
 
-    shutdown_observability()
+    await shutdown_observability()

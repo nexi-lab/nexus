@@ -458,7 +458,7 @@ class MountCoreService:
         """
         try:
             from nexus.backends.service_map import ServiceMap
-            from nexus.skills.skill_generator import generate_skill_md
+            from nexus.services.protocols.skill_doc import generate_skill_md
 
             # Get service name from backend type
             service_name = ServiceMap.get_service_name(connector=backend_type)

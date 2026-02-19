@@ -19,15 +19,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.metadata import DT_DIR, DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 logger = logging.getLogger(__name__)
-
-# SSOT for default root zone ID — used by bootstrap() and from_zone_manager()
-ROOT_ZONE_ID = "root"
 
 
 def _get_py_zone_manager() -> type | None:

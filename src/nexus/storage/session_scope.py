@@ -16,7 +16,7 @@ from sqlalchemy.exc import OperationalError as SAOperationalError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     DatabaseConnectionError,
     DatabaseError,
     DatabaseIntegrityError,

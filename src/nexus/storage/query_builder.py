@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.core.exceptions import MetadataError
+from nexus.contracts.exceptions import MetadataError
 
 
 class WorkQueryBuilder:

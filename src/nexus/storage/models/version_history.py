@@ -95,7 +95,7 @@ class VersionHistoryModel(Base):
 
     def validate(self) -> None:
         """Validate version history model before database operations."""
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         valid_types = ["file", "memory", "skill"]
         if self.resource_type not in valid_types:

@@ -6559,7 +6559,7 @@ class NexusFS(  # type: ignore[misc]
         self,
         prefix: str = "/",
         zone_id: str | None = None,
-        _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
+        _context: Any = None,
     ) -> dict[str, Any]:
         """Backfill sparse directory index from existing files.
 

@@ -210,7 +210,7 @@ class IsolatedBackend(Backend):
         except IsolationError as exc:
             return HandlerStatusResponse(success=False, error_message=str(exc))
 
-    def disconnect(self, context: OperationContext | None = None) -> None:  # noqa: ARG002
+    def disconnect(self, _context: OperationContext | None = None) -> None:
         self._pool.shutdown()
 
     # ── Internal helpers ────────────────────────────────────────────────

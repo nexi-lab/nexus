@@ -20,9 +20,9 @@ class _GenericValidator(BaseValidator):
 
     def parse_output(
         self,
-        stdout: str,  # noqa: ARG002
-        stderr: str,  # noqa: ARG002
-        exit_code: int,  # noqa: ARG002
+        _stdout: str,
+        _stderr: str,
+        _exit_code: int,
     ) -> list[ValidationError]:
         return []
 

@@ -586,7 +586,7 @@ Validate skills and metadata:
 
 ```python
 from nexus.skills import Skill, SkillMetadata
-from nexus.core.exceptions import ValidationError
+from nexus.contracts.exceptions import ValidationError
 
 metadata = SkillMetadata(
     name="test-skill",

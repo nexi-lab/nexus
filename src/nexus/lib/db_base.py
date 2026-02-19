@@ -1,18 +1,12 @@
 """Shared ORM base, mixins, and utilities for SQLAlchemy models.
 
 Canonical location for ``Base``, ``TimestampMixin``, ``ZoneIsolationMixin``,
-``ResourceConfigMixin``, and ``uuid_pk``.  This module lives in
-``nexus.contracts`` (tier-neutral) so that both kernel code and bricks can
-depend on it without pulling in storage internals.
+``ResourceConfigMixin``, and ``uuid_pk``.  Lives in ``nexus.lib`` (tier-neutral
+implementation helpers) so that both kernel code and bricks can depend on it
+without pulling in storage internals.
 
 History:
-    Originally in ``nexus.storage.models._base`` (Issue #1246 / #1286).
-    Moved here by Issue #2129 (governance brick extraction) to break the
-    storage ↔ brick import cycle.
-
-Backward compatibility:
-    ``from nexus.storage.models._base import Base`` still works via re-exports
-    in ``nexus/storage/models/_base.py``.
+    nexus.storage.models._base → nexus.contracts.db_base → nexus.lib.db_base
 """
 
 from __future__ import annotations

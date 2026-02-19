@@ -4,7 +4,7 @@ Tier-neutral validation types used across connectors, services, and bricks.
 Zero imports from ``nexus.core`` or any other kernel module.
 
 Usage:
-    from nexus.contracts.validators import EmailAddress, EmailList, ISODateTimeStr
+    from nexus.lib.validators import EmailAddress, EmailList, ISODateTimeStr
 
     class MySchema(BaseModel):
         to: EmailList

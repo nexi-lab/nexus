@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import BranchNotFoundError, StalePointerError
+from nexus.contracts.exceptions import BranchNotFoundError, StalePointerError
 from nexus.services.context_branch import (
     _BASE_BACKOFF_MS,
     _MAX_RETRIES,

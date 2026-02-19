@@ -112,7 +112,7 @@ class TestMCPServiceSmoke:
     @pytest.mark.asyncio
     async def test_mcp_mount_validation(self):
         """Test mcp_mount validates inputs."""
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
         from nexus.services.mcp_service import MCPService
 
         service = MCPService(filesystem=None)

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     InvalidPathError,
     NexusFileNotFoundError,
     NexusPermissionError,

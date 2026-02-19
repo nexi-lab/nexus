@@ -6,7 +6,7 @@ via the centralized nexus_error_handler.
 
 from unittest.mock import MagicMock
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     AuditLogError,
     AuthenticationError,
     BackendError,

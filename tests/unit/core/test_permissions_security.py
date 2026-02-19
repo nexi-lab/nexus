@@ -633,7 +633,7 @@ class TestStaleSessionDetection:
 
     def test_stale_agent_generation_raises_error(self):
         """Agent with outdated generation is rejected."""
-        from nexus.core.exceptions import StaleSessionError
+        from nexus.contracts.exceptions import StaleSessionError
 
         agent_registry = MagicMock()
         record = MagicMock()
@@ -680,7 +680,7 @@ class TestStaleSessionDetection:
 
     def test_deleted_agent_with_valid_jwt_raises_stale_error(self):
         """Agent deleted from registry but JWT still valid should be rejected."""
-        from nexus.core.exceptions import StaleSessionError
+        from nexus.contracts.exceptions import StaleSessionError
 
         agent_registry = MagicMock()
         agent_registry.get.return_value = None  # Agent no longer exists
@@ -753,7 +753,7 @@ class TestCheckStaleSessionHelper:
 
     def test_stale_generation_raises(self):
         """Mismatched generation should raise StaleSessionError."""
-        from nexus.core.exceptions import StaleSessionError
+        from nexus.contracts.exceptions import StaleSessionError
         from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
@@ -793,7 +793,7 @@ class TestCheckStaleSessionHelper:
 
     def test_missing_agent_raises(self):
         """Agent not found in registry should raise StaleSessionError."""
-        from nexus.core.exceptions import StaleSessionError
+        from nexus.contracts.exceptions import StaleSessionError
         from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
@@ -866,7 +866,7 @@ class TestNamespaceVisibility:
 
     def test_invisible_path_raises_not_found(self):
         """Path not visible to subject raises NexusFileNotFoundError, not 403."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         ns_manager = MagicMock()
         ns_manager.is_visible.return_value = False

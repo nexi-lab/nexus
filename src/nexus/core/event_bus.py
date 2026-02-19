@@ -204,9 +204,9 @@ class FileEvent:
             if not pattern.endswith("/") and self.old_path.startswith(pattern + "/"):
                 return True
 
-        # Glob pattern match — delegate to reactive_subscriptions for consistency
+        # Glob pattern match — delegate to lib/path_utils for consistency
         if "*" in pattern or "?" in pattern:
-            from nexus.core.reactive_subscriptions import path_matches_pattern
+            from nexus.lib.path_utils import path_matches_pattern
 
             if path_matches_pattern(self.path, pattern):
                 return True

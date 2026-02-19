@@ -1,9 +1,8 @@
 """Unit tests for SyncStoreBase shared session/dialect logic.
 
 Tests cover:
-- __init__: session_factory assignment, initial state
+- __init__: session_factory assignment, is_postgresql config-time flag
 - _get_session: session factory present/absent
-- _detect_dialect: PostgreSQL detection, SQLite fallback, caching, thread safety
 - _dialect_insert: correct dialect-specific INSERT statement
 - _dialect_upsert: correct dialect-specific ON CONFLICT handling
 - _with_session: commit on success, rollback on error, close always, no factory
@@ -23,25 +22,18 @@ from nexus.storage.sync_store_base import SyncStoreBase
 # ---------------------------------------------------------------------------
 
 
-def _make_session(dialect_name: str = "sqlite") -> MagicMock:
-    """Build a mock SQLAlchemy session."""
-    session = MagicMock()
-    session.bind.dialect.name = dialect_name
-    return session
-
-
 @pytest.fixture
 def sqlite_store() -> SyncStoreBase:
-    """SyncStoreBase backed by a SQLite session."""
-    session = _make_session("sqlite")
-    return SyncStoreBase(lambda: session)
+    """SyncStoreBase configured for SQLite."""
+    session = MagicMock()
+    return SyncStoreBase(lambda: session, is_postgresql=False)
 
 
 @pytest.fixture
 def pg_store() -> SyncStoreBase:
-    """SyncStoreBase backed by a PostgreSQL session."""
-    session = _make_session("postgresql")
-    return SyncStoreBase(lambda: session)
+    """SyncStoreBase configured for PostgreSQL."""
+    session = MagicMock()
+    return SyncStoreBase(lambda: session, is_postgresql=True)
 
 
 @pytest.fixture
@@ -63,9 +55,13 @@ class TestInit:
         store = SyncStoreBase(factory)
         assert store._session_factory is factory
 
-    def test_initial_dialect_is_none(self):
+    def test_default_dialect_is_sqlite(self):
         store = SyncStoreBase(MagicMock())
-        assert store._is_postgres is None
+        assert store._is_postgres is False
+
+    def test_is_postgresql_flag(self):
+        store = SyncStoreBase(MagicMock(), is_postgresql=True)
+        assert store._is_postgres is True
 
 
 # ===========================================================================
@@ -82,48 +78,6 @@ class TestGetSession:
 
     def test_returns_none_without_factory(self, no_session_store):
         assert no_session_store._get_session() is None
-
-
-# ===========================================================================
-# _detect_dialect
-# ===========================================================================
-
-
-class TestDetectDialect:
-    """Tests for _detect_dialect."""
-
-    def test_detects_postgresql(self, pg_store):
-        assert pg_store._detect_dialect() is True
-
-    def test_detects_sqlite(self, sqlite_store):
-        assert sqlite_store._detect_dialect() is False
-
-    def test_caches_result(self, pg_store):
-        """Second call should return cached value without opening a new session."""
-        result1 = pg_store._detect_dialect()
-        result2 = pg_store._detect_dialect()
-        assert result1 is result2
-        assert pg_store._is_postgres is True
-
-    def test_no_session_returns_false(self, no_session_store):
-        assert no_session_store._detect_dialect() is False
-
-    def test_exception_during_detection_returns_false(self):
-        """Exception reading dialect should fall back to False."""
-        session = MagicMock()
-        session.bind.dialect.name = property(lambda s: (_ for _ in ()).throw(RuntimeError("boom")))
-        # Simpler: make the attribute access raise
-        type(session.bind.dialect).name = property(lambda self: (_ for _ in ()).throw(RuntimeError))
-
-        store = SyncStoreBase(lambda: session)
-        assert store._detect_dialect() is False
-
-    def test_session_closed_after_detection(self):
-        """Session should be closed after dialect detection."""
-        session = _make_session("postgresql")
-        store = SyncStoreBase(lambda: session)
-        store._detect_dialect()
-        session.close.assert_called_once()
 
 
 # ===========================================================================

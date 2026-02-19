@@ -96,6 +96,7 @@ class EventDeliveryWorker:
         batch_size: int = 50,
         max_retries: int = 3,
         max_backoff_ms: int = 5000,
+        use_row_locking: bool = False,
     ) -> None:
         self._session_factory = session_factory
         self._event_bus = event_bus
@@ -105,6 +106,7 @@ class EventDeliveryWorker:
         self._batch_size = batch_size
         self._max_retries = max_retries
         self._max_backoff_s = max_backoff_ms / 1000.0
+        self._use_row_locking = use_row_locking
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -210,9 +212,8 @@ class EventDeliveryWorker:
                 .limit(self._batch_size)
             )
 
-            # PostgreSQL: row-level locking for concurrent workers
-            dialect_name = session.bind.dialect.name if session.bind else ""
-            if dialect_name == "postgresql":
+            # Row-level locking for concurrent workers (PostgreSQL)
+            if self._use_row_locking:
                 stmt = stmt.with_for_update(skip_locked=True)
 
             rows = list(session.execute(stmt).scalars())

@@ -85,7 +85,7 @@ def pg_session_factory(pg_engine):
 @pytest.fixture()
 def store(pg_session_factory):
     """Create a ChangeLogStore backed by real PostgreSQL."""
-    return ChangeLogStore(pg_session_factory)
+    return ChangeLogStore(pg_session_factory, is_postgresql=True)
 
 
 @pytest.fixture(autouse=True)

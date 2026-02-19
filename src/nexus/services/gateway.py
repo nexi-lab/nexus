@@ -462,6 +462,15 @@ class NexusFSGateway:
     # Database URL
     # =========================================================================
 
+    @property
+    def is_postgresql(self) -> bool:
+        """Check if the database is PostgreSQL (config-time detection)."""
+        try:
+            url = self.get_database_url()
+            return url.startswith(("postgres", "postgresql"))
+        except Exception:
+            return False
+
     def get_database_url(self) -> str:
         """Get database URL for OAuth backends.
 

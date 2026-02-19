@@ -45,13 +45,19 @@ class ChangeLogStore(SyncStoreBase):
     Inherits from SyncStoreBase for session management and dialect detection.
     """
 
-    def __init__(self, session_factory: Callable[..., Any] | None) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[..., Any] | None,
+        *,
+        is_postgresql: bool = False,
+    ) -> None:
         """Initialize change log store.
 
         Args:
             session_factory: SQLAlchemy session factory callable.
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
-        super().__init__(session_factory)
+        super().__init__(session_factory, is_postgresql=is_postgresql)
 
     def get_change_log(
         self, path: str, backend_name: str, zone_id: str = "root"
@@ -241,7 +247,7 @@ class ChangeLogStore(SyncStoreBase):
         try:
             with self._with_session() as session:
                 now = datetime.now(UTC)
-                is_pg = self._detect_dialect()
+                is_pg = self._is_postgres
 
                 # Build all value dicts upfront
                 all_values = [

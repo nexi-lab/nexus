@@ -145,3 +145,27 @@ class TestResourceMonitor:
             result = await monitor.check_pressure()
 
         assert result is PressureLevel.WARNING
+
+    @pytest.mark.asyncio
+    async def test_psutil_exception_returns_normal(self, monitor):
+        """When psutil.virtual_memory() raises, falls back to NORMAL."""
+        with (
+            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+        ):
+            mock_psutil.virtual_memory.side_effect = OSError("cgroups v2 not supported")
+            result = await monitor.check_pressure()
+
+        assert result is PressureLevel.NORMAL
+
+    @pytest.mark.asyncio
+    async def test_psutil_exception_get_memory_returns_negative(self, monitor):
+        """When psutil raises, get_memory_percent returns -1.0."""
+        with (
+            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+        ):
+            mock_psutil.virtual_memory.side_effect = PermissionError("no access")
+            result = await monitor.get_memory_percent()
+
+        assert result == -1.0

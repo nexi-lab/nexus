@@ -31,8 +31,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
     _startup_agent_registry(app)
     _startup_key_service(app)
-    _startup_reputation_service(app)
-    _startup_delegation_service(app)
+    _startup_reputation_delegation_from_bricks(app)
     _startup_sandbox_auth(app)
     _startup_transactional_snapshot(app)
     _startup_rlm_service(app)
@@ -85,7 +84,8 @@ async def shutdown_services(app: FastAPI) -> None:
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
     stale_detection_task = getattr(app.state, "_stale_detection_task", None)
     eviction_task = getattr(app.state, "_eviction_task", None)
-    for task_ref in (heartbeat_task, stale_detection_task, eviction_task):
+    cleanup_task = getattr(app.state, "_checkpoint_cleanup_task", None)
+    for task_ref in (heartbeat_task, stale_detection_task, eviction_task, cleanup_task):
         if task_ref and not task_ref.done():
             task_ref.cancel()
             with suppress(asyncio.CancelledError):
@@ -93,6 +93,7 @@ async def shutdown_services(app: FastAPI) -> None:
     app.state._heartbeat_task = None
     app.state._stale_detection_task = None
     app.state._eviction_task = None
+    app.state._checkpoint_cleanup_task = None
 
     if app.state.agent_registry:
         try:
@@ -230,55 +231,34 @@ def _startup_key_service(app: FastAPI) -> None:
         app.state.key_service = None
 
 
-def _startup_reputation_service(app: FastAPI) -> None:
-    """Initialize ReputationService singleton for trust routing (#1619)."""
-    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
+def _startup_reputation_delegation_from_bricks(app: FastAPI) -> None:
+    """Expose ReputationService and DelegationService from factory brick_dict (Issue #2131).
+
+    These services are now created in ``factory._boot_brick_services()`` and
+    stored in ``BrickServices``. This function wires them onto ``app.state``
+    for backward-compatible access by routers and dependencies.
+    """
+    nx = app.state.nexus_fs
+    if nx is None:
         app.state.reputation_service = None
-        return
-
-    try:
-        from nexus.services.reputation.reputation_service import ReputationService
-
-        app.state.reputation_service = ReputationService(
-            session_factory=app.state.nexus_fs.SessionLocal,
-        )
-        logger.info("[REPUTATION] ReputationService initialized (singleton)")
-    except Exception as e:
-        logger.warning("[REPUTATION] Failed to initialize: %s", e, exc_info=True)
-        app.state.reputation_service = None
-
-
-def _startup_delegation_service(app: FastAPI) -> None:
-    """Initialize DelegationService for agent delegation (Issue #1618)."""
-    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
         app.state.delegation_service = None
         return
 
-    rebac_manager = getattr(app.state.nexus_fs, "_rebac_manager", None)
-    if rebac_manager is None:
-        app.state.delegation_service = None
-        return
+    # Get from BrickServices (created by factory)
+    brk = getattr(nx, "_brick_services", None)
+    app.state.reputation_service = getattr(brk, "reputation_service", None) if brk else None
+    app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
 
-    try:
-        from nexus.services.delegation.service import DelegationService
-
-        namespace_manager = getattr(app.state.nexus_fs, "_namespace_manager", None)
-        entity_registry = getattr(app.state.nexus_fs, "_entity_registry", None)
-        agent_registry = getattr(app.state, "agent_registry", None)
-        reputation_service = getattr(app.state, "reputation_service", None)
-
-        app.state.delegation_service = DelegationService(
-            session_factory=app.state.nexus_fs.SessionLocal,
-            rebac_manager=rebac_manager,
-            namespace_manager=namespace_manager,
-            entity_registry=entity_registry,
-            agent_registry=agent_registry,
-            reputation_service=reputation_service,
-        )
-        logger.info("[DELEGATION] DelegationService initialized and wired")
-    except Exception as e:
-        logger.warning("[DELEGATION] Failed to initialize DelegationService: %s", e, exc_info=True)
-        app.state.delegation_service = None
+    if app.state.reputation_service is not None:
+        logger.info("[REPUTATION] ReputationService wired from brick_dict")
+    if app.state.delegation_service is not None:
+        # Wire system-tier dependencies that weren't available during factory boot
+        deleg = app.state.delegation_service
+        if getattr(deleg, "_namespace_manager", None) is None:
+            deleg._namespace_manager = getattr(nx, "_namespace_manager", None)
+        if getattr(deleg, "_agent_registry", None) is None:
+            deleg._agent_registry = getattr(app.state, "agent_registry", None)
+        logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
 
 def _startup_sandbox_auth(app: FastAPI) -> None:
@@ -439,10 +419,42 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     tasks = [app.state._heartbeat_task, app.state._stale_detection_task]
 
     # Agent eviction under resource pressure (Issue #2170)
-    app.state.eviction_manager = None
+    # Use factory-constructed EvictionManager (DRY — avoid duplicate construction)
     app.state._eviction_task = None
+    app.state._checkpoint_cleanup_task = None
+    _sys_svc = getattr(getattr(app.state, "nexus_fs", None), "_system_services", None)
+    _factory_em = getattr(_sys_svc, "eviction_manager", None) if _sys_svc else None
     _eviction_tuning = getattr(app.state.profile_tuning, "eviction", None)
-    if _eviction_tuning is not None:
+    if _factory_em is not None and _eviction_tuning is not None:
+        try:
+            from nexus.server.background_tasks import (
+                agent_eviction_task,
+                checkpoint_cleanup_task,
+            )
+
+            app.state.eviction_manager = _factory_em
+            app.state._eviction_task = asyncio.create_task(
+                agent_eviction_task(
+                    _factory_em,
+                    interval_seconds=_eviction_tuning.eviction_poll_interval_seconds,
+                )
+            )
+            tasks.append(app.state._eviction_task)
+
+            # Stale checkpoint cleanup (Issue #2170, #16A)
+            app.state._checkpoint_cleanup_task = asyncio.create_task(
+                checkpoint_cleanup_task(
+                    app.state.agent_registry,
+                    interval_seconds=_eviction_tuning.checkpoint_cleanup_interval_seconds,
+                    max_age_seconds=_eviction_tuning.checkpoint_max_age_seconds,
+                )
+            )
+            tasks.append(app.state._checkpoint_cleanup_task)
+            logger.info("[EVICTION] Background eviction + checkpoint cleanup tasks started")
+        except Exception:
+            logger.warning("[EVICTION] Failed to start eviction tasks", exc_info=True)
+    elif _eviction_tuning is not None:
+        # Fallback: construct EvictionManager here if factory didn't create one
         try:
             from nexus.server.background_tasks import agent_eviction_task
             from nexus.services.agents.eviction_manager import EvictionManager
@@ -460,11 +472,11 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
             app.state._eviction_task = asyncio.create_task(
                 agent_eviction_task(
                     app.state.eviction_manager,
-                    interval_seconds=_eviction_tuning.eviction_cooldown_seconds,
+                    interval_seconds=_eviction_tuning.eviction_poll_interval_seconds,
                 )
             )
             tasks.append(app.state._eviction_task)
-            logger.info("[EVICTION] Background agent eviction task started")
+            logger.info("[EVICTION] Background agent eviction task started (fallback)")
         except Exception:
             logger.warning("[EVICTION] Failed to initialize eviction manager", exc_info=True)
 

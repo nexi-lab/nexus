@@ -206,6 +206,8 @@ _FACTORY_BRICKS: list[tuple[str, str]] = [
     ("task_queue_service", "TaskQueueProtocol"),
     ("ipc_vfs_driver", "IPCProtocol"),
     ("wallet_provisioner", "WalletProtocol"),
+    ("delegation_service", "DelegationProtocol"),
+    ("reputation_service", "ReputationProtocol"),
 ]
 
 # Entries intentionally NOT registered with lifecycle manager.
@@ -856,6 +858,17 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
 
+    # --- Brick Reconciler (Issue #2060) ---
+    brick_reconciler: Any = None
+    if brick_lifecycle_manager is not None:
+        try:
+            from nexus.services.brick_reconciler import BrickReconciler
+
+            brick_reconciler = BrickReconciler(lifecycle_manager=brick_lifecycle_manager)
+            logger.debug("[BOOT:SYSTEM] BrickReconciler created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
+
     # TODO: EventLog, Hook, Scheduler services (not yet implemented)
 
     result = {
@@ -869,6 +882,7 @@ def _boot_system_services(
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
+        "brick_reconciler": brick_reconciler,
         "scoped_hook_engine": scoped_hook_engine,
         "eviction_manager": eviction_manager,
     }
@@ -1121,15 +1135,48 @@ def _boot_brick_services(
     # --- TransactionalSnapshotService (Issue #1752) ---
     snapshot_service: Any = None
     try:
-        from nexus.services.snapshot.service import TransactionalSnapshotService
+        from nexus.bricks.snapshot.service import TransactionalSnapshotService
+        from nexus.core.metadata import FileMetadata
 
         snapshot_service = TransactionalSnapshotService(
             session_factory=ctx.session_factory,
             cas_store=ctx.backend,
             metadata_store=ctx.metadata_store,
+            metadata_factory=FileMetadata,
         )
     except ImportError as _snap_exc:
         logger.debug("[BOOT:BRICK] TransactionalSnapshotService unavailable: %s", _snap_exc)
+
+    # --- ReputationService (Issue #2131: extracted to bricks) ---
+    reputation_service: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.bricks.reputation.reputation_service import ReputationService
+
+            reputation_service = ReputationService(
+                session_factory=ctx.session_factory,
+            )
+            logger.debug("[BOOT:BRICK] ReputationService created")
+        except Exception as _rep_exc:
+            logger.debug("[BOOT:BRICK] ReputationService unavailable: %s", _rep_exc)
+
+    # --- DelegationService (Issue #2131: extracted to bricks) ---
+    delegation_service: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.bricks.delegation.service import DelegationService
+
+            delegation_service = DelegationService(
+                session_factory=ctx.session_factory,
+                rebac_manager=kernel["rebac_manager"],
+                entity_registry=kernel.get("entity_registry"),
+                reputation_service=reputation_service,
+                # namespace_manager + agent_registry live in system tier;
+                # wired later by server lifespan if available.
+            )
+            logger.debug("[BOOT:BRICK] DelegationService created")
+        except Exception as _del_exc:
+            logger.debug("[BOOT:BRICK] DelegationService unavailable: %s", _del_exc)
 
     # --- TaskQueueService (Issue #655) ---
     task_queue_service: Any = None
@@ -1221,6 +1268,8 @@ def _boot_brick_services(
         "agent_event_log": agent_event_log,
         "skill_service": skill_service,
         "skill_package_service": skill_package_service,
+        "delegation_service": delegation_service,
+        "reputation_service": reputation_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1711,6 +1760,7 @@ def create_nexus_services(
         context_branch_service=system_dict.get("context_branch_service"),
         scoped_hook_engine=system_dict.get("scoped_hook_engine"),
         brick_lifecycle_manager=system_dict.get("brick_lifecycle_manager"),
+        brick_reconciler=system_dict.get("brick_reconciler"),
         delivery_worker=system_dict["delivery_worker"],
         observability_subsystem=system_dict["observability_subsystem"],
         resiliency_manager=system_dict["resiliency_manager"],
@@ -1738,6 +1788,9 @@ def create_nexus_services(
         # Skills Brick (Issue #2035)
         skill_service=brick_dict["skill_service"],
         skill_package_service=brick_dict["skill_package_service"],
+        # Delegation & Reputation Bricks (Issue #2131)
+        delegation_service=brick_dict["delegation_service"],
+        reputation_service=brick_dict["reputation_service"],
     )
 
     return kernel_services, system_services, brick_services

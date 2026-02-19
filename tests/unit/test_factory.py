@@ -205,6 +205,7 @@ class TestBootSystemServices:
             "resiliency_manager",
             "context_branch_service",
             "brick_lifecycle_manager",
+            "brick_reconciler",
             "scoped_hook_engine",
         }
         assert expected_keys == set(result.keys())
@@ -264,6 +265,8 @@ class TestBootBrickServices:
             "ipc_provisioner",
             "skill_service",
             "skill_package_service",
+            "delegation_service",
+            "reputation_service",
         }
         assert expected_keys == set(result.keys())
 

@@ -10,22 +10,30 @@ References:
     - docs/architecture/ops-scenario-matrix.md  (S26)
     - docs/architecture/data-storage-matrix.md  (Four Pillars)
     - Issue #1287: Extract NexusFS domain services from god object
+    - Issue #2131: Extract reputation into nexus/bricks/reputation
 """
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.services.reputation.reputation_records import (
+        DisputeRecord,
+        ReputationEvent,
+        ReputationScore,
+    )
 
 
 @runtime_checkable
 class ReputationProtocol(Protocol):
     """Service contract for agent reputation and dispute resolution.
 
-    Combines the public APIs of ``services/reputation/reputation_service.ReputationService``
-    and ``services/reputation/dispute_service.DisputeService``.
+    Combines the public APIs of ``bricks/reputation/reputation_service.ReputationService``
+    and ``bricks/reputation/dispute_service.DisputeService``.
     """
 
-    # ── Feedback & Scores ──────────────────────────────────────────────
+    # -- Feedback & Scores --------------------------------------------------
 
     def submit_feedback(
         self,
@@ -40,7 +48,7 @@ class ReputationProtocol(Protocol):
         fairness_score: float | None = None,
         evidence_hash: str | None = None,
         context: str = "general",
-    ) -> Any:
+    ) -> ReputationEvent | Any:
         """Submit feedback for an exchange, creating an event and updating scores.
 
         Returns:
@@ -53,7 +61,7 @@ class ReputationProtocol(Protocol):
         agent_id: str,
         context: str = "general",
         window: str = "all_time",
-    ) -> Any | None:
+    ) -> ReputationScore | Any | None:
         """Get materialized reputation score for an agent.
 
         Returns:
@@ -66,7 +74,7 @@ class ReputationProtocol(Protocol):
         zone_id: str,
         context: str = "general",
         limit: int = 50,
-    ) -> list[Any]:
+    ) -> list[ReputationScore | Any]:
         """Get reputation leaderboard for a zone.
 
         Returns:
@@ -77,7 +85,7 @@ class ReputationProtocol(Protocol):
     def get_feedback_for_exchange(
         self,
         exchange_id: str,
-    ) -> list[Any]:
+    ) -> list[ReputationEvent | Any]:
         """Get all feedback events for an exchange.
 
         Returns:
@@ -85,7 +93,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    # ── Dispute Resolution ─────────────────────────────────────────────
+    # -- Dispute Resolution -------------------------------------------------
 
     def file_dispute(
         self,
@@ -95,7 +103,7 @@ class ReputationProtocol(Protocol):
         zone_id: str,
         reason: str,
         evidence_hash: str | None = None,
-    ) -> Any:
+    ) -> DisputeRecord | Any:
         """File a new dispute for an exchange.
 
         Returns:
@@ -103,7 +111,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    def auto_mediate(self, dispute_id: str) -> Any:
+    def auto_mediate(self, dispute_id: str) -> DisputeRecord | Any:
         """Transition dispute to auto_mediating state.
 
         Returns:
@@ -116,7 +124,7 @@ class ReputationProtocol(Protocol):
         dispute_id: str,
         resolution: str,
         evidence_hash: str | None = None,
-    ) -> Any:
+    ) -> DisputeRecord | Any:
         """Resolve a dispute.
 
         Returns:
@@ -124,7 +132,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    def dismiss(self, dispute_id: str, reason: str) -> Any:
+    def dismiss(self, dispute_id: str, reason: str) -> DisputeRecord | Any:
         """Dismiss a dispute.
 
         Returns:
@@ -132,7 +140,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    def get_dispute(self, dispute_id: str) -> Any | None:
+    def get_dispute(self, dispute_id: str) -> DisputeRecord | Any | None:
         """Get a dispute by ID.
 
         Returns:
@@ -146,7 +154,7 @@ class ReputationProtocol(Protocol):
         agent_id: str | None = None,
         status: str | None = None,
         zone_id: str | None = None,
-    ) -> list[Any]:
+    ) -> list[DisputeRecord | Any]:
         """List disputes with optional filters.
 
         Returns:

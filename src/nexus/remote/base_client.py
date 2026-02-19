@@ -16,7 +16,7 @@ import base64
 import logging
 from typing import Any
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusError,

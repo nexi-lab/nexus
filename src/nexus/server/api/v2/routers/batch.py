@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.server.batch_executor import BatchExecutor, BatchRequest, BatchResponse
 
 if TYPE_CHECKING:
@@ -83,7 +83,7 @@ def create_batch_router(
         ) -> OperationContext:
             """Get operation context from auth result."""
             if auth_result is None or not auth_result.get("authenticated"):
-                from nexus.core.permissions import OperationContext as OC
+                from nexus.contracts.types import OperationContext as OC
 
                 return OC(user_id="anonymous", groups=[], zone_id="root")
             return cast("OperationContext", _real_get_operation_context(auth_result))

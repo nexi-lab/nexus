@@ -147,6 +147,7 @@ class SearchService(SemanticSearchMixin):
         gateway: NexusFSGateway | None = None,
         list_parallel_workers: int = LIST_PARALLEL_WORKERS,
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
+        file_cache: Any | None = None,
     ):
         """Initialize search service.
 
@@ -170,6 +171,9 @@ class SearchService(SemanticSearchMixin):
 
         # Gateway for NexusFS operations (Issue #1287)
         self._gw = gateway
+
+        # Injected file cache (Issue #690 — replaces global singleton)
+        self._file_cache = file_cache
 
         # Semantic search (initialized later, types declared in SemanticSearchMixin)
         self._semantic_search = None
@@ -1767,11 +1771,9 @@ class SearchService(SemanticSearchMixin):
         # Try mmap-accelerated grep first (Issue #893)
         if grep_fast.is_mmap_available():
             try:
-                from nexus.storage.file_cache import get_file_cache
-
                 zone_id, _, _ = self._extract_zone_info(context)
-                if zone_id:
-                    file_cache = get_file_cache()
+                if zone_id and self._file_cache is not None:
+                    file_cache = self._file_cache
                     disk_paths = file_cache.get_disk_paths_bulk(zone_id, files_needing_raw)
                     if disk_paths:
                         disk_to_virtual = {dp: vp for vp, dp in disk_paths.items()}

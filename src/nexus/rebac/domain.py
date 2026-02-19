@@ -38,8 +38,10 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-# Wildcard subject for public access
-WILDCARD_SUBJECT = ("*", "*")
+from nexus.contracts.rebac_types import WILDCARD_SUBJECT as WILDCARD_SUBJECT  # noqa: F401
+
+# Canonical location: nexus.contracts.rebac_types (Issue #2190)
+from nexus.contracts.rebac_types import Entity as Entity  # noqa: F401
 
 
 class RelationType(StrEnum):
@@ -72,38 +74,6 @@ class EntityType(StrEnum):
     PLAYBOOK = "playbook"  # v0.5.0 ACE
     TRAJECTORY = "trajectory"  # v0.5.0 ACE
     SKILL = "skill"  # v0.5.0 Skills System
-
-
-@dataclass(slots=True)
-class Entity:
-    """Represents an entity in the ReBAC system.
-
-    Attributes:
-        entity_type: Type of entity (agent, group, file, etc.)
-        entity_id: Unique identifier for the entity
-    """
-
-    entity_type: str
-    entity_id: str
-
-    def __post_init__(self) -> None:
-        """Validate entity."""
-        if not self.entity_type:
-            raise ValueError("entity_type is required")
-        if not self.entity_id:
-            raise ValueError("entity_id is required")
-
-    def to_tuple(self) -> tuple[str, str]:
-        """Convert to (type, id) tuple."""
-        return (self.entity_type, self.entity_id)
-
-    @classmethod
-    def from_tuple(cls, tup: tuple[str, str]) -> Entity:
-        """Create entity from (type, id) tuple."""
-        return cls(entity_type=tup[0], entity_id=tup[1])
-
-    def __str__(self) -> str:
-        return f"{self.entity_type}:{self.entity_id}"
 
 
 @dataclass(slots=True)

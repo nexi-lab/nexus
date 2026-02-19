@@ -24,9 +24,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.rebac.domain import Entity
-from nexus.rebac.types import ConsistencyLevel
+from nexus.contracts.rebac_types import (
+    CROSS_ZONE_ALLOWED_RELATIONS,
+    ConsistencyLevel,
+    Entity,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable

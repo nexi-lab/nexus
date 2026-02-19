@@ -259,6 +259,19 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.services.protocols.scheduler.InMemoryScheduler",
         True,
     ),
+    # ── Narrow dependency Protocols (Issue #2190) ────────────────────
+    (
+        "MemoryPermissionCheckerProtocol",
+        "nexus.services.protocols.memory",
+        "nexus.rebac.memory_permission_enforcer.MemoryPermissionEnforcer",
+        True,
+    ),
+    (
+        "EntityResolverProtocol",
+        "nexus.services.protocols.memory",
+        "nexus.rebac.entity_registry.EntityRegistry",
+        True,
+    ),
     # ── Brick-level protocols ─────────────────────────────────────────
     (
         "LLMProviderProtocol",

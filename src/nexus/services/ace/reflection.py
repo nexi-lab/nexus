@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from nexus.llm.message import Message, MessageRole
+from nexus.contracts.llm_types import Message, MessageRole
 from nexus.services.ace.trajectory import TrajectoryManager
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel

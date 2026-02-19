@@ -22,6 +22,14 @@ class MockNexusFS:
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._permission_enforcer = MagicMock()
+        # rebac_create/rebac_check delegate to rebac_service
+        from nexus.services.rebac_service import ReBACService
+
+        self.rebac_service = ReBACService(
+            rebac_manager=rebac_manager,
+            enforce_permissions=enforce_permissions,
+            permission_enforcer=self._permission_enforcer,
+        )
 
     def _validate_path(self, path):
         """Mock path validation that returns path unchanged."""
@@ -196,7 +204,7 @@ class TestCheckSharePermission:
 
     def test_admin_context_bypasses_check(self):
         """Bypasses permission check for admin context."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         fs = MockNexusFS()
         resource = ("file", "/test/doc.txt")
@@ -212,7 +220,7 @@ class TestCheckSharePermission:
 
     def test_system_context_bypasses_check(self):
         """Bypasses permission check for system context."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         fs = MockNexusFS()
         resource = ("file", "/test/doc.txt")
@@ -228,7 +236,7 @@ class TestCheckSharePermission:
 
     def test_non_file_resource_checks_rebac_owner(self):
         """Checks ReBAC 'owner' permission for non-file resources."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
@@ -251,7 +259,7 @@ class TestCheckSharePermission:
 
     def test_non_file_resource_raises_when_not_owner(self):
         """Raises PermissionError when user is not owner of non-file resource."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
@@ -307,7 +315,7 @@ class TestRebacCreate:
         """Raises ValueError when dynamic_viewer is used on non-CSV file."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="dynamic_viewer relation only supports CSV files"):
             fs.rebac_create(
@@ -321,7 +329,7 @@ class TestRebacCreate:
         """Raises ValueError when dynamic_viewer is used without column_config."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="column_config is required"):
             fs.rebac_create(
@@ -335,7 +343,7 @@ class TestRebacCreate:
         """Raises ValueError when column_config is provided for non-dynamic_viewer relation."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(
             ValueError, match="can only be provided when relation is 'dynamic_viewer'"
@@ -351,7 +359,7 @@ class TestRebacCreate:
         """Raises ValueError when column appears in multiple categories."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="appears in multiple categories"):
             fs.rebac_create(
@@ -368,7 +376,7 @@ class TestRebacCreate:
         """Raises ValueError when aggregation operation is invalid."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="Invalid aggregation operation"):
             fs.rebac_create(
@@ -387,7 +395,7 @@ class TestRebacCreate:
             return_value=Mock(tuple_id="abc", revision="1", consistency_token="token")
         )
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         fs.rebac_create(
             subject=("user", "alice"),
@@ -410,7 +418,7 @@ class TestRebacCreate:
             )
         )
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         result = fs.rebac_create(
             subject=("user", "alice"),
@@ -1075,11 +1083,7 @@ class TestGetDynamicViewerConfig:
 
     def test_returns_column_config_from_conditions(self):
         """Returns column_config from tuple conditions."""
-        import json
-
         mock_manager = MagicMock()
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
 
         # Mock the conditions with column_config
         column_config = {
@@ -1087,19 +1091,13 @@ class TestGetDynamicViewerConfig:
             "aggregations": {"age": "mean"},
             "visible_columns": ["name", "email"],
         }
-        conditions = json.dumps(
-            {
+
+        mock_manager.get_tuple_conditions = Mock(
+            return_value={
                 "type": "dynamic_viewer",
                 "column_config": column_config,
             }
         )
-
-        mock_row = {"conditions": conditions}
-        mock_cursor.fetchone = Mock(return_value=mock_row)
-        mock_manager._create_cursor = Mock(return_value=mock_cursor)
-        mock_manager._get_connection = Mock(return_value=mock_conn)
-        mock_manager._close_connection = Mock()
-        mock_manager._fix_sql_placeholders = Mock(side_effect=lambda x: x)
 
         fs = MockNexusFS(rebac_manager=mock_manager)
         fs.rebac_list_tuples = Mock(return_value=[{"tuple_id": "uuid-1"}])

@@ -19,7 +19,8 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.contracts.types import OperationContext, Permission
+from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.rebac.namespace_manager import (
     MountEntry,
     NamespaceManager,
@@ -519,7 +520,7 @@ class TestPermissionEnforcerNamespaceIntegration:
 
     def test_unmounted_path_raises_not_found(self, enhanced_rebac_manager, namespace_manager):
         """Non-admin subject accessing unmounted path gets NexusFileNotFoundError (404)."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         enforcer = PermissionEnforcer(
             rebac_manager=enhanced_rebac_manager,
@@ -769,7 +770,7 @@ class TestNamespaceEdgeCases:
         self, enhanced_rebac_manager, namespace_manager
     ):
         """PermissionEnforcer raises NexusFileNotFoundError for invisible paths."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         enforcer = PermissionEnforcer(
             rebac_manager=enhanced_rebac_manager,

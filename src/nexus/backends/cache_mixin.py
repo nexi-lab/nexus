@@ -21,7 +21,7 @@ from nexus.backends.cache_models import (
     CacheEntry,
     SyncResult,
 )
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 if TYPE_CHECKING:
     from nexus_fast import L1MetadataCache

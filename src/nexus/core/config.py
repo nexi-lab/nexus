@@ -245,6 +245,9 @@ class BrickServices:
     ipc_vfs_driver: Any = None  # IPCVFSDriver (Backend mounted at /agents)
     ipc_provisioner: Any = None  # AgentProvisioner
 
+    # --- Sandbox Brick (Issue #1307) ---
+    agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
+
     # --- Skills Brick (Issue #2035) ---
     skill_service: Any = None  # SkillService (protocol-based)
     skill_package_service: Any = None  # SkillPackageService

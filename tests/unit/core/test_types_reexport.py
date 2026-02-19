@@ -1,10 +1,8 @@
-"""Backward-compatibility re-export tests for core/types.py (Issue #1291, #1501).
+"""Leaf-module tests for contracts/types.py (Issue #1501).
 
 Verifies that:
-1. Types are importable from core.types, core.permissions, and contracts.types.
-2. The imported classes are the *same* objects (identity, not just equality).
-3. contracts/types.py is a zero-dependency leaf module (no runtime nexus.* imports).
-4. core/types.py is a thin re-export shim pointing to contracts.types.
+1. contracts/types.py is a zero-dependency leaf module (no runtime nexus.* imports).
+2. contracts/types.py uses ``from __future__ import annotations``.
 """
 
 from __future__ import annotations
@@ -15,64 +13,6 @@ from pathlib import Path
 _CONTRACTS_TYPES_FILE = (
     Path(__file__).resolve().parents[3] / "src" / "nexus" / "contracts" / "types.py"
 )
-
-
-class TestOperationContextReExport:
-    """OperationContext importable from both modules with identity."""
-
-    def test_importable_from_types(self) -> None:
-        from nexus.core.types import OperationContext
-
-        assert OperationContext is not None
-
-    def test_importable_from_permissions(self) -> None:
-        from nexus.core.permissions import OperationContext
-
-        assert OperationContext is not None
-
-    def test_same_class_identity(self) -> None:
-        from nexus.core.permissions import OperationContext as OC_permissions
-        from nexus.core.types import OperationContext as OC_types
-
-        assert OC_permissions is OC_types
-
-
-class TestPermissionReExport:
-    """Permission importable from both modules with identity."""
-
-    def test_importable_from_types(self) -> None:
-        from nexus.core.types import Permission
-
-        assert Permission is not None
-
-    def test_importable_from_permissions(self) -> None:
-        from nexus.core.permissions import Permission
-
-        assert Permission is not None
-
-    def test_same_class_identity(self) -> None:
-        from nexus.core.permissions import Permission as P_permissions
-        from nexus.core.types import Permission as P_types
-
-        assert P_permissions is P_types
-
-
-class TestContextIdentityReExport:
-    """ContextIdentity importable from both modules with identity."""
-
-    def test_importable_from_types(self) -> None:
-        from nexus.core.types import ContextIdentity
-
-        assert ContextIdentity is not None
-
-
-class TestExtractContextIdentityExport:
-    """extract_context_identity importable from core.types."""
-
-    def test_importable_from_types(self) -> None:
-        from nexus.core.types import extract_context_identity
-
-        assert extract_context_identity is not None
 
 
 class TestTypesIsLeafModule:

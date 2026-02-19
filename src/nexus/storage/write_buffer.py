@@ -44,6 +44,8 @@ class EventType(Enum):
     WRITE = "write"
     DELETE = "delete"
     RENAME = "rename"
+    MKDIR = "mkdir"
+    RMDIR = "rmdir"
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,9 @@ class WriteEvent:
     # Rename-specific
     old_path: str | None = None
     new_path: str | None = None
+
+    # Rmdir-specific
+    recursive: bool = False
 
 
 class WriteBuffer:
@@ -242,6 +247,40 @@ class WriteBuffer:
         )
         self._enqueue(event)
 
+    def enqueue_mkdir(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Enqueue a mkdir event. Returns immediately."""
+        event = WriteEvent(
+            event_type=EventType.MKDIR,
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
+        self._enqueue(event)
+
+    def enqueue_rmdir(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        recursive: bool = False,
+    ) -> None:
+        """Enqueue a rmdir event. Returns immediately."""
+        event = WriteEvent(
+            event_type=EventType.RMDIR,
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            recursive=recursive,
+        )
+        self._enqueue(event)
+
     # -- Internal ----------------------------------------------------------
 
     def _enqueue(self, event: WriteEvent) -> None:
@@ -321,6 +360,25 @@ class WriteBuffer:
                             agent_id=event.agent_id,
                             snapshot_hash=event.snapshot_hash,
                             metadata_snapshot=event.metadata_snapshot,
+                            status="success",
+                        )
+
+                    elif event.event_type == EventType.MKDIR:
+                        op_logger.log_operation(
+                            operation_type="mkdir",
+                            path=event.path,
+                            zone_id=zone,
+                            agent_id=event.agent_id,
+                            status="success",
+                        )
+
+                    elif event.event_type == EventType.RMDIR:
+                        op_type = "rmdir_recursive" if event.recursive else "rmdir"
+                        op_logger.log_operation(
+                            operation_type=op_type,
+                            path=event.path,
+                            zone_id=zone,
+                            agent_id=event.agent_id,
                             status="success",
                         )
 

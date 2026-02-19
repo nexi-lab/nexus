@@ -35,11 +35,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from nexus.lib.env import get_database_url
 from nexus.search.results import BaseSearchResult
 
 if TYPE_CHECKING:
@@ -846,7 +846,7 @@ class SearchDaemon:
     # Index Refresh
     # =========================================================================
 
-    async def notify_file_change(self, path: str, change_type: str = "update") -> None:  # noqa: ARG002
+    async def notify_file_change(self, path: str, _change_type: str = "update") -> None:
         """Notify the daemon of a file change for index refresh.
 
         Changes are debounced and batched for efficiency.
@@ -1059,7 +1059,7 @@ async def create_and_start_daemon(
         Initialized SearchDaemon instance
     """
     config = DaemonConfig(
-        database_url=database_url or os.environ.get("NEXUS_DATABASE_URL"),
+        database_url=database_url or get_database_url(),
         bm25s_index_dir=bm25s_index_dir or ".nexus-data/bm25s",
     )
 

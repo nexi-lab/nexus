@@ -223,6 +223,7 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "ipc_provisioner",  # provisioning helper, not a brick
         "skill_service",  # wired later via NexusFS gateway adapters
         "skill_package_service",  # wired later via NexusFS gateway adapters
+        "agent_event_log",  # event log, not a lifecycle brick
     }
 )
 
@@ -474,7 +475,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
     Returns:
         Dict with 13 kernel service entries.
     """
-    from nexus.core.exceptions import BootError
+    from nexus.contracts.exceptions import BootError
 
     t0 = time.perf_counter()
     try:
@@ -661,22 +662,37 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         raise BootError(str(exc), tier="kernel") from exc
 
 
-def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str, Any]:
+def _boot_system_services(
+    ctx: _BootContext,
+    kernel: dict[str, Any],
+    brick_on: Callable[[str], bool] | None = None,
+) -> dict[str, Any]:
     """Boot Tier 1 (SYSTEM) — degraded-mode on failure.
 
     Creates AgentRegistry, NamespaceManager, AsyncVFSRouter,
     EventDeliveryWorker, ObservabilitySubsystem, ResiliencyManager.
     On failure: logs WARNING, sets that service to None.
 
+    Args:
+        ctx: Boot context with shared dependencies.
+        kernel: Kernel services dict from Tier 0.
+        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+            When None, all services are enabled (backward-compatible default).
+
     Returns:
-        Dict with 8 system service entries (some may be None).
+        Dict with 11 system service entries (some may be None).
     """
     t0 = time.perf_counter()
+
+    def _on(name: str) -> bool:
+        if brick_on is None:
+            return True
+        return brick_on(name)
 
     # --- Agent Registry (Issue #1502) ---
     agent_registry: Any = None
     async_agent_registry: Any = None
-    if ctx.session_factory is not None:
+    if _on("agent_registry") and ctx.session_factory is not None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
             from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
@@ -691,23 +707,29 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] AgentRegistry unavailable: %s", exc)
 
+    if not _on("agent_registry"):
+        logger.debug("[BOOT:SYSTEM] AgentRegistry disabled by profile")
+
     # --- Namespace Manager (Issue #1502) ---
     namespace_manager: Any = None
     async_namespace_manager: Any = None
-    try:
-        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
-        from nexus.rebac.namespace_factory import (
-            create_namespace_manager as _create_ns_manager,
-        )
+    if not _on("namespace"):
+        logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
+    else:
+        try:
+            from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
+            from nexus.rebac.namespace_factory import (
+                create_namespace_manager as _create_ns_manager,
+            )
 
-        namespace_manager = _create_ns_manager(
-            rebac_manager=kernel["rebac_manager"],
-            record_store=ctx.record_store,
-        )
-        async_namespace_manager = AsyncNamespaceManager(namespace_manager)
-        logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
+            namespace_manager = _create_ns_manager(
+                rebac_manager=kernel["rebac_manager"],
+                record_store=ctx.record_store,
+            )
+            async_namespace_manager = AsyncNamespaceManager(namespace_manager)
+            logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
 
     # --- Async VFS Router (Issue #1502) ---
     async_vfs_router: Any = None
@@ -721,7 +743,9 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     # --- Event Delivery Worker (Issue #1241, constructed, NOT started) ---
     delivery_worker = None
-    if ctx.db_url.startswith(("postgres", "postgresql")):
+    if not _on("eventlog"):
+        logger.debug("[BOOT:SYSTEM] EventDeliveryWorker disabled by profile")
+    elif ctx.db_url.startswith(("postgres", "postgresql")):
         try:
             from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
@@ -736,31 +760,37 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     # --- Observability Subsystem (Issue #1301) ---
     observability_subsystem: Any = None
-    try:
-        from nexus.core.config import ObservabilityConfig
-        from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+    if not _on("observability"):
+        logger.debug("[BOOT:SYSTEM] ObservabilitySubsystem disabled by profile")
+    else:
+        try:
+            from nexus.core.config import ObservabilityConfig
+            from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
 
-        # Instrument both primary and replica pools (Issue #725)
-        obs_engines = [ctx.engine]
-        if ctx.record_store.has_read_replica:
-            obs_engines.append(ctx.read_engine)
-        observability_subsystem = ObservabilitySubsystem(
-            config=ObservabilityConfig(),
-            engines=obs_engines,
-        )
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
+            # Instrument both primary and replica pools (Issue #725)
+            obs_engines = [ctx.engine]
+            if ctx.record_store.has_read_replica:
+                obs_engines.append(ctx.read_engine)
+            observability_subsystem = ObservabilitySubsystem(
+                config=ObservabilityConfig(),
+                engines=obs_engines,
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
 
     # --- Resiliency Subsystem (Issue #1366) ---
     resiliency_manager: Any = None
-    try:
-        from nexus.core.resiliency import ResiliencyManager, set_default_manager
+    if not _on("resiliency"):
+        logger.debug("[BOOT:SYSTEM] ResiliencyManager disabled by profile")
+    else:
+        try:
+            from nexus.core.resiliency import ResiliencyManager, set_default_manager
 
-        resiliency_config = _parse_resiliency_config(ctx.resiliency_raw)
-        resiliency_manager = ResiliencyManager(config=resiliency_config)
-        set_default_manager(resiliency_manager)
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
+            resiliency_config = _parse_resiliency_config(ctx.resiliency_raw)
+            resiliency_manager = ResiliencyManager(config=resiliency_config)
+            set_default_manager(resiliency_manager)
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
     # --- Context Branch Service (Issue #1315) ---
     context_branch_service: Any = None
@@ -823,7 +853,13 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
     elapsed = time.perf_counter() - t0
     active = sum(1 for v in result.values() if v is not None)
-    logger.info("[BOOT:SYSTEM] %d/%d services ready (%.3fs)", active, len(result), elapsed)
+    logger.info(
+        "[BOOT:SYSTEM] %d/%d services ready (%.3fs, profile gating=%s)",
+        active,
+        len(result),
+        elapsed,
+        "active" if brick_on is not None else "off",
+    )
     return result
 
 
@@ -913,7 +949,7 @@ def _boot_brick_services(
     # --- Manifest Resolver (Issue #1427, #1428) ---
     manifest_resolver: Any = None
     manifest_metrics: Any = None
-    if _on("mcp"):
+    if _on("skills"):
         try:
             from nexus.bricks.context_manifest import ManifestResolver
             from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
@@ -1026,7 +1062,9 @@ def _boot_brick_services(
     # --- Infrastructure: event bus + lock manager ---
     event_bus: Any = None
     lock_manager: Any = None
-    if ctx.dist.enable_locks or ctx.dist.enable_events:
+    if not _on("ipc"):
+        logger.debug("[BOOT:BRICK] IPC/EventBus brick disabled by profile")
+    elif ctx.dist.enable_locks or ctx.dist.enable_events:
         event_bus, lock_manager = _create_distributed_infra(
             ctx.dist,
             ctx.metadata_store,
@@ -1073,14 +1111,17 @@ def _boot_brick_services(
 
     # --- TaskQueueService (Issue #655) ---
     task_queue_service: Any = None
-    try:
-        from nexus.services.task_queue_service import TaskQueueService
+    if not _on("scheduler"):
+        logger.debug("[BOOT:BRICK] Scheduler/TaskQueue brick disabled by profile")
+    else:
+        try:
+            from nexus.services.task_queue_service import TaskQueueService
 
-        task_queue_service = TaskQueueService(
-            db_path=_resolve_tasks_db_path(ctx.backend),
-        )
-    except Exception as _tq_exc:
-        logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
+            task_queue_service = TaskQueueService(
+                db_path=_resolve_tasks_db_path(ctx.backend),
+            )
+        except Exception as _tq_exc:
+            logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
     # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
     ipc_storage_driver: Any = None
@@ -1160,6 +1201,17 @@ def _boot_brick_services(
     except Exception as _mem_exc:
         logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
 
+    # --- Sandbox Brick: AgentEventLog (Issue #1307) ---
+    agent_event_log: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.bricks.sandbox.events import AgentEventLog
+
+            agent_event_log = AgentEventLog(session_factory=ctx.session_factory)
+            logger.debug("[BOOT:BRICK] AgentEventLog created")
+        except Exception as _ael_exc:
+            logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
+
     # --- Skills Brick (Issue #2035) ---
     skill_service: Any = None
     skill_package_service: Any = None
@@ -1187,6 +1239,7 @@ def _boot_brick_services(
         "ipc_vfs_driver": ipc_vfs_driver,
         "ipc_provisioner": ipc_provisioner,
         "memory_brick_factory": memory_brick_factory,
+        "agent_event_log": agent_event_log,
         "skill_service": skill_service,
         "skill_package_service": skill_package_service,
     }
@@ -1223,6 +1276,300 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
     if dw is not None and hasattr(dw, "start"):
         dw.start()
         logger.debug("[BOOT:BG] EventDeliveryWorker started")
+
+
+def _boot_wired_services(
+    nx: Any,
+    kernel_services: Any,
+    brick_services: Any,
+    brick_on: Callable[[str], bool] | None = None,
+) -> dict[str, Any]:
+    """Boot Tier 2b (WIRED) — services needing NexusFS reference.
+
+    Two-phase init: called AFTER NexusFS construction in ``create_nexus_fs()``.
+    ``NexusFSGateway`` breaks the circular dependency between kernel and services.
+
+    Profile gating is applied via ``brick_on`` — same callback used by other tiers.
+    Services that fail to construct are set to None (degraded mode).
+
+    Issue #643: Migrated from ``NexusFS._wire_services()`` to factory.py
+    so the kernel never imports or creates services.
+
+    Args:
+        nx: The NexusFS instance (already constructed).
+        kernel_services: KernelServices container (Tier 0).
+        brick_services: BrickServices container (Tier 2).
+        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+
+    Returns:
+        Dict of service name -> instance (some may be None).
+    """
+    t0 = time.perf_counter()
+
+    def _on(name: str) -> bool:
+        if brick_on is None:
+            return True
+        return brick_on(name)
+
+    # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
+    gateway: Any = None
+    try:
+        from nexus.services.gateway import NexusFSGateway
+
+        gateway = NexusFSGateway(nx)
+        logger.debug("[BOOT:WIRED] NexusFSGateway created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] NexusFSGateway unavailable: %s", exc)
+
+    # --- ReBACService: Permission and access control operations ---
+    rebac_service: Any = None
+    try:
+        from nexus.services.rebac_service import ReBACService
+
+        rebac_service = ReBACService(
+            rebac_manager=kernel_services.rebac_manager,
+            enforce_permissions=getattr(nx, "_enforce_permissions", True),
+            enable_audit_logging=True,
+            circuit_breaker=brick_services.rebac_circuit_breaker,
+            file_reader=lambda path: nx.read(path),
+            permission_enforcer=getattr(nx, "_permission_enforcer", None),
+        )
+        logger.debug("[BOOT:WIRED] ReBACService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] ReBACService unavailable: %s", exc)
+
+    # --- MountService: Dynamic backend mounting operations ---
+    mount_service: Any = None
+    try:
+        from nexus.services.mount_service import MountService
+
+        mount_service = MountService(
+            router=kernel_services.router,
+            mount_manager=kernel_services.mount_manager,
+            nexus_fs=nx,
+        )
+        logger.debug("[BOOT:WIRED] MountService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
+
+    # --- MCPService: Model Context Protocol operations ---
+    mcp_service: Any = None
+    if _on("mcp"):
+        try:
+            from nexus.services.mcp_service import MCPService
+
+            mcp_service = MCPService(filesystem=nx)
+            logger.debug("[BOOT:WIRED] MCPService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] MCPService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:WIRED] MCPService disabled by profile")
+
+    # --- LLMService + LLMSubsystem: LLM integration ---
+    llm_service: Any = None
+    llm_subsystem: Any = None
+    if _on("llm"):
+        try:
+            from nexus.services.llm_service import LLMService
+
+            llm_service = LLMService(nexus_fs=nx)
+
+            from nexus.services.subsystems.llm_subsystem import LLMSubsystem
+
+            llm_subsystem = LLMSubsystem(llm_service=llm_service)
+            logger.debug("[BOOT:WIRED] LLMService + LLMSubsystem created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] LLMService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:WIRED] LLMService disabled by profile")
+
+    # --- OAuthService: OAuth authentication operations ---
+    oauth_service: Any = None
+    if _on("sandbox"):
+        try:
+            import os
+
+            from nexus.services.oauth_service import OAuthService
+
+            oauth_service = OAuthService(
+                oauth_factory=None,
+                token_manager=None,
+                filesystem=nx,
+                database_url=os.getenv("TOKEN_MANAGER_DB"),
+                oauth_config=getattr(getattr(nx, "_config", None), "oauth", None),
+                mount_lister=lambda: [
+                    (m.mount_point, type(m.backend).__name__)
+                    for m in kernel_services.router.list_mounts()
+                ],
+            )
+            logger.debug("[BOOT:WIRED] OAuthService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] OAuthService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:WIRED] OAuthService disabled by profile")
+
+    # --- MountCoreService: Internal mount operations (gateway-dependent) ---
+    mount_core_service: Any = None
+    if gateway is not None:
+        try:
+            from nexus.services.mount_core_service import MountCoreService
+
+            mount_core_service = MountCoreService(gateway)
+            logger.debug("[BOOT:WIRED] MountCoreService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] MountCoreService unavailable: %s", exc)
+
+    # --- SyncService: Sync operations (gateway-dependent) ---
+    sync_service: Any = None
+    if gateway is not None:
+        try:
+            from nexus.services.sync_service import SyncService
+
+            sync_service = SyncService(gateway)
+            logger.debug("[BOOT:WIRED] SyncService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] SyncService unavailable: %s", exc)
+
+    # --- SyncJobService: Sync job management ---
+    sync_job_service: Any = None
+    if gateway is not None and sync_service is not None:
+        try:
+            from nexus.services.sync_job_service import SyncJobService
+
+            sync_job_service = SyncJobService(gateway, sync_service)
+            logger.debug("[BOOT:WIRED] SyncJobService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] SyncJobService unavailable: %s", exc)
+
+    # --- MountPersistService: Mount persistence ---
+    mount_persist_service: Any = None
+    if mount_core_service is not None:
+        try:
+            from nexus.services.mount_persist_service import MountPersistService
+
+            mount_persist_service = MountPersistService(
+                mount_manager=kernel_services.mount_manager,
+                mount_service=mount_core_service,
+                sync_service=sync_service,
+            )
+            logger.debug("[BOOT:WIRED] MountPersistService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] MountPersistService unavailable: %s", exc)
+
+    # --- SkillService: Skill management (Issue #2035) ---
+    skill_service: Any = brick_services.skill_service
+    if skill_service is None and _on("skills") and gateway is not None:
+        try:
+            from nexus.services.skill_service import SkillService as _SkillService
+
+            skill_service = _SkillService(gateway=gateway)
+            logger.debug("[BOOT:WIRED] SkillService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] SkillService unavailable: %s", exc)
+    elif not _on("skills"):
+        logger.debug("[BOOT:WIRED] SkillService disabled by profile")
+
+    # --- SkillPackageService: Skill export/import/validate (Issue #2035) ---
+    skill_package_service: Any = getattr(brick_services, "skill_package_service", None)
+    if skill_package_service is None and _on("skills") and skill_service is not None:
+        try:
+            from nexus.skills.package_service import SkillPackageService as _SkillPkgSvc
+
+            skill_package_service = _SkillPkgSvc(
+                fs=skill_service._fs,
+                perms=skill_service._perms,
+                skill_service=skill_service,
+            )
+            logger.debug("[BOOT:WIRED] SkillPackageService created")
+        except Exception:
+            pass  # Optional, may not be importable
+
+    # --- SearchService: Search operations ---
+    search_service: Any = None
+    if _on("search"):
+        try:
+            from nexus.services.search_service import SearchService
+
+            search_service = SearchService(
+                metadata_store=nx.metadata,
+                permission_enforcer=getattr(nx, "_permission_enforcer", None),
+                router=kernel_services.router,
+                rebac_manager=kernel_services.rebac_manager,
+                enforce_permissions=getattr(nx, "_enforce_permissions", True),
+                default_context=getattr(nx, "_default_context", None),
+                record_store=getattr(nx, "_record_store", None),
+                gateway=gateway,
+            )
+            logger.debug("[BOOT:WIRED] SearchService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] SearchService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:WIRED] SearchService disabled by profile")
+
+    # --- ShareLinkService: Share link operations ---
+    share_link_service: Any = None
+    if _on("discovery"):
+        try:
+            from nexus.services.share_link_service import ShareLinkService
+
+            share_link_service = ShareLinkService(
+                gateway=gateway,
+                enforce_permissions=getattr(nx, "_enforce_permissions", True),
+            )
+            logger.debug("[BOOT:WIRED] ShareLinkService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] ShareLinkService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:WIRED] ShareLinkService disabled by profile")
+
+    # --- EventsService: File watching + advisory locking ---
+    events_service: Any = None
+    if _on("ipc"):
+        try:
+            from nexus.services.events_service import EventsService
+
+            metadata_cache = None
+            if hasattr(nx.metadata, "_cache"):
+                metadata_cache = nx.metadata._cache
+
+            events_service = EventsService(
+                backend=nx.backend,
+                event_bus=brick_services.event_bus,
+                lock_manager=brick_services.lock_manager,
+                zone_id=None,
+                metadata_cache=metadata_cache,
+            )
+            logger.debug("[BOOT:WIRED] EventsService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] EventsService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:WIRED] EventsService disabled by profile")
+
+    result = {
+        "version_service": kernel_services.version_service,
+        "rebac_service": rebac_service,
+        "mount_service": mount_service,
+        "gateway": gateway,
+        "mount_core_service": mount_core_service,
+        "sync_service": sync_service,
+        "sync_job_service": sync_job_service,
+        "mount_persist_service": mount_persist_service,
+        "mcp_service": mcp_service,
+        "llm_service": llm_service,
+        "llm_subsystem": llm_subsystem,
+        "oauth_service": oauth_service,
+        "skill_service": skill_service,
+        "skill_package_service": skill_package_service,
+        "search_service": search_service,
+        "share_link_service": share_link_service,
+        "events_service": events_service,
+        "task_queue_service": brick_services.task_queue_service,
+    }
+
+    elapsed = time.perf_counter() - t0
+    active = sum(1 for v in result.values() if v is not None)
+    logger.info("[BOOT:WIRED] %d/%d services ready (%.3fs)", active, len(result), elapsed)
+    return result
 
 
 def create_nexus_services(
@@ -1346,8 +1693,8 @@ def create_nexus_services(
     # --- Tier 0: KERNEL (fatal on failure) ---
     kernel_dict = _boot_kernel_services(ctx)
 
-    # --- Tier 1: SYSTEM (degraded on failure) ---
-    system_dict = _boot_system_services(ctx, kernel_dict)
+    # --- Tier 1: SYSTEM (degraded on failure, gated by profile) ---
+    system_dict = _boot_system_services(ctx, kernel_dict, _brick_on)
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
     brick_dict = _boot_brick_services(ctx, kernel_dict, _brick_on)
@@ -1406,6 +1753,8 @@ def create_nexus_services(
         ipc_storage_driver=brick_dict["ipc_storage_driver"],
         ipc_vfs_driver=brick_dict["ipc_vfs_driver"],
         ipc_provisioner=brick_dict["ipc_provisioner"],
+        # Sandbox Brick (Issue #1307)
+        agent_event_log=brick_dict["agent_event_log"],
         # Skills Brick (Issue #2035)
         skill_service=brick_dict["skill_service"],
         skill_package_service=brick_dict["skill_package_service"],
@@ -1462,10 +1811,10 @@ def _create_distributed_infra(
                 dist.nats_url,
             )
         elif dist.enable_events:
-            import os
+            from nexus.lib.env import get_dragonfly_url, get_redis_url
 
-            coordination_url_resolved = coordination_url or os.getenv("NEXUS_REDIS_URL")
-            event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
+            coordination_url_resolved = coordination_url or get_redis_url()
+            event_url_resolved = coordination_url_resolved or get_dragonfly_url()
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
                 from nexus.services.event_bus.redis import RedisEventBus
@@ -1718,6 +2067,20 @@ def create_nexus_fs(
         vfs_lock_manager=_vfs_lock_manager,
     )
 
+    # --- Phase 2: Wire services needing NexusFS reference (Issue #643) ---
+    # Resolve enabled_bricks for brick gating (same pattern as create_nexus_services)
+    from nexus.core.deployment_profile import DeploymentProfile as _DP
+
+    _resolved_bricks = enabled_bricks
+    if _resolved_bricks is None:
+        _resolved_bricks = _DP.FULL.default_bricks()
+
+    def _brick_on(name: str) -> bool:
+        return name in _resolved_bricks
+
+    _wired = _boot_wired_services(nx, kernel_services, brick_services, _brick_on)
+    nx._bind_wired_services(_wired)
+
     # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)
     _blm = getattr(system_services, "brick_lifecycle_manager", None)
     if _blm is not None:
@@ -1725,3 +2088,88 @@ def create_nexus_fs(
         _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
 
     return nx
+
+
+def create_memory_service(nx: Any) -> Any:
+    """Create MemoryService for server-layer RPC dispatch (Issue #12).
+
+    This is a **server-layer** factory function — the kernel (NexusFS) has
+    zero knowledge of MemoryService.  The server calls this once during
+    ``create_app()`` and registers the result as an additional RPC source.
+
+    Args:
+        nx: A NexusFS instance (used to read SessionLocal, backend, config).
+
+    Returns:
+        MemoryService instance, or None if dependencies are unavailable.
+    """
+    try:
+        memory_cfg = getattr(nx, "_memory_config_obj", None)
+        _paging = getattr(memory_cfg, "enable_paging", False) if memory_cfg else False
+        _main_cap = getattr(memory_cfg, "main_capacity", 1000) if memory_cfg else 1000
+        _recall_age = getattr(memory_cfg, "recall_max_age_hours", 168) if memory_cfg else 168
+
+        def _create_memory(
+            zone_id: str | None = None,
+            user_id: str | None = None,
+            agent_id: str | None = None,
+            use_paging: bool | None = None,
+        ) -> Any:
+            nx._ensure_entity_registry()
+            session = nx.SessionLocal()
+            do_paging = use_paging if use_paging is not None else _paging
+
+            if do_paging:
+                from nexus.services.memory.memory_with_paging import MemoryWithPaging
+
+                engine = nx.SessionLocal.kw.get("bind") if nx.SessionLocal else None
+                return MemoryWithPaging(
+                    session=session,
+                    backend=nx.backend,
+                    zone_id=zone_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    entity_registry=nx._entity_registry,
+                    enable_paging=True,
+                    main_capacity=_main_cap,
+                    recall_max_age_hours=_recall_age,
+                    engine=engine,
+                    session_factory=nx.SessionLocal,
+                )
+            else:
+                from nexus.services.memory.memory_api import Memory
+
+                return Memory(
+                    session=session,
+                    backend=nx.backend,
+                    zone_id=zone_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    entity_registry=nx._entity_registry,
+                )
+
+        from nexus.services.memory_service import MemoryService
+
+        default_ctx = getattr(nx, "_default_context", None)
+        if default_ctx is None:
+            from nexus.contracts.types import OperationContext
+
+            default_ctx = OperationContext(user_id="system", groups=[])
+        memory_config: dict[str, str | None] = {
+            "zone_id": getattr(default_ctx, "zone_id", None),
+            "user_id": getattr(default_ctx, "user_id", None),
+            "agent_id": getattr(default_ctx, "agent_id", None),
+        }
+
+        svc = MemoryService(
+            memory_factory=_create_memory,
+            session_factory=nx.SessionLocal,
+            backend=nx.backend,
+            default_context=default_ctx,
+            memory_config=memory_config,
+        )
+        logger.info("[FACTORY] MemoryService created for server-layer RPC")
+        return svc
+    except Exception as exc:
+        logger.debug("[FACTORY] MemoryService unavailable: %s", exc)
+        return None

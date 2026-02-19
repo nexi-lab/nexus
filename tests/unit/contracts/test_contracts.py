@@ -108,43 +108,27 @@ class TestImportPaths:
 class TestObjectIdentity:
     """Verify that re-exports yield the exact same class object."""
 
-    def test_operation_context_identity(self):
-        from nexus.contracts.types import OperationContext as ContractsOC
-        from nexus.core.permissions import OperationContext as PermsOC
-        from nexus.core.types import OperationContext as CoreOC
-
-        assert ContractsOC is CoreOC
-        assert ContractsOC is PermsOC
-
-    def test_permission_identity(self):
-        from nexus.contracts.types import Permission as ContractsPerm
-        from nexus.core.permissions import Permission as PermsPerm
-        from nexus.core.types import Permission as CorePerm
-
-        assert ContractsPerm is CorePerm
-        assert ContractsPerm is PermsPerm
-
     def test_nexus_error_identity(self):
         from nexus.contracts.exceptions import NexusError as ContractsErr
-        from nexus.core.exceptions import NexusError as CoreErr
+        from nexus.contracts.exceptions import NexusError as CoreErr
 
         assert ContractsErr is CoreErr
 
     def test_parser_error_identity(self):
         from nexus.contracts.exceptions import ParserError as ContractsPE
-        from nexus.core.exceptions import ParserError as CorePE
+        from nexus.contracts.exceptions import ParserError as CorePE
 
         assert ContractsPE is CorePE
 
     def test_backend_error_identity(self):
         from nexus.contracts.exceptions import BackendError as ContractsBE
-        from nexus.core.exceptions import BackendError as CoreBE
+        from nexus.contracts.exceptions import BackendError as CoreBE
 
         assert ContractsBE is CoreBE
 
     def test_validation_error_identity(self):
         from nexus.contracts.exceptions import ValidationError as ContractsVE
-        from nexus.core.exceptions import ValidationError as CoreVE
+        from nexus.contracts.exceptions import ValidationError as CoreVE
 
         assert ContractsVE is CoreVE
 

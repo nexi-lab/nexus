@@ -29,9 +29,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext, Permission
     from nexus.core.metadata import FileMetadata
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.permissions import OperationContext, Permission
     from nexus.core.router import PathRouter
 
 logger = logging.getLogger(__name__)

@@ -30,8 +30,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.types import OperationContext
 from nexus.core.hash_fast import hash_content
-from nexus.core.permissions import OperationContext
 
 if TYPE_CHECKING:
     from nexus.backends.cache_mixin import CacheEntry, SyncResult

@@ -50,9 +50,8 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
-from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
-from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
-from nexus.core.exceptions import (
+from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL, ROOT_ZONE_ID
+from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusError,
@@ -60,6 +59,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 
 # --- Extracted modules (re-exported for backward compatibility) ---
 from nexus.server.dependencies import (  # noqa: F401, E402
@@ -296,15 +296,14 @@ async def lifespan(_app: FastAPI) -> Any:
                 _app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
                 logger.info("Async ReBAC manager initialized (wrapping sync manager)")
             else:
-                # Fallback: create a fresh sync manager for async wrapper
-                from sqlalchemy import create_engine as _create_engine
-
+                # Fallback: create a fresh sync manager via RecordStore
                 from nexus.rebac.manager import ReBACManager
+                from nexus.storage.record_store import SQLAlchemyRecordStore
 
-                _sync_engine = _create_engine(_app.state.database_url)
-                _sync_mgr = ReBACManager(engine=_sync_engine)
+                _store = SQLAlchemyRecordStore(db_url=_app.state.database_url)
+                _sync_mgr = ReBACManager(engine=_store.engine)
                 _app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
-                logger.info("Async ReBAC manager initialized (fresh sync manager)")
+                logger.info("Async ReBAC manager initialized (fresh sync manager via RecordStore)")
 
             # Issue #940: Initialize AsyncNexusFS with permission enforcement
             try:
@@ -889,13 +888,19 @@ async def lifespan(_app: FastAPI) -> Any:
     if _app.state.nexus_fs and _app.state.agent_registry:
         try:
             from nexus.bricks.sandbox.auth_service import SandboxAuthService
-            from nexus.bricks.sandbox.events import AgentEventLog
             from nexus.bricks.sandbox.sandbox_manager import SandboxManager
 
             session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
-                # Create AgentEventLog for sandbox lifecycle audit
-                _app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
+                # Get AgentEventLog from factory (preferred) or create fallback
+                _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
+                _factory_event_log = getattr(_brk, "agent_event_log", None) if _brk else None
+                if _factory_event_log is not None:
+                    _app.state.agent_event_log = _factory_event_log
+                else:
+                    from nexus.bricks.sandbox.events import AgentEventLog
+
+                    _app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
                 # Create SandboxManager for SandboxAuthService
                 # (separate from NexusFS's lazy sandbox manager — different layers)
@@ -1372,10 +1377,20 @@ def create_app(
 
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
     _brick_sources: list[Any] = []
-    for _attr_name in ("skill_service", "skill_package_service"):
+    for _attr_name in ("skill_service", "skill_package_service", "task_queue_service"):
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:
             _brick_sources.append(_brick_svc)
+    # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
+    try:
+        from nexus.factory import create_memory_service
+
+        _memory_svc = create_memory_service(nexus_fs)
+        if _memory_svc is not None:
+            _brick_sources.append(_memory_svc)
+            app.state.memory_service = _memory_svc  # for cleanup in lifespan
+    except Exception as _exc:
+        logger.debug("MemoryService unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)
@@ -1456,7 +1471,9 @@ def create_app(
         "1",
         "yes",
     )
-    redis_url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+    from nexus.lib.env import get_dragonfly_url, get_redis_url
+
+    redis_url = get_redis_url() or get_dragonfly_url()
 
     limiter = Limiter(
         key_func=_get_rate_limit_key,
@@ -1472,7 +1489,7 @@ def create_app(
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # Register Nexus exception handlers for error classification
-    from nexus.core.exceptions import NexusError
+    from nexus.contracts.exceptions import NexusError
 
     app.add_exception_handler(NexusError, _nexus_error_handler)
 
@@ -1862,7 +1879,7 @@ def _register_routes(app: FastAPI) -> None:
                 if session_factory is None:
                     raise HTTPException(status_code=500, detail="Secrets audit not configured")
                 _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
-            zone_id = auth_result.get("zone_id", "root")
+            zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
             return _secrets_audit_logger_instance, zone_id
 
         app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override
@@ -1985,7 +2002,7 @@ def _register_routes(app: FastAPI) -> None:
         try:
             full_path = f"/{path}"
 
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             context = OperationContext(
                 user_id="system",
@@ -3353,7 +3370,7 @@ def _handle_delta_write(params: Any, context: Any) -> dict[str, Any]:
 
 def _require_admin(context: Any) -> None:
     """Require admin privileges for admin operations."""
-    from nexus.core.exceptions import NexusPermissionError
+    from nexus.contracts.exceptions import NexusPermissionError
 
     if not context or not getattr(context, "is_admin", False):
         raise NexusPermissionError("Admin privileges required for this operation")
@@ -3494,7 +3511,7 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_get_key method."""
     from sqlalchemy import select
 
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.contracts.exceptions import NexusFileNotFoundError
     from nexus.storage.models import APIKeyModel
 
     _require_admin(context)
@@ -3529,7 +3546,7 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
 def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.contracts.exceptions import NexusFileNotFoundError
 
     _require_admin(context)
 
@@ -3552,7 +3569,7 @@ def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
 
     from sqlalchemy import select
 
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.contracts.exceptions import NexusFileNotFoundError
     from nexus.storage.models import APIKeyModel
 
     _require_admin(context)

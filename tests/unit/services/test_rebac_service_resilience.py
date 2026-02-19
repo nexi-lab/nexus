@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.exc import OperationalError
 
-from nexus.core.exceptions import CircuitOpenError
+from nexus.contracts.exceptions import CircuitOpenError
 from nexus.rebac.circuit_breaker import (
     AsyncCircuitBreaker,
     CircuitBreakerConfig,

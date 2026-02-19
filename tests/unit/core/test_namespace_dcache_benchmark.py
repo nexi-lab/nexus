@@ -36,7 +36,7 @@ def engine():
 @pytest.fixture
 def rebac_manager(engine):
     """Create an EnhancedReBACManager with 200 grants for benchmarking."""
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,

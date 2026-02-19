@@ -1,13 +1,13 @@
-"""Unit tests verifying _write_observer is called (or not) for each write path.
+"""Unit tests verifying _write_observer is called for each mutation path.
 
-Documents and tests which operations currently call the observer:
+Coverage matrix (all gaps closed in Issue #625):
 - write()       -> on_write()       YES
 - delete()      -> on_delete()      YES
 - rename()      -> on_rename()      YES
 - write_batch() -> on_write_batch() YES
-- write_stream()-> (none)           NO  <-- gap
-- mkdir()       -> (none)           NO  <-- gap
-- rmdir()       -> (none)           NO  <-- gap
+- write_stream()-> on_write()       YES
+- mkdir()       -> on_mkdir()       YES  (Issue #625)
+- rmdir()       -> on_rmdir()       YES  (Issue #625)
 
 Phase 1.3 of #1246/#1330 consolidation plan.
 """
@@ -157,12 +157,12 @@ class TestWriteBatchCallsObserver:
 
 
 # =========================================================================
-# Operations that do NOT call the observer (documenting current gaps)
+# write_stream, mkdir, rmdir — gaps closed (Issue #625)
 # =========================================================================
 
 
 class TestWriteStreamCallsObserver:
-    """write_stream() calls _write_observer.on_write() directly (gap closed)."""
+    """write_stream() calls _write_observer.on_write() directly."""
 
     def test_write_stream_calls_on_write(self, nx: NexusFS, observer: MagicMock) -> None:
         if not hasattr(nx, "write_stream"):
@@ -176,25 +176,121 @@ class TestWriteStreamCallsObserver:
         assert kwargs["is_new"] is True
 
 
-class TestMkdirDoesNotCallObserver:
-    """mkdir() currently does NOT call any observer method."""
+class TestMkdirCallsObserver:
+    """mkdir() calls on_mkdir() (Issue #625 gap closed)."""
 
-    def test_mkdir_skips_observer(self, nx: NexusFS, observer: MagicMock) -> None:
+    def test_mkdir_calls_on_mkdir(self, nx: NexusFS, observer: MagicMock) -> None:
         nx.mkdir("/testdir")
 
-        # Document the gap: observer should be called but isn't
-        observer.on_write.assert_not_called()
+        observer.on_mkdir.assert_called_once()
+        kwargs = observer.on_mkdir.call_args.kwargs
+        assert kwargs["path"] == "/testdir"
+
+    def test_mkdir_parents_calls_on_mkdir(self, nx: NexusFS, observer: MagicMock) -> None:
+        nx.mkdir("/a/b/c", parents=True)
+
+        # on_mkdir is called once for the final directory
+        observer.on_mkdir.assert_called_once()
+        kwargs = observer.on_mkdir.call_args.kwargs
+        assert kwargs["path"] == "/a/b/c"
 
 
-class TestRmdirDoesNotCallObserver:
-    """rmdir() currently does NOT call any observer method."""
+class TestRmdirCallsObserver:
+    """rmdir() calls on_rmdir() (Issue #625 gap closed)."""
 
-    def test_rmdir_skips_observer(self, nx: NexusFS, observer: MagicMock) -> None:
-        # Create a directory and a file in it
+    def test_rmdir_calls_on_rmdir(self, nx: NexusFS, observer: MagicMock) -> None:
         nx.mkdir("/mydir")
         observer.reset_mock()
 
         nx.rmdir("/mydir")
 
-        # Document the gap: observer should be called but isn't
-        observer.on_delete.assert_not_called()
+        observer.on_rmdir.assert_called_once()
+        kwargs = observer.on_rmdir.call_args.kwargs
+        assert kwargs["path"] == "/mydir"
+
+    def test_rmdir_recursive_calls_on_rmdir(self, nx: NexusFS, observer: MagicMock) -> None:
+        nx.mkdir("/mydir")
+        nx.write("/mydir/file.txt", b"content")
+        observer.reset_mock()
+
+        nx.rmdir("/mydir", recursive=True)
+
+        observer.on_rmdir.assert_called_once()
+        kwargs = observer.on_rmdir.call_args.kwargs
+        assert kwargs["path"] == "/mydir"
+        assert kwargs["recursive"] is True
+
+
+# =========================================================================
+# Post-mutation hook coverage (Issue #625)
+# =========================================================================
+
+
+class TestPostMutationHookCoverage:
+    """Verify _fire_post_mutation_hooks fires for all mutation operations."""
+
+    @pytest.fixture
+    def hook(self) -> MagicMock:
+        return MagicMock()
+
+    @pytest.fixture
+    def nx_with_hook(
+        self, temp_dir: Path, observer: MagicMock, hook: MagicMock
+    ) -> Generator[NexusFS, None, None]:
+        nx = NexusFS(
+            backend=LocalBackend(str(temp_dir / "data")),
+            metadata_store=InMemoryMetastore(),
+            permissions=PermissionConfig(enforce=False),
+            parsing=ParseConfig(auto_parse=False),
+            kernel_services=KernelServices(write_observer=observer),
+        )
+        nx.register_mutation_hook(hook)
+        yield nx
+        nx.close()
+
+    def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+        nx_with_hook.write("/file.txt", b"hello")
+        hook.on_mutation.assert_called_once()
+        event = hook.on_mutation.call_args.args[0]
+        assert event.operation.value == "write"
+        assert event.path == "/file.txt"
+
+    def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+        nx_with_hook.write("/file.txt", b"hello")
+        hook.reset_mock()
+        nx_with_hook.delete("/file.txt")
+        hook.on_mutation.assert_called_once()
+        event = hook.on_mutation.call_args.args[0]
+        assert event.operation.value == "delete"
+
+    def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+        nx_with_hook.write("/old.txt", b"hello")
+        hook.reset_mock()
+        nx_with_hook.rename("/old.txt", "/new.txt")
+        hook.on_mutation.assert_called_once()
+        event = hook.on_mutation.call_args.args[0]
+        assert event.operation.value == "rename"
+        assert event.new_path == "/new.txt"
+
+    def test_write_batch_fires_hook_per_file(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+        files = [("/a.txt", b"aaa"), ("/b.txt", b"bbb"), ("/c.txt", b"ccc")]
+        nx_with_hook.write_batch(files)
+        assert hook.on_mutation.call_count == 3
+        paths = {call.args[0].path for call in hook.on_mutation.call_args_list}
+        assert paths == {"/a.txt", "/b.txt", "/c.txt"}
+
+    def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+        nx_with_hook.mkdir("/newdir")
+        hook.on_mutation.assert_called_once()
+        event = hook.on_mutation.call_args.args[0]
+        assert event.operation.value == "mkdir"
+        assert event.path == "/newdir"
+
+    def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+        nx_with_hook.mkdir("/mydir")
+        hook.reset_mock()
+        nx_with_hook.rmdir("/mydir")
+        hook.on_mutation.assert_called_once()
+        event = hook.on_mutation.call_args.args[0]
+        assert event.operation.value == "rmdir"
+        assert event.path == "/mydir"

@@ -25,6 +25,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.core.operation_types import OperationType
 
@@ -275,7 +276,7 @@ class EventDeliveryWorker:
                             "size": event.size,
                             "timestamp": event.timestamp,
                         },
-                        zone_id=event.zone_id or "root",
+                        zone_id=event.zone_id or ROOT_ZONE_ID,
                     )
 
                 _run_async(_broadcast(), self._event_loop)
@@ -371,7 +372,7 @@ class EventDeliveryWorker:
         return FileEvent(
             type=event_type,
             path=record.path,
-            zone_id=record.zone_id or "root",
+            zone_id=record.zone_id or ROOT_ZONE_ID,
             timestamp=record.created_at.isoformat() if record.created_at else "",
             old_path=record.new_path,  # new_path stores old_path for renames
             agent_id=record.agent_id,

@@ -156,7 +156,7 @@ Create a new file for your parser, e.g., `my_custom_parser.py`:
 ```python
 from nexus.parsers.base import Parser
 from nexus.parsers.types import ParseResult, TextChunk
-from nexus.core.exceptions import ParserError
+from nexus.contracts.exceptions import ParserError
 
 
 class MyCustomParser(Parser):
@@ -756,7 +756,7 @@ class AsyncParser(Parser):
 Always raise `ParserError` for parse failures:
 
 ```python
-from nexus.core.exceptions import ParserError
+from nexus.contracts.exceptions import ParserError
 
 class SafeParser(Parser):
     async def parse(self, content: bytes, metadata: dict | None = None) -> ParseResult:
@@ -820,7 +820,7 @@ Create tests in `tests/unit/parsers/test_my_custom_parser.py`:
 import pytest
 from my_custom_parser import MyCustomParser
 from nexus.parsers.types import ParseResult
-from nexus.core.exceptions import ParserError
+from nexus.contracts.exceptions import ParserError
 
 
 @pytest.fixture
@@ -1016,7 +1016,7 @@ import csv
 from io import StringIO
 from nexus.parsers.base import Parser
 from nexus.parsers.types import ParseResult, TextChunk
-from nexus.core.exceptions import ParserError
+from nexus.contracts.exceptions import ParserError
 
 
 class CSVParser(Parser):
@@ -1093,7 +1093,7 @@ import re
 from datetime import datetime
 from nexus.parsers.base import Parser
 from nexus.parsers.types import ParseResult, TextChunk
-from nexus.core.exceptions import ParserError
+from nexus.contracts.exceptions import ParserError
 
 
 class LogParser(Parser):

@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fuse import FuseOSError
 
-from nexus.core.filters import is_os_metadata_file
-from nexus.core.virtual_views import should_add_virtual_views
+from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
     build_dir_attrs,
@@ -25,6 +24,7 @@ from nexus.fuse.ops._shared import (
     stat_size_fallback,
     try_rust,
 )
+from nexus.lib.virtual_views import should_add_virtual_views
 
 if TYPE_CHECKING:
     pass
@@ -38,7 +38,7 @@ class MetadataHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def getattr(self, path: str, fh: int | None = None) -> dict[str, Any]:  # noqa: ARG002
+    def getattr(self, path: str, _fh: int | None = None) -> dict[str, Any]:
         """Get file attributes."""
         ctx = self._ctx
         start_time = time.time()
@@ -155,7 +155,7 @@ class MetadataHandler:
 
         return stat_size_fallback(ctx, path)
 
-    def readdir(self, path: str, fh: int | None = None) -> list[str]:  # noqa: ARG002
+    def readdir(self, path: str, _fh: int | None = None) -> list[str]:
         """Read directory contents."""
         ctx = self._ctx
         start_time = time.time()

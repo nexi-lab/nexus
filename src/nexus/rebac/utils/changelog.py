@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from nexus.rebac.utils.zone import normalize_zone_id
+from nexus.lib.zone import normalize_zone_id
 
 # Canonical column order — every caller must use this order.
 CHANGELOG_INSERT_SQL = """

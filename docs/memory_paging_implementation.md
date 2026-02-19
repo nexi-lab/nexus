@@ -75,7 +75,7 @@ score = recency_weight * recency_factor + importance_weight * importance_factor
 ### Basic Usage
 
 ```python
-from nexus.core.memory_with_paging import MemoryWithPaging
+from nexus.services.memory.memory_with_paging import MemoryWithPaging
 
 # Initialize with paging enabled
 memory = MemoryWithPaging(
@@ -117,7 +117,7 @@ print(f"Archival: {stats['archival']['count']}")
 ### Backward Compatible
 
 ```python
-from nexus.core.memory_with_paging import MemoryWithPaging
+from nexus.services.memory.memory_with_paging import MemoryWithPaging
 
 # Disable paging to use like regular Memory API
 memory = MemoryWithPaging(

@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
+from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.server.streaming import _verify_stream_token
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ async def stream_file(
     try:
         full_path = f"/{path}"
 
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
         from nexus.server.fastapi_server import to_thread_with_timeout
 
         context = OperationContext(

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, Header, HTTPException, Request
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.token_utils import parse_sk_token
 
 if TYPE_CHECKING:
@@ -274,11 +275,11 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     Returns:
         OperationContext for filesystem operations
     """
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     is_admin = auth_result.get("is_admin", False)
     agent_id = auth_result.get("x_agent_id")
     user_id = subject_id

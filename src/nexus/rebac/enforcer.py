@@ -3,9 +3,6 @@
 Canonical location: nexus.rebac.enforcer (moved from services/permissions/ per
 Issue #1847 — the enforcer is a brick-level component that belongs with the
 ReBAC manager, not in the services tier).
-
-Kernel-level types (Permission, OperationContext, check_stale_session) remain
-in core/permissions.py.
 """
 
 from __future__ import annotations
@@ -16,7 +13,58 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.permissions import OperationContext, Permission, check_stale_session
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import OperationContext, Permission
+
+
+def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
+    """Check for stale agent sessions and raise if the session is outdated.
+
+    Compares the agent_generation from the JWT token (stored in context) against
+    the current generation in the agent registry (DB). A mismatch means a newer
+    session has superseded this one.
+
+    Issue #1240 / #1445: Shared helper used by both sync and async enforcers.
+
+    Args:
+        agent_registry: AgentRegistry instance (or None to skip check).
+        context: Operation context with agent_generation from JWT claims.
+
+    Raises:
+        StaleSessionError: If the session generation is stale or the agent
+            record no longer exists (deleted agent with valid JWT).
+    """
+    if (
+        agent_registry is None
+        or context.agent_generation is None
+        or context.subject_type != "agent"
+    ):
+        return
+
+    agent_id = context.agent_id or context.subject_id
+    if not agent_id:
+        logger.warning("[STALE-SESSION] No agent_id in context, skipping check")
+        return
+
+    current_record = agent_registry.get(agent_id)
+
+    from nexus.contracts.exceptions import StaleSessionError
+
+    # Issue #1445: Agent deleted but JWT still valid → stale session
+    if current_record is None:
+        raise StaleSessionError(
+            agent_id,
+            f"Agent '{agent_id}' no longer exists (session generation "
+            f"{context.agent_generation} is stale)",
+        )
+
+    if current_record.generation != context.agent_generation:
+        raise StaleSessionError(
+            agent_id,
+            f"Session generation {context.agent_generation} is stale "
+            f"(current: {current_record.generation})",
+        )
+
 
 if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager
@@ -419,7 +467,7 @@ class PermissionEnforcer:
         if self.namespace_manager is not None:
             subject = context.get_subject()
             if not self.namespace_manager.is_visible(subject, path, context.zone_id):
-                from nexus.core.exceptions import NexusFileNotFoundError
+                from nexus.contracts.exceptions import NexusFileNotFoundError
 
                 raise NexusFileNotFoundError(
                     path=path,
@@ -499,7 +547,7 @@ class PermissionEnforcer:
 
         # Check ReBAC permission using backend-provided object type
         # P0-4: Pass zone_id for multi-zone isolation
-        zone_id = context.zone_id or "root"
+        zone_id = context.zone_id or ROOT_ZONE_ID
         subject = context.get_subject()
 
         logger.debug(
@@ -950,7 +998,7 @@ class PermissionEnforcer:
         # Use strategy chain if rebac_manager supports bulk checks
         if self.rebac_manager and hasattr(self.rebac_manager, "rebac_check_bulk"):
             overall_start = time.time()
-            zone_id = context.zone_id or "root"
+            zone_id = context.zone_id or ROOT_ZONE_ID
             subject = context.get_subject()
 
             logger.debug(

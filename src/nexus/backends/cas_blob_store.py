@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 
 _T = TypeVar("_T")
 

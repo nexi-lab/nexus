@@ -1,28 +1,33 @@
 """Virtual view support for file parsing (_parsed suffix pattern).
 
-This module provides shared logic for creating virtual views of binary files
-as text. When a user requests `file_parsed.xlsx.md`, the system:
+Tier-neutral helper that lives in ``nexus.lib`` because it is used by
+both kernel (``nexus.core``) and presentation (``nexus.fuse``) layers.
+
+When a user requests ``file_parsed.xlsx.md``, the system:
 1. Recognizes it as a virtual view request
-2. Reads the original `file.xlsx`
+2. Reads the original ``file.xlsx``
 3. Parses it using the appropriate parser (MarkItDown)
 4. Returns the parsed text content
 
 Virtual views are read-only and don't create actual files.
 
 Naming convention:
-- Original file: `file.xlsx` → always returns binary
-- Parsed view: `file_parsed.xlsx.md` → returns parsed markdown
+- Original file: ``file.xlsx`` → always returns binary
+- Parsed view: ``file_parsed.xlsx.md`` → returns parsed markdown
 
 Safety features:
 - Only creates views for files that exist
 - Only applies to parseable file types
 - Works consistently across FUSE and RPC layers
 - Binary files always return binary (no auto-parsing)
+
+History:
+    nexus.core.virtual_views → nexus.lib.virtual_views
 """
 
 import logging
 from collections.abc import Callable
-from typing import Any, overload
+from typing import Any, cast, overload
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +220,7 @@ def add_virtual_views_to_listing(
     if not show_parsed:
         return files
 
-    virtual_files: list[str] | list[dict[str, Any]] = []
+    virtual_files: list[Any] = []
 
     for file in files:
         # Get the file path (handle both string and dict formats)
@@ -254,11 +259,11 @@ def add_virtual_views_to_listing(
                 parsed_path = f"{base_name}_parsed{extension}.md"
 
                 if isinstance(file, str):
-                    virtual_files.append(parsed_path)  # type: ignore[arg-type]
+                    virtual_files.append(parsed_path)
                 else:
                     # For dict format, create a copy with modified path
                     parsed_file = file.copy()
                     parsed_file["path"] = parsed_path
-                    virtual_files.append(parsed_file)  # type: ignore[arg-type]
+                    virtual_files.append(parsed_file)
 
-    return files + virtual_files  # type: ignore[operator]
+    return cast("list[str] | list[dict[str, Any]]", [*files, *virtual_files])

@@ -14,7 +14,7 @@ from nexus.backends.cas_blob_store import CASBlobStore
 from nexus.backends.chunked_storage import ChunkedStorageMixin
 from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
@@ -22,7 +22,7 @@ from nexus.storage.content_cache import ContentCache
 if TYPE_CHECKING:
     from nexus_fast import BloomFilter
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

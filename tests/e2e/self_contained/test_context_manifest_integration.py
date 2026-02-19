@@ -28,7 +28,7 @@ from nexus.bricks.context_manifest.models import (
     WorkspaceSnapshotSource,
 )
 from nexus.bricks.context_manifest.resolver import ManifestResolver
-from nexus.services.agents.agent_record import AgentRecord, AgentState
+from nexus.contracts.agent_types import AgentRecord, AgentState
 
 # ---------------------------------------------------------------------------
 # Stub executors

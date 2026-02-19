@@ -103,7 +103,7 @@ Here's how to add support for a new blob storage provider:
 
 ```python
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 
 class AzureBlobConnectorBackend(BaseBlobStorageConnector):
     """Azure Blob Storage connector with direct path mapping."""

@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.memory.memory_api import Memory
 from nexus.services.memory.memory_paging import MemoryPager
 
@@ -112,7 +113,7 @@ class MemoryWithPaging(Memory):
         if enable_paging:
             self.pager = MemoryPager(
                 session_factory=session_factory,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
                 main_capacity=main_capacity,
                 recall_max_age_hours=recall_max_age_hours,
                 warm_up=warm_up,

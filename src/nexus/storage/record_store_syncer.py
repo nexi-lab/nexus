@@ -3,8 +3,9 @@
 Bundles OperationLogger + VersionRecorder into a single injectable observer.
 Created by factory.py, injected into NexusFS kernel as write_observer.
 
-The kernel calls on_write()/on_delete() after Metastore mutations.
-These observers handle all RecordStore side-effects in a single transaction.
+The kernel calls on_write()/on_delete()/on_rename()/on_write_batch()/
+on_mkdir()/on_rmdir() after Metastore mutations. These observers handle
+all RecordStore side-effects in a single transaction.
 
 Two implementations:
     RecordStoreWriteObserver         — synchronous, blocks hot path (~2-10ms)
@@ -202,6 +203,54 @@ class RecordStoreWriteObserver:
         except Exception as e:
             self._handle_error("delete", path, e)
 
+    def on_mkdir(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Sync a mkdir operation to RecordStore (audit log only, no versioning)."""
+        from nexus.storage.operation_logger import OperationLogger
+
+        try:
+            with self._session_factory() as session:
+                OperationLogger(session).log_operation(
+                    operation_type="mkdir",
+                    path=path,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    status="success",
+                )
+                session.commit()
+        except Exception as e:
+            self._handle_error("mkdir", path, e)
+
+    def on_rmdir(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        recursive: bool = False,
+    ) -> None:
+        """Sync a rmdir operation to RecordStore (audit log only, no versioning)."""
+        from nexus.storage.operation_logger import OperationLogger
+
+        op_type = "rmdir_recursive" if recursive else "rmdir"
+        try:
+            with self._session_factory() as session:
+                OperationLogger(session).log_operation(
+                    operation_type=op_type,
+                    path=path,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    status="success",
+                )
+                session.commit()
+        except Exception as e:
+            self._handle_error("rmdir", path, e)
+
 
 class BufferedRecordStoreWriteObserver:
     """Async write observer backed by WriteBuffer (Issue #1246, Decision 13A).
@@ -325,4 +374,27 @@ class BufferedRecordStoreWriteObserver:
             agent_id=agent_id,
             snapshot_hash=snapshot_hash,
             metadata_snapshot=metadata_snapshot,
+        )
+
+    def on_mkdir(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Enqueue a mkdir event. Returns immediately."""
+        self._buffer.enqueue_mkdir(path=path, zone_id=zone_id, agent_id=agent_id)
+
+    def on_rmdir(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        recursive: bool = False,
+    ) -> None:
+        """Enqueue a rmdir event. Returns immediately."""
+        self._buffer.enqueue_rmdir(
+            path=path, zone_id=zone_id, agent_id=agent_id, recursive=recursive
         )

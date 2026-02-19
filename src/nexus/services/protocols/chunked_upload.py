@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.services.upload_session import UploadSession
 
@@ -26,7 +28,7 @@ class ChunkedUploadProtocol(Protocol):
         upload_length: int,
         *,
         metadata: dict[str, str] | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         user_id: str = "anonymous",
         checksum_algorithm: str | None = None,
     ) -> UploadSession: ...

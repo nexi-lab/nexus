@@ -1,23 +1,16 @@
 """Shared ORM base, mixins, and utilities for SQLAlchemy models.
 
 Canonical location for ``Base``, ``TimestampMixin``, ``ZoneIsolationMixin``,
-``ResourceConfigMixin``, and ``uuid_pk``.  This module lives in
-``nexus.contracts`` (tier-neutral) so that both kernel code and bricks can
-depend on it without pulling in storage internals.
+``ResourceConfigMixin``, and ``uuid_pk``.  Lives in ``nexus.lib`` (tier-neutral
+implementation helpers) so that both kernel code and bricks can depend on it
+without pulling in storage internals.
 
 History:
-    Originally in ``nexus.storage.models._base`` (Issue #1246 / #1286).
-    Moved here by Issue #2129 (governance brick extraction) to break the
-    storage ↔ brick import cycle.
-
-Backward compatibility:
-    ``from nexus.storage.models._base import Base`` still works via re-exports
-    in ``nexus/storage/models/_base.py``.
+    nexus.storage.models._base → nexus.contracts.db_base → nexus.lib.db_base
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import UTC, datetime
 
@@ -42,7 +35,9 @@ def _get_uuid_server_default() -> TextClause | None:
 
     Only checks the database URL string — no engine creation or DB probing at import time.
     """
-    db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+    from nexus.lib.env import get_database_url
+
+    db_url = get_database_url() or ""
     if db_url.startswith(("postgres", "postgresql")):
         return text("gen_random_uuid()::text")
     return None

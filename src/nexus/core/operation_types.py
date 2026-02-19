@@ -19,6 +19,7 @@ class OperationType(StrEnum):
     RENAME = "rename"
     MKDIR = "mkdir"
     RMDIR = "rmdir"
+    RMDIR_RECURSIVE = "rmdir_recursive"
     CHMOD = "chmod"
     CHOWN = "chown"
     CHGRP = "chgrp"

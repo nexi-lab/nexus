@@ -54,21 +54,19 @@ from nexus.contracts.exceptions import (
     UploadOffsetMismatchError,
     ValidationError,
 )
-from nexus.contracts.registry import BaseRegistry, BrickInfo, BrickRegistry
-from nexus.contracts.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
 from nexus.contracts.types import (
     ContextIdentity,
     OperationContext,
     Permission,
     extract_context_identity,
 )
-from nexus.contracts.validators import (
+from nexus.contracts.write_observer import WriteObserverProtocol
+from nexus.lib.validators import (
     EmailAddress,
     EmailList,
     EmailListRequired,
     ISODateTimeStr,
 )
-from nexus.contracts.write_observer import WriteObserverProtocol
 
 __all__ = [
     # Constants (shared across bricks)
@@ -79,14 +77,6 @@ __all__ = [
     "EmailList",
     "EmailListRequired",
     "ISODateTimeStr",
-    # RPC codec
-    "RPCEncoder",
-    "decode_rpc_message",
-    "encode_rpc_message",
-    # Registry
-    "BaseRegistry",
-    "BrickInfo",
-    "BrickRegistry",
     # Types
     "ContextIdentity",
     "OperationContext",

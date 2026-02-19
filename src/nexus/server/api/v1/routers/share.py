@@ -17,8 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import Response, StreamingResponse
 
-from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.permissions import OperationContext
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.types import OperationContext
 from nexus.server.api.v1.dependencies import get_nexus_fs
 from nexus.server.dependencies import get_auth_result, get_operation_context
 from nexus.server.fastapi_server import to_thread_with_timeout
@@ -143,7 +144,7 @@ async def download_via_share_link(
 
     data = access_result.data or {}
     file_path = data.get("path")
-    zone_id = data.get("zone_id", "root")
+    zone_id = data.get("zone_id", ROOT_ZONE_ID)
 
     if not file_path:
         raise HTTPException(status_code=500, detail="Share link missing file path")

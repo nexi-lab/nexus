@@ -23,7 +23,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from nexus.core.exceptions import CircuitOpenError
+from nexus.contracts.exceptions import CircuitOpenError
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.services.rebac_share_mixin import ReBACShareMixin
 
@@ -94,6 +94,7 @@ class ReBACService(ReBACShareMixin):
         enable_audit_logging: bool = True,
         circuit_breaker: AsyncCircuitBreaker | None = None,
         file_reader: Callable | None = None,
+        permission_enforcer: Any = None,
     ):
         """Initialize ReBAC service.
 
@@ -104,12 +105,14 @@ class ReBACService(ReBACShareMixin):
             circuit_breaker: Optional circuit breaker for database resilience (Issue #726)
             file_reader: Optional callback ``(path) -> bytes|str`` for CSV column validation.
                          Provided by NexusFS at composition time.
+            permission_enforcer: Optional permission enforcer for file-resource permission checks.
         """
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._enable_audit_logging = enable_audit_logging
         self._circuit_breaker = circuit_breaker
         self._file_reader = file_reader
+        self._permission_enforcer = permission_enforcer
 
         logger.info(
             "[ReBACService] Initialized with audit_logging=%s, circuit_breaker=%s",
@@ -1605,7 +1608,7 @@ class ReBACService(ReBACShareMixin):
         if not context:
             return
 
-        from nexus.core.permissions import OperationContext, Permission
+        from nexus.contracts.types import OperationContext, Permission
 
         # Extract OperationContext from context parameter
         op_context: OperationContext | None = None
@@ -1898,7 +1901,7 @@ class ReBACService(ReBACShareMixin):
         zone_id: str | None = None,
     ) -> bool:
         """Check if user has READ access to any descendant of path."""
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.lib.zone import normalize_zone_id
 
         prefix = path if path.endswith("/") else path + "/"
         if path == "/":

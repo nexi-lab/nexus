@@ -31,7 +31,7 @@ class Validator(ABC):
             List of structured validation errors.
         """
 
-    def build_command(self, workspace_path: str = ".") -> str:  # noqa: ARG002
+    def build_command(self, _workspace_path: str = ".") -> str:
         """Build the shell command to run this validator.
 
         Default implementation uses config.command directly.

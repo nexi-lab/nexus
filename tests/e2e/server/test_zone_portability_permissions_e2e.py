@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.portability import (
     ConflictMode,

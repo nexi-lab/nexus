@@ -116,7 +116,7 @@ class TestLocalBackendStreaming:
 
     def test_stream_content_not_found(self, local_backend: LocalBackend) -> None:
         """Test stream_content raises error for missing content."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             list(local_backend.stream_content("nonexistent_hash"))
@@ -668,7 +668,7 @@ class TestStatRPC:
     def test_stat_file_not_found(self, tmp_path: Path) -> None:
         """Test stat() raises error for non-existent file."""
         from nexus.backends.local import LocalBackend
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"

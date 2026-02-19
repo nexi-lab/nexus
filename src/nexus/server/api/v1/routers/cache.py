@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.api.v1.dependencies import get_nexus_fs
 from nexus.server.cache_warmer import CacheWarmer, WarmupConfig, get_file_access_tracker
 from nexus.server.dependencies import require_auth
@@ -48,7 +49,7 @@ async def warmup_cache(
     depth = body.get("depth", 2)
     include_content = body.get("include_content", False)
     max_files = body.get("max_files", 1000)
-    zone_id = auth_result.get("zone_id", "root")
+    zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
 
     config = WarmupConfig(
         max_files=max_files,
@@ -161,7 +162,7 @@ async def get_hot_files(
     Args:
         limit: Maximum number of hot files to return (1-100, default: 20).
     """
-    zone_id = auth_result.get("zone_id", "root")
+    zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
     tracker = get_file_access_tracker()
     hot_files = tracker.get_hot_files(zone_id=zone_id, limit=limit)
 

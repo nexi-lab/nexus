@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
-    from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
     from nexus.rebac.manager import EnhancedReBACManager
@@ -483,7 +483,7 @@ class VersionService:
         Raises:
             PermissionError: If permission denied
         """
-        from nexus.core.permissions import Permission
+        from nexus.contracts.types import Permission
 
         # Skip permission checks if not enforcing or no enforcer configured
         if not self._enforce_permissions or self._permission_enforcer is None:
@@ -515,7 +515,7 @@ class VersionService:
         Raises:
             PermissionError: If permission denied
         """
-        from nexus.core.permissions import Permission
+        from nexus.contracts.types import Permission
 
         # Skip permission checks if not enforcing or no enforcer configured
         if not self._enforce_permissions or self._permission_enforcer is None:

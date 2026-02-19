@@ -26,7 +26,7 @@ from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from nexus.storage.file_cache import FileContentCache, get_file_cache
+from nexus.storage.file_cache import FileContentCache
 
 
 class TestFileContentCache:
@@ -223,38 +223,3 @@ class TestFileContentCache:
 
         # Content should be the newer one
         assert cache.read("zone1", "/file.txt") == b"content2"
-
-
-class TestGetFileCache:
-    """Test global file cache accessor."""
-
-    def test_get_file_cache_creates_singleton(self, tmp_path: Path, monkeypatch):
-        """Test that get_file_cache returns the same instance."""
-        import nexus.storage.file_cache as fc
-
-        # Reset the global instance
-        fc._file_cache = None
-
-        # Set env var for cache dir
-        monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path))
-
-        cache1 = get_file_cache()
-        cache2 = get_file_cache()
-
-        assert cache1 is cache2
-
-        # Clean up
-        fc._file_cache = None
-
-    def test_get_file_cache_with_explicit_dir(self, tmp_path: Path):
-        """Test get_file_cache with explicit directory."""
-        import nexus.storage.file_cache as fc
-
-        # Reset the global instance
-        fc._file_cache = None
-
-        cache = get_file_cache(tmp_path)
-        assert cache.base_dir == tmp_path
-
-        # Clean up
-        fc._file_cache = None

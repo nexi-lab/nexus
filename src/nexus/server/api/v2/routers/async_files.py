@@ -163,7 +163,7 @@ def create_async_files_router(
     ) -> Any:
         """Get operation context from auth result."""
         if auth_result is None or not auth_result.get("authenticated"):
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             return OperationContext(
                 user_id="anonymous",

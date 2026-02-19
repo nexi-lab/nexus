@@ -28,10 +28,10 @@ from nexus.backends.cache_models import (
     CachedReadResult,
     CacheEntry,
 )
+from nexus.contracts.types import OperationContext
 from nexus.core.exceptions import ConflictError
 from nexus.core.hash_fast import hash_content
-from nexus.core.permissions import OperationContext
-from nexus.storage.file_cache import get_file_cache
+from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import FilePathModel
 
 if TYPE_CHECKING:
@@ -63,10 +63,21 @@ class CacheService:
         connector: Any,
         l1_cache: L1MetadataCache | None = None,
         backend_io: BackendIOService | None = None,
+        file_cache: FileContentCache | None = None,
     ) -> None:
         self._connector = connector
         self._l1_cache = l1_cache
         self._backend_io = backend_io
+        self._file_cache = file_cache
+
+    @property
+    def file_cache(self) -> FileContentCache:
+        """Get the injected FileContentCache (lazy-create if not provided)."""
+        if self._file_cache is None:
+            import os
+
+            self._file_cache = FileContentCache(os.getenv("NEXUS_DATA_DIR", "./nexus-data"))
+        return self._file_cache
 
     @property
     def backend_io(self) -> BackendIOService:
@@ -257,7 +268,7 @@ class CacheService:
             logger.debug("[CACHE] L2 SKIP (l1_only mode): %s", path)
             return None
 
-        file_cache = get_file_cache()
+        file_cache = self.file_cache
         cache_zone = self._get_cache_zone()
         meta = file_cache.read_meta(cache_zone, path)
 
@@ -338,7 +349,7 @@ class CacheService:
             return results
 
         # L2: Disk-based lookup for remaining paths
-        file_cache = get_file_cache()
+        file_cache = self.file_cache
         cache_zone = self._get_cache_zone()
 
         meta_entries = file_cache.read_meta_bulk(cache_zone, paths_needing_l2)
@@ -448,7 +459,7 @@ class CacheService:
         has_l2 = self.has_l2_caching()
 
         if has_l2:
-            file_cache = get_file_cache()
+            file_cache = self.file_cache
 
             path_id = ""
             session = self.get_db_session()
@@ -555,7 +566,7 @@ class CacheService:
 
         now = datetime.now(UTC)
         l1_cache = self._l1_cache
-        file_cache = get_file_cache()
+        file_cache = self.file_cache
 
         session = self.get_db_session()
         path_id_map: dict[str, str] = {}
@@ -703,7 +714,7 @@ class CacheService:
         instead of `f"cache_entry:{path}"` which never matched.
         """
         memory_cache = self._l1_cache
-        file_cache = get_file_cache()
+        file_cache = self.file_cache
         cache_zone = self._get_cache_zone()
 
         if path:

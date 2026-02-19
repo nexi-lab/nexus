@@ -8,6 +8,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.event_bus import FileEvent
 from nexus.services.event_bus.base import EventBusBase
 from nexus.services.event_bus.protocol import AckableEvent, PubSubClientProtocol
@@ -40,7 +41,7 @@ class RedisEventBus(EventBusBase):
         >>> event = FileEvent(
         ...     type=FileEventType.FILE_WRITE,
         ...     path="/inbox/test.txt",
-        ...     zone_id="root",
+        ...     zone_id=ROOT_ZONE_ID,
         ... )
         >>> await bus.publish(event)
     """
@@ -126,7 +127,7 @@ class RedisEventBus(EventBusBase):
             except Exception as e:
                 logger.error(f"Event log append failed (event still published): {e}")
 
-        zone_id = event.zone_id or "root"
+        zone_id = event.zone_id or ROOT_ZONE_ID
         channel = self._channel_name(zone_id)
         message = event.to_json()
 

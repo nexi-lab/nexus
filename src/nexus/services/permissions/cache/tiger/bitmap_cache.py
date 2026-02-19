@@ -27,6 +27,7 @@ from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.storage.models.permissions import ReBACVersionSequenceModel as RVS
 from nexus.storage.models.permissions import TigerCacheModel as TC
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
@@ -1432,7 +1433,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_int_ids: set[int],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> bool:
         """Persist bitmap to database after bulk read operations (Issue #979).
 

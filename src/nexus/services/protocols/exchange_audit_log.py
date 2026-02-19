@@ -18,6 +18,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
+from nexus.constants import ROOT_ZONE_ID
+
 
 @runtime_checkable
 class ExchangeAuditLogProtocol(Protocol):
@@ -39,7 +41,7 @@ class ExchangeAuditLogProtocol(Protocol):
         currency: str = "credits",
         status: str,
         application: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         trace_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         transfer_id: str | None = None,

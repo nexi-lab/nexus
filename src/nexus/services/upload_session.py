@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 
 class UploadStatus(StrEnum):
     """Status of a chunked upload session."""
@@ -49,7 +51,7 @@ class UploadSession:
     upload_length: int
     upload_offset: int = 0
     status: UploadStatus = UploadStatus.CREATED
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
     user_id: str = "anonymous"
     metadata: dict[str, str] = field(default_factory=dict)
     checksum_algorithm: str | None = None
@@ -105,7 +107,7 @@ class UploadSession:
             upload_length=data["upload_length"],
             upload_offset=data.get("upload_offset", 0),
             status=UploadStatus(data.get("status", "created")),
-            zone_id=data.get("zone_id", "root"),
+            zone_id=data.get("zone_id", ROOT_ZONE_ID),
             user_id=data.get("user_id", "anonymous"),
             metadata=data.get("metadata", {}),
             checksum_algorithm=data.get("checksum_algorithm"),

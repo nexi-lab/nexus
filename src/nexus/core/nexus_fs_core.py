@@ -937,7 +937,7 @@ class NexusFSCoreMixin:
             from nexus.core.permissions import OperationContext
 
             read_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
         # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
@@ -1905,7 +1905,7 @@ class NexusFSCoreMixin:
             from nexus.core.permissions import OperationContext
 
             context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
         content_hash = route.backend.write_content(content, context=context).unwrap()
 

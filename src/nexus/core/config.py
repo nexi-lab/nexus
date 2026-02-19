@@ -145,6 +145,7 @@ class KernelServices:
     cache_observer: CacheInvalidationObserver | None = None
 
     # --- Tier 1.5: SYSTEM SERVICE — Hook Engine + Brick Lifecycle (Issue #1257, #1704) ---
+    hook_pipeline: Any = None
     scoped_hook_engine: Any = None
     brick_lifecycle_manager: Any = None
 

@@ -838,7 +838,7 @@ class PermissionEnforcer:
         Returns:
             True if path matches any allowlist pattern
         """
-        from nexus.core import glob_fast
+        from nexus.search.primitives import glob_fast
 
         return glob_fast.glob_match(path, list(allowlist))
 

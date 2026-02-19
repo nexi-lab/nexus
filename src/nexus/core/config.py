@@ -237,6 +237,7 @@ class BrickServices:
     api_key_creator: Any = None  # AUTH brick (Issue #1519, 3A)
     snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
     task_queue_service: Any = None  # TASK_QUEUE brick (Issue #655)
+    memory_brick_factory: Any = None  # MEMORY brick factory (Issue #2128, request-scoped)
 
     # --- IPC Brick (Issue #1727, LEGO §8) ---
     ipc_storage_driver: Any = None  # IPCStorageDriver (RecordStore or VFS)

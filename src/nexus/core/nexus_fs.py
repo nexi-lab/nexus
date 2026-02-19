@@ -832,7 +832,7 @@ class NexusFS(  # type: ignore[misc]
         Lazy initialization on first access.
 
         Returns:
-            Memory API instance.
+            Memory API instance (MemoryBrick if available, else legacy Memory).
 
         Example:
             >>> nx = nexus.connect()
@@ -846,39 +846,52 @@ class NexusFS(  # type: ignore[misc]
             # Create a session from SessionLocal
             session = self.SessionLocal()
 
-            # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
-            if self._enable_memory_paging:
-                from nexus.services.memory.memory_with_paging import MemoryWithPaging
+            # Issue #2128: Use MemoryBrick if factory is available in brick_services
+            if self._brick_services and self._brick_services.memory_brick_factory:
+                try:
+                    self._memory_api = self._brick_services.memory_brick_factory(
+                        session=session,
+                        entity_registry=self._entity_registry,
+                    )
+                except Exception:
+                    # Fall back to legacy Memory if brick fails
+                    pass
 
-                # Try to get engine for VectorDatabase integration
-                engine = None
-                if self.SessionLocal is not None:
-                    engine = self.SessionLocal.kw.get("bind")
+            # Fall back to legacy Memory if brick not available
+            if self._memory_api is None:
+                # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
+                if self._enable_memory_paging:
+                    from nexus.services.memory.memory_with_paging import MemoryWithPaging
 
-                self._memory_api = MemoryWithPaging(
-                    session=session,
-                    backend=self.backend,
-                    zone_id=self._memory_config.get("zone_id"),
-                    user_id=self._memory_config.get("user_id"),
-                    agent_id=self._memory_config.get("agent_id"),
-                    entity_registry=self._entity_registry,
-                    enable_paging=True,
-                    main_capacity=self._memory_main_capacity,
-                    recall_max_age_hours=self._memory_recall_max_age_hours,
-                    engine=engine,
-                    session_factory=self.SessionLocal,
-                )
-            else:
-                from nexus.services.memory.memory_api import Memory
+                    # Try to get engine for VectorDatabase integration
+                    engine = None
+                    if self.SessionLocal is not None:
+                        engine = self.SessionLocal.kw.get("bind")
 
-                self._memory_api = Memory(
-                    session=session,
-                    backend=self.backend,
-                    zone_id=self._memory_config.get("zone_id"),
-                    user_id=self._memory_config.get("user_id"),
-                    agent_id=self._memory_config.get("agent_id"),
-                    entity_registry=self._entity_registry,
-                )
+                    self._memory_api = MemoryWithPaging(
+                        session=session,
+                        backend=self.backend,
+                        zone_id=self._memory_config.get("zone_id"),
+                        user_id=self._memory_config.get("user_id"),
+                        agent_id=self._memory_config.get("agent_id"),
+                        entity_registry=self._entity_registry,
+                        enable_paging=True,
+                        main_capacity=self._memory_main_capacity,
+                        recall_max_age_hours=self._memory_recall_max_age_hours,
+                        engine=engine,
+                        session_factory=self.SessionLocal,
+                    )
+                else:
+                    from nexus.services.memory.memory_api import Memory
+
+                    self._memory_api = Memory(
+                        session=session,
+                        backend=self.backend,
+                        zone_id=self._memory_config.get("zone_id"),
+                        user_id=self._memory_config.get("user_id"),
+                        agent_id=self._memory_config.get("agent_id"),
+                        entity_registry=self._entity_registry,
+                    )
 
         return self._memory_api
 

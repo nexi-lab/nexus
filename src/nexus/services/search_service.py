@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
-from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.exceptions import PermissionDeniedError
+from nexus.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.search.strategies import (

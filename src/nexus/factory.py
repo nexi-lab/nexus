@@ -914,7 +914,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         # Try to get Rust glob_match for performance (falls back to fnmatch)
         _glob_match_fn: Any = None
         try:
-            from nexus.core import glob_fast
+            from nexus.search.primitives import glob_fast
 
             _glob_match_fn = glob_fast.glob_match
         except ImportError:
@@ -988,6 +988,48 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         except Exception as _ipc_exc:
             logger.warning("[BOOT:BRICK] IPC brick unavailable: %s", _ipc_exc)
 
+    # --- Memory Brick (Issue #2128) ---
+    # Note: Memory brick is request-scoped (needs session), so we return a factory
+    # that NexusFS.memory property can use to create instances
+    memory_brick_factory: Any = None
+    try:
+        from nexus.bricks.memory import MemoryBrick, RetentionPolicy
+        from nexus.core.permissions import OperationContext
+
+        # Create factory function that NexusFS.memory will call per-request
+        def create_memory_brick(session: Any, entity_registry: Any) -> MemoryBrick:
+            """Create MemoryBrick instance for a request session."""
+            from nexus.services.memory.memory_router import MemoryViewRouter
+            from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+
+            memory_router = MemoryViewRouter(session, entity_registry)
+            permission_enforcer = MemoryPermissionEnforcer(
+                metadata_store=ctx.metadata_store,
+                rebac_manager=kernel.get("rebac_manager"),
+                memory_router=memory_router,
+                entity_registry=entity_registry,
+            )
+            context = OperationContext(
+                user_id=ctx.zone_id or "system",
+                groups=[],
+                is_admin=False,
+            )
+
+            return MemoryBrick(
+                memory_router=memory_router,
+                permission_enforcer=permission_enforcer,
+                backend=ctx.backend,
+                context=context,
+                session_factory=ctx.session_factory,
+                retention_policy=RetentionPolicy(),
+                zone_id=ctx.zone_id,
+            )
+
+        memory_brick_factory = create_memory_brick
+        logger.debug("[BOOT:BRICK] Memory brick factory created")
+    except Exception as _mem_exc:
+        logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -1003,6 +1045,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "ipc_storage_driver": ipc_storage_driver,
         "ipc_vfs_driver": ipc_vfs_driver,
         "ipc_provisioner": ipc_provisioner,
+        "memory_brick_factory": memory_brick_factory,
     }
 
     elapsed = time.perf_counter() - t0

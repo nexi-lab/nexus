@@ -4,7 +4,7 @@ This module provides utilities for filtering out OS-generated metadata files
 that should not be stored or displayed in Nexus.
 """
 
-from nexus.core import glob_fast
+from nexus.search.primitives import glob_fast
 
 # Try to import Rust acceleration
 try:

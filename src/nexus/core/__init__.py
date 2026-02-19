@@ -120,6 +120,24 @@ def __getattr__(name: str) -> Any:
         _lazy_imports_cache[name] = value
         return value
 
+    # Backward compatibility for search primitives (Issue #2123)
+    # Deprecated: These moved from nexus.core to nexus.search.primitives
+    # 6-month deprecation period ending 2026-08-18
+    if name in ("grep_fast", "glob_fast", "trigram_fast"):
+        import warnings
+
+        warnings.warn(
+            f"Importing {name} from nexus.core is deprecated. "
+            f"Use: from nexus.search.primitives import {name}",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        import importlib
+
+        module = importlib.import_module(f"nexus.search.primitives.{name}")
+        _lazy_imports_cache[name] = module
+        return module
+
     raise AttributeError(f"module 'nexus.core' has no attribute {name!r}")
 
 

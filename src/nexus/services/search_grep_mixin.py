@@ -19,8 +19,8 @@ import os
 import re
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.search.strategies import (
     GREP_PARALLEL_WORKERS,
     SearchStrategy,

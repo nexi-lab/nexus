@@ -691,6 +691,69 @@ class GraphStore:
         result = await self.session.execute(stmt)
         return [Relationship.from_model(m) for m in result.scalars().all()]
 
+    async def get_relationships_batch(
+        self,
+        entity_ids: list[str],
+        direction: str = "both",
+        rel_types: list[str] | None = None,
+        min_confidence: float | None = None,
+    ) -> dict[str, list[Relationship]]:
+        """Get relationships for multiple entities in a single query.
+
+        More efficient than calling get_relationships() in a loop — reduces
+        N+1 queries to a single batched query.
+
+        Args:
+            entity_ids: List of entity IDs to fetch relationships for
+            direction: "outgoing", "incoming", or "both"
+            rel_types: Optional filter by relationship types
+            min_confidence: Optional minimum confidence threshold
+
+        Returns:
+            Dictionary mapping entity_id -> list of relationships
+            Entities with no relationships will have empty lists
+        """
+        if not entity_ids:
+            return {}
+
+        conditions = [RelationshipModel.zone_id == self.zone_id]
+
+        # Build direction filter for batch
+        if direction == "outgoing":
+            conditions.append(RelationshipModel.source_entity_id.in_(entity_ids))
+        elif direction == "incoming":
+            conditions.append(RelationshipModel.target_entity_id.in_(entity_ids))
+        else:  # both
+            conditions.append(
+                or_(
+                    RelationshipModel.source_entity_id.in_(entity_ids),
+                    RelationshipModel.target_entity_id.in_(entity_ids),
+                )
+            )
+
+        if rel_types:
+            conditions.append(RelationshipModel.relationship_type.in_(rel_types))
+
+        if min_confidence is not None:
+            conditions.append(RelationshipModel.confidence >= min_confidence)
+
+        stmt = select(RelationshipModel).where(and_(*conditions))
+        result = await self.session.execute(stmt)
+        relationships = [Relationship.from_model(m) for m in result.scalars().all()]
+
+        # Group relationships by entity ID
+        result_map: dict[str, list[Relationship]] = {eid: [] for eid in entity_ids}
+        for rel in relationships:
+            # Add to source entity
+            if rel.source_entity_id in result_map:
+                result_map[rel.source_entity_id].append(rel)
+            # Add to target entity if bidirectional and different from source
+            if direction == "both" and rel.target_entity_id in result_map:
+                if rel.target_entity_id != rel.source_entity_id:
+                    result_map[rel.target_entity_id].append(rel)
+
+        return result_map
+
     async def delete_relationship(self, relationship_id: str) -> bool:
         """Delete a relationship by ID."""
         stmt = delete(RelationshipModel).where(

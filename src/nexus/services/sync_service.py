@@ -1157,7 +1157,7 @@ class SyncService:
         Returns:
             True if file should be included
         """
-        from nexus.core import glob_fast
+        from nexus.search.primitives import glob_fast
 
         # Check include patterns
         if ctx.include_patterns and not glob_fast.glob_match(file_path, list(ctx.include_patterns)):

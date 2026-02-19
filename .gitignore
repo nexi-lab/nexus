@@ -218,3 +218,4 @@ NUL
 
 # Build tools (binary)
 tools/
+.nexus-data/

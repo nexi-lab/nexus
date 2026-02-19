@@ -15,11 +15,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.types import OperationContext, Permission
-from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
+
+if TYPE_CHECKING:
+    from nexus.services.protocols.memory import MemoryPermissionCheckerProtocol
 from nexus.services.memory.temporal import parse_datetime
 
 logger = logging.getLogger(__name__)
@@ -35,7 +37,7 @@ class MemoryStateManager:
     def __init__(
         self,
         memory_router: MemoryViewRouter,
-        permission_enforcer: MemoryPermissionEnforcer,
+        permission_enforcer: MemoryPermissionCheckerProtocol,
         context: OperationContext,
     ) -> None:
         self._memory_router = memory_router

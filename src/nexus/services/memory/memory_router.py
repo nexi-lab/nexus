@@ -7,21 +7,25 @@ Includes temporal query operators (Issue #1023) for time-based filtering.
 Includes version tracking (#1184) for memory audit trails.
 """
 
+from __future__ import annotations
+
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import MemoryModel, VersionHistoryModel
+
+if TYPE_CHECKING:
+    from nexus.services.protocols.memory import EntityResolverProtocol
 
 
 class MemoryViewRouter:
     """Router for resolving virtual paths to canonical memory IDs."""
 
-    def __init__(self, session: Session, entity_registry: EntityRegistry | None = None):
+    def __init__(self, session: Session, entity_registry: EntityResolverProtocol | None = None):
         """Initialize memory view router.
 
         Args:
@@ -29,7 +33,12 @@ class MemoryViewRouter:
             entity_registry: Entity registry instance (creates new if None).
         """
         self.session = session
-        self.entity_registry = entity_registry or EntityRegistry(session)
+        if entity_registry is not None:
+            self.entity_registry = entity_registry
+        else:
+            from nexus.rebac.entity_registry import EntityRegistry
+
+            self.entity_registry = EntityRegistry(session)
 
     @staticmethod
     def is_memory_path(path: str) -> bool:

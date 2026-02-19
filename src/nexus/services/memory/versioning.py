@@ -19,11 +19,13 @@ import difflib
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from nexus.contracts.types import OperationContext, Permission
-from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
+
+if TYPE_CHECKING:
+    from nexus.services.protocols.memory import MemoryPermissionCheckerProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ class MemoryVersioning:
         self,
         session_factory: Callable[..., Any],
         memory_router: MemoryViewRouter,
-        permission_enforcer: MemoryPermissionEnforcer,
+        permission_enforcer: MemoryPermissionCheckerProtocol,
         backend: Any,
         context: OperationContext,
     ) -> None:

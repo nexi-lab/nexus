@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.services.skill_service import SkillService
 
 # =============================================================================

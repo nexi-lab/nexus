@@ -21,6 +21,7 @@ from nexus.core.mutation_hooks import MutationOp
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
+from nexus.contracts.types import OperationContext, Permission
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     BrickServices,
@@ -42,7 +43,6 @@ from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
-from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -98,14 +98,6 @@ class NexusFS(  # type: ignore[misc]
         parser_registry: ParserRegistry | None = None,
         provider_registry: Any | None = None,
         vfs_lock_manager: Any | None = None,
-        # Test injection params — "accept or build" services (Issue #2034)
-        rebac_service: Any | None = None,
-        search_service: Any | None = None,
-        events_service: Any | None = None,
-        mount_core_service: Any | None = None,
-        sync_service: Any | None = None,
-        sync_job_service: Any | None = None,
-        mount_persist_service: Any | None = None,
     ):
         """Initialize NexusFS kernel.
 
@@ -128,13 +120,10 @@ class NexusFS(  # type: ignore[misc]
                 for virtual views. Created by factory.py via ParsersBrick.create_parse_fn().
             parser_registry: Injected ParserRegistry from ParsersBrick (Issue #1523).
             provider_registry: Injected ProviderRegistry from ParsersBrick (Issue #1523).
-            rebac_service: Pre-built ReBACService (test injection).
-            search_service: Pre-built SearchService (test injection).
-            events_service: Pre-built EventsService (test injection).
-            mount_core_service: Pre-built MountCoreService (test injection).
-            sync_service: Pre-built SyncService (test injection).
-            sync_job_service: Pre-built SyncJobService (test injection).
-            mount_persist_service: Pre-built MountPersistService (test injection).
+
+        .. versionchanged:: Issue #643
+            Test injection params (rebac_service, search_service, etc.) removed.
+            Services are now created by factory.py and bound via _bind_wired_services().
         """
         # Apply defaults — config dataclasses are SSOT for default values
         cache = cache or CacheConfig()
@@ -157,15 +146,6 @@ class NexusFS(  # type: ignore[misc]
         self._kernel_services = ksvc
         self._system_services = sys_svc
         self._brick_services = brk_svc
-
-        # Store test injection params for _wire_services()
-        self._inject_rebac_service = rebac_service
-        self._inject_search_service = search_service
-        self._inject_events_service = events_service
-        self._inject_mount_core_service = mount_core_service
-        self._inject_sync_service = sync_service
-        self._inject_sync_job_service = sync_job_service
-        self._inject_mount_persist_service = mount_persist_service
 
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -337,8 +317,27 @@ class NexusFS(  # type: ignore[misc]
             self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
-        # Wire self-dependent services (require self reference)
-        self._wire_services()
+        # Service attributes — set to None by default.
+        # Wired by factory.py two-phase init via _bind_wired_services().
+        # Issue #643: kernel no longer creates services.
+        self.version_service: Any = None
+        self.rebac_service: Any = None
+        self.mount_service: Any = None
+        self._gateway: Any = None
+        self._mount_core_service: Any = None
+        self._sync_service: Any = None
+        self._sync_job_service: Any = None
+        self._mount_persist_service: Any = None
+        self.mcp_service: Any = None
+        self.llm_service: Any = None
+        self._llm_subsystem: Any = None
+        self.oauth_service: Any = None
+        self.skill_service: Any = None
+        self.skill_package_service: Any = None
+        self.search_service: Any = None
+        self.share_link_service: Any = None
+        self.events_service: Any = None
+        self.task_queue_service: Any = None
 
         # Issue #1169: Read Set-Aware Cache for precise invalidation
         # Wraps the metadata cache with read-set-aware invalidation.
@@ -394,184 +393,35 @@ class NexusFS(  # type: ignore[misc]
         """
         self._post_mutation_hooks.append(hook)
 
-    def _wire_services(self) -> None:
-        """Wire services that require a reference to self (NexusFS).
+    def _bind_wired_services(self, wired: dict[str, Any]) -> None:
+        """Bind pre-built services from factory.py two-phase init.
 
-        Called at end of __init__. Services follow "accept or build" pattern:
-        if pre-built via constructor injection params, use that instance;
-        otherwise build internally. This enables test-time mock injection.
+        Called by ``create_nexus_fs()`` AFTER NexusFS construction.
+        All service creation lives in ``factory._boot_wired_services()``.
 
-        Issue #2034: Service sources are now the 3-tier containers
-        (KernelServices, SystemServices, BrickServices) + explicit constructor
-        params for "accept or build" services.
+        Issue #643: Kernel no longer imports or creates services.
+
+        Args:
+            wired: Dict of service_name -> instance (from _boot_wired_services).
         """
-        brk_svc = self._brick_services
-
-        # VersionService: injected by factory (Task #45) — from kernel tier
-        self.version_service = self._kernel_services.version_service
-
-        # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
-        from nexus.services.llm_service import LLMService
-        from nexus.services.mcp_service import MCPService
-        from nexus.services.mount_service import MountService
-        from nexus.services.oauth_service import OAuthService
-        from nexus.services.search_service import SearchService
-
-        # ReBACService: Permission and access control operations
-        if self._inject_rebac_service is not None:
-            self.rebac_service = self._inject_rebac_service
-        else:
-            from nexus.services.rebac_service import ReBACService
-
-            self.rebac_service = ReBACService(
-                rebac_manager=self._rebac_manager,
-                enforce_permissions=self._enforce_permissions,
-                enable_audit_logging=True,
-                circuit_breaker=brk_svc.rebac_circuit_breaker,
-            )
-
-        # MountService: Dynamic backend mounting operations
-        self.mount_service = MountService(
-            router=self.router,
-            mount_manager=self.mount_manager,
-            nexus_fs=self,
-        )
-
-        # MCPService: Model Context Protocol operations
-        self.mcp_service = MCPService(filesystem=self)
-
-        # LLMService: LLM integration operations
-        self.llm_service = LLMService(nexus_fs=self)
-        from nexus.services.subsystems.llm_subsystem import LLMSubsystem
-
-        self._llm_subsystem = LLMSubsystem(llm_service=self.llm_service)
-
-        # OAuthService: OAuth authentication operations
-        import os
-
-        self.oauth_service = OAuthService(
-            oauth_factory=None,
-            token_manager=None,
-            filesystem=self,
-            database_url=os.getenv("TOKEN_MANAGER_DB"),
-            oauth_config=getattr(self._config, "oauth", None) if self._config else None,
-            mount_lister=lambda: [
-                (m.mount_point, type(m.backend).__name__) for m in self.router.list_mounts()
-            ],
-        )
-
-        # Shared gateway for all extracted services (Issue #1287)
-        from nexus.services.gateway import NexusFSGateway
-
-        self._gateway = NexusFSGateway(self)
-
-        # Mount/sync services: accept pre-built or create (Issue #655)
-        if self._inject_mount_core_service is not None:
-            self._mount_core_service = self._inject_mount_core_service
-        else:
-            from nexus.services.mount_core_service import MountCoreService
-
-            self._mount_core_service = MountCoreService(self._gateway)
-
-        if self._inject_sync_service is not None:
-            self._sync_service = self._inject_sync_service
-        else:
-            from nexus.services.sync_service import SyncService
-
-            self._sync_service = SyncService(self._gateway)
-
-        if self._inject_sync_job_service is not None:
-            self._sync_job_service = self._inject_sync_job_service
-        else:
-            from nexus.services.sync_job_service import SyncJobService
-
-            self._sync_job_service = SyncJobService(self._gateway, self._sync_service)
-
-        if self._inject_mount_persist_service is not None:
-            self._mount_persist_service = self._inject_mount_persist_service
-        else:
-            from nexus.services.mount_persist_service import MountPersistService
-
-            self._mount_persist_service = MountPersistService(
-                mount_manager=getattr(self, "mount_manager", None),
-                mount_service=self._mount_core_service,
-                sync_service=self._sync_service,
-            )
-
-        # TaskQueueService: from brick tier (Issue #655)
-        if brk_svc.task_queue_service is not None:
-            self.task_queue_service = brk_svc.task_queue_service
-
-        # SkillService: Skill management (Issue #2035 — prefer injected brick)
-        if brk_svc.skill_service is not None:
-            self.skill_service = brk_svc.skill_service
-        else:
-            from nexus.services.skill_service import SkillService as _SkillService
-
-            self.skill_service = _SkillService(gateway=self._gateway)
-
-        # SkillPackageService: Skill export/import/validate (Issue #2035)
-        if getattr(brk_svc, "skill_package_service", None) is not None:
-            self.skill_package_service = brk_svc.skill_package_service
-        else:
-            try:
-                from nexus.skills.package_service import (
-                    SkillPackageService as _SkillPkgSvc,
-                )
-
-                # Reuse same protocol deps as skill_service (gateway adapter)
-                self.skill_package_service = _SkillPkgSvc(
-                    fs=self.skill_service._fs,
-                    perms=self.skill_service._perms,
-                    skill_service=self.skill_service,
-                )
-            except Exception:
-                self.skill_package_service = None
-
-        # SearchService: Search operations
-        if self._inject_search_service is not None:
-            self.search_service = self._inject_search_service
-        else:
-            self.search_service = SearchService(
-                metadata_store=self.metadata,
-                permission_enforcer=self._permission_enforcer,
-                router=self.router,
-                rebac_manager=self._rebac_manager,
-                enforce_permissions=self._enforce_permissions,
-                default_context=self._default_context,
-                record_store=self._record_store,
-                gateway=self._gateway,
-            )
-
-        # ShareLinkService: Share link operations
-        from nexus.services.share_link_service import ShareLinkService
-
-        self.share_link_service = ShareLinkService(
-            gateway=self._gateway,
-            enforce_permissions=self._enforce_permissions,
-        )
-
-        # EventsService: File watching + advisory locking
-        if self._inject_events_service is not None:
-            self.events_service = self._inject_events_service
-        else:
-            from nexus.services.events_service import EventsService
-
-            metadata_cache = None
-            if hasattr(self.metadata, "_cache"):
-                metadata_cache = self.metadata._cache
-
-            self.events_service = EventsService(
-                backend=self.backend,
-                event_bus=self._event_bus,
-                lock_manager=self._lock_manager,
-                zone_id=None,
-                metadata_cache=metadata_cache,
-            )
-
-        # _workflow_dispatch REMOVED (#625 infra cleanup)
-        # Kernel no longer references BrickServices.workflow_dispatch.
-        # Userspace hooks register via register_mutation_hook() post-construction.
+        self.version_service = wired.get("version_service")
+        self.rebac_service = wired.get("rebac_service")
+        self.mount_service = wired.get("mount_service")
+        self._gateway = wired.get("gateway")
+        self._mount_core_service = wired.get("mount_core_service")
+        self._sync_service = wired.get("sync_service")
+        self._sync_job_service = wired.get("sync_job_service")
+        self._mount_persist_service = wired.get("mount_persist_service")
+        self.mcp_service = wired.get("mcp_service")
+        self.llm_service = wired.get("llm_service")
+        self._llm_subsystem = wired.get("llm_subsystem")
+        self.oauth_service = wired.get("oauth_service")
+        self.skill_service = wired.get("skill_service")
+        self.skill_package_service = wired.get("skill_package_service")
+        self.search_service = wired.get("search_service")
+        self.share_link_service = wired.get("share_link_service")
+        self.events_service = wired.get("events_service")
+        self.task_queue_service = wired.get("task_queue_service")
 
     @property
     def read_set_cache(self) -> Any | None:
@@ -7191,7 +7041,7 @@ class NexusFS(  # type: ignore[misc]
         if not context:
             return
 
-        from nexus.core.permissions import OperationContext, Permission
+        from nexus.contracts.types import OperationContext, Permission
 
         # Extract OperationContext from context parameter
         op_context: OperationContext | None = None
@@ -8765,7 +8615,7 @@ class NexusFS(  # type: ignore[misc]
     def list_outgoing_shares(
         self,
         resource: tuple[str, str] | None = None,
-        zone_id: str | None = None,  # noqa: ARG002 - Reserved for future zone filtering
+        zone_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
         cursor: str | None = None,
@@ -8846,7 +8696,7 @@ class NexusFS(  # type: ignore[misc]
             return _transform_tuples(all_tuples)
 
         # Get current zone ID for cache isolation
-        current_zone = getattr(self, "_current_zone_id", ROOT_ZONE_ID)
+        current_zone = zone_id or getattr(self, "_current_zone_id", ROOT_ZONE_ID)
 
         # Try to use cursor-based pagination
         if cursor:

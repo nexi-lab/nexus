@@ -1605,7 +1605,7 @@ class ReBACService(ReBACShareMixin):
         if not context:
             return
 
-        from nexus.core.permissions import OperationContext, Permission
+        from nexus.contracts.types import OperationContext, Permission
 
         # Extract OperationContext from context parameter
         op_context: OperationContext | None = None

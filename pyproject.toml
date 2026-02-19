@@ -146,6 +146,11 @@ compression = [
     "zstandard>=0.22.0",
 ]
 
+monitoring = [
+    # System resource monitoring for agent eviction (Issue #2170)
+    "psutil>=5.9",
+]
+
 mobile = [
     # GGUF model support via llama.cpp (Issue #1214)
     # For local embedding inference on mobile/edge devices

@@ -275,11 +275,10 @@ class TestPerTierBreakdown:
 
         result = bench(boot_kernel)
 
-        # Kernel must return all 13 expected keys
+        # Kernel must return all 11 expected keys (Issue #2034)
         assert isinstance(result, dict)
         expected_keys = {
             "rebac_manager",
-            "rebac_circuit_breaker",
             "dir_visibility_cache",
             "audit_store",
             "entity_registry",
@@ -290,7 +289,6 @@ class TestPerTierBreakdown:
             "mount_manager",
             "workspace_manager",
             "write_observer",
-            "version_service",
         }
         assert set(result.keys()) == expected_keys, (
             f"Kernel tier key mismatch. "
@@ -317,6 +315,7 @@ class TestPerTierBreakdown:
         expected_keys = {
             "agent_registry",
             "async_agent_registry",
+            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "async_vfs_router",
@@ -325,6 +324,7 @@ class TestPerTierBreakdown:
             "resiliency_manager",
             "context_branch_service",
             "brick_lifecycle_manager",
+            "brick_reconciler",
             "scoped_hook_engine",
         }
         assert set(result.keys()) == expected_keys, (
@@ -350,6 +350,7 @@ class TestPerTierBreakdown:
 
         assert isinstance(result, dict)
         expected_keys = {
+            "agent_event_log",
             "wallet_provisioner",
             "manifest_resolver",
             "manifest_metrics",
@@ -361,10 +362,15 @@ class TestPerTierBreakdown:
             "api_key_creator",
             "snapshot_service",
             "task_queue_service",
-            "brick_registry",
             "ipc_storage_driver",
             "ipc_vfs_driver",
             "ipc_provisioner",
+            "skill_service",
+            "skill_package_service",
+            "delegation_service",
+            "reputation_service",
+            "version_service",
+            "rebac_circuit_breaker",
         }
         assert set(result.keys()) == expected_keys, (
             f"Brick tier key mismatch. "

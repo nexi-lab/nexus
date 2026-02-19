@@ -14,6 +14,7 @@ Current bricks:
   - a2a              — Google A2A agent-to-agent protocol
   - context_manifest — Deterministic context pre-execution (Stripe Minions pattern)
   - discovery        — BM25-based MCP tool discovery
+  - governance       — Anti-fraud & anti-collusion governance graphs
   - pay              — NexusPay credits + X402 payments
   - sandbox          — Sandboxed code execution (Docker / E2B / Monty)
   - scheduler        — Fair-share priority scheduler (Astraea)

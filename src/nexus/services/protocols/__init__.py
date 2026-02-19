@@ -25,9 +25,9 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from nexus.bricks.governance.protocols import AnomalyDetectorProtocol
 from nexus.rebac.namespace_manager import NamespaceMount
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
-from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol

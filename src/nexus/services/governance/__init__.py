@@ -1,86 +1,117 @@
-"""Anti-Fraud & Anti-Collusion Governance Graphs.
+"""Anti-Fraud & Anti-Collusion Governance — backward-compatible re-exports.
 
-Issue #1359: Governance graphs, anomaly detection, collusion detection,
-and response actions for the Nexus exchange.
-
-Public API:
-    - Approval workflow: StateMachine, ApprovalWorkflow, ApprovalStatus
-    - Anomaly detection: AnomalyService, AnomalyDetectionConfig
-    - Collusion detection: CollusionService, FraudRing, FraudScore
-    - Governance graphs: GovernanceGraphService, GovernanceEnforcedPayment
-    - Response actions: ResponseService, SuspensionRecord, ThrottleConfig
+Issue #2129: Canonical implementation moved to ``nexus.bricks.governance``.
+This shim re-exports everything for backward compatibility.
 """
 
-from __future__ import annotations
-
-# Services (lazy imports to avoid heavy deps at package level)
-from nexus.services.governance.anomaly_service import AnomalyService
-
-# Phase 0: Shared approval workflow
-from nexus.services.governance.approval.state_machine import InvalidTransitionError, StateMachine
-from nexus.services.governance.approval.types import (
-    ApprovalStatus,
-    ApprovalTimestamps,
-    ExpiryPolicy,
+from nexus.bricks.governance import (
+    AgentBaseline as AgentBaseline,
 )
-from nexus.services.governance.collusion_service import CollusionService
-from nexus.services.governance.governance_graph_service import GovernanceGraphService
-from nexus.services.governance.governance_wrapper import (
-    GovernanceApprovalRequired,
-    GovernanceBlockedError,
-    GovernanceEnforcedPayment,
+from nexus.bricks.governance import (
+    AnomalyAlert as AnomalyAlert,
 )
-
-# Phase 1: Anomaly detection
-from nexus.services.governance.models import (
-    AgentBaseline,
-    AnomalyAlert,
-    AnomalyDetectionConfig,
-    AnomalySeverity,
-    ConstraintCheckResult,
-    ConstraintType,
-    FraudRing,
-    FraudScore,
-    GovernanceEdge,
-    GovernanceNode,
-    NodeType,
-    SuspensionRecord,
-    ThrottleConfig,
-    TransactionSummary,
+from nexus.bricks.governance import (
+    AnomalyDetectionConfig as AnomalyDetectionConfig,
 )
-from nexus.services.governance.protocols import AnomalyDetectorProtocol
-from nexus.services.governance.response_service import ResponseService
+from nexus.bricks.governance import (
+    AnomalyDetectorProtocol as AnomalyDetectorProtocol,
+)
+from nexus.bricks.governance import (
+    AnomalyService as AnomalyService,
+)
+from nexus.bricks.governance import (
+    AnomalySeverity as AnomalySeverity,
+)
+from nexus.bricks.governance import (
+    ApprovalStatus as ApprovalStatus,
+)
+from nexus.bricks.governance import (
+    ApprovalTimestamps as ApprovalTimestamps,
+)
+from nexus.bricks.governance import (
+    CollusionService as CollusionService,
+)
+from nexus.bricks.governance import (
+    ConstraintCheckResult as ConstraintCheckResult,
+)
+from nexus.bricks.governance import (
+    ConstraintType as ConstraintType,
+)
+from nexus.bricks.governance import (
+    ExpiryPolicy as ExpiryPolicy,
+)
+from nexus.bricks.governance import (
+    FraudRing as FraudRing,
+)
+from nexus.bricks.governance import (
+    FraudScore as FraudScore,
+)
+from nexus.bricks.governance import (
+    GovernanceApprovalRequired as GovernanceApprovalRequired,
+)
+from nexus.bricks.governance import (
+    GovernanceBlockedError as GovernanceBlockedError,
+)
+from nexus.bricks.governance import (
+    GovernanceEdge as GovernanceEdge,
+)
+from nexus.bricks.governance import (
+    GovernanceEnforcedPayment as GovernanceEnforcedPayment,
+)
+from nexus.bricks.governance import (
+    GovernanceGraphService as GovernanceGraphService,
+)
+from nexus.bricks.governance import (
+    GovernanceNode as GovernanceNode,
+)
+from nexus.bricks.governance import (
+    InvalidTransitionError as InvalidTransitionError,
+)
+from nexus.bricks.governance import (
+    NodeType as NodeType,
+)
+from nexus.bricks.governance import (
+    ResponseService as ResponseService,
+)
+from nexus.bricks.governance import (
+    StateMachine as StateMachine,
+)
+from nexus.bricks.governance import (
+    SuspensionRecord as SuspensionRecord,
+)
+from nexus.bricks.governance import (
+    ThrottleConfig as ThrottleConfig,
+)
+from nexus.bricks.governance import (
+    TransactionSummary as TransactionSummary,
+)
 
 __all__ = [
-    # Approval
-    "ApprovalStatus",
-    "ApprovalTimestamps",
-    "ExpiryPolicy",
-    "InvalidTransitionError",
-    "StateMachine",
-    # Models
     "AgentBaseline",
     "AnomalyAlert",
     "AnomalyDetectionConfig",
+    "AnomalyDetectorProtocol",
+    "AnomalyService",
     "AnomalySeverity",
+    "ApprovalStatus",
+    "ApprovalTimestamps",
+    "CollusionService",
     "ConstraintCheckResult",
     "ConstraintType",
+    "ExpiryPolicy",
     "FraudRing",
     "FraudScore",
+    "GovernanceApprovalRequired",
+    "GovernanceBlockedError",
     "GovernanceEdge",
+    "GovernanceEnforcedPayment",
+    "GovernanceGraphService",
     "GovernanceNode",
+    "InvalidTransitionError",
     "NodeType",
+    "ResponseService",
+    "StateMachine",
     "SuspensionRecord",
     "ThrottleConfig",
     "TransactionSummary",
-    # Protocols
-    "AnomalyDetectorProtocol",
-    # Services
-    "AnomalyService",
-    "CollusionService",
-    "GovernanceApprovalRequired",
-    "GovernanceBlockedError",
-    "GovernanceEnforcedPayment",
-    "GovernanceGraphService",
-    "ResponseService",
 ]

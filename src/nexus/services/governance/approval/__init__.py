@@ -1,22 +1,11 @@
-"""Shared approval workflow infrastructure.
+"""Backward-compatible re-exports (Issue #2129).
 
-Issue #1359 Phase 0: Generic state machine and approval workflow base
-extracted from SpendingApproval, SkillApproval, and DisputeRecord.
+Canonical location: ``nexus.bricks.governance.approval``
 """
 
-from nexus.services.governance.approval.state_machine import InvalidTransitionError, StateMachine
-from nexus.services.governance.approval.types import (
-    ApprovalStatus,
-    ApprovalTimestamps,
-    ExpiryPolicy,
-)
-from nexus.services.governance.approval.workflow import ApprovalWorkflow
-
-__all__ = [
-    "ApprovalStatus",
-    "ApprovalTimestamps",
-    "ApprovalWorkflow",
-    "ExpiryPolicy",
-    "InvalidTransitionError",
-    "StateMachine",
-]
+from nexus.bricks.governance.approval import ApprovalStatus as ApprovalStatus
+from nexus.bricks.governance.approval import ApprovalTimestamps as ApprovalTimestamps
+from nexus.bricks.governance.approval import ApprovalWorkflow as ApprovalWorkflow
+from nexus.bricks.governance.approval import ExpiryPolicy as ExpiryPolicy
+from nexus.bricks.governance.approval import InvalidTransitionError as InvalidTransitionError
+from nexus.bricks.governance.approval import StateMachine as StateMachine

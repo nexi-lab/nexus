@@ -511,18 +511,22 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
                 use_buffer = ctx.db_url.startswith(("postgres", "postgresql"))
 
         if use_buffer:
-            from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+            from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
 
             _st = ctx.profile_tuning.storage
-            write_observer = BufferedRecordStoreSyncer(
+            write_observer = BufferedRecordStoreWriteObserver(
                 ctx.session_factory,
+                strict_mode=ctx.perm.audit_strict_mode,
                 flush_interval_ms=_st.write_buffer_flush_ms,
                 max_buffer_size=_st.write_buffer_max_size,
             )
         else:
-            from nexus.storage.record_store_syncer import RecordStoreSyncer
+            from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
-            write_observer = RecordStoreSyncer(ctx.session_factory)
+            write_observer = RecordStoreWriteObserver(
+                ctx.session_factory,
+                strict_mode=ctx.perm.audit_strict_mode,
+            )
 
         # --- VersionService (Task #45) ---
         from nexus.services.version_service import VersionService
@@ -1018,14 +1022,14 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
         dpb.start()
         logger.debug("[BOOT:BG] DeferredPermissionBuffer started")
 
-    # Write Observer — only BufferedRecordStoreSyncer needs .start()
+    # Write Observer — only BufferedRecordStoreWriteObserver needs .start()
     wo = kernel.get("write_observer")
     if wo is not None and hasattr(wo, "start"):
-        from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
 
-        if isinstance(wo, BufferedRecordStoreSyncer):
+        if isinstance(wo, BufferedRecordStoreWriteObserver):
             wo.start()
-            logger.debug("[BOOT:BG] BufferedRecordStoreSyncer started")
+            logger.debug("[BOOT:BG] BufferedRecordStoreWriteObserver started")
 
     # Event Delivery Worker (system tier)
     dw = system.get("delivery_worker")

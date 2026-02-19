@@ -68,6 +68,7 @@ from nexus.contracts.validators import (
     EmailListRequired,
     ISODateTimeStr,
 )
+from nexus.contracts.write_observer import WriteObserverProtocol
 
 __all__ = [
     # Constants (shared across bricks)
@@ -133,4 +134,6 @@ __all__ = [
     "UploadNotFoundError",
     "UploadOffsetMismatchError",
     "ValidationError",
+    # Protocols
+    "WriteObserverProtocol",
 ]

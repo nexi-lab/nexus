@@ -52,6 +52,7 @@ class NexusFSCoreMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
+        from nexus.contracts.write_observer import WriteObserverProtocol
         from nexus.core.metastore import MetastoreABC
         from nexus.rebac.enforcer import PermissionEnforcer
 
@@ -68,8 +69,7 @@ class NexusFSCoreMixin:
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
         _overlay_resolver: Any  # Issue #1264: OverlayResolver service
         _workspace_registry: Any  # Workspace registry for overlay config lookup
-        _write_observer: Any  # Duck-typed: on_write()/on_delete()
-        _audit_strict_mode: bool
+        _write_observer: WriteObserverProtocol | None  # Issue #55
 
         @property
         def zone_id(self) -> str | None: ...
@@ -1765,7 +1765,6 @@ class NexusFSCoreMixin:
         # Sync to RecordStore via write_observer (closes gap: write_stream was missing this)
         self._notify_observer(
             "write",
-            path,
             metadata=new_meta,
             is_new=(meta is None),
             path=path,
@@ -2131,7 +2130,6 @@ class NexusFSCoreMixin:
         # Issue #1246: Unified error handling via _notify_observer.
         self._notify_observer(
             "write",
-            path,
             metadata=metadata,
             is_new=(meta is None),
             path=path,
@@ -2715,7 +2713,6 @@ class NexusFSCoreMixin:
         ]
         self._notify_observer(
             "write_batch",
-            f"batch({len(metadata_list)} files)",
             items=items,
             zone_id=zone_id,
             agent_id=agent_id,
@@ -2836,45 +2833,21 @@ class NexusFSCoreMixin:
 
         return results
 
-    def _notify_observer(self, operation: str, op_path: str, **kwargs: Any) -> None:
-        """Notify the write observer of a mutation, with unified error policy.
+    def _notify_observer(self, operation: str, **kwargs: Any) -> None:
+        """Notify the write observer of a mutation.
 
-        Replaces the inconsistent error handling where single writes used
-        audit_strict_mode but batch/delete/rename silently suppressed errors.
-
-        Issue #1246: All observer calls now follow the same policy:
-        - audit_strict_mode=True: raise AuditLogError on failure
-        - audit_strict_mode=False: log critical warning, continue
+        Pure caller — the observer owns its own error policy (Issue #55).
+        If the observer raises, the exception propagates to the caller.
 
         Args:
             operation: One of 'write', 'write_batch', 'delete', 'rename'.
-            op_path: Primary path affected (for error messages only).
             **kwargs: Passed directly to the observer method.
         """
         if not self._write_observer:
             return
 
-        try:
-            method = getattr(self._write_observer, f"on_{operation}")
-            method(**kwargs)
-        except Exception as e:
-            from nexus.core.exceptions import AuditLogError
-
-            if self._audit_strict_mode:
-                logger.error(
-                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' ABORTED. "
-                    f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
-                )
-                raise AuditLogError(
-                    f"Operation aborted: audit logging failed for {operation}: {e}",
-                    path=op_path,
-                    original_error=e,
-                ) from e
-            else:
-                logger.critical(
-                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' SUCCEEDED but audit log FAILED. "
-                    f"Error: {e}. This creates an audit trail gap!"
-                )
+        method = getattr(self._write_observer, f"on_{operation}")
+        method(**kwargs)
 
     def _auto_parse_file(self, path: str) -> None:
         """Auto-parse a file in the background (fire-and-forget).
@@ -3041,7 +3014,6 @@ class NexusFSCoreMixin:
         # Issue #1246: Unified error handling via _notify_observer.
         self._notify_observer(
             "delete",
-            path,
             path=path,
             zone_id=zone_id,
             agent_id=agent_id,
@@ -3304,7 +3276,6 @@ class NexusFSCoreMixin:
         # Issue #1246: Unified error handling via _notify_observer.
         self._notify_observer(
             "rename",
-            old_path,
             old_path=old_path,
             new_path=new_path,
             zone_id=zone_id,

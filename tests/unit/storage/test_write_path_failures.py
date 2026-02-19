@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.core.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel
-from nexus.storage.record_store_syncer import RecordStoreSyncer
+from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,16 +77,16 @@ def session_factory(engine):
 
 
 # ---------------------------------------------------------------------------
-# Test: RecordStoreSyncer raises on failure (caller decides policy)
+# Test: RecordStoreWriteObserver raises on failure (caller decides policy)
 # ---------------------------------------------------------------------------
 
 
 class TestSyncerRaisesOnFailure:
-    """RecordStoreSyncer should raise exceptions — caller (kernel) decides policy."""
+    """RecordStoreWriteObserver should raise exceptions — caller (kernel) decides policy."""
 
     def test_on_write_propagates_db_error(self, session_factory) -> None:
         """Database errors in on_write should propagate to caller."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(session_factory=session_factory)
 
         with (
             patch(
@@ -103,7 +103,7 @@ class TestSyncerRaisesOnFailure:
 
     def test_on_write_propagates_version_recorder_error(self, session_factory) -> None:
         """VersionRecorder errors in on_write should propagate to caller."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(session_factory=session_factory)
 
         with (
             patch(
@@ -120,7 +120,7 @@ class TestSyncerRaisesOnFailure:
 
     def test_on_delete_propagates_error(self, session_factory) -> None:
         """Errors in on_delete should propagate to caller."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(session_factory=session_factory)
 
         with (
             patch(

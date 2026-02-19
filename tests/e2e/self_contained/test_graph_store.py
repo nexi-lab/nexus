@@ -24,10 +24,9 @@ import json
 import logging
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nexus.search.graph_store import GraphStore
-from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -35,36 +34,32 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-async def async_engine(tmp_path):
-    """Create async database engine with file-based SQLite."""
-    # Use file-based SQLite for testing
+async def record_store(tmp_path):
+    """Create a RecordStore backed by file-based SQLite."""
     db_path = tmp_path / "test_graph.db"
-    async_url = f"sqlite+aiosqlite:///{db_path}"
-
-    engine = create_async_engine(async_url, echo=False)
-
-    # Create all tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    yield engine
-    await engine.dispose()
+    store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}", create_tables=True)
+    yield store
+    store.close()
 
 
 @pytest.fixture
-async def session(async_engine):
-    """Create async database session."""
-    async_session_factory = async_sessionmaker(
-        async_engine, class_=AsyncSession, expire_on_commit=False
-    )
-    async with async_session_factory() as session:
+async def async_engine(record_store):
+    """Get async engine from record_store (delegates to RecordStoreABC)."""
+    # Access the underlying engine for table creation verification
+    yield record_store.engine
+
+
+@pytest.fixture
+async def session(record_store):
+    """Create async database session from RecordStoreABC."""
+    async with record_store.async_session_factory() as session:
         yield session
 
 
 @pytest.fixture
-async def graph_store(session):
+async def graph_store(record_store, session):
     """Create GraphStore instance."""
-    return GraphStore(session, zone_id="test-zone")
+    return GraphStore(record_store, session, zone_id="test-zone")
 
 
 class TestGraphStoreE2E:

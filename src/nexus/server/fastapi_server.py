@@ -1290,10 +1290,11 @@ def create_app(
     # Performance tuning (Issue #2071): resolve per-profile thresholds
     app.state.profile_tuning = _profile.tuning()
 
-    # Expose async_session_factory from RecordStoreABC (if available).
+    # Expose RecordStoreABC and its session factories on app.state (if available).
     # This is the canonical way for async endpoints to get database sessions
     # without bypassing the RecordStore abstraction with raw URLs.
     _record_store = getattr(nexus_fs, "_record_store", None)
+    app.state.record_store = _record_store
     if _record_store is not None:
         try:
             app.state.async_session_factory = _record_store.async_session_factory

@@ -192,7 +192,7 @@ class MCPService:
         import asyncio
         import json
 
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         # Get MCP mount manager
         manager = self._get_mcp_mount_manager()
@@ -323,7 +323,7 @@ class MCPService:
             - Transport is auto-detected: stdio for command, sse for url
             - Tools are automatically synced after mounting
         """
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
         from nexus.mcp.models import MCPMount
 
         # Validate: need either command or url
@@ -410,7 +410,7 @@ class MCPService:
             for m in mounts:
                 service.mcp_unmount(m['name'], context=context)
         """
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         manager = self._get_mcp_mount_manager()
 
@@ -463,7 +463,7 @@ class MCPService:
         """
         import asyncio
 
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         manager = self._get_mcp_mount_manager()
 

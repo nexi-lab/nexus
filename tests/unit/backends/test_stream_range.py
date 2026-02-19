@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.contracts.exceptions import NexusFileNotFoundError
 
 # =============================================================================
 # Helpers

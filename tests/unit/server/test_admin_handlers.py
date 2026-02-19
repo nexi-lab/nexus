@@ -94,14 +94,14 @@ class TestRequireAdmin:
 
     def test_non_admin_context_raises(self, non_admin_context):
         """Non-admin context should raise NexusPermissionError."""
-        from nexus.core.exceptions import NexusPermissionError
+        from nexus.contracts.exceptions import NexusPermissionError
 
         with pytest.raises(NexusPermissionError, match="Admin privileges required"):
             require_admin(non_admin_context)
 
     def test_none_context_raises(self):
         """None context should raise NexusPermissionError."""
-        from nexus.core.exceptions import NexusPermissionError
+        from nexus.contracts.exceptions import NexusPermissionError
 
         with pytest.raises(NexusPermissionError):
             require_admin(None)
@@ -117,14 +117,14 @@ class TestRequireDatabaseAuth:
 
     def test_none_auth_provider_raises(self):
         """None auth provider should raise ConfigurationError."""
-        from nexus.core.exceptions import ConfigurationError
+        from nexus.contracts.exceptions import ConfigurationError
 
         with pytest.raises(ConfigurationError, match="DatabaseAPIKeyAuth"):
             require_database_auth(None)
 
     def test_auth_provider_without_session_factory_raises(self):
         """Auth provider without session_factory should raise."""
-        from nexus.core.exceptions import ConfigurationError
+        from nexus.contracts.exceptions import ConfigurationError
 
         provider = MagicMock(spec=[])  # No attributes
         with pytest.raises(ConfigurationError):
@@ -201,7 +201,7 @@ class TestHandleAdminCreateKey:
 
     def test_non_admin_rejected(self, auth_provider, non_admin_context):
         """Non-admin should be rejected."""
-        from nexus.core.exceptions import NexusPermissionError
+        from nexus.contracts.exceptions import NexusPermissionError
 
         params = FakeParams(
             name="test",
@@ -267,7 +267,7 @@ class TestHandleAdminListKeys:
 class TestHandleAdminGetKey:
     def test_get_key_with_zone_isolation(self, auth_provider, admin_context):
         """Getting a key with wrong zone should raise NotFound."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         # Create a key in zone1
         create_params = FakeParams(
@@ -316,7 +316,7 @@ class TestHandleAdminRevokeKey:
 
     def test_revoke_with_wrong_zone_raises(self, auth_provider, admin_context):
         """Revoking with wrong zone should raise NotFound."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         create_params = FakeParams(
             name="zone-isolated",
@@ -340,7 +340,7 @@ class TestHandleAdminRevokeKey:
 class TestHandleAdminUpdateKey:
     def test_self_demotion_prevented(self, auth_provider, admin_context):
         """Cannot remove admin from the last admin key."""
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         # Create a single admin key
         create_params = FakeParams(
@@ -419,7 +419,7 @@ class TestHandleAdminUpdateKey:
 
     def test_update_with_wrong_zone_raises(self, auth_provider, admin_context):
         """Updating a key from the wrong zone should raise NotFound."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         create_params = FakeParams(
             name="zone-locked",

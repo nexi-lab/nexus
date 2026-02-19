@@ -128,7 +128,7 @@ def create_tus_uploads_router(
         _tus_resumable: str = Depends(_validate_tus_resumable),
     ) -> Response:
         """Create a new upload session (tus creation extension)."""
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         service = _get_service()
 
@@ -187,7 +187,7 @@ def create_tus_uploads_router(
         _tus_resumable: str = Depends(_validate_tus_resumable),
     ) -> Response:
         """Upload a chunk of data (tus core protocol)."""
-        from nexus.core.exceptions import (
+        from nexus.contracts.exceptions import (
             UploadChecksumMismatchError,
             UploadExpiredError,
             UploadNotFoundError,
@@ -264,7 +264,7 @@ def create_tus_uploads_router(
         _tus_resumable: str = Depends(_validate_tus_resumable),
     ) -> Response:
         """Get the current offset of an upload (for resumption)."""
-        from nexus.core.exceptions import UploadExpiredError, UploadNotFoundError
+        from nexus.contracts.exceptions import UploadExpiredError, UploadNotFoundError
 
         service = _get_service()
 
@@ -294,7 +294,7 @@ def create_tus_uploads_router(
         _tus_resumable: str = Depends(_validate_tus_resumable),
     ) -> Response:
         """Terminate an upload and release resources (tus termination extension)."""
-        from nexus.core.exceptions import UploadNotFoundError
+        from nexus.contracts.exceptions import UploadNotFoundError
 
         service = _get_service()
 

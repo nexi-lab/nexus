@@ -51,7 +51,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL, ROOT_ZONE_ID
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusError,
@@ -1479,7 +1479,7 @@ def create_app(
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # Register Nexus exception handlers for error classification
-    from nexus.core.exceptions import NexusError
+    from nexus.contracts.exceptions import NexusError
 
     app.add_exception_handler(NexusError, _nexus_error_handler)
 
@@ -3360,7 +3360,7 @@ def _handle_delta_write(params: Any, context: Any) -> dict[str, Any]:
 
 def _require_admin(context: Any) -> None:
     """Require admin privileges for admin operations."""
-    from nexus.core.exceptions import NexusPermissionError
+    from nexus.contracts.exceptions import NexusPermissionError
 
     if not context or not getattr(context, "is_admin", False):
         raise NexusPermissionError("Admin privileges required for this operation")
@@ -3501,7 +3501,7 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_get_key method."""
     from sqlalchemy import select
 
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.contracts.exceptions import NexusFileNotFoundError
     from nexus.storage.models import APIKeyModel
 
     _require_admin(context)
@@ -3536,7 +3536,7 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
 def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.contracts.exceptions import NexusFileNotFoundError
 
     _require_admin(context)
 
@@ -3559,7 +3559,7 @@ def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
 
     from sqlalchemy import select
 
-    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.contracts.exceptions import NexusFileNotFoundError
     from nexus.storage.models import APIKeyModel
 
     _require_admin(context)

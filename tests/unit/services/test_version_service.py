@@ -67,7 +67,7 @@ class TestVersionServiceGetVersion:
     @pytest.mark.asyncio
     async def test_get_version_not_found_without_session_factory(self, service, operation_context):
         """Test that get_version raises NexusFileNotFoundError when no session_factory."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         # Without session_factory, version_meta is None → NexusFileNotFoundError
         with pytest.raises(NexusFileNotFoundError):

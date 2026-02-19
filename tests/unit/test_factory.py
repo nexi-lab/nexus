@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.contracts.exceptions import BootError, NexusError
 from nexus.core.deployment_profile import DeploymentProfile
-from nexus.core.exceptions import BootError, NexusError
 
 # ---------------------------------------------------------------------------
 # TestBootError

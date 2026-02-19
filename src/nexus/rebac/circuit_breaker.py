@@ -28,7 +28,7 @@ from typing import Any, TypeVar
 
 from sqlalchemy.exc import InterfaceError, OperationalError
 
-from nexus.core.exceptions import CircuitOpenError
+from nexus.contracts.exceptions import CircuitOpenError
 
 T = TypeVar("T")
 

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.core.exceptions import ValidationError
+from nexus.contracts.exceptions import ValidationError
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import ContentChunkModel, FileMetadataModel, FilePathModel
 

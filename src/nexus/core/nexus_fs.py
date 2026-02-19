@@ -6559,7 +6559,7 @@ class NexusFS(  # type: ignore[misc]
         self,
         prefix: str = "/",
         zone_id: str | None = None,
-        _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
+        _context: Any = None,
     ) -> dict[str, Any]:
         """Backfill sparse directory index from existing files.
 
@@ -7202,196 +7202,15 @@ class NexusFS(  # type: ignore[misc]
             ... )
             'uuid-string'
         """
-        if not hasattr(self, "_rebac_manager"):
-            raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
-            )
-
-        # Validate tuples (support 2-tuple and 3-tuple for subject to support userset-as-subject)
-        if not isinstance(subject, tuple) or len(subject) not in (2, 3):
-            raise ValueError(
-                f"subject must be (type, id) or (type, id, relation) tuple, got {subject}"
-            )
-        if not isinstance(object, tuple) or len(object) != 2:
-            raise ValueError(f"object must be (type, id) tuple, got {object}")
-
-        # Normalize file paths by removing trailing slashes for proper parent traversal
-        # Special case: Keep root path "/" as-is to avoid empty string
-        if (
-            object[0] == "file"
-            and isinstance(object[1], str)
-            and object[1].endswith("/")
-            and object[1] != "/"
-        ):
-            object = (object[0], object[1].rstrip("/"))
-
-        # Use zone_id from context if not explicitly provided
-        effective_zone_id = zone_id
-        if effective_zone_id is None and context:
-            # Handle both dict and OperationContext
-            if isinstance(context, dict):
-                effective_zone_id = context.get("zone")
-            elif hasattr(context, "zone_id"):
-                effective_zone_id = context.zone_id
-
-        # SECURITY: Check execute permission before allowing permission management
-        # Only owners (those with execute permission) can grant/manage permissions on resources
-        # Now applies to ALL resource types, not just files
-        self._check_share_permission(resource=object, context=context)
-
-        # Validate column_config for dynamic_viewer relation
-        conditions = None
-        if relation == "dynamic_viewer":
-            # Check if object is a CSV file
-            if object[0] == "file" and not object[1].lower().endswith(".csv"):
-                raise ValueError(
-                    f"dynamic_viewer relation only supports CSV files. "
-                    f"File '{object[1]}' does not have .csv extension."
-                )
-
-            if column_config is None:
-                raise ValueError(
-                    "column_config is required when relation is 'dynamic_viewer'. "
-                    "Provide configuration with hidden_columns, aggregations, and/or visible_columns."
-                )
-
-            # Validate column_config structure
-            if not isinstance(column_config, dict):
-                raise ValueError("column_config must be a dictionary")
-
-            # Get all column categories
-            hidden_columns = column_config.get("hidden_columns", [])
-            aggregations = column_config.get("aggregations", {})
-            visible_columns = column_config.get("visible_columns", [])
-
-            # Validate types
-            if not isinstance(hidden_columns, list):
-                raise ValueError("column_config.hidden_columns must be a list")
-            if not isinstance(aggregations, dict):
-                raise ValueError("column_config.aggregations must be a dictionary")
-            if not isinstance(visible_columns, list):
-                raise ValueError("column_config.visible_columns must be a list")
-
-            # Validate columns against actual CSV file
-            file_path = object[1]
-            if hasattr(self, "read") and hasattr(self, "exists"):
-                try:
-                    # Check if file exists
-                    if self.exists(file_path):
-                        # Read file to get actual columns
-                        raw = self.read(file_path)
-                        text_content: str = (
-                            raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
-                        )
-
-                        try:
-                            import io
-
-                            import pandas as pd
-
-                            df = pd.read_csv(io.StringIO(text_content))
-                            actual_columns = set(df.columns)
-
-                            # Collect all configured columns
-                            configured_columns = (
-                                set(hidden_columns)
-                                | set(aggregations.keys())
-                                | set(visible_columns)
-                            )
-
-                            # Check for invalid columns
-                            invalid_columns = configured_columns - actual_columns
-                            if invalid_columns:
-                                raise ValueError(
-                                    f"Column config contains invalid columns: {sorted(invalid_columns)}. "
-                                    f"Available columns in CSV: {sorted(actual_columns)}"
-                                )
-                        except ValueError:
-                            # Re-raise ValueError (validation error)
-                            raise
-                        except ImportError:
-                            # pandas not available, skip validation
-                            pass
-                        except (RuntimeError, pd.errors.ParserError) as e:
-                            # If CSV parsing fails (non-validation error), provide warning but allow creation
-                            logger.warning(
-                                f"Could not validate CSV columns for {file_path}: {e}. "
-                                f"Column config will be created without validation."
-                            )
-                except ValueError:
-                    # Re-raise validation errors
-                    raise
-                except OSError as e:
-                    # If file read fails, skip validation (file might not exist yet)
-                    logger.debug(f"Could not read file {file_path} for column validation: {e}")
-
-            # Check that a column only appears in one category
-            all_columns = set()
-            for col in hidden_columns:
-                if col in all_columns:
-                    raise ValueError(
-                        f"Column '{col}' appears in multiple categories. "
-                        f"Each column can only be in hidden_columns, aggregations, or visible_columns."
-                    )
-                all_columns.add(col)
-
-            for col in aggregations:
-                if col in all_columns:
-                    raise ValueError(
-                        f"Column '{col}' appears in multiple categories. "
-                        f"Each column can only be in hidden_columns, aggregations, or visible_columns."
-                    )
-                all_columns.add(col)
-
-            for col in visible_columns:
-                if col in all_columns:
-                    raise ValueError(
-                        f"Column '{col}' appears in multiple categories. "
-                        f"Each column can only be in hidden_columns, aggregations, or visible_columns."
-                    )
-                all_columns.add(col)
-
-            # Validate aggregation operations (single value per column)
-            valid_ops = {"mean", "sum", "min", "max", "std", "median", "count"}
-            for col, op in aggregations.items():
-                if not isinstance(op, str):
-                    raise ValueError(
-                        f"column_config.aggregations['{col}'] must be a string (one of: {', '.join(valid_ops)}). "
-                        f"Got: {type(op).__name__}"
-                    )
-                if op not in valid_ops:
-                    raise ValueError(
-                        f"Invalid aggregation operation '{op}' for column '{col}'. "
-                        f"Valid operations: {', '.join(sorted(valid_ops))}"
-                    )
-
-            # Store column_config as conditions
-            conditions = {"type": "dynamic_viewer", "column_config": column_config}
-        elif column_config is not None:
-            # column_config provided but relation is not dynamic_viewer
-            raise ValueError("column_config can only be provided when relation is 'dynamic_viewer'")
-
-        # Create relationship
-        result = self._require_rebac.rebac_write(
+        return self.rebac_service.rebac_create_sync(
             subject=subject,
             relation=relation,
             object=object,
             expires_at=expires_at,
-            zone_id=effective_zone_id,
-            conditions=conditions,
+            zone_id=zone_id,
+            context=context,
+            column_config=column_config,
         )
-
-        # NOTE: Tiger Cache queue update is now handled in EnhancedReBACManager.rebac_write()
-        # This ensures ALL write paths (rebac_create, share_with_user, etc.) get Tiger Cache updates
-
-        # Convert WriteResult to dict for JSON serialization.
-        # WriteResult uses slots=True so it has no __dict__ and can't be
-        # auto-serialized by RPCEncoder/_prepare_for_orjson.
-        return {
-            "tuple_id": result.tuple_id,
-            "revision": result.revision,
-            "consistency_token": result.consistency_token,
-        }
 
     def _has_descendant_access_for_traverse(
         self,
@@ -7528,50 +7347,13 @@ class NexusFS(  # type: ignore[misc]
             ... )
             False  # Denied outside time window
         """
-        if not hasattr(self, "_rebac_manager"):
-            raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
-            )
-
-        # Validate tuples
-        if not isinstance(subject, tuple) or len(subject) != 2:
-            raise ValueError(f"subject must be (type, id) tuple, got {subject}")
-        if not isinstance(object, tuple) or len(object) != 2:
-            raise ValueError(f"object must be (type, id) tuple, got {object}")
-
-        # P0-4: Pass zone_id for multi-zone isolation
-        # Use zone_id from operation context if not explicitly provided
-        effective_zone_id = zone_id
-        if effective_zone_id is None and context:
-            # Handle both dict and OperationContext
-            if isinstance(context, dict):
-                effective_zone_id = context.get("zone")
-            elif hasattr(context, "zone_id"):
-                effective_zone_id = context.zone_id
-        # BUGFIX: Don't default to "root" - let ReBAC manager handle None
-        # This allows proper zone isolation testing
-
-        # Check permission with optional context
-        result = self._require_rebac.rebac_check(
+        return self.rebac_service.rebac_check_sync(
             subject=subject,
             permission=permission,
             object=object,
             context=context,
-            zone_id=effective_zone_id,
+            zone_id=zone_id,
         )
-
-        # Unix-like TRAVERSE behavior: if user has READ on any descendant,
-        # they can TRAVERSE the parent directory (like Unix x permission on dirs).
-        # This fallback uses rebac_check_bulk directly to avoid infinite recursion
-        # (since _has_descendant_access calls self.rebac_check internally).
-        if not result and permission == "traverse" and object[0] == "file":
-            result = self._has_descendant_access_for_traverse(
-                path=object[1],
-                subject=subject,
-                zone_id=effective_zone_id,
-            )
-
-        return result
 
     @rpc_expose(description="Expand ReBAC permissions to find all subjects")
     def rebac_expand(

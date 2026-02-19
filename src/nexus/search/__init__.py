@@ -203,7 +203,7 @@ AsyncSearchResult = BaseSearchResult  # Merged into BaseSearchResult
 class AsyncSemanticSearch:
     """Removed in Issue #2075. Use QueryService + IndexingService instead."""
 
-    def __init__(self, *args: object, **kwargs: object) -> None:  # noqa: ARG002
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
         raise RuntimeError(
             "AsyncSemanticSearch was removed in Issue #2075. "
             "Use nexus.search.QueryService for search and "

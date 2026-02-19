@@ -59,7 +59,7 @@ class MetastoreABC(ABC):
         """
         pass
 
-    def is_committed(self, token: int) -> str | None:  # noqa: ARG002
+    def is_committed(self, _token: int) -> str | None:
         """Check if an EC write token has been replicated to a majority.
 
         Args:

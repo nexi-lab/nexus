@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nexus.contracts.db_base import Base, TimestampMixin, ZoneIsolationMixin, uuid_pk
+from nexus.lib.db_base import Base, TimestampMixin, ZoneIsolationMixin, uuid_pk
 
 # =============================================================================
 # Phase 1: Anomaly Detection Tables

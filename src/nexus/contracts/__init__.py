@@ -60,13 +60,13 @@ from nexus.contracts.types import (
     Permission,
     extract_context_identity,
 )
-from nexus.contracts.validators import (
+from nexus.contracts.write_observer import WriteObserverProtocol
+from nexus.lib.validators import (
     EmailAddress,
     EmailList,
     EmailListRequired,
     ISODateTimeStr,
 )
-from nexus.contracts.write_observer import WriteObserverProtocol
 
 __all__ = [
     # Constants (shared across bricks)

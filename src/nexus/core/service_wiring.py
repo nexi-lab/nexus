@@ -101,13 +101,17 @@ def wire_services(fs: Any) -> None:
     )
 
     # SandboxRPCService: Replaces NexusFS sandbox management facades
-    from nexus.sandbox.sandbox_rpc_service import SandboxRPCService
+    # Optional — sandbox package may not be installed
+    try:
+        from nexus.sandbox.sandbox_rpc_service import SandboxRPCService
 
-    fs._sandbox_rpc_service = SandboxRPCService(
-        session_factory=fs.SessionLocal,
-        default_context=fs._default_context,
-        config=getattr(fs, "_config", None),
-    )
+        fs._sandbox_rpc_service = SandboxRPCService(
+            session_factory=fs.SessionLocal,
+            default_context=fs._default_context,
+            config=getattr(fs, "_config", None),
+        )
+    except ImportError:
+        fs._sandbox_rpc_service = None
 
     # MetadataExportService: Replaces NexusFS export/import facades
     from nexus.services.metadata_export import MetadataExportService

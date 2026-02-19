@@ -124,7 +124,10 @@ def nx(tmp_path):
 def nx_perms(tmp_path):
     """Factory-wired NexusFS with PostgreSQL, permissions enabled."""
     fs = _create_factory_nexus_fs(
-        tmp_path, enforce_permissions=True, is_admin=True, enable_tiger_cache=False,
+        tmp_path,
+        enforce_permissions=True,
+        is_admin=True,
+        enable_tiger_cache=False,
     )
     yield fs
     fs.close()
@@ -161,7 +164,10 @@ def client_perms(tmp_path):
     from nexus.server.fastapi_server import create_app
 
     fs = _create_factory_nexus_fs(
-        tmp_path, enforce_permissions=True, is_admin=True, enable_tiger_cache=False,
+        tmp_path,
+        enforce_permissions=True,
+        is_admin=True,
+        enable_tiger_cache=False,
     )
     api_key = "test-api-key-" + uuid.uuid4().hex[:16]
     app = create_app(fs, api_key=api_key, database_url=PG_URL)
@@ -541,20 +547,28 @@ class TestFastAPIIntegration:
     def test_list_via_rpc(self, client):
         """list via RPC endpoint after writing a file."""
         prefix = f"/list-rpc-{uuid.uuid4().hex[:8]}"
-        _rpc(client, "write", {
-            "path": f"{prefix}/file.txt",
-            "content": base64.b64encode(b"data").decode(),
-        })
+        _rpc(
+            client,
+            "write",
+            {
+                "path": f"{prefix}/file.txt",
+                "content": base64.b64encode(b"data").decode(),
+            },
+        )
         result = _rpc(client, "list", {"path": prefix})
         assert "result" in result
 
     def test_list_versions_via_rpc(self, client):
         """list_versions via RPC endpoint with factory-wired VersionService."""
         path = f"/ver-rpc-{uuid.uuid4().hex[:8]}.txt"
-        _rpc(client, "write", {
-            "path": path,
-            "content": base64.b64encode(b"v1").decode(),
-        })
+        _rpc(
+            client,
+            "write",
+            {
+                "path": path,
+                "content": base64.b64encode(b"v1").decode(),
+            },
+        )
         result = _rpc(client, "list_versions", {"path": path})
         # With factory wiring, VersionService should be available
         if "error" in result and result["error"]:
@@ -584,30 +598,42 @@ class TestFastAPIIntegration:
     def test_exists_via_rpc(self, client):
         """exists via RPC endpoint."""
         path = f"/exists-rpc-{uuid.uuid4().hex[:8]}.txt"
-        _rpc(client, "write", {
-            "path": path,
-            "content": base64.b64encode(b"check").decode(),
-        })
+        _rpc(
+            client,
+            "write",
+            {
+                "path": path,
+                "content": base64.b64encode(b"check").decode(),
+            },
+        )
         result = _rpc(client, "exists", {"path": path})
         assert "result" in result
 
     def test_delete_via_rpc(self, client):
         """delete via RPC endpoint."""
         path = f"/del-rpc-{uuid.uuid4().hex[:8]}.txt"
-        _rpc(client, "write", {
-            "path": path,
-            "content": base64.b64encode(b"to-delete").decode(),
-        })
+        _rpc(
+            client,
+            "write",
+            {
+                "path": path,
+                "content": base64.b64encode(b"to-delete").decode(),
+            },
+        )
         result = _rpc(client, "delete", {"path": path})
         assert "error" not in result or result.get("error") is None
 
     def test_get_metadata_via_rpc(self, client):
         """get_metadata via RPC endpoint."""
         path = f"/meta-rpc-{uuid.uuid4().hex[:8]}.txt"
-        _rpc(client, "write", {
-            "path": path,
-            "content": base64.b64encode(b"meta check").decode(),
-        })
+        _rpc(
+            client,
+            "write",
+            {
+                "path": path,
+                "content": base64.b64encode(b"meta check").decode(),
+            },
+        )
         result = _rpc(client, "get_metadata", {"path": path})
         assert "result" in result
 
@@ -639,30 +665,42 @@ class TestFastAPIWithPermissions:
     def test_mkdir_with_perms(self, client_perms):
         """mkdir via RPC with permissions on."""
         dirname = f"/perm-dir-{uuid.uuid4().hex[:8]}"
-        result = _rpc(client_perms, "mkdir", {
-            "path": dirname,
-            "parents": True,
-            "exist_ok": True,
-        })
+        result = _rpc(
+            client_perms,
+            "mkdir",
+            {
+                "path": dirname,
+                "parents": True,
+                "exist_ok": True,
+            },
+        )
         assert "error" not in result or result.get("error") is None
 
     def test_list_with_perms(self, client_perms):
         """list via RPC with permissions on."""
         prefix = f"/perm-list-api-{uuid.uuid4().hex[:8]}"
-        _rpc(client_perms, "write", {
-            "path": f"{prefix}/file.txt",
-            "content": base64.b64encode(b"data").decode(),
-        })
+        _rpc(
+            client_perms,
+            "write",
+            {
+                "path": f"{prefix}/file.txt",
+                "content": base64.b64encode(b"data").decode(),
+            },
+        )
         result = _rpc(client_perms, "list", {"path": prefix})
         assert "result" in result
 
     def test_version_with_perms(self, client_perms):
         """list_versions via RPC with permissions on."""
         path = f"/perm-ver-{uuid.uuid4().hex[:8]}.txt"
-        _rpc(client_perms, "write", {
-            "path": path,
-            "content": base64.b64encode(b"v1 perm").decode(),
-        })
+        _rpc(
+            client_perms,
+            "write",
+            {
+                "path": path,
+                "content": base64.b64encode(b"v1 perm").decode(),
+            },
+        )
         result = _rpc(client_perms, "list_versions", {"path": path})
         if "error" in result and result["error"]:
             pytest.skip("VersionService not available")

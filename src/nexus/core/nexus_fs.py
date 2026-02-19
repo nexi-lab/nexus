@@ -8,7 +8,6 @@ import contextlib
 import logging
 import threading
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.backends.backend import Backend
@@ -133,7 +132,9 @@ class NexusFS(  # type: ignore[misc]
             self._sql_engine = None
             self._db_session_factory = None
             self.SessionLocal = None
-        self.cache_store: CacheStoreABC = cache_store if cache_store is not None else NullCacheStore()
+        self.cache_store: CacheStoreABC = (
+            cache_store if cache_store is not None else NullCacheStore()
+        )
 
         # Path router
         if svc.router is not None:
@@ -151,12 +152,14 @@ class NexusFS(  # type: ignore[misc]
         else:
             from nexus.parsers.markitdown_parser import MarkItDownParser as _MkD
             from nexus.parsers.registry import ParserRegistry as _PR
+
             self.parser_registry = _PR()
             self.parser_registry.register(_MkD())
         if provider_registry is not None:
             self.provider_registry = provider_registry
         else:
             from nexus.parsers.providers.registry import ProviderRegistry as _PvR
+
             self.provider_registry = _PvR()
             self.provider_registry.auto_discover()
 
@@ -166,8 +169,12 @@ class NexusFS(  # type: ignore[misc]
 
         # Default context for embedded mode
         self._default_context = OperationContext(
-            user_id="anonymous", groups=[], zone_id=ROOT_ZONE_ID,
-            agent_id=None, is_admin=is_admin, is_system=False,
+            user_id="anonymous",
+            groups=[],
+            zone_id=ROOT_ZONE_ID,
+            agent_id=None,
+            is_admin=is_admin,
+            is_system=False,
             admin_capabilities=set(),
         )
 
@@ -201,7 +208,11 @@ class NexusFS(  # type: ignore[misc]
         self._token_manager = None
         self._semantic_search = None
         self._memory_api: Memory | None = None
-        self._memory_config: dict[str, str | None] = {"zone_id": None, "user_id": None, "agent_id": None}
+        self._memory_config: dict[str, str | None] = {
+            "zone_id": None,
+            "user_id": None,
+            "agent_id": None,
+        }
         self._sandbox_manager: Any = None
         self.subscription_manager: Any = None
         self._coordination_client: Any = None
@@ -212,11 +223,13 @@ class NexusFS(  # type: ignore[misc]
             self._vfs_lock_manager = vfs_lock_manager
         else:
             from nexus.core.lock_fast import create_vfs_lock_manager
+
             self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
         # VFS Hook Pipeline
         from nexus.core.vfs_hooks import VFSHookPipeline
+
         self._hook_pipeline: VFSHookPipeline = svc.hook_pipeline or VFSHookPipeline()
 
         # Wire self-dependent services, then register hooks
@@ -229,9 +242,11 @@ class NexusFS(  # type: ignore[misc]
         if metadata_cache is not None and self._cache_config.enable_metadata_cache:
             from nexus.core.read_set import ReadSetRegistry
             from nexus.storage.read_set_cache import ReadSetAwareCache
+
             self._read_set_registry = ReadSetRegistry()
             self._read_set_cache = ReadSetAwareCache(
-                base_cache=metadata_cache, registry=self._read_set_registry,
+                base_cache=metadata_cache,
+                registry=self._read_set_registry,
             )
             self._read_tracking_enabled = True
 
@@ -239,12 +254,15 @@ class NexusFS(  # type: ignore[misc]
         self._cache_observer = svc.cache_observer
         if self._cache_observer is None and self._read_set_cache is not None:
             from nexus.core.cache_invalidation import ReadSetCacheObserver
+
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
         # Tiger Cache
         from nexus.services.tiger_cache_manager import TigerCacheManager
+
         self._tiger_cache_manager = TigerCacheManager(
-            rebac_manager=self._rebac_manager, metadata_store=self.metadata,
+            rebac_manager=self._rebac_manager,
+            metadata_store=self.metadata,
             default_zone_id=self._default_context.zone_id or "root",
             process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
             warm_cache_fn=getattr(self, "warm_tiger_cache", None),
@@ -300,6 +318,7 @@ class NexusFS(  # type: ignore[misc]
         # TigerCacheRenameHook (post-rename: bitmap updates)
         tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
         if tiger_cache is not None:
+
             def _metadata_list_iter(
                 prefix: str, recursive: bool = True, zone_id: str = "root"
             ) -> Any:
@@ -367,7 +386,6 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the semantic search engine instance."""
         return self._semantic_search
 
-
     @property
     def memory(self) -> Any:
         """Get Memory API instance (lazy init on first access)."""
@@ -376,6 +394,7 @@ class NexusFS(  # type: ignore[misc]
     def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking."""
         from nexus.core.context_utils import get_created_by
+
         return get_created_by(context, self._default_context)
 
     def _get_routing_params(
@@ -383,7 +402,11 @@ class NexusFS(  # type: ignore[misc]
     ) -> tuple[str | None, str | None, bool]:
         """Extract (zone_id, agent_id, is_admin) from context for router.route()."""
         if context is None:
-            return self._default_context.zone_id, self._default_context.agent_id, self._default_context.is_admin
+            return (
+                self._default_context.zone_id,
+                self._default_context.agent_id,
+                self._default_context.is_admin,
+            )
         if isinstance(context, dict):
             return (
                 context.get("zone_id", self._default_context.zone_id),
@@ -414,6 +437,7 @@ class NexusFS(  # type: ignore[misc]
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
         """Parse context dict or OperationContext into OperationContext."""
         from nexus.core.context_utils import parse_context
+
         return parse_context(context)
 
     def _ensure_entity_registry(self) -> EntityRegistry:
@@ -639,7 +663,6 @@ class NexusFS(  # type: ignore[misc]
 
         # P0-3: Create parent relationship tuples for directory inheritance
         # This enables granting access to /workspace to automatically grant access to subdirectories
-
 
         logger.debug(
             f"mkdir: Checking for hierarchy_manager: hasattr={hasattr(self, '_hierarchy_manager')}"
@@ -1012,90 +1035,90 @@ class NexusFS(  # type: ignore[misc]
 
     _SERVICE_METHODS: dict[str, str] = {
         # WorkspaceRPCService
-        'workspace_snapshot': '_workspace_rpc_service',
-        'workspace_restore': '_workspace_rpc_service',
-        'workspace_log': '_workspace_rpc_service',
-        'workspace_diff': '_workspace_rpc_service',
-        'snapshot_begin': '_workspace_rpc_service',
-        'snapshot_commit': '_workspace_rpc_service',
-        'snapshot_rollback': '_workspace_rpc_service',
-        'load_workspace_memory_config': '_workspace_rpc_service',
-        'register_workspace': '_workspace_rpc_service',
-        'unregister_workspace': '_workspace_rpc_service',
-        'update_workspace': '_workspace_rpc_service',
-        'list_workspaces': '_workspace_rpc_service',
-        'get_workspace_info': '_workspace_rpc_service',
-        'register_memory': '_workspace_rpc_service',
-        'unregister_memory': '_workspace_rpc_service',
-        'list_registered_memories': '_workspace_rpc_service',
-        'get_memory_info': '_workspace_rpc_service',
+        "workspace_snapshot": "_workspace_rpc_service",
+        "workspace_restore": "_workspace_rpc_service",
+        "workspace_log": "_workspace_rpc_service",
+        "workspace_diff": "_workspace_rpc_service",
+        "snapshot_begin": "_workspace_rpc_service",
+        "snapshot_commit": "_workspace_rpc_service",
+        "snapshot_rollback": "_workspace_rpc_service",
+        "load_workspace_memory_config": "_workspace_rpc_service",
+        "register_workspace": "_workspace_rpc_service",
+        "unregister_workspace": "_workspace_rpc_service",
+        "update_workspace": "_workspace_rpc_service",
+        "list_workspaces": "_workspace_rpc_service",
+        "get_workspace_info": "_workspace_rpc_service",
+        "register_memory": "_workspace_rpc_service",
+        "unregister_memory": "_workspace_rpc_service",
+        "list_registered_memories": "_workspace_rpc_service",
+        "get_memory_info": "_workspace_rpc_service",
         # AgentRPCService
-        'register_agent': '_agent_rpc_service',
-        'update_agent': '_agent_rpc_service',
-        'list_agents': '_agent_rpc_service',
-        'get_agent': '_agent_rpc_service',
-        'delete_agent': '_agent_rpc_service',
+        "register_agent": "_agent_rpc_service",
+        "update_agent": "_agent_rpc_service",
+        "list_agents": "_agent_rpc_service",
+        "get_agent": "_agent_rpc_service",
+        "delete_agent": "_agent_rpc_service",
         # UserProvisioningService
-        'provision_user': '_user_provisioning_service',
-        'deprovision_user': '_user_provisioning_service',
+        "provision_user": "_user_provisioning_service",
+        "deprovision_user": "_user_provisioning_service",
         # SandboxRPCService
-        'sandbox_create': '_sandbox_rpc_service',
-        'sandbox_run': '_sandbox_rpc_service',
-        'sandbox_validate': '_sandbox_rpc_service',
-        'sandbox_pause': '_sandbox_rpc_service',
-        'sandbox_resume': '_sandbox_rpc_service',
-        'sandbox_stop': '_sandbox_rpc_service',
-        'sandbox_list': '_sandbox_rpc_service',
-        'sandbox_status': '_sandbox_rpc_service',
-        'sandbox_get_or_create': '_sandbox_rpc_service',
-        'sandbox_connect': '_sandbox_rpc_service',
-        'sandbox_disconnect': '_sandbox_rpc_service',
+        "sandbox_create": "_sandbox_rpc_service",
+        "sandbox_run": "_sandbox_rpc_service",
+        "sandbox_validate": "_sandbox_rpc_service",
+        "sandbox_pause": "_sandbox_rpc_service",
+        "sandbox_resume": "_sandbox_rpc_service",
+        "sandbox_stop": "_sandbox_rpc_service",
+        "sandbox_list": "_sandbox_rpc_service",
+        "sandbox_status": "_sandbox_rpc_service",
+        "sandbox_get_or_create": "_sandbox_rpc_service",
+        "sandbox_connect": "_sandbox_rpc_service",
+        "sandbox_disconnect": "_sandbox_rpc_service",
         # MetadataExportService
-        'export_metadata': '_metadata_export_service',
-        'import_metadata': '_metadata_export_service',
+        "export_metadata": "_metadata_export_service",
+        "import_metadata": "_metadata_export_service",
         # MountCoreService
-        'add_mount': '_mount_core_service',
-        'remove_mount': '_mount_core_service',
-        'list_connectors': '_mount_core_service',
-        'list_mounts': '_mount_core_service',
-        'get_mount': '_mount_core_service',
-        'has_mount': '_mount_core_service',
+        "add_mount": "_mount_core_service",
+        "remove_mount": "_mount_core_service",
+        "list_connectors": "_mount_core_service",
+        "list_mounts": "_mount_core_service",
+        "get_mount": "_mount_core_service",
+        "has_mount": "_mount_core_service",
         # MountPersistService
-        'save_mount': '_mount_persist_service',
-        'list_saved_mounts': '_mount_persist_service',
-        'load_mount': '_mount_persist_service',
-        'delete_saved_mount': '_mount_persist_service',
+        "save_mount": "_mount_persist_service",
+        "list_saved_mounts": "_mount_persist_service",
+        "load_mount": "_mount_persist_service",
+        "delete_saved_mount": "_mount_persist_service",
         # SearchService (list/glob/grep are thin forwarders, not __getattr__)
         # asemantic_search* are in _SERVICE_ALIASES (name transformation: a-prefix removed)
-        'glob_batch': 'search_service',
+        "glob_batch": "search_service",
         # TaskQueueService
-        'get_task': 'task_queue_service',
-        'cancel_task': 'task_queue_service',
+        "get_task": "task_queue_service",
+        "cancel_task": "task_queue_service",
     }
 
     # Special aliases where service method name differs
     _SERVICE_ALIASES: dict[str, tuple[str, str]] = {
-        'list_memories': ('_workspace_rpc_service', 'list_registered_memories'),
-        'sandbox_available': ('_sandbox_rpc_service', 'sandbox_available'),
-        'get_sync_job': ('_sync_job_service', 'get_job'),
-        'list_sync_jobs': ('_sync_job_service', 'list_jobs'),
-        'load_all_saved_mounts': ('_mount_persist_service', 'load_all_mounts'),
+        "list_memories": ("_workspace_rpc_service", "list_registered_memories"),
+        "sandbox_available": ("_sandbox_rpc_service", "sandbox_available"),
+        "get_sync_job": ("_sync_job_service", "get_job"),
+        "list_sync_jobs": ("_sync_job_service", "list_jobs"),
+        "load_all_saved_mounts": ("_mount_persist_service", "load_all_mounts"),
         # Dir visibility cache: NexusFS method names → cache method names
-        'get_dir_visibility_cache_metrics': ('_dir_visibility_cache', 'get_metrics'),
-        'clear_dir_visibility_cache': ('_dir_visibility_cache', 'clear'),
+        "get_dir_visibility_cache_metrics": ("_dir_visibility_cache", "get_metrics"),
+        "clear_dir_visibility_cache": ("_dir_visibility_cache", "clear"),
         # SearchService async methods: a-prefix removed when calling service
-        'asemantic_search': ('search_service', 'semantic_search'),
-        'asemantic_search_index': ('search_service', 'semantic_search_index'),
-        'asemantic_search_stats': ('search_service', 'semantic_search_stats'),
+        "asemantic_search": ("search_service", "semantic_search"),
+        "asemantic_search_index": ("search_service", "semantic_search_index"),
+        "asemantic_search_stats": ("search_service", "semantic_search_stats"),
         # SyncService / SyncJobService (Issue #2033)
-        'sync_mount': ('_sync_service', 'sync_mount_flat'),
-        'sync_mount_async': ('_sync_job_service', 'sync_mount_async'),
-        'cancel_sync_job': ('_sync_job_service', 'cancel_sync_job'),
+        "sync_mount": ("_sync_service", "sync_mount_flat"),
+        "sync_mount_async": ("_sync_job_service", "sync_mount_async"),
+        "cancel_sync_job": ("_sync_job_service", "cancel_sync_job"),
         # VersionService async methods (Issue #2033)
-        'aget_version': ('version_service', 'get_version'),
-        'alist_versions': ('version_service', 'list_versions'),
-        'arollback': ('version_service', 'rollback'),
-        'adiff_versions': ('version_service', 'diff_versions'),
+        "aget_version": ("version_service", "get_version"),
+        "alist_versions": ("version_service", "list_versions"),
+        "arollback": ("version_service", "rollback"),
+        "adiff_versions": ("version_service", "diff_versions"),
     }
 
     def __getattr__(self, name: str) -> Any:
@@ -1113,15 +1136,285 @@ class NexusFS(  # type: ignore[misc]
                 return getattr(svc, svc_method)
 
         # Standard forwarding (same method name on service)
-        svc_attr = NexusFS._SERVICE_METHODS.get(name)
-        if svc_attr is not None:
-            svc = self.__dict__.get(svc_attr)
+        svc_attr_std = NexusFS._SERVICE_METHODS.get(name)
+        if svc_attr_std is not None:
+            svc = self.__dict__.get(svc_attr_std)
             if svc is not None:
                 return getattr(svc, name)
 
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
+    # ------------------------------------------------------------------
     # Abstract method forwarders (ABCMeta requires real definitions)
+    # These satisfy the NexusFilesystem ABC while delegating to services.
+    # ------------------------------------------------------------------
+
+    # --- Workspace Versioning (→ _workspace_rpc_service) ---
+
+    def workspace_snapshot(
+        self,
+        workspace_path: str | None = None,
+        description: str | None = None,
+        tags: builtins.list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.workspace_snapshot(
+            workspace_path=workspace_path,
+            description=description,
+            tags=tags,
+        )
+
+    def workspace_restore(
+        self,
+        snapshot_number: int,
+        workspace_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.workspace_restore(
+            snapshot_number=snapshot_number,
+            workspace_path=workspace_path,
+        )
+
+    def workspace_log(
+        self,
+        workspace_path: str | None = None,
+        limit: int = 100,
+    ) -> builtins.list[dict[str, Any]]:
+        return self._workspace_rpc_service.workspace_log(
+            workspace_path=workspace_path,
+            limit=limit,
+        )
+
+    def workspace_diff(
+        self,
+        snapshot_1: int,
+        snapshot_2: int,
+        workspace_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.workspace_diff(
+            snapshot_1=snapshot_1,
+            snapshot_2=snapshot_2,
+            workspace_path=workspace_path,
+        )
+
+    # --- Workspace Registry (→ _workspace_rpc_service) ---
+
+    def register_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        ttl: Any | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.register_workspace(
+            path=path,
+            name=name,
+            description=description,
+            created_by=created_by,
+            tags=tags,
+            metadata=metadata,
+            session_id=session_id,
+            ttl=ttl,
+        )
+
+    def unregister_workspace(self, path: str) -> bool:
+        return self._workspace_rpc_service.unregister_workspace(path=path)
+
+    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
+        return self._workspace_rpc_service.list_workspaces(context=context)
+
+    def get_workspace_info(self, path: str) -> dict | None:
+        return self._workspace_rpc_service.get_workspace_info(path=path)
+
+    # --- Memory Registry (→ _workspace_rpc_service) ---
+
+    def register_memory(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        ttl: Any | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.register_memory(
+            path=path,
+            name=name,
+            description=description,
+            created_by=created_by,
+            tags=tags,
+            metadata=metadata,
+            session_id=session_id,
+            ttl=ttl,
+        )
+
+    def unregister_memory(self, path: str) -> bool:
+        return self._workspace_rpc_service.unregister_memory(path=path)
+
+    def list_memories(self) -> builtins.list[dict]:
+        return self._workspace_rpc_service.list_registered_memories()
+
+    def get_memory_info(self, path: str) -> dict | None:
+        return self._workspace_rpc_service.get_memory_info(path=path)
+
+    # --- Sandbox Operations (→ _sandbox_rpc_service) ---
+
+    def sandbox_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = "e2b",
+        template_id: str | None = None,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_create(
+            name=name,
+            ttl_minutes=ttl_minutes,
+            provider=provider,
+            template_id=template_id,
+            context=context,
+        )
+
+    def sandbox_get_or_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = None,
+        template_id: str | None = None,
+        verify_status: bool = True,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_get_or_create(
+            name=name,
+            ttl_minutes=ttl_minutes,
+            provider=provider,
+            template_id=template_id,
+            verify_status=verify_status,
+            context=context,
+        )
+
+    def sandbox_run(
+        self,
+        sandbox_id: str,
+        language: str,
+        code: str,
+        timeout: int = 300,
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
+        context: dict | None = None,
+        as_script: bool = False,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_run(
+            sandbox_id=sandbox_id,
+            language=language,
+            code=code,
+            timeout=timeout,
+            nexus_url=nexus_url,
+            nexus_api_key=nexus_api_key,
+            context=context,
+            as_script=as_script,
+        )
+
+    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_pause(sandbox_id=sandbox_id, context=context)
+
+    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_resume(sandbox_id=sandbox_id, context=context)
+
+    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_stop(sandbox_id=sandbox_id, context=context)
+
+    def sandbox_list(
+        self,
+        context: dict | None = None,
+        verify_status: bool = False,
+        user_id: str | None = None,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        status: str | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_list(
+            context=context,
+            verify_status=verify_status,
+            user_id=user_id,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            status=status,
+        )
+
+    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_status(sandbox_id=sandbox_id, context=context)
+
+    def sandbox_connect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        mount_path: str = "/mnt/nexus",
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
+        agent_id: str | None = None,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_connect(
+            sandbox_id=sandbox_id,
+            provider=provider,
+            sandbox_api_key=sandbox_api_key,
+            mount_path=mount_path,
+            nexus_url=nexus_url,
+            nexus_api_key=nexus_api_key,
+            agent_id=agent_id,
+            context=context,
+        )
+
+    def sandbox_disconnect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_disconnect(
+            sandbox_id=sandbox_id,
+            provider=provider,
+            sandbox_api_key=sandbox_api_key,
+            context=context,
+        )
+
+    # --- Mount Operations (→ _mount_core_service) ---
+
+    def add_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+        io_profile: str = "balanced",
+    ) -> str:
+        return self._mount_core_service.add_mount(
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            io_profile=io_profile,
+        )
+
+    def remove_mount(self, mount_point: str) -> dict[str, Any]:
+        return self._mount_core_service.remove_mount(mount_point=mount_point)
+
+    def list_mounts(self) -> builtins.list[dict[str, Any]]:
+        return self._mount_core_service.list_mounts()
+
+    def get_mount(self, mount_point: str) -> dict[str, Any] | None:
+        return self._mount_core_service.get_mount(mount_point=mount_point)
+
+    # --- Search (list/glob/grep already have concrete impls below) ---
 
     def list(
         self,
@@ -1134,9 +1427,13 @@ class NexusFS(  # type: ignore[misc]
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         return self.search_service.list(
-            path=path, recursive=recursive, details=details,
-            show_parsed=show_parsed, context=context,
-            limit=limit, cursor=cursor,
+            path=path,
+            recursive=recursive,
+            details=details,
+            show_parsed=show_parsed,
+            context=context,
+            limit=limit,
+            cursor=cursor,
         )
 
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
@@ -1153,9 +1450,13 @@ class NexusFS(  # type: ignore[misc]
         context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
         return self.search_service.grep(
-            pattern=pattern, path=path, file_pattern=file_pattern,
-            ignore_case=ignore_case, max_results=max_results,
-            search_mode=search_mode, context=context,
+            pattern=pattern,
+            path=path,
+            file_pattern=file_pattern,
+            ignore_case=ignore_case,
+            max_results=max_results,
+            search_mode=search_mode,
+            context=context,
         )
 
     @rpc_expose(description="Batch get content IDs for multiple paths")
@@ -1218,6 +1519,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.sync_bridge import run_sync
 
         return run_sync(coro)
+
     @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
     def backfill_directory_index(
         self,
@@ -1243,14 +1545,23 @@ class NexusFS(  # type: ignore[misc]
         return {"entries_created": created, "prefix": prefix}
 
     @rpc_expose(description="Get specific file version")
-    def get_version(self, path: str, version: int, context: OperationContext | None = None) -> bytes:
+    def get_version(
+        self, path: str, version: int, context: OperationContext | None = None
+    ) -> bytes:
         """Get a specific version of a file."""
-        return cast(bytes, NexusFS._run_async(self.version_service.get_version(path, version, context)))
+        return cast(
+            bytes, NexusFS._run_async(self.version_service.get_version(path, version, context))
+        )
 
     @rpc_expose(description="List file versions")
-    def list_versions(self, path: str, context: OperationContext | None = None) -> list[dict[str, Any]]:
+    def list_versions(
+        self, path: str, context: OperationContext | None = None
+    ) -> list[dict[str, Any]]:
         """List all versions of a file."""
-        return cast(list[dict[str, Any]], NexusFS._run_async(self.version_service.list_versions(path, context)))
+        return cast(
+            list[dict[str, Any]],
+            NexusFS._run_async(self.version_service.list_versions(path, context)),
+        )
 
     @rpc_expose(description="Rollback file to previous version")
     def rollback(self, path: str, version: int, context: OperationContext | None = None) -> None:
@@ -1258,13 +1569,24 @@ class NexusFS(  # type: ignore[misc]
         cast(None, NexusFS._run_async(self.version_service.rollback(path, version, context)))
 
     @rpc_expose(description="Compare file versions")
-    def diff_versions(self, path: str, v1: int, v2: int, mode: str = "metadata", context: OperationContext | None = None) -> dict[str, Any] | str:
+    def diff_versions(
+        self,
+        path: str,
+        v1: int,
+        v2: int,
+        mode: str = "metadata",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | str:
         """Compare two versions of a file."""
-        return cast(dict[str, Any] | str, NexusFS._run_async(self.version_service.diff_versions(path, v1, v2, mode, context)))
+        return cast(
+            dict[str, Any] | str,
+            NexusFS._run_async(self.version_service.diff_versions(path, v1, v2, mode, context)),
+        )
 
     def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
         """Extract subject from operation context."""
         from nexus.core.context_utils import get_subject_from_context
+
         return get_subject_from_context(context)
 
     # sync_mount, sync_mount_async, cancel_sync_job → _SERVICE_ALIASES (Issue #2033)

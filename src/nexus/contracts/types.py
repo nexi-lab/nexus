@@ -25,12 +25,35 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import IntFlag, StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.read_set import ReadSet
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class VFSOperations(Protocol):
+    """Minimal sync VFS interface that extracted services depend on.
+
+    NexusFS satisfies this naturally.  Services receive it via DI so they
+    never import from ``nexus.core`` at runtime.
+    """
+
+    def mkdir(
+        self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
+    ) -> None: ...
+
+    def write(self, path: str, content: bytes | str, context: Any = None, **kw: Any) -> Any: ...
+
+    def read(self, path: str, context: Any = None, **kw: Any) -> bytes: ...
+
+    def exists(self, path: str, context: Any = None) -> bool: ...
+
+    def list(self, path: str = "/", **kw: Any) -> list: ...
+
+    def delete(self, path: str, **kw: Any) -> None: ...
 
 
 class Permission(IntFlag):
@@ -228,6 +251,35 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
 # ---------------------------------------------------------------------------
 # Transaction Protocol (moved from nexus.bricks.pay.audit_types, Issue #2129)
 # ---------------------------------------------------------------------------
+
+
+def parse_operation_context(context: OperationContext | dict | None = None) -> OperationContext:
+    """Parse a context dict or OperationContext into a canonical OperationContext.
+
+    This is the tier-neutral equivalent of ``nexus.core.context_utils.parse_context``.
+    Services in ``nexus.services.*`` should import from here to avoid depending on
+    ``nexus.core``.
+
+    Args:
+        context: Optional dict or OperationContext.
+
+    Returns:
+        OperationContext instance with sensible defaults.
+    """
+    if isinstance(context, OperationContext):
+        return context
+
+    if context is None:
+        context = {}
+
+    return OperationContext(
+        user_id=context.get("user_id", "system"),
+        groups=context.get("groups", []),
+        zone_id=context.get("zone_id"),
+        agent_id=context.get("agent_id"),
+        is_admin=context.get("is_admin", False),
+        is_system=context.get("is_system", False),
+    )
 
 
 class TransactionProtocol(StrEnum):

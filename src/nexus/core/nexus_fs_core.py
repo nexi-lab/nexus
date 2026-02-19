@@ -2600,7 +2600,9 @@ class NexusFSCoreMixin:
             for path in paths:
                 meta = existing_metadata.get(path)
                 if meta is not None:
-                    self._permission_checker.check(path, Permission.WRITE, context, file_metadata=meta)
+                    self._permission_checker.check(
+                        path, Permission.WRITE, context, file_metadata=meta
+                    )
 
         now = datetime.now(UTC)
         metadata_list: list[FileMetadata] = []

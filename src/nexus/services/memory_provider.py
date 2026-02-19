@@ -76,7 +76,7 @@ class MemoryProvider:
 
             engine = None
             if self._session_factory is not None:
-                engine = self._session_factory.kw.get("bind")  # type: ignore[union-attr]
+                engine = getattr(self._session_factory, "kw", {}).get("bind")  # type: ignore[union-attr]
 
             self._memory_api = MemoryWithPaging(
                 session=session,

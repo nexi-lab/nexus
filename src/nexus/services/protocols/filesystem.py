@@ -115,11 +115,14 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def delete(self, path: str) -> None:
+    def delete(self, path: str) -> Any:
         """Delete a file.
 
         Args:
             path: Virtual path to delete
+
+        Returns:
+            Implementation-defined result (may be None or metadata dict).
         """
         ...
 

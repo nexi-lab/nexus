@@ -2695,6 +2695,22 @@ class NexusFSCoreMixin:
                 agent_id=agent_id,
             )
 
+        # Issue #625: Fire post-mutation hooks for each file in the batch
+        new_revision = self._increment_zone_revision()
+        for metadata in metadata_list:
+            is_new = existing_metadata.get(metadata.path) is None
+            self._fire_post_mutation_hooks(
+                MutationOp.WRITE,
+                metadata.path,
+                zone_id or ROOT_ZONE_ID,
+                new_revision,
+                agent_id=agent_id,
+                etag=metadata.etag,
+                size=metadata.size,
+                version=metadata.version,
+                is_new=is_new,
+            )
+
         # Issue #548: Create parent tuples and grant direct_owner for new files
         # This ensures agents can read files they create (via user inheritance)
         # PERF OPTIMIZATION: Use batch operations instead of individual calls (20x faster)

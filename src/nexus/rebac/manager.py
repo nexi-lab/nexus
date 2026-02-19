@@ -152,7 +152,7 @@ class ReBACManager:
         self._tuple_version: int = 0
 
         # Compose TupleRepository for data access delegation (Issue #725: read/write split)
-        self._repo = TupleRepository(engine, read_engine=read_engine)
+        self._repo = TupleRepository(engine, read_engine=read_engine, is_postgresql=is_postgresql)
 
         # Compose graph traversal and expand engines
         self._computer = PermissionComputer(self._repo, self.get_namespace, max_depth)
@@ -204,6 +204,7 @@ class ReBACManager:
                 engine=engine,
                 cache_enabled=True,
                 cache_max_size=100_000,
+                is_postgresql=is_postgresql,
             )
 
         # Tiger Cache for materialized permissions (Issue #682)
@@ -217,16 +218,18 @@ class ReBACManager:
                 TigerResourceMap,
             )
 
-            resource_map = TigerResourceMap(engine)
+            resource_map = TigerResourceMap(engine, is_postgresql=is_postgresql)
             self._tiger_cache = TigerCache(
                 engine=engine,
                 resource_map=resource_map,
                 rebac_manager=self,
+                is_postgresql=is_postgresql,
             )
             self._tiger_updater = TigerCacheUpdater(
                 engine=engine,
                 tiger_cache=self._tiger_cache,
                 rebac_manager=self,
+                is_postgresql=is_postgresql,
             )
 
         # Issue #1459 Phase 12: Tiger Cache facade
@@ -239,6 +242,7 @@ class ReBACManager:
         self._directory_expander = DirectoryExpander(
             engine=engine,
             tiger_cache=self._tiger_cache,
+            is_postgresql=is_postgresql,
         )
 
         # Issue #1459 Phase 15+: Zone-aware graph traversal
@@ -266,6 +270,7 @@ class ReBACManager:
             rebac_check_single=self.rebac_check,
             cache_result=self._cache_check_result,
             tuple_version=getattr(self, "_tuple_version", 0),
+            is_postgresql=is_postgresql,
         )
 
         # Iterator cache for paginated list operations (Issue #722)
@@ -2867,7 +2872,9 @@ class ReBACManager:
 
         Delegates to consistency.revision module (Issue #1459).
         """
-        return increment_version_token(self.engine, self._repo, zone_id)
+        return increment_version_token(
+            self.engine, self._repo, zone_id, is_postgresql=self._is_postgresql
+        )
 
     def _get_cached_check_zone_aware_bounded(
         self,

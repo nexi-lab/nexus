@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 def increment_version_token(
     engine: Engine,
     zone_id: str = "root",
+    *,
+    is_postgresql: bool = False,
 ) -> str:
     """Atomically increment and return the version token for a zone.
 
@@ -55,7 +57,7 @@ def increment_version_token(
     Returns:
         Monotonic version token string (e.g., "v123")
     """
-    if engine.dialect.name == "postgresql":
+    if is_postgresql:
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         stmt = (

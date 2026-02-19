@@ -356,7 +356,11 @@ class SkillService:
             is_public = normalized in public_set
 
             # Fast-path: public and shared skills are always readable
-            if not is_public and normalized not in shared_set and not self._can_read_skill(skill_path, context):
+            if (
+                not is_public
+                and normalized not in shared_set
+                and not self._can_read_skill(skill_path, context)
+            ):
                 continue
 
             metadata = self._load_skill_metadata(skill_path, context, is_public=is_public)

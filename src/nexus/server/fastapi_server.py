@@ -1617,9 +1617,7 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     # (moved from here to avoid being gated on OAuth credentials)
 
 
-def _discover_exposed_methods(
-    nexus_fs: NexusFS, *additional_sources: Any
-) -> dict[str, Any]:
+def _discover_exposed_methods(nexus_fs: NexusFS, *additional_sources: Any) -> dict[str, Any]:
     """Discover all methods marked with @rpc_expose decorator.
 
     Scans NexusFS and any additional sources (brick services) for methods

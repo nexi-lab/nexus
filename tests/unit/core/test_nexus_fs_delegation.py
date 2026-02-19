@@ -346,18 +346,14 @@ class TestSkillServiceBackwardCompat:
 
     def test_skills_discover_via_getattr(self, mock_fs, context):
         """skills_discover dispatches to skill_service.rpc_discover via __getattr__."""
-        mock_fs.skill_service.rpc_discover = MagicMock(
-            return_value={"skills": [], "count": 0}
-        )
+        mock_fs.skill_service.rpc_discover = MagicMock(return_value={"skills": [], "count": 0})
         result = mock_fs.skills_discover("all", context)
         assert result == {"skills": [], "count": 0}
 
     def test_skills_export_via_getattr(self, mock_fs, context):
         """skills_export dispatches to skill_package_service.export via __getattr__."""
         mock_fs.skill_package_service = MagicMock()
-        mock_fs.skill_package_service.export = MagicMock(
-            return_value={"path": "/tmp/test.skill"}
-        )
+        mock_fs.skill_package_service.export = MagicMock(return_value={"path": "/tmp/test.skill"})
         result = mock_fs.skills_export(
             skill_path="/skills/test.py",
             format="generic",
@@ -368,9 +364,7 @@ class TestSkillServiceBackwardCompat:
     def test_skills_import_via_getattr(self, mock_fs, context):
         """skills_import dispatches to skill_package_service.import_skill."""
         mock_fs.skill_package_service = MagicMock()
-        mock_fs.skill_package_service.import_skill = MagicMock(
-            return_value={"imported": True}
-        )
+        mock_fs.skill_package_service.import_skill = MagicMock(return_value={"imported": True})
         result = mock_fs.skills_import(
             source_path="/tmp/test.skill",
             context=context,

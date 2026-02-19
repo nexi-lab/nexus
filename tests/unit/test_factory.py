@@ -246,6 +246,7 @@ class TestBootBrickServices:
         result = _boot_brick_services(ctx, kernel)
 
         expected_keys = {
+            "agent_event_log",
             "wallet_provisioner",
             "manifest_resolver",
             "manifest_metrics",

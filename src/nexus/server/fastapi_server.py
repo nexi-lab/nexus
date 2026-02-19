@@ -1461,7 +1461,9 @@ def create_app(
         "1",
         "yes",
     )
-    redis_url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+    from nexus.lib.env import get_dragonfly_url, get_redis_url
+
+    redis_url = get_redis_url() or get_dragonfly_url()
 
     limiter = Limiter(
         key_func=_get_rate_limit_key,

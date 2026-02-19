@@ -16,8 +16,8 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
-    from nexus.rebac.cache.tiger.updater import TigerCacheUpdater
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
+    from nexus.services.permissions.cache.tiger.updater import TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
 

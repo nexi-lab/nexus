@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
+from nexus.bricks.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 
 if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager

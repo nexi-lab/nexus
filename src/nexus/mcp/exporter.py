@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
 
 if TYPE_CHECKING:
-    from nexus.skills.protocols import NexusFilesystem
+    from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 

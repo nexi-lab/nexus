@@ -371,10 +371,14 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize CacheBrick for Dragonfly/Redis or NullCacheStore fallback (Issue #1524)
     # CacheBrick owns all cache domain services with lifecycle management
     try:
-        cache_brick = getattr(_app.state.nexus_fs, "_cache_brick", None)
+        cache_brick = getattr(
+            getattr(_app.state.nexus_fs, "_brick_services", None),
+            "cache_brick",
+            None,
+        )
         if cache_brick is not None:
             await cache_brick.start()
-            _app.state.cache_factory = cache_brick  # Backward-compat alias
+            _app.state.cache_brick = cache_brick
             logger.info("CacheBrick started (Issue #1524)")
 
             # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
@@ -727,10 +731,11 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
 
+            _bg_t = getattr(getattr(_app.state, "profile_tuning", None), "background_task", None)
             _app.state.agent_registry = AgentRegistry(
                 session_factory=_app.state.nexus_fs.SessionLocal,
                 entity_registry=getattr(_app.state.nexus_fs, "_entity_registry", None),
-                flush_interval=60,
+                flush_interval=_bg_t.heartbeat_flush_interval if _bg_t else 60,
             )
             # Inject into NexusFS for RPC methods
             _app.state.nexus_fs._agent_registry = _app.state.agent_registry
@@ -861,11 +866,18 @@ async def lifespan(_app: FastAPI) -> Any:
             stale_agent_detection_task,
         )
 
+        _bg_t2 = getattr(getattr(_app.state, "profile_tuning", None), "background_task", None)
         _heartbeat_task = asyncio.create_task(
-            heartbeat_flush_task(_app.state.agent_registry, interval_seconds=60)
+            heartbeat_flush_task(
+                _app.state.agent_registry,
+                interval_seconds=_bg_t2.heartbeat_flush_interval if _bg_t2 else 60,
+            )
         )
         _stale_detection_task = asyncio.create_task(
-            stale_agent_detection_task(_app.state.agent_registry, interval_seconds=300)
+            stale_agent_detection_task(
+                _app.state.agent_registry,
+                interval_seconds=_bg_t2.stale_agent_check_interval if _bg_t2 else 300,
+            )
         )
         logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
@@ -944,7 +956,12 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Convert SQLAlchemy URL to asyncpg DSN
             pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-            _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+            _pool_tuning = _app.state.profile_tuning.pool
+            _scheduler_pool = await asyncpg.create_pool(
+                pg_dsn,
+                min_size=_pool_tuning.asyncpg_min_size,
+                max_size=_pool_tuning.asyncpg_max_size,
+            )
 
             # Create scheduled_tasks table if it doesn't exist
             async with _scheduler_pool.acquire() as conn:
@@ -1167,13 +1184,13 @@ async def lifespan(_app: FastAPI) -> Any:
     if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
         _app.state.nexus_fs.close()
 
-    # Shutdown CacheBrick (Issue #1524, replaces #1075 cache_factory)
-    if hasattr(_app.state, "cache_factory") and _app.state.cache_factory:
+    # Shutdown CacheBrick (Issue #1524)
+    if hasattr(_app.state, "cache_brick") and _app.state.cache_brick:
         try:
-            await _app.state.cache_factory.stop()
+            await _app.state.cache_brick.stop()
             logger.info("CacheBrick stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down cache factory: {e}")
+            logger.warning(f"Error shutting down CacheBrick: {e}")
 
     # Shutdown Pyroscope continuous profiling (Issue #763)
     try:
@@ -1322,8 +1339,13 @@ def create_app(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
     )
 
-    # Discover exposed methods
-    app.state.exposed_methods = _discover_exposed_methods(nexus_fs)
+    # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
+    _brick_sources: list[Any] = []
+    for _attr_name in ("skill_service", "skill_package_service"):
+        _brick_svc = getattr(nexus_fs, _attr_name, None)
+        if _brick_svc is not None:
+            _brick_sources.append(_brick_svc)
+    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)
     app.state.async_nexus_fs = None
@@ -1332,7 +1354,7 @@ def create_app(
     app.state.search_daemon = None
     app.state.search_daemon_enabled = False
     app.state.directory_grant_expander = None
-    app.state.cache_factory = None
+    app.state.cache_brick = None
     app.state.websocket_manager = None
     app.state.reactive_subscription_manager = None
     app.state.agent_registry = None
@@ -1358,7 +1380,10 @@ def create_app(
                 set_subscription_manager,
             )
 
-            app.state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
+            app.state.subscription_manager = SubscriptionManager(
+                nexus_fs.SessionLocal,
+                webhook_timeout=app.state.profile_tuning.network.webhook_timeout,
+            )
             nexus_fs.subscription_manager = app.state.subscription_manager
             set_subscription_manager(app.state.subscription_manager)
             # Issue #625: Forward subscription_manager to workflow dispatch service
@@ -1612,30 +1637,52 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     # (moved from here to avoid being gated on OAuth credentials)
 
 
-def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
-    """Discover all methods marked with @rpc_expose decorator."""
-    exposed = {}
+def _discover_exposed_methods(nexus_fs: NexusFS, *additional_sources: Any) -> dict[str, Any]:
+    """Discover all methods marked with @rpc_expose decorator.
 
-    for name in dir(nexus_fs):
-        if name.startswith("_"):
+    Scans NexusFS and any additional sources (brick services) for methods
+    decorated with @rpc_expose. This allows bricks to expose RPC methods
+    directly without NexusFS delegation boilerplate (Issue #2035, Follow-up 1).
+
+    Args:
+        nexus_fs: The NexusFS kernel instance (always scanned).
+        *additional_sources: Brick service instances to scan for @rpc_expose.
+    """
+    exposed: dict[str, Any] = {}
+
+    for source in (nexus_fs, *additional_sources):
+        if source is None:
             continue
 
-        try:
-            attr = getattr(nexus_fs, name)
-            if callable(attr) and hasattr(attr, "_rpc_exposed"):
-                method_name = getattr(attr, "_rpc_name", name)
-                # Issue #2136: Block rpc_name bypass — skip private method names
-                if method_name.startswith("_"):
-                    logger.warning(
-                        "Skipping RPC method with private rpc_name: %s -> %s", name, method_name
-                    )
-                    continue
-                exposed[method_name] = attr
-                logger.debug(f"Discovered RPC method: {method_name}")
-        except Exception:
-            continue
+        source_name = type(source).__name__
+        for name in dir(source):
+            if name.startswith("_"):
+                continue
 
-    logger.info(f"Auto-discovered {len(exposed)} RPC methods")
+            try:
+                attr = getattr(source, name)
+                if callable(attr) and hasattr(attr, "_rpc_exposed"):
+                    method_name = getattr(attr, "_rpc_name", name)
+                    # Issue #2136: Block rpc_name bypass — skip private method names
+                    if method_name.startswith("_"):
+                        logger.warning(
+                            "Skipping RPC method with private rpc_name: %s -> %s",
+                            name,
+                            method_name,
+                        )
+                        continue
+                    if method_name in exposed:
+                        logger.debug(
+                            "RPC method %s from %s overrides previous source",
+                            method_name,
+                            source_name,
+                        )
+                    exposed[method_name] = attr
+                    logger.debug("Discovered RPC method: %s (from %s)", method_name, source_name)
+            except Exception:
+                continue
+
+    logger.info("Auto-discovered %d RPC methods", len(exposed))
     return exposed
 
 

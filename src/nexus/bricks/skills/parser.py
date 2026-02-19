@@ -8,8 +8,8 @@ from typing import Any
 
 import yaml
 
-from nexus.skills.exceptions import SkillParseError
-from nexus.skills.models import Skill, SkillMetadata
+from nexus.bricks.skills.exceptions import SkillParseError
+from nexus.bricks.skills.models import Skill, SkillMetadata
 
 logger = logging.getLogger(__name__)
 

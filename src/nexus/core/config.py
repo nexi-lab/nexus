@@ -236,10 +236,17 @@ class BrickServices:
     snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
     task_queue_service: Any = None  # TASK_QUEUE brick (Issue #655)
 
+    # --- Cache Brick (Issue #1524) ---
+    cache_brick: Any = None  # CacheBrick — owns all cache domain services
+
     # --- IPC Brick (Issue #1727, LEGO §8) ---
     ipc_storage_driver: Any = None  # IPCStorageDriver (RecordStore or VFS)
     ipc_vfs_driver: Any = None  # IPCVFSDriver (Backend mounted at /agents)
     ipc_provisioner: Any = None  # AgentProvisioner
+
+    # --- Skills Brick (Issue #2035) ---
+    skill_service: Any = None  # SkillService (protocol-based)
+    skill_package_service: Any = None  # SkillPackageService
 
 
 # ---------------------------------------------------------------------------

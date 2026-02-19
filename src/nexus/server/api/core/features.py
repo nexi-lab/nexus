@@ -30,6 +30,10 @@ class PerformanceTuningInfo(BaseModel):
     default_http_timeout: float = Field(description="Default HTTP timeout (seconds)")
     db_pool_size: int = Field(description="DB connection pool size")
     search_max_concurrency: int = Field(description="Search indexing concurrency")
+    heartbeat_flush_interval: int = Field(description="Heartbeat flush interval (seconds)")
+    default_max_retries: int = Field(description="Default retry count")
+    blob_operation_timeout: float = Field(description="Blob storage operation timeout (seconds)")
+    asyncpg_max_size: int = Field(description="AsyncPG connection pool max size")
 
 
 class FeaturesResponse(BaseModel):

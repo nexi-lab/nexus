@@ -4,7 +4,7 @@ Extracts shared non-I/O logic used by both RemoteNexusFS (sync) and
 AsyncRemoteNexusFS (async) to eliminate code duplication.
 
 Shared concerns:
-- Negative cache (Bloom filter) management
+- Negative cache management (via injectable NegativeCache protocol)
 - RPC error handling and exception mapping
 - Response parsing (base64 decoding, bytes format handling)
 - Zone/agent identity properties
@@ -24,6 +24,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.remote.negative_cache import NegativeCache, create_negative_cache
 from nexus.server.protocol import RPCErrorCode
 
 logger = logging.getLogger(__name__)
@@ -36,39 +37,33 @@ class BaseRemoteNexusFS:
     HTTP transport via _call_rpc() (sync or async).
     """
 
-    # Attributes set by subclass __init__ before calling _init_negative_cache
-    _negative_cache_capacity: int
-    _negative_cache_fp_rate: float
-    _negative_bloom: Any
+    _negative_cache: NegativeCache
     _zone_id: str | None
     _agent_id: str | None
 
     # ============================================================
-    # Negative Cache (Bloom Filter)
+    # Negative Cache
     # ============================================================
 
-    def _init_negative_cache(self) -> None:
-        """Initialize Bloom filter for negative caching of non-existent files.
+    def _init_negative_cache(
+        self,
+        negative_cache: NegativeCache | None = None,
+        capacity: int = 100_000,
+        fp_rate: float = 0.01,
+    ) -> None:
+        """Initialize or inject the negative cache.
 
-        Expects self._negative_cache_capacity, self._negative_cache_fp_rate
-        to be set before calling.
+        Args:
+            negative_cache: Pre-built cache instance (DI). If None, one is
+                created via the factory using capacity/fp_rate.
+            capacity: Bloom filter capacity (ignored when negative_cache given).
+            fp_rate: Bloom filter false-positive rate (ignored when
+                negative_cache given).
         """
-        try:
-            from nexus_fast import BloomFilter
-
-            self._negative_bloom = BloomFilter(
-                self._negative_cache_capacity, self._negative_cache_fp_rate
-            )
-            logger.debug(
-                f"Negative cache initialized: capacity={self._negative_cache_capacity}, "
-                f"fp_rate={self._negative_cache_fp_rate}, memory={self._negative_bloom.memory_bytes} bytes"
-            )
-        except ImportError:
-            logger.debug("nexus_fast not available, negative cache disabled")
-            self._negative_bloom = None
-        except Exception as e:
-            logger.warning(f"Failed to initialize negative cache: {e}")
-            self._negative_bloom = None
+        if negative_cache is not None:
+            self._negative_cache = negative_cache
+        else:
+            self._negative_cache = create_negative_cache(capacity, fp_rate)
 
     def _negative_cache_key(self, path: str) -> str:
         """Generate cache key with zone isolation."""
@@ -81,39 +76,31 @@ class BaseRemoteNexusFS:
             True if path is definitely non-existent (skip RPC)
             False if path might exist (need to check server)
         """
-        if self._negative_bloom is None:
-            return False
         key = self._negative_cache_key(path)
-        return bool(self._negative_bloom.might_exist(key))
+        return self._negative_cache.check(key)
 
     def _negative_cache_add(self, path: str) -> None:
         """Add path to negative cache (file confirmed to not exist)."""
-        if self._negative_bloom is None:
-            return
         key = self._negative_cache_key(path)
-        self._negative_bloom.add(key)
+        self._negative_cache.add(key)
 
     def _negative_cache_invalidate(self, path: str) -> None:
-        """Invalidate negative cache entry for path.
+        """Invalidate negative cache for path.
 
-        Note: Bloom filters don't support deletion, so we clear the entire filter
-        when invalidation is needed. This is acceptable because:
-        1. Write/delete operations are less frequent than reads
-        2. The filter will repopulate naturally as files are checked
+        Bloom filters don't support per-key deletion, so the underlying
+        cache is cleared entirely. This is acceptable because write/delete
+        operations are less frequent than reads and the cache repopulates
+        naturally.
         """
-        if self._negative_bloom is None:
-            return
-        # Bloom filters can't delete individual keys, so we clear the entire filter
-        # This is a trade-off: occasional full clear vs. complex counting bloom filter
-        self._negative_bloom.clear()
-        logger.debug(f"Negative cache cleared due to write/delete of {path}")
+        self._negative_cache.clear()
+        logger.debug("Negative cache cleared due to write/delete of %s", path)
 
     def _negative_cache_invalidate_bulk(self, paths: list[str]) -> None:
         """Invalidate negative cache for multiple paths."""
-        if self._negative_bloom is None or not paths:
+        if not paths:
             return
-        self._negative_bloom.clear()
-        logger.debug(f"Negative cache cleared due to bulk write/delete of {len(paths)} paths")
+        self._negative_cache.clear()
+        logger.debug("Negative cache cleared due to bulk write/delete of %d paths", len(paths))
 
     # ============================================================
     # Zone / Agent Identity Properties

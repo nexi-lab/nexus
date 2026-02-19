@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from nexus.search.mobile_config import (
@@ -21,10 +21,11 @@ from nexus.search.mobile_config import (
     detect_device_tier,
     get_config_for_tier,
 )
+from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v2/mobile", tags=["mobile"])
+router = APIRouter(prefix="/api/v2/mobile", tags=["mobile"], dependencies=[Depends(require_auth)])
 
 
 # =============================================================================

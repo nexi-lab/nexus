@@ -16,6 +16,7 @@ from httpx import ASGITransport, AsyncClient
 
 from nexus.backends.local import LocalBackend
 from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
+from nexus.server.dependencies import require_auth
 from nexus.services.chunked_upload_service import (
     ChunkedUploadConfig,
     ChunkedUploadService,
@@ -67,8 +68,14 @@ def upload_service(tmp_path: Path, tmp_backend: LocalBackend) -> ChunkedUploadSe
 def app(upload_service: ChunkedUploadService) -> FastAPI:
     """Create a FastAPI app with the tus router."""
     _app = FastAPI()
-    router = create_tus_uploads_router(get_upload_service=lambda: upload_service)
-    _app.include_router(router, prefix="/api/v2/uploads")
+    public_router, auth_router = create_tus_uploads_router(
+        get_upload_service=lambda: upload_service
+    )
+    _app.include_router(public_router, prefix="/api/v2/uploads")
+    _app.include_router(auth_router, prefix="/api/v2/uploads")
+    # Override require_auth for functional tests
+    _auth_result = {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
+    _app.dependency_overrides[require_auth] = lambda: _auth_result
     return _app
 
 

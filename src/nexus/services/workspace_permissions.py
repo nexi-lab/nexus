@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from nexus.contracts.exceptions import NexusPermissionError
 
 if TYPE_CHECKING:
-    from nexus.rebac.manager import ReBACManager
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ _READ_PERMISSIONS = frozenset(
 
 
 def check_workspace_permission(
-    rebac_manager: ReBACManager | None,
+    rebac_manager: ReBACBrickProtocol | None,
     workspace_path: str,
     permission: str,
     user_id: str | None = None,

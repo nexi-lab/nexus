@@ -286,12 +286,8 @@ class MessageSender:
         if envelope.sender == envelope.recipient:
             raise EnvelopeValidationError("Sender and recipient must be different")
 
-        # Sender/recipient must not contain path separators (prevents path traversal)
-        for field_name, value in [("sender", envelope.sender), ("recipient", envelope.recipient)]:
-            if "/" in value or "\\" in value:
-                raise EnvelopeValidationError(
-                    f"{field_name} must not contain path separators: '{value}'"
-                )
+        # Note: Agent ID validation (path separators, format) is done in
+        # MessageEnvelope field validators via validate_agent_id()
 
         # Payload size check
         payload_size = serialized_size if serialized_size is not None else len(envelope.to_bytes())
@@ -352,6 +348,8 @@ class MessageProcessor:
         max_handler_concurrency: int = DEFAULT_MAX_HANDLER_CONCURRENCY,
         verifier: MessageVerifier | None = None,
         signing_mode: SigningMode = SigningMode.OFF,
+        max_retries: int = 3,
+        retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
     ) -> None:
         self._storage = storage
         self._agent_id = agent_id
@@ -365,6 +363,8 @@ class MessageProcessor:
         self._handler_tasks: set[asyncio.Task[None]] = set()
         self._verifier = verifier
         self._signing_mode = signing_mode
+        self._max_retries = max_retries
+        self._retry_delays = retry_delays
 
     def _dedup_key(self, msg_id: str) -> str:
         """Zone-scoped cache key for message dedup."""
@@ -561,24 +561,41 @@ class MessageProcessor:
         if not await self._verify_signature(msg_path, envelope):
             return
 
-        # Invoke handler
-        try:
-            await self._handler(envelope)
-        except Exception as exc:
-            logger.error(
-                "Handler failed for message %s: %s",
-                envelope.id,
-                exc,
-                exc_info=True,
-            )
-            await self._dead_letter(
-                msg_path,
-                DLQReason.HANDLER_ERROR,
-                msg_id=envelope.id,
-                timestamp=envelope.timestamp,
-                detail=str(exc),
-            )
-            return
+        # Invoke handler with exponential backoff retry
+        for attempt in range(self._max_retries + 1):
+            try:
+                await self._handler(envelope)
+                break  # Success - exit retry loop
+            except Exception as exc:
+                if attempt < self._max_retries:
+                    # Retry with exponential backoff
+                    delay = self._retry_delays[min(attempt, len(self._retry_delays) - 1)]
+                    logger.warning(
+                        "Handler failed for message %s (attempt %d/%d), retrying in %.1fs: %s",
+                        envelope.id,
+                        attempt + 1,
+                        self._max_retries + 1,
+                        delay,
+                        exc,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    # Final attempt failed - dead letter
+                    logger.error(
+                        "Handler failed for message %s after %d attempts: %s",
+                        envelope.id,
+                        self._max_retries + 1,
+                        exc,
+                        exc_info=True,
+                    )
+                    await self._dead_letter(
+                        msg_path,
+                        DLQReason.HANDLER_ERROR,
+                        msg_id=envelope.id,
+                        timestamp=envelope.timestamp,
+                        detail=f"Failed after {self._max_retries + 1} attempts: {exc}",
+                    )
+                    return
 
         # Success: move to processed
         try:

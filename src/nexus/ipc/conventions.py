@@ -15,9 +15,14 @@ All functions are pure — they compose path strings with no I/O.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 AGENTS_ROOT = "/agents"
+
+# Agent ID validation pattern and limits
+AGENT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9:_\-\.]+$")
+MAX_AGENT_ID_LENGTH = 255
 
 # Subdirectory names within each agent's directory
 INBOX_DIR = "inbox"
@@ -35,6 +40,53 @@ AGENT_SUBDIRS: tuple[str, ...] = (
     DEAD_LETTER_DIR,
     TASKS_DIR,
 )
+
+
+def validate_agent_id(agent_id: str) -> str:
+    """Validate and normalize agent ID per IPC conventions.
+
+    Validates that agent_id:
+    - Is non-empty after stripping whitespace
+    - Does not exceed MAX_AGENT_ID_LENGTH (255 chars)
+    - Matches AGENT_ID_PATTERN (alphanumeric, colon, underscore, hyphen, dot)
+    - Does not contain path separators (prevents path traversal)
+
+    Args:
+        agent_id: The agent ID to validate.
+
+    Returns:
+        The normalized (stripped) agent ID.
+
+    Raises:
+        ValueError: If agent_id is invalid.
+
+    Examples:
+        >>> validate_agent_id("agent_123")
+        'agent_123'
+        >>> validate_agent_id("  agent:foo  ")
+        'agent:foo'
+        >>> validate_agent_id("")
+        Traceback (most recent call last):
+        ValueError: Agent ID must be non-empty
+        >>> validate_agent_id("agent/../../etc/passwd")
+        Traceback (most recent call last):
+        ValueError: Agent ID must not contain path separators: 'agent/../../etc/passwd'
+    """
+    if not agent_id or not agent_id.strip():
+        raise ValueError("Agent ID must be non-empty")
+
+    agent_id = agent_id.strip()
+
+    if len(agent_id) > MAX_AGENT_ID_LENGTH:
+        raise ValueError(f"Agent ID exceeds {MAX_AGENT_ID_LENGTH} chars: {len(agent_id)}")
+
+    if "/" in agent_id or "\\" in agent_id:
+        raise ValueError(f"Agent ID must not contain path separators: {agent_id!r}")
+
+    if not AGENT_ID_PATTERN.match(agent_id):
+        raise ValueError(f"Agent ID contains invalid characters: {agent_id!r}")
+
+    return agent_id
 
 
 def agent_dir(agent_id: str) -> str:

@@ -18,6 +18,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from nexus.ipc.conventions import validate_agent_id
+
 
 class MessageType(StrEnum):
     """Types of inter-agent messages."""
@@ -73,9 +75,7 @@ class MessageEnvelope(BaseModel):
     @field_validator("sender", "recipient")
     @classmethod
     def _validate_agent_ref(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Agent reference must be non-empty")
-        return v.strip()
+        return validate_agent_id(v)
 
     @field_validator("ttl_seconds")
     @classmethod
@@ -140,3 +140,47 @@ class MessageEnvelope(BaseModel):
             return cls.model_validate(parsed)
         except Exception as exc:
             raise EnvelopeValidationError(str(exc)) from exc
+
+    def create_reply(
+        self, payload: dict[str, Any], *, ttl_seconds: int | None = None
+    ) -> MessageEnvelope:
+        """Create a reply envelope for this message.
+
+        Automatically:
+        - Swaps sender and recipient (reply goes back to original sender)
+        - Copies correlation_id from this message
+        - Sets type to RESPONSE
+        - Generates new message ID and timestamp
+
+        Args:
+            payload: The reply payload.
+            ttl_seconds: Optional TTL for the reply. If None, inherits from this message.
+
+        Returns:
+            A new MessageEnvelope configured as a reply.
+
+        Example:
+            >>> request = MessageEnvelope(
+            ...     sender="agent_a", recipient="agent_b",
+            ...     type=MessageType.TASK, payload={"action": "process"}
+            ... )
+            >>> reply = request.create_reply({"status": "done"})
+            >>> reply.sender
+            'agent_b'
+            >>> reply.recipient
+            'agent_a'
+            >>> reply.type
+            <MessageType.RESPONSE: 'response'>
+            >>> reply.correlation_id == request.id
+            True
+        """
+        return MessageEnvelope.model_validate(
+            {
+                "from": self.recipient,  # Reply sender is original recipient
+                "to": self.sender,  # Reply goes to original sender
+                "type": MessageType.RESPONSE,
+                "payload": payload,
+                "correlation_id": self.id,  # Link reply to original message
+                "ttl_seconds": ttl_seconds if ttl_seconds is not None else self.ttl_seconds,
+            }
+        )

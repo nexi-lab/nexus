@@ -110,6 +110,31 @@ class ParseConfig:
     providers: tuple[dict[str, Any], ...] | None = None
 
 
+@dataclass(frozen=True)
+class IPCConfig:
+    """Inter-Process Communication (IPC) configuration (Issue #2037).
+
+    Controls message delivery limits, concurrency, delivery modes,
+    and deduplication for the filesystem-as-IPC subsystem.
+    """
+
+    # Message limits
+    max_inbox_size: int = 1000
+    max_payload_bytes: int = 1_048_576  # 1 MB
+    max_cold_concurrency: int = 100
+    max_handler_concurrency: int = 50
+
+    # Delivery mode: cold_only | hot_cold | hot_only
+    delivery_mode: str = "cold_only"
+
+    # Deduplication TTL (seconds)
+    dedup_ttl_seconds: int = 3600
+
+    # Retry configuration
+    max_retries: int = 3
+    retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0)
+
+
 # ---------------------------------------------------------------------------
 # KernelServices — Tier 0: boot-fatal kernel mechanisms
 # ---------------------------------------------------------------------------

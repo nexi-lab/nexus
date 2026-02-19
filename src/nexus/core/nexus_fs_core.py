@@ -294,11 +294,11 @@ class NexusFSCoreMixin:
         """
         if self._revision_notifier is None:
             try:
-                from nexus.core.revision_notifier import RevisionNotifier
+                from nexus.services.revision_notifier import RevisionNotifier
 
                 NexusFSCoreMixin._revision_notifier = RevisionNotifier()
             except Exception:
-                from nexus.core.revision_notifier import NullRevisionNotifier
+                from nexus.services.revision_notifier import NullRevisionNotifier
 
                 logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()

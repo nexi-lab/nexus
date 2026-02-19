@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
-from nexus.core.exceptions import ValidationError as CoreValidationError
+from nexus.contracts.exceptions import ValidationError as CoreValidationError
 
 if TYPE_CHECKING:
     from nexus.connectors.error_formatter import SkillErrorFormatter

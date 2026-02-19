@@ -437,7 +437,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # MCPService: Model Context Protocol operations
-        self.mcp_service = MCPService(nexus_fs=self)
+        self.mcp_service = MCPService(filesystem=self)
 
         # LLMService: LLM integration operations
         self.llm_service = LLMService(nexus_fs=self)

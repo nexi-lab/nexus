@@ -196,6 +196,7 @@ class TestBootSystemServices:
         expected_keys = {
             "agent_registry",
             "async_agent_registry",
+            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "async_vfs_router",

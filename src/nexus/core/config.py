@@ -203,6 +203,9 @@ class SystemServices:
     # Resiliency policies (Issue #1366)
     resiliency_manager: Any = None
 
+    # Agent eviction under resource pressure (Issue #2170)
+    eviction_manager: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure

@@ -321,6 +321,7 @@ class TestSystemServices:
         expected_fields = {
             "agent_registry",
             "async_agent_registry",
+            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "context_branch_service",

@@ -18,7 +18,6 @@ from nexus.rebac.entity_registry import EntityRegistry
 from nexus.services.memory.memory_api import Memory
 from nexus.storage.models import Base
 
-
 # ---------------------------------------------------------------------------
 # Fixtures (shared with existing test_enrichment_pipeline.py pattern)
 # ---------------------------------------------------------------------------

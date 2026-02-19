@@ -14,10 +14,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.rebac.entity_registry import EntityRegistry
 from nexus.bricks.memory.service import Memory
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
-
 
 # ---------------------------------------------------------------------------
 # Fixtures (shared with existing test_enrichment_pipeline.py pattern)

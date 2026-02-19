@@ -17,7 +17,6 @@ from nexus.services.memory.memory_api import Memory
 from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.storage.models import Base
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -197,10 +196,16 @@ class TestQueryMemories:
     def test_query_filters_superseded(self, router, session, backend, memory_api):
         """By default, query_memories filters out superseded memories."""
         memory_api.store(
-            content="v1", scope="user", namespace="ns", path_key="qf",
+            content="v1",
+            scope="user",
+            namespace="ns",
+            path_key="qf",
         )
         memory_api.store(
-            content="v2", scope="user", namespace="ns", path_key="qf",
+            content="v2",
+            scope="user",
+            namespace="ns",
+            path_key="qf",
         )
         results = router.query_memories(user_id="alice")
         # Only the current (non-superseded) version should appear
@@ -250,6 +255,7 @@ class TestCreateMemory:
     def test_create_with_version_history(self, router, backend, session):
         """create_memory() creates a version history entry."""
         from sqlalchemy import select
+
         from nexus.storage.models import VersionHistoryModel
 
         content_hash = _write_content(backend, b"versioned create")

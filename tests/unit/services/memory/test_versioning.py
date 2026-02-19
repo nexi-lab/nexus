@@ -23,7 +23,6 @@ from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.services.memory.versioning import MemoryVersioning
 from nexus.storage.models import Base
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -121,7 +120,7 @@ class TestListVersions:
 
     def test_list_versions_after_update(self, versioning, memory_api):
         """list_versions() returns multiple entries after upsert updates."""
-        id1 = memory_api.store(
+        memory_api.store(
             content="v1",
             scope="user",
             namespace="ver",
@@ -175,7 +174,7 @@ class TestRollback:
 
     def test_rollback_to_previous(self, versioning, memory_api):
         """rollback() restores the content_hash to the target version."""
-        id1 = memory_api.store(
+        memory_api.store(
             content="original",
             scope="user",
             namespace="rb",
@@ -219,7 +218,7 @@ class TestDiffVersions:
 
     def test_metadata_diff(self, versioning, memory_api):
         """diff_versions(mode='metadata') returns hash and size comparison."""
-        id1 = memory_api.store(
+        memory_api.store(
             content="diff v1",
             scope="user",
             namespace="diff_ns",
@@ -243,7 +242,7 @@ class TestDiffVersions:
 
     def test_content_diff(self, versioning, memory_api):
         """diff_versions(mode='content') returns a unified diff string."""
-        id1 = memory_api.store(
+        memory_api.store(
             content="line one\nline two\n",
             scope="user",
             namespace="cdiff",
@@ -311,7 +310,6 @@ class TestGcOldVersions:
 
     def test_gc_removes_old_superseded(self, versioning, memory_api, session):
         """gc_old_versions() removes superseded memories older than threshold."""
-        from nexus.storage.models import MemoryModel
 
         id1 = memory_api.store(
             content="gc v1",
@@ -340,10 +338,9 @@ class TestGcOldVersions:
 
     def test_gc_preserves_current(self, versioning, memory_api, session):
         """gc_old_versions() never removes current (non-superseded) memories."""
-        from nexus.storage.models import MemoryModel
 
         memory_id = memory_api.store(content="current memory", scope="user")
-        removed = versioning.gc_old_versions(older_than_days=0)
+        versioning.gc_old_versions(older_than_days=0)
 
         # Current memory should NOT be removed even with threshold=0
         model = versioning._memory_router.get_memory_by_id(memory_id)

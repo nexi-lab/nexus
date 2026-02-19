@@ -9,23 +9,22 @@ Validates that the Memory brick:
 from __future__ import annotations
 
 import ast
-import importlib
 import pathlib
-from typing import Any
 
 import pytest
-
 
 BRICK_ROOT = pathlib.Path(__file__).resolve().parents[4] / "src" / "nexus" / "bricks" / "memory"
 
 # Tolerated imports — stable leaf modules with zero internal dependencies
-TOLERATED_CORE_IMPORTS = frozenset({
-    "nexus.core.permissions",       # OperationContext, Permission (stable enums)
-    "nexus.core.temporal",          # parse_datetime, validate_temporal_params (stable leaf)
-    "nexus.core.temporal_resolver",  # resolve_temporal, extract_temporal_metadata (stable leaf)
-    "nexus.core.sync_bridge",       # run_sync (stable leaf)
-    "nexus.core.hash_fast",         # hash_content (stable leaf)
-})
+TOLERATED_CORE_IMPORTS = frozenset(
+    {
+        "nexus.core.permissions",  # OperationContext, Permission (stable enums)
+        "nexus.core.temporal",  # parse_datetime, validate_temporal_params (stable leaf)
+        "nexus.core.temporal_resolver",  # resolve_temporal, extract_temporal_metadata (stable leaf)
+        "nexus.core.sync_bridge",  # run_sync (stable leaf)
+        "nexus.core.hash_fast",  # hash_content (stable leaf)
+    }
+)
 
 
 def _collect_imports(filepath: pathlib.Path) -> list[str]:
@@ -37,9 +36,8 @@ def _collect_imports(filepath: pathlib.Path) -> list[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                imports.append(node.module)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module)
     return imports
 
 
@@ -77,20 +75,24 @@ class TestZeroCoreImports:
                     test = node.test
                     is_type_checking = (
                         isinstance(test, ast.Name) and test.id == "TYPE_CHECKING"
-                    ) or (
-                        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
-                    )
+                    ) or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
                     if is_type_checking:
                         continue  # Skip TYPE_CHECKING blocks
                 # Only check top-level and non-TYPE_CHECKING imports
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
-                    if isinstance(node, ast.Import):
-                        for alias in node.names:
-                            if alias.name.startswith("nexus.core.") and alias.name not in TOLERATED_CORE_IMPORTS:
-                                real_violations.append(f"{rel}: {alias.name}")
-                    elif isinstance(node, ast.ImportFrom) and node.module:
-                        if node.module.startswith("nexus.core.") and node.module not in TOLERATED_CORE_IMPORTS:
-                            real_violations.append(f"{rel}: {node.module}")
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if (
+                            alias.name.startswith("nexus.core.")
+                            and alias.name not in TOLERATED_CORE_IMPORTS
+                        ):
+                            real_violations.append(f"{rel}: {alias.name}")
+                elif (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module
+                    and node.module.startswith("nexus.core.")
+                    and node.module not in TOLERATED_CORE_IMPORTS
+                ):
+                    real_violations.append(f"{rel}: {node.module}")
 
         if real_violations:
             pytest.fail(
@@ -135,14 +137,16 @@ class TestProtocolCompliance:
 
         # Get protocol methods (excluding dunder)
         protocol_methods = {
-            name for name in dir(MemoryProtocol)
+            name
+            for name in dir(MemoryProtocol)
             if not name.startswith("_") and callable(getattr(MemoryProtocol, name, None))
         }
 
         from nexus.bricks.memory.service import Memory
 
         memory_methods = {
-            name for name in dir(Memory)
+            name
+            for name in dir(Memory)
             if not name.startswith("_") and callable(getattr(Memory, name, None))
         }
 

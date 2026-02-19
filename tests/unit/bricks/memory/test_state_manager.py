@@ -15,13 +15,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.contracts.types import OperationContext, Permission
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.bricks.memory.service import Memory
 from nexus.bricks.memory.router import MemoryViewRouter
+from nexus.bricks.memory.service import Memory
 from nexus.bricks.memory.state import MemoryStateManager
+from nexus.contracts.types import OperationContext
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -133,9 +132,7 @@ class TestApprove:
 
     def test_approve_activates_memory(self, state_manager, memory_api):
         """approve() changes state from 'inactive' to 'active'."""
-        memory_id = memory_api.store(
-            content="inactive memory", scope="user", state="inactive"
-        )
+        memory_id = memory_api.store(content="inactive memory", scope="user", state="inactive")
         result_before = memory_api.get(memory_id)
         assert result_before is not None
         assert result_before["state"] == "inactive"
@@ -277,10 +274,7 @@ class TestBatchOperations:
 
     def test_invalidate_batch(self, state_manager, memory_api):
         """invalidate_batch() invalidates multiple memories at once."""
-        ids = [
-            memory_api.store(content=f"batch invalidate {i}", scope="user")
-            for i in range(3)
-        ]
+        ids = [memory_api.store(content=f"batch invalidate {i}", scope="user") for i in range(3)]
         result = state_manager.invalidate_batch(ids)
         assert result["invalidated"] == 3
         assert result["failed"] == 0

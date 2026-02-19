@@ -24,6 +24,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.pay.audit_types import TransactionProtocol
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.x402 import X402Client
@@ -254,7 +255,7 @@ class CreditsPaymentProtocol:
     Structurally satisfies ``PaymentProtocol``.
     """
 
-    def __init__(self, service: Any, zone_id: str = "root") -> None:
+    def __init__(self, service: Any, zone_id: str = ROOT_ZONE_ID) -> None:
         self._service = service
         self._zone_id = zone_id
 

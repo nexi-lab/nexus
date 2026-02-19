@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.services.events_service import EventsService
 

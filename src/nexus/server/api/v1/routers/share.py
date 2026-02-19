@@ -17,8 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import Response, StreamingResponse
 
+from nexus.contracts.types import OperationContext
 from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.permissions import OperationContext
 from nexus.server.api.v1.dependencies import get_nexus_fs
 from nexus.server.dependencies import get_auth_result, get_operation_context
 from nexus.server.fastapi_server import to_thread_with_timeout

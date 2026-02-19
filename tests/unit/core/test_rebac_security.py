@@ -18,11 +18,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import (
+from nexus.contracts.types import (
     OperationContext,
     Permission,
-    PermissionEnforcer,
 )
+from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.rebac.manager import (
     CheckResult,
     ConsistencyLevel,

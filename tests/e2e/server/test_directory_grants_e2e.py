@@ -96,7 +96,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
     from nexus.backends.local import LocalBackend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
@@ -172,7 +172,7 @@ class TestDirectoryGrantExpansion:
         Note: Tiger Cache is only enabled for PostgreSQL. With SQLite, the expansion
         won't happen but the directory grant should still work via ReBAC graph traversal.
         """
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         nx = nexus_fs_with_tiger
 
@@ -237,7 +237,7 @@ class TestDirectoryGrantExpansion:
         if tiger_cache is None:
             pytest.skip("Tiger Cache requires PostgreSQL - skipping new file inheritance test")
 
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         ctx = OperationContext(
             user_id="admin",
@@ -279,7 +279,7 @@ class TestDirectoryGrantExpansion:
         if tiger_cache is None:
             pytest.skip("Tiger Cache requires PostgreSQL - skipping move permission test")
 
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         ctx = OperationContext(
             user_id="admin",

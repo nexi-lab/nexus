@@ -1020,7 +1020,7 @@ class ContextBranchService:
 
     def _fast_forward_merge(
         self,
-        session: Any,  # noqa: ARG002
+        _session: Any,
         source: ContextBranchModel,
         target: ContextBranchModel,
         workspace_path: str,

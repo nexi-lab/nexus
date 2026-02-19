@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 
 @runtime_checkable

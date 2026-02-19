@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.services.mount_core_service import MountCoreService
     from nexus.services.mount_manager import MountManager
     from nexus.services.sync_service import SyncService
@@ -355,7 +355,7 @@ class MountPersistService:
             return None
 
         try:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             owner_parts = mount["owner_user_id"].split(":", 1)
             if len(owner_parts) == 2:

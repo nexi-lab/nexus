@@ -84,7 +84,8 @@ async def shutdown_services(app: FastAPI) -> None:
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
     stale_detection_task = getattr(app.state, "_stale_detection_task", None)
     eviction_task = getattr(app.state, "_eviction_task", None)
-    for task_ref in (heartbeat_task, stale_detection_task, eviction_task):
+    cleanup_task = getattr(app.state, "_checkpoint_cleanup_task", None)
+    for task_ref in (heartbeat_task, stale_detection_task, eviction_task, cleanup_task):
         if task_ref and not task_ref.done():
             task_ref.cancel()
             with suppress(asyncio.CancelledError):
@@ -92,6 +93,7 @@ async def shutdown_services(app: FastAPI) -> None:
     app.state._heartbeat_task = None
     app.state._stale_detection_task = None
     app.state._eviction_task = None
+    app.state._checkpoint_cleanup_task = None
 
     if app.state.agent_registry:
         try:
@@ -417,10 +419,42 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     tasks = [app.state._heartbeat_task, app.state._stale_detection_task]
 
     # Agent eviction under resource pressure (Issue #2170)
-    app.state.eviction_manager = None
+    # Use factory-constructed EvictionManager (DRY — avoid duplicate construction)
     app.state._eviction_task = None
+    app.state._checkpoint_cleanup_task = None
+    _sys_svc = getattr(getattr(app.state, "nexus_fs", None), "_system_services", None)
+    _factory_em = getattr(_sys_svc, "eviction_manager", None) if _sys_svc else None
     _eviction_tuning = getattr(app.state.profile_tuning, "eviction", None)
-    if _eviction_tuning is not None:
+    if _factory_em is not None and _eviction_tuning is not None:
+        try:
+            from nexus.server.background_tasks import (
+                agent_eviction_task,
+                checkpoint_cleanup_task,
+            )
+
+            app.state.eviction_manager = _factory_em
+            app.state._eviction_task = asyncio.create_task(
+                agent_eviction_task(
+                    _factory_em,
+                    interval_seconds=_eviction_tuning.eviction_poll_interval_seconds,
+                )
+            )
+            tasks.append(app.state._eviction_task)
+
+            # Stale checkpoint cleanup (Issue #2170, #16A)
+            app.state._checkpoint_cleanup_task = asyncio.create_task(
+                checkpoint_cleanup_task(
+                    app.state.agent_registry,
+                    interval_seconds=_eviction_tuning.checkpoint_cleanup_interval_seconds,
+                    max_age_seconds=_eviction_tuning.checkpoint_max_age_seconds,
+                )
+            )
+            tasks.append(app.state._checkpoint_cleanup_task)
+            logger.info("[EVICTION] Background eviction + checkpoint cleanup tasks started")
+        except Exception:
+            logger.warning("[EVICTION] Failed to start eviction tasks", exc_info=True)
+    elif _eviction_tuning is not None:
+        # Fallback: construct EvictionManager here if factory didn't create one
         try:
             from nexus.server.background_tasks import agent_eviction_task
             from nexus.services.agents.eviction_manager import EvictionManager
@@ -438,11 +472,11 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
             app.state._eviction_task = asyncio.create_task(
                 agent_eviction_task(
                     app.state.eviction_manager,
-                    interval_seconds=_eviction_tuning.eviction_cooldown_seconds,
+                    interval_seconds=_eviction_tuning.eviction_poll_interval_seconds,
                 )
             )
             tasks.append(app.state._eviction_task)
-            logger.info("[EVICTION] Background agent eviction task started")
+            logger.info("[EVICTION] Background agent eviction task started (fallback)")
         except Exception:
             logger.warning("[EVICTION] Failed to initialize eviction manager", exc_info=True)
 

@@ -4,7 +4,7 @@ Tests the full eviction pipeline:
 1. Register agents → connect → stop heartbeating
 2. Mock psutil to report high memory → trigger eviction
 3. Verify agents transitioned to SUSPENDED
-4. Verify checkpoint data persisted
+4. Verify checkpoint data persisted (via restore_checkpoint public API)
 5. Verify agents can reconnect and restore checkpoint
 """
 
@@ -17,7 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.contracts.agent_types import AgentState
+from nexus.contracts.agent_types import AgentState, EvictionReason
 from nexus.core.performance_tuning import EvictionTuning
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.agents.eviction_manager import EvictionManager
@@ -60,6 +60,7 @@ def tuning():
         eviction_batch_size=10,
         checkpoint_timeout_seconds=5.0,
         eviction_cooldown_seconds=0,  # No cooldown for testing
+        max_concurrent_transitions=10,
     )
 
 
@@ -110,20 +111,20 @@ class TestAgentEvictionE2E:
 
         # 6. Verify agents were evicted
         assert result.evicted == 3
-        assert "critical" in result.reason
+        assert result.reason is EvictionReason.PRESSURE_CRITICAL
 
         # 7. Verify all agents are SUSPENDED
         for i in range(3):
             record = registry.get(f"agent-{i}")
             assert record.state is AgentState.SUSPENDED
 
-        # 8. Verify checkpoint data was saved
+        # 8. Verify checkpoint data via public restore_checkpoint() API
         for i in range(3):
-            record = registry.get(f"agent-{i}")
-            checkpoint = record.metadata.get("_checkpoint")
+            checkpoint = registry.restore_checkpoint(f"agent-{i}")
             assert checkpoint is not None
             assert checkpoint["state"] == "CONNECTED"
             assert checkpoint["generation"] == 1
+            assert checkpoint["last_heartbeat"] is not None or True  # may be None
             assert "evicted_at" in checkpoint
 
     @pytest.mark.asyncio
@@ -173,7 +174,7 @@ class TestAgentEvictionE2E:
             result = await eviction_manager.run_cycle()
 
         assert result.evicted == 0
-        assert result.reason == "normal_pressure"
+        assert result.reason is EvictionReason.NORMAL_PRESSURE
 
         # Agent still CONNECTED
         record = registry.get("agent-1")

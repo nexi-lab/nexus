@@ -858,16 +858,13 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
 
-    # --- Brick Reconciler (Issue #2059) ---
+    # --- Brick Reconciler (Issue #2060) ---
     brick_reconciler: Any = None
     if brick_lifecycle_manager is not None:
         try:
             from nexus.services.brick_reconciler import BrickReconciler
-            from nexus.services.protocols.brick_reconciler import BrickReconcilerConfig
 
-            brick_reconciler = BrickReconciler(
-                brick_lifecycle_manager, config=BrickReconcilerConfig()
-            )
+            brick_reconciler = BrickReconciler(lifecycle_manager=brick_lifecycle_manager)
             logger.debug("[BOOT:SYSTEM] BrickReconciler created")
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)

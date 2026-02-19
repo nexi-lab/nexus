@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fuse import FuseOSError
 
-from nexus.core.virtual_views import should_add_virtual_views
 from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
@@ -25,6 +24,7 @@ from nexus.fuse.ops._shared import (
     stat_size_fallback,
     try_rust,
 )
+from nexus.lib.virtual_views import should_add_virtual_views
 
 if TYPE_CHECKING:
     pass

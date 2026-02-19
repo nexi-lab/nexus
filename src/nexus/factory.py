@@ -972,11 +972,11 @@ def _boot_brick_services(
             try:
                 from nexus.bricks.context_manifest.executors.snapshot_lookup_db import (
                     CASManifestReader,
-                    DatabaseSnapshotLookup,
                 )
                 from nexus.bricks.context_manifest.executors.workspace_snapshot import (
                     WorkspaceSnapshotExecutor,
                 )
+                from nexus.storage.repositories.snapshot_lookup import DatabaseSnapshotLookup
 
                 snapshot_lookup = DatabaseSnapshotLookup(session_factory=ctx.session_factory)
                 cas_reader = CASManifestReader(backend=ctx.backend)

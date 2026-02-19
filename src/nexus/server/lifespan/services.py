@@ -291,6 +291,9 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
     try:
         from nexus.bricks.sandbox.auth_service import SandboxAuthService
         from nexus.bricks.sandbox.sandbox_manager import SandboxManager
+        from nexus.storage.repositories.agent_event_log import (
+            SQLAlchemyAgentEventLog as AgentEventLog,
+        )
 
         session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
         if not (session_factory and callable(session_factory)):

@@ -103,8 +103,10 @@ async def async_session_factory():
 @pytest.fixture
 def policy_service(async_session_factory):
     from nexus.bricks.pay.spending_policy_service import SpendingPolicyService
+    from nexus.storage.repositories.spending_policy import SQLAlchemySpendingPolicyRepository
 
-    return SpendingPolicyService(session_factory=async_session_factory)
+    repo = SQLAlchemySpendingPolicyRepository(session_factory=async_session_factory)
+    return SpendingPolicyService(repo=repo)
 
 
 # =============================================================================

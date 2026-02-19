@@ -1,16 +1,17 @@
-"""Spending Policy Service — CRUD, evaluation, ledger, approvals, and rate limits.
+"""Spending Policy Service — evaluation, rate limits, budget, and cache.
 
 Issue #1358: Full spending policy engine (Phases 1-4).
+Issue #2189: Replaced concrete nexus.storage imports with Repository Protocol.
 
 Hot path (evaluate):
     1. Policy cache lookup (~0ms, 60s TTL)
-    2. Spending ledger read (~1ms, single indexed row)
+    2. Spending ledger read via repository (~1ms, single indexed row)
     3. Rule evaluation (~0.1ms, Python field comparisons)
     4. Rate limit check (~0ms, in-memory sliding window)
     Total: ~1.2ms — well under 5ms target.
 
 Ledger update (record_spending):
-    Fire-and-forget async UPSERT after successful transfer.
+    Fire-and-forget async UPSERT via repository after successful transfer.
     Does not block the transfer response.
 
 Default behavior: open by default (no policy = allow all transactions).
@@ -18,10 +19,8 @@ Default behavior: open by default (no policy = allow all transactions).
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-import uuid
 from collections import deque
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -29,7 +28,6 @@ from typing import TYPE_CHECKING, Any
 
 from cachetools import LRUCache, TTLCache
 
-from nexus.bricks.pay.constants import credits_to_micro, micro_to_credits
 from nexus.bricks.pay.policy_rules import RuleContext, evaluate_rules
 from nexus.bricks.pay.spending_policy import (
     PolicyEvaluation,
@@ -38,11 +36,7 @@ from nexus.bricks.pay.spending_policy import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from nexus.storage.models.spending_policy import SpendingPolicyModel
+    from nexus.bricks.pay.protocols import SpendingPolicyRepository
 
 logger = logging.getLogger(__name__)
 
@@ -50,45 +44,26 @@ logger = logging.getLogger(__name__)
 _APPROVAL_EXPIRY_HOURS = 24
 
 
-def _current_period_start(period_type: str, ref: date | None = None) -> date:
-    """Calculate the start of the current period.
-
-    Args:
-        period_type: "daily", "weekly", or "monthly".
-        ref: Reference date (defaults to today).
-
-    Returns:
-        Start date of the current period.
-    """
-    ref = ref or date.today()
-    if period_type == "daily":
-        return ref
-    if period_type == "weekly":
-        # Monday-based week
-        return ref - timedelta(days=ref.weekday())
-    if period_type == "monthly":
-        return ref.replace(day=1)
-    msg = f"Unknown period_type: {period_type}"
-    raise ValueError(msg)
-
-
 class SpendingPolicyService:
     """Manages spending policies and evaluates transactions against them.
 
     Safe for concurrent coroutines within a single event loop.
     Cache invalidation via TTL (60s). Policy changes take up to 60s to propagate.
+
+    All storage operations are delegated to the SpendingPolicyRepository,
+    keeping this service free of nexus.storage imports.
     """
 
     _CACHE_TTL: float = 60.0  # seconds
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
+        repo: SpendingPolicyRepository,
         *,
         cache_ttl: float = _CACHE_TTL,
         max_cache_entries: int = 4096,
     ) -> None:
-        self._session_factory = session_factory
+        self._repo = repo
         # Policy cache with automatic TTL expiration
         self._cache: TTLCache[tuple[str, str], SpendingPolicy | None] = TTLCache(
             maxsize=max_cache_entries, ttl=cache_ttl
@@ -102,7 +77,7 @@ class SpendingPolicyService:
         self._daily_tx_date: date | None = None
 
     # =========================================================================
-    # CRUD
+    # CRUD (delegated to repository)
     # =========================================================================
 
     async def create_policy(
@@ -122,32 +97,7 @@ class SpendingPolicyService:
         enabled: bool = True,
     ) -> SpendingPolicy:
         """Create a new spending policy."""
-        from nexus.storage.models.spending_policy import SpendingPolicyModel
-
-        policy_id = str(uuid.uuid4())
-        now = datetime.now(UTC)
-
-        model = SpendingPolicyModel(
-            id=policy_id,
-            agent_id=agent_id,
-            zone_id=zone_id,
-            daily_limit=_to_micro_or_none(daily_limit),
-            weekly_limit=_to_micro_or_none(weekly_limit),
-            monthly_limit=_to_micro_or_none(monthly_limit),
-            per_tx_limit=_to_micro_or_none(per_tx_limit),
-            auto_approve_threshold=_to_micro_or_none(auto_approve_threshold),
-            max_tx_per_hour=max_tx_per_hour,
-            max_tx_per_day=max_tx_per_day,
-            rules=json.dumps(rules) if rules is not None else None,
-            priority=priority,
-            enabled=enabled,
-        )
-
-        async with self._session_factory() as session, session.begin():
-            session.add(model)
-
-        policy = SpendingPolicy(
-            policy_id=policy_id,
+        policy = await self._repo.create_policy(
             zone_id=zone_id,
             agent_id=agent_id,
             daily_limit=daily_limit,
@@ -160,8 +110,6 @@ class SpendingPolicyService:
             rules=rules,
             priority=priority,
             enabled=enabled,
-            created_at=now,
-            updated_at=now,
         )
 
         # Invalidate cache for this agent+zone
@@ -170,124 +118,35 @@ class SpendingPolicyService:
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "Created spending policy %s for agent=%s zone=%s", policy_id, agent_id, zone_id
+                "Created spending policy %s for agent=%s zone=%s",
+                policy.policy_id,
+                agent_id,
+                zone_id,
             )
 
         return policy
 
     async def get_policy(self, agent_id: str | None, zone_id: str) -> SpendingPolicy | None:
         """Get a specific policy by agent_id and zone_id."""
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingPolicyModel
-
-        async with self._session_factory() as session:
-            stmt = select(SpendingPolicyModel).where(
-                SpendingPolicyModel.zone_id == zone_id,
-                SpendingPolicyModel.enabled.is_(True),
-            )
-            if agent_id is not None:
-                stmt = stmt.where(SpendingPolicyModel.agent_id == agent_id)
-            else:
-                stmt = stmt.where(SpendingPolicyModel.agent_id.is_(None))
-
-            result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
-            if model is None:
-                return None
-            return _model_to_policy(model)
-
-    _UPDATABLE_FIELDS = frozenset(
-        {
-            "daily_limit",
-            "weekly_limit",
-            "monthly_limit",
-            "per_tx_limit",
-            "auto_approve_threshold",
-            "max_tx_per_hour",
-            "max_tx_per_day",
-            "rules",
-            "priority",
-            "enabled",
-        }
-    )
-    _MICRO_FIELDS = frozenset(
-        {
-            "daily_limit",
-            "weekly_limit",
-            "monthly_limit",
-            "per_tx_limit",
-            "auto_approve_threshold",
-        }
-    )
+        return await self._repo.get_policy(agent_id, zone_id)
 
     async def update_policy(self, policy_id: str, **updates: Any) -> SpendingPolicy | None:
         """Update a spending policy by ID. Returns updated policy or None if not found."""
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingPolicyModel
-
-        async with self._session_factory() as session, session.begin():
-            stmt = select(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
-            result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
-            if model is None:
-                return None
-
-            for key, value in updates.items():
-                if key not in self._UPDATABLE_FIELDS:
-                    continue
-                if key in self._MICRO_FIELDS:
-                    setattr(model, key, _to_micro_or_none(value))
-                elif key == "rules":
-                    setattr(model, key, json.dumps(value) if value is not None else None)
-                else:
-                    setattr(model, key, value)
-
-            # Invalidate cache
-            cache_key = (model.agent_id or "", model.zone_id)
+        policy, cache_key = await self._repo.update_policy(policy_id, **updates)
+        if cache_key is not None:
             self._cache.pop(cache_key, None)
-
-            await session.flush()
-            return _model_to_policy(model)
+        return policy
 
     async def delete_policy(self, policy_id: str) -> bool:
         """Delete a spending policy by ID. Returns True if deleted."""
-        from sqlalchemy import delete, select
-
-        from nexus.storage.models.spending_policy import SpendingPolicyModel
-
-        async with self._session_factory() as session, session.begin():
-            # Fetch first to invalidate cache
-            stmt = select(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
-            result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
-            if model is None:
-                return False
-
-            cache_key = (model.agent_id or "", model.zone_id)
+        deleted, cache_key = await self._repo.delete_policy(policy_id)
+        if cache_key is not None:
             self._cache.pop(cache_key, None)
-
-            del_stmt = delete(SpendingPolicyModel).where(SpendingPolicyModel.id == policy_id)
-            await session.execute(del_stmt)
-
-        return True
+        return deleted
 
     async def list_policies(self, zone_id: str) -> list[SpendingPolicy]:
         """List all policies for a zone."""
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingPolicyModel
-
-        async with self._session_factory() as session:
-            stmt = (
-                select(SpendingPolicyModel)
-                .where(SpendingPolicyModel.zone_id == zone_id)
-                .order_by(SpendingPolicyModel.priority.desc())
-            )
-            result = await session.execute(stmt)
-            models = result.scalars().all()
-            return [_model_to_policy(m) for m in models]
+        return await self._repo.list_policies(zone_id)
 
     # =========================================================================
     # Evaluation (hot path — must be <5ms)
@@ -334,7 +193,7 @@ class SpendingPolicyService:
             )
 
         # 2. Period-based checks (requires ledger read)
-        spending = await self._get_spending(agent_id, zone_id)
+        spending = await self._repo.get_spending(agent_id, zone_id)
         remaining: dict[str, Decimal] = {}
 
         for period_type, limit in [
@@ -480,48 +339,28 @@ class SpendingPolicyService:
         memo: str = "",
     ) -> SpendingApproval:
         """Create a pending approval request."""
-        from nexus.storage.models.spending_policy import SpendingApprovalModel
-
-        approval_id = str(uuid.uuid4())
         now = datetime.now(UTC)
         expires_at = now + timedelta(hours=_APPROVAL_EXPIRY_HOURS)
 
-        model = SpendingApprovalModel(
-            id=approval_id,
-            policy_id=policy_id,
-            agent_id=agent_id,
-            zone_id=zone_id,
-            amount=credits_to_micro(amount),
-            to=to,
-            memo=memo,
-            status="pending",
-            requested_at=now,
-            expires_at=expires_at,
-        )
-
-        async with self._session_factory() as session, session.begin():
-            session.add(model)
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "Approval requested: id=%s agent=%s amount=%s",
-                approval_id,
-                agent_id,
-                amount,
-            )
-
-        return SpendingApproval(
-            approval_id=approval_id,
+        approval = await self._repo.create_approval(
             policy_id=policy_id,
             agent_id=agent_id,
             zone_id=zone_id,
             amount=amount,
             to=to,
             memo=memo,
-            status="pending",
-            requested_at=now,
             expires_at=expires_at,
         )
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "Approval requested: id=%s agent=%s amount=%s",
+                approval.approval_id,
+                agent_id,
+                amount,
+            )
+
+        return approval
 
     async def check_approval(
         self,
@@ -534,86 +373,19 @@ class SpendingPolicyService:
         Returns the approval if it is approved, not expired, matches agent/amount.
         Returns None if not found, wrong agent, wrong amount, or not approved.
         """
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingApprovalModel
-
-        async with self._session_factory() as session:
-            stmt = select(SpendingApprovalModel).where(
-                SpendingApprovalModel.id == approval_id,
-            )
-            result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
-
-        if model is None:
-            return None
-
-        # Validate
-        if model.agent_id != agent_id:
-            return None
-        if model.status != "approved":
-            return None
-        if datetime.now(UTC) > model.expires_at:
-            return None
-        if credits_to_micro(amount) != model.amount:
-            return None
-
-        return _approval_model_to_dataclass(model)
+        return await self._repo.check_approval(approval_id, agent_id, amount)
 
     async def approve_request(self, approval_id: str, decided_by: str) -> SpendingApproval | None:
         """Approve a pending approval request. Returns updated approval or None."""
-        return await self._decide_approval(approval_id, "approved", decided_by)
+        return await self._repo.decide_approval(approval_id, "approved", decided_by)
 
     async def reject_request(self, approval_id: str, decided_by: str) -> SpendingApproval | None:
         """Reject a pending approval request. Returns updated approval or None."""
-        return await self._decide_approval(approval_id, "rejected", decided_by)
+        return await self._repo.decide_approval(approval_id, "rejected", decided_by)
 
     async def list_pending_approvals(self, zone_id: str) -> list[SpendingApproval]:
         """List all pending approvals for a zone."""
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingApprovalModel
-
-        now = datetime.now(UTC)
-        async with self._session_factory() as session:
-            stmt = (
-                select(SpendingApprovalModel)
-                .where(
-                    SpendingApprovalModel.zone_id == zone_id,
-                    SpendingApprovalModel.status == "pending",
-                    SpendingApprovalModel.expires_at > now,
-                )
-                .order_by(SpendingApprovalModel.requested_at.desc())
-            )
-            result = await session.execute(stmt)
-            models = result.scalars().all()
-            return [_approval_model_to_dataclass(m) for m in models]
-
-    async def _decide_approval(
-        self, approval_id: str, decision: str, decided_by: str
-    ) -> SpendingApproval | None:
-        """Set approval status to approved/rejected."""
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingApprovalModel
-
-        now = datetime.now(UTC)
-        async with self._session_factory() as session, session.begin():
-            stmt = select(SpendingApprovalModel).where(
-                SpendingApprovalModel.id == approval_id,
-                SpendingApprovalModel.status == "pending",
-            )
-            result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
-            if model is None:
-                return None
-
-            model.status = decision
-            model.decided_at = now
-            model.decided_by = decided_by
-
-            await session.flush()
-            return _approval_model_to_dataclass(model)
+        return await self._repo.list_pending_approvals(zone_id)
 
     # =========================================================================
     # Ledger
@@ -627,42 +399,10 @@ class SpendingPolicyService:
     ) -> None:
         """Atomically increment spending counters for all active periods.
 
-        Uses PostgreSQL UPSERT (INSERT ON CONFLICT DO UPDATE) for atomicity.
-        Called fire-and-forget after a successful transfer.
+        Delegates to repository for database UPSERT.
         Also updates in-memory rate limit counters.
         """
-        from sqlalchemy import func
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-        from nexus.storage.models.spending_policy import SpendingLedgerModel
-
-        micro_amount = credits_to_micro(amount)
-
-        async with self._session_factory() as session, session.begin():
-            for period_type in ("daily", "weekly", "monthly"):
-                period_start = _current_period_start(period_type)
-                # UPSERT via ORM: insert or increment
-                stmt = (
-                    pg_insert(SpendingLedgerModel)
-                    .values(
-                        agent_id=agent_id,
-                        zone_id=zone_id,
-                        period_type=period_type,
-                        period_start=period_start,
-                        amount_spent=micro_amount,
-                        tx_count=1,
-                        updated_at=func.now(),
-                    )
-                    .on_conflict_do_update(
-                        constraint="uq_spending_ledger_agent_period",
-                        set_={
-                            "amount_spent": SpendingLedgerModel.amount_spent + micro_amount,
-                            "tx_count": SpendingLedgerModel.tx_count + 1,
-                            "updated_at": func.now(),
-                        },
-                    )
-                )
-                await session.execute(stmt)
+        await self._repo.record_spending(agent_id, zone_id, amount)
 
         # Update rate limit counters
         self.record_rate_limit_hit(agent_id, zone_id)
@@ -688,7 +428,7 @@ class SpendingPolicyService:
         if policy is None:
             return {"has_policy": False, "policy_id": None, "limits": {}, "remaining": {}}
 
-        spending = await self._get_spending(agent_id, zone_id)
+        spending = await self._repo.get_spending(agent_id, zone_id)
         limits: dict[str, str] = {}
         remaining: dict[str, str] = {}
 
@@ -735,187 +475,18 @@ class SpendingPolicyService:
         """Resolve effective policy with 60s TTL cache.
 
         Resolution: agent-specific → zone default. Highest priority wins.
+        Cache is managed at service level; repository is stateless.
         """
-        # Check cache for agent-specific (TTLCache handles expiration)
         cache_key = (agent_id, zone_id)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        # DB lookup: agent-specific policies
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingPolicyModel
-
-        async with self._session_factory() as session:
-            # Agent-specific policy (highest priority)
-            stmt = (
-                select(SpendingPolicyModel)
-                .where(
-                    SpendingPolicyModel.zone_id == zone_id,
-                    SpendingPolicyModel.agent_id == agent_id,
-                    SpendingPolicyModel.enabled.is_(True),
-                )
-                .order_by(SpendingPolicyModel.priority.desc())
-                .limit(1)
-            )
-            result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
-
-            if model is not None:
-                policy = _model_to_policy(model)
-                self._cache[cache_key] = policy
-                return policy
-
-            # Zone-level default (agent_id IS NULL)
-            stmt = (
-                select(SpendingPolicyModel)
-                .where(
-                    SpendingPolicyModel.zone_id == zone_id,
-                    SpendingPolicyModel.agent_id.is_(None),
-                    SpendingPolicyModel.enabled.is_(True),
-                )
-                .order_by(SpendingPolicyModel.priority.desc())
-                .limit(1)
-            )
-            result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
-
-            resolved: SpendingPolicy | None = _model_to_policy(model) if model is not None else None
-
+        resolved = await self._repo.resolve_policy(agent_id, zone_id)
         self._cache[cache_key] = resolved
         return resolved
-
-    async def _get_spending(self, agent_id: str, zone_id: str) -> dict[str, Decimal]:
-        """Get current spending for all active periods (single query).
-
-        Returns dict like {"daily": Decimal("42.50"), "weekly": Decimal("150"), ...}
-        """
-        import sqlalchemy as sa
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingLedgerModel
-
-        periods = {pt: _current_period_start(pt) for pt in ("daily", "weekly", "monthly")}
-
-        async with self._session_factory() as session:
-            stmt = select(
-                SpendingLedgerModel.period_type,
-                SpendingLedgerModel.amount_spent,
-            ).where(
-                SpendingLedgerModel.agent_id == agent_id,
-                SpendingLedgerModel.zone_id == zone_id,
-                sa.or_(
-                    *[
-                        sa.and_(
-                            SpendingLedgerModel.period_type == pt,
-                            SpendingLedgerModel.period_start == start,
-                        )
-                        for pt, start in periods.items()
-                    ]
-                ),
-            )
-            result = await session.execute(stmt)
-            rows = result.all()
-
-        result_map: dict[str, Decimal] = {}
-        for period_type, micro in rows:
-            result_map[period_type] = micro_to_credits(micro) if micro is not None else Decimal("0")
-
-        # Fill in missing periods with zero
-        for pt in periods:
-            if pt not in result_map:
-                result_map[pt] = Decimal("0")
-
-        return result_map
-
-    async def _get_daily_tx_count(self, agent_id: str, zone_id: str) -> int:
-        """Get today's transaction count from the ledger."""
-        from sqlalchemy import select
-
-        from nexus.storage.models.spending_policy import SpendingLedgerModel
-
-        today = _current_period_start("daily")
-        async with self._session_factory() as session:
-            stmt = select(SpendingLedgerModel.tx_count).where(
-                SpendingLedgerModel.agent_id == agent_id,
-                SpendingLedgerModel.zone_id == zone_id,
-                SpendingLedgerModel.period_type == "daily",
-                SpendingLedgerModel.period_start == today,
-            )
-            result = await session.execute(stmt)
-            row = result.scalar_one_or_none()
-        return row or 0
 
     def clear_cache(self) -> None:
         """Clear the policy cache and rate limit counters (for testing)."""
         self._cache.clear()
         self._hourly_counters.clear()
         self._daily_tx_counts.clear()
-
-
-# =============================================================================
-# Helpers
-# =============================================================================
-
-
-def _to_micro_or_none(value: Decimal | None) -> int | None:
-    """Convert credits Decimal to micro-credits int, or None."""
-    if value is None:
-        return None
-    return credits_to_micro(value)
-
-
-def _model_to_policy(model: SpendingPolicyModel) -> SpendingPolicy:
-    """Convert SQLAlchemy model to frozen dataclass."""
-    rules_parsed: list[dict[str, Any]] | None = None
-    if model.rules is not None:
-        try:
-            rules_parsed = json.loads(model.rules)
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("Invalid rules JSON for policy %s", model.id)
-
-    return SpendingPolicy(
-        policy_id=model.id,
-        zone_id=model.zone_id,
-        agent_id=model.agent_id,
-        daily_limit=micro_to_credits(model.daily_limit) if model.daily_limit is not None else None,
-        weekly_limit=micro_to_credits(model.weekly_limit)
-        if model.weekly_limit is not None
-        else None,
-        monthly_limit=micro_to_credits(model.monthly_limit)
-        if model.monthly_limit is not None
-        else None,
-        per_tx_limit=micro_to_credits(model.per_tx_limit)
-        if model.per_tx_limit is not None
-        else None,
-        auto_approve_threshold=(
-            micro_to_credits(model.auto_approve_threshold)
-            if model.auto_approve_threshold is not None
-            else None
-        ),
-        max_tx_per_hour=model.max_tx_per_hour,
-        max_tx_per_day=model.max_tx_per_day,
-        rules=rules_parsed,
-        priority=model.priority,
-        enabled=model.enabled,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
-    )
-
-
-def _approval_model_to_dataclass(model: Any) -> SpendingApproval:
-    """Convert SpendingApprovalModel to SpendingApproval dataclass."""
-    return SpendingApproval(
-        approval_id=model.id,
-        policy_id=model.policy_id,
-        agent_id=model.agent_id,
-        zone_id=model.zone_id,
-        amount=micro_to_credits(model.amount),
-        to=model.to,
-        memo=model.memo,
-        status=model.status,
-        requested_at=model.requested_at,
-        decided_at=model.decided_at,
-        decided_by=model.decided_by,
-        expires_at=model.expires_at,
-    )

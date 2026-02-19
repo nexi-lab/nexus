@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from nexus.cache.base import TigerCacheProtocol
     from nexus.rebac.cache.tiger.resource_map import TigerResourceMap
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 

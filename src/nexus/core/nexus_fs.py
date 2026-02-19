@@ -7558,7 +7558,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             True if user has READ on any descendant, False otherwise
         """
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.rebac.utils.zone import normalize_zone_id
 
         # Normalize path prefix for matching
         prefix = path if path.endswith("/") else path + "/"
@@ -9354,7 +9354,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.rebac.utils.zone import normalize_zone_id
 
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
@@ -9471,7 +9471,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.rebac.utils.zone import normalize_zone_id
 
         if not hasattr(self, "_rebac_manager"):
             return 0

@@ -23,13 +23,17 @@ from concurrent.futures import Executor
 from pathlib import Path
 from typing import Any
 
-from nexus.services.context_manifest.executors.executor_utils import (
+from nexus.bricks.context_manifest.executors.executor_utils import (
     FileGlobSourceProtocol,
     resolve_source_template,
 )
-from nexus.services.context_manifest.models import ContextSourceProtocol, SourceResult
+from nexus.bricks.context_manifest.models import ContextSourceProtocol, SourceResult
 
 logger = logging.getLogger(__name__)
+
+# Hard limit on raw glob results to prevent DoS from pathological patterns
+# like '**/*' in large workspaces. Applied before stat/resolve loop.
+GLOB_SCAN_LIMIT = 10_000
 
 
 class FileGlobExecutor:
@@ -126,9 +130,9 @@ class FileGlobExecutor:
                 elapsed_ms=elapsed_ms,
             )
 
-        # Phase 1: Glob for paths
+        # Phase 1: Glob for paths (cap raw results to prevent DoS — Issue #2130)
         full_pattern = str(self._workspace_root / pattern)
-        matched_paths = glob_module.glob(full_pattern, recursive=True)
+        matched_paths = glob_module.glob(full_pattern, recursive=True)[:GLOB_SCAN_LIMIT]
 
         # Filter: only regular files, validate each path is under workspace_root
         safe_paths: list[Path] = []

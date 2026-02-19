@@ -11,11 +11,10 @@ References:
 from __future__ import annotations
 
 import time
-from concurrent.futures import Executor
 from typing import Protocol, runtime_checkable
 
-from nexus.services.context_manifest.models import ContextSourceProtocol, SourceResult
-from nexus.services.context_manifest.template import resolve_template
+from nexus.bricks.context_manifest.models import ContextSourceProtocol, SourceResult
+from nexus.bricks.context_manifest.template import resolve_template
 
 # ---------------------------------------------------------------------------
 # Per-executor source protocols (6A)
@@ -100,25 +99,3 @@ def resolve_source_template(
             error_message=f"Template resolution failed: {exc}",
             elapsed_ms=elapsed_ms,
         )
-
-
-# ---------------------------------------------------------------------------
-# Thread pool helper (14B)
-# ---------------------------------------------------------------------------
-
-
-def get_executor_pool(
-    custom_pool: Executor | None,
-) -> Executor | None:
-    """Return the thread pool to use for blocking I/O.
-
-    Returns the custom pool if provided, or None to use the default
-    event loop executor (typically a ThreadPoolExecutor).
-
-    Args:
-        custom_pool: Optional custom Executor instance.
-
-    Returns:
-        The executor to pass to ``loop.run_in_executor()``.
-    """
-    return custom_pool

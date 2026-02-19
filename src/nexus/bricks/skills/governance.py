@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 
 if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
@@ -64,6 +67,37 @@ class GovernanceError(SkillValidationError):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Serialization helpers
+# ---------------------------------------------------------------------------
+
+_KEY_PREFIX = "skills:approval"
+
+
+def _approval_key(approval_id: str) -> str:
+    return f"{_KEY_PREFIX}:{approval_id}"
+
+
+def _json_default(obj: object) -> str:
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Not JSON serializable: {type(obj)}")
+
+
+def _serialize_approval(approval: SkillApproval) -> bytes:
+    return json.dumps(dataclasses.asdict(approval), default=_json_default).encode()
+
+
+def _deserialize_approval(raw: bytes) -> SkillApproval:
+    data: dict[str, Any] = json.loads(raw)
+    data["status"] = ApprovalStatus(data["status"])
+    if data.get("submitted_at"):
+        data["submitted_at"] = datetime.fromisoformat(data["submitted_at"])
+    if data.get("reviewed_at"):
+        data["reviewed_at"] = datetime.fromisoformat(data["reviewed_at"])
+    return SkillApproval(**data)
+
+
 class SkillGovernance:
     """Governance system for skill approvals.
 
@@ -100,14 +134,64 @@ class SkillGovernance:
     def __init__(
         self,
         rebac_manager: ReBACManager | None = None,
+        cache_store: CacheStoreABC | None = None,
     ):
         """Initialize governance system.
 
         Args:
             rebac_manager: Optional ReBAC manager for permission checks
+            cache_store: Optional CacheStoreABC for ephemeral approval storage.
+                         Defaults to InMemoryCacheStore when *None*.
         """
         self._rebac = rebac_manager
-        self._in_memory_approvals: dict[str, SkillApproval] = {}
+        if cache_store is not None:
+            self._cache: CacheStoreABC = cache_store
+        else:
+            from nexus.cache.inmemory import InMemoryCacheStore
+
+            self._cache = InMemoryCacheStore()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _save_approval(self, approval: SkillApproval) -> None:
+        """Persist an approval record to the cache."""
+        await self._cache.set(
+            _approval_key(approval.approval_id),
+            _serialize_approval(approval),
+        )
+
+    async def _get_approval(self, approval_id: str) -> SkillApproval | None:
+        """Get approval by ID."""
+        raw = await self._cache.get(_approval_key(approval_id))
+        if raw is None:
+            return None
+        return _deserialize_approval(raw)
+
+    async def _all_approvals(self) -> list[SkillApproval]:
+        """Load all approval records from the cache."""
+        keys = await self._cache.keys_by_pattern(f"{_KEY_PREFIX}:*")
+        if not keys:
+            return []
+        values = await self._cache.get_many(keys)
+        return [_deserialize_approval(v) for v in values.values() if v is not None]
+
+    async def _get_pending_approval(self, skill_name: str) -> SkillApproval | None:
+        """Get pending approval for a skill."""
+        all_approvals = await self._all_approvals()
+        pending = [
+            a
+            for a in all_approvals
+            if a.skill_name == skill_name and a.status == ApprovalStatus.PENDING
+        ]
+        if not pending:
+            return None
+        return max(pending, key=lambda a: a.submitted_at or datetime.min)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     async def submit_for_approval(
         self,
@@ -160,7 +244,7 @@ class SkillGovernance:
 
         approval.validate()
 
-        self._in_memory_approvals[approval_id] = approval
+        await self._save_approval(approval)
 
         logger.info(f"Submitted skill '{skill_name}' for approval (ID: {approval_id})")
         return approval_id
@@ -232,6 +316,8 @@ class SkillGovernance:
         if comments:
             approval.comments = comments
 
+        await self._save_approval(approval)
+
         logger.info(f"Approved skill '{approval.skill_name}' (ID: {approval_id}) by {reviewed_by}")
 
     async def reject_skill(
@@ -301,6 +387,8 @@ class SkillGovernance:
         if comments:
             approval.comments = comments
 
+        await self._save_approval(approval)
+
         logger.info(f"Rejected skill '{approval.skill_name}' (ID: {approval_id}) by {reviewed_by}")
 
     async def is_approved(self, skill_name: str) -> bool:
@@ -316,7 +404,8 @@ class SkillGovernance:
             >>> if await gov.is_approved("analyze-code"):
             ...     print("Skill is approved!")
         """
-        approvals = [a for a in self._in_memory_approvals.values() if a.skill_name == skill_name]
+        all_approvals = await self._all_approvals()
+        approvals = [a for a in all_approvals if a.skill_name == skill_name]
 
         if not approvals:
             return False
@@ -342,9 +431,8 @@ class SkillGovernance:
             >>> # Get approvals assigned to specific reviewer
             >>> my_approvals = await gov.get_pending_approvals(reviewer="bob")
         """
-        approvals = [
-            a for a in self._in_memory_approvals.values() if a.status == ApprovalStatus.PENDING
-        ]
+        all_approvals = await self._all_approvals()
+        approvals = [a for a in all_approvals if a.status == ApprovalStatus.PENDING]
 
         if reviewer:
             approvals = [a for a in approvals if a.reviewers and reviewer in a.reviewers]
@@ -365,7 +453,8 @@ class SkillGovernance:
             >>> for approval in history:
             ...     print(f"{approval.status.value} by {approval.reviewed_by} at {approval.reviewed_at}")
         """
-        approvals = [a for a in self._in_memory_approvals.values() if a.skill_name == skill_name]
+        all_approvals = await self._all_approvals()
+        approvals = [a for a in all_approvals if a.skill_name == skill_name]
         return sorted(approvals, key=lambda a: a.submitted_at or datetime.min, reverse=True)
 
     async def list_approvals(
@@ -390,7 +479,7 @@ class SkillGovernance:
             >>> # List approvals for a specific skill
             >>> skill_approvals = await gov.list_approvals(skill_name="my-analyzer")
         """
-        approvals = list(self._in_memory_approvals.values())
+        approvals = await self._all_approvals()
 
         if status:
             status_enum = ApprovalStatus(status)
@@ -400,21 +489,3 @@ class SkillGovernance:
             approvals = [a for a in approvals if a.skill_name == skill_name]
 
         return sorted(approvals, key=lambda a: a.submitted_at or datetime.min, reverse=True)
-
-    async def _get_approval(self, approval_id: str) -> SkillApproval | None:
-        """Get approval by ID (internal helper)."""
-        return self._in_memory_approvals.get(approval_id)
-
-    async def _get_pending_approval(self, skill_name: str) -> SkillApproval | None:
-        """Get pending approval for a skill (internal helper)."""
-        pending = [
-            a
-            for a in self._in_memory_approvals.values()
-            if a.skill_name == skill_name and a.status == ApprovalStatus.PENDING
-        ]
-
-        if not pending:
-            return None
-
-        # Return most recent
-        return max(pending, key=lambda a: a.submitted_at or datetime.min)

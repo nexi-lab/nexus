@@ -122,7 +122,9 @@ class SyncService:
         """
         self._gw = gateway
         # Issue #1127: Initialize change log store for delta sync
-        self._change_log = ChangeLogStore(gateway.session_factory)
+        self._change_log = ChangeLogStore(
+            gateway.session_factory, is_postgresql=gateway.is_postgresql
+        )
         # Issue #1127: Per-mount sync locks to prevent concurrent races
         self._mount_locks: dict[str, threading.Lock] = {}
         self._lock_guard = threading.Lock()

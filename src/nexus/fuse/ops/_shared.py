@@ -34,8 +34,8 @@ from nexus.core.virtual_views import parse_virtual_path
 from nexus.fuse.cache import FUSECacheManager
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.filesystem import NexusFilesystem
-    from nexus.core.permissions import OperationContext
     from nexus.fuse.mount import MountMode
     from nexus.fuse.ops._events import FUSEEventDispatcher
     from nexus.rebac.namespace_manager import NamespaceManager

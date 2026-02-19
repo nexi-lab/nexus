@@ -53,9 +53,11 @@ system (like systemd): creates selected services and injects them via
 `KernelServices` dataclass. Different distros select different service sets at
 startup — `nexus-server` loads all 22+, `nexus-embedded` loads zero.
 
-> *Implemented:* `factory.py` gates services via `DeploymentProfile` + `enabled_bricks`
-> frozenset. See §5.1 for profile details. Remaining gap: `_wire_services()` in
-> kernel still loads unconditionally (#643).
+> *Resolved (Issue #643):* `factory.py` gates all services via `DeploymentProfile` +
+> `enabled_bricks` frozenset (see §5.1). `_wire_services()` migrated to
+> `factory._boot_wired_services()` — NexusFS constructor no longer imports or creates
+> services. Two-phase init: `NexusFS(...)` → `_boot_wired_services(nx, ...)` →
+> `nx._bind_wired_services(dict)`.
 
 **Phase 2 — Runtime hot-swap (Linux LKM model).** A `ServiceRegistry` manages
 in-process service modules following the Loadable Kernel Module pattern:
@@ -159,8 +161,8 @@ constructor and never auto-creates services.
 
 > *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
 > `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
-> Remaining: ~40 lazy service imports in `_wire_services()` (#194), replace
-> `KernelServices` dataclass with `ServiceRegistry`.
+> `_wire_services()` deleted — all service creation moved to `factory._boot_wired_services()` (#643).
+> Remaining: replace `KernelServices` dataclass with `ServiceRegistry`.
 
 ### Service Protocols (`nexus.services.protocols`)
 

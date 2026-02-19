@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.skills.exceptions import SkillPermissionDeniedError
 from nexus.skills.importer import SkillImporter, SkillImportError
 

@@ -31,8 +31,8 @@ from nexus.core.exceptions import (
 )
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.async_nexus_fs import AsyncNexusFS
-    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 

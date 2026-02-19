@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.core.permissions import OperationContext, Permission
+from nexus.contracts.types import OperationContext, Permission
 from nexus.storage.models import TrajectoryModel
 
 

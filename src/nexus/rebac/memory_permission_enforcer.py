@@ -21,7 +21,7 @@ from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 
 class MemoryPermissionEnforcer(PermissionEnforcer):

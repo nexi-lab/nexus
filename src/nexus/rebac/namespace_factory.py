@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from nexus.rebac.namespace_manager import NamespaceManager
 
 if TYPE_CHECKING:
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)

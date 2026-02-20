@@ -181,6 +181,17 @@ def make_test_nexus(
         kernel_services=services,
         system_services=system_services,
     )
+
+    # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
+    from nexus.services.permissions.checker import PermissionChecker
+
+    nx._permission_checker = PermissionChecker(
+        permission_enforcer=nx._permission_enforcer,
+        metadata_store=nx.metadata,
+        default_context=nx._default_context,
+        enforce_permissions=nx._enforce_permissions,
+    )
+
     return nx
 
 

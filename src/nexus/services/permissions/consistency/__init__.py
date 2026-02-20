@@ -1,24 +1,22 @@
-"""Consistency module — Zone isolation + version tokens.
+"""Backward-compat shim — canonical: nexus.rebac.consistency.
 
-Provides zone isolation enforcement (Zanzibar-style) and revision-based
-consistency tokens for the ReBAC permission system.
-
-Components:
-- ``ZoneManager``: Zone isolation enforcement and cross-zone share validation
-- ``ZoneIsolationError``: Exception for cross-zone violations
-- ``increment_version_token``: DB-backed monotonic version token generation
-- ``get_zone_revision_for_grant``: Zone revision lookup for consistency guarantees
-
-Related: Issue #1459 (decomposition), Issue #773 (zone isolation), Issue #1064 (wildcards)
+Deprecated: import from nexus.rebac.consistency instead.
 """
 
-from nexus.services.permissions.consistency.revision import (
-    get_zone_revision_for_grant,
-    increment_version_token,
+import warnings
+
+warnings.warn(
+    "nexus.services.permissions.consistency is deprecated. "
+    "Import from nexus.rebac.consistency instead.",
+    DeprecationWarning,
+    stacklevel=2,
 )
-from nexus.services.permissions.consistency.zone_manager import (
+
+from nexus.rebac.consistency import (  # noqa: F401, E402
     ZoneIsolationError,
     ZoneManager,
+    get_zone_revision_for_grant,
+    increment_version_token,
 )
 
 __all__ = [

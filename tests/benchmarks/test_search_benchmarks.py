@@ -708,7 +708,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_build_1k_files(self, benchmark):
         """Benchmark building trigram index from 1K files."""
-        from nexus.core import trigram_fast
+        from nexus.lib import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -730,7 +730,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_literal(self, benchmark):
         """Benchmark trigram search for literal pattern."""
-        from nexus.core import trigram_fast
+        from nexus.lib import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -747,7 +747,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_regex(self, benchmark):
         """Benchmark trigram search for regex pattern."""
-        from nexus.core import trigram_fast
+        from nexus.lib import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -764,7 +764,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_no_match(self, benchmark):
         """Benchmark trigram search for non-matching pattern."""
-        from nexus.core import trigram_fast
+        from nexus.lib import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -782,7 +782,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_vs_mmap_grep(self, benchmark):
         """Compare trigram index search vs mmap grep."""
-        from nexus.core import trigram_fast
+        from nexus.lib import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")

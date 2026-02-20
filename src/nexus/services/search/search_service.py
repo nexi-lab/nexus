@@ -150,6 +150,7 @@ class SearchService(SemanticSearchMixin):
         list_parallel_workers: int = LIST_PARALLEL_WORKERS,
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
+        zoekt_client: Any | None = None,
     ):
         """Initialize search service.
 
@@ -162,11 +163,13 @@ class SearchService(SemanticSearchMixin):
             default_context: Default operation context (embedded mode)
             record_store: RecordStoreABC for SQL engine (needed for semantic search)
             gateway: NexusFSGateway for file ops, routing, and dependency tracking
+            zoekt_client: Injected ZoektClient instance (Issue #2188).
         """
         self.metadata = metadata_store
         self._record_store = record_store
         # Injected file cache (Issue #690 — replaces global singleton)
         self._file_cache = file_cache
+        self._zoekt_client = zoekt_client
         self._permission_enforcer = permission_enforcer
         self.router = router
         self._rebac_manager = rebac_manager
@@ -1861,19 +1864,16 @@ class SearchService(SemanticSearchMixin):
         context: Any,
     ) -> builtins.list[dict[str, Any]] | None:
         """Try Zoekt for accelerated grep. Returns None if not available."""
-        try:
-            from nexus.bricks.search.zoekt_client import get_zoekt_client
-        except ImportError:
+        if self._zoekt_client is None:
             return None
 
-        client = get_zoekt_client()
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 return None
-            is_available = loop.run_until_complete(client.is_available())
+            is_available = loop.run_until_complete(self._zoekt_client.is_available())
         except RuntimeError:
-            is_available = asyncio.run(client.is_available())
+            is_available = asyncio.run(self._zoekt_client.is_available())
 
         if not is_available:
             return None
@@ -1889,9 +1889,11 @@ class SearchService(SemanticSearchMixin):
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     return None
-                matches = loop.run_until_complete(client.search(zoekt_query, num=max_results * 3))
+                matches = loop.run_until_complete(
+                    self._zoekt_client.search(zoekt_query, num=max_results * 3)
+                )
             except RuntimeError:
-                matches = asyncio.run(client.search(zoekt_query, num=max_results * 3))
+                matches = asyncio.run(self._zoekt_client.search(zoekt_query, num=max_results * 3))
 
             if not matches:
                 return None
@@ -2153,18 +2155,17 @@ class SearchService(SemanticSearchMixin):
 
     def _is_zoekt_available(self) -> bool:
         """Check if Zoekt indexing service is available."""
-        try:
-            from nexus.bricks.search.zoekt_client import get_zoekt_client
+        if self._zoekt_client is None:
+            return False
 
-            client = get_zoekt_client()
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    return False
-                return loop.run_until_complete(client.is_available())
-            except RuntimeError:
-                return asyncio.run(client.is_available())
-        except (ImportError, Exception):
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                return False
+            return loop.run_until_complete(self._zoekt_client.is_available())
+        except RuntimeError:
+            return asyncio.run(self._zoekt_client.is_available())
+        except Exception:
             return False
 
     def _select_grep_strategy(

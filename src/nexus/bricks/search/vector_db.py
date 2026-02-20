@@ -50,6 +50,8 @@ class VectorDatabase:
         zoekt_client: Any | None = None,
         bm25s_index: Any | None = None,
         sync_pool_workers: int = _DEFAULT_VDB_WORKERS,
+        *,
+        is_postgresql: bool = False,
     ):
         """Initialize vector database.
 
@@ -62,9 +64,11 @@ class VectorDatabase:
             zoekt_client: Injected ZoektClient instance (Issue #2188).
             bm25s_index: Injected BM25SIndex instance (Issue #2188).
             sync_pool_workers: Thread pool size for sync-to-async bridge (Issue #2188).
+            is_postgresql: Config-time flag indicating PostgreSQL backend.
+                When False, assumes SQLite. Avoids runtime dialect sniffing.
         """
         self.engine = engine
-        self.db_type = engine.dialect.name
+        self._is_postgresql = is_postgresql
         self.hnsw_config = hnsw_config or HNSWConfig.medium_scale()
         self._zoekt_client = zoekt_client
         self._bm25s_index = bm25s_index
@@ -75,6 +79,11 @@ class VectorDatabase:
         self.vec_available = False  # Set to True if vector extension is loaded
         self.bm25_available = False  # Set to True if pg_textsearch BM25 is available
         self._sqlite_vec_loaded = False  # Track if we've set up the event listener
+
+    @property
+    def db_type(self) -> str:
+        """Return database type string for callers that need it."""
+        return "postgresql" if self._is_postgresql else "sqlite"
 
     def _run_sync(self, coro: Any) -> Any:
         """Run an async coroutine synchronously using the instance thread pool."""
@@ -94,12 +103,10 @@ class VectorDatabase:
             return
 
         with self.engine.connect() as conn:
-            if self.db_type == "sqlite":
-                self._init_sqlite(conn)
-            elif self.db_type == "postgresql":
+            if self._is_postgresql:
                 self._init_postgresql(conn)
             else:
-                raise ValueError(f"Unsupported database type: {self.db_type}")
+                self._init_sqlite(conn)
 
         self._initialized = True
 
@@ -126,14 +133,14 @@ class VectorDatabase:
             chunk_id: Chunk ID
             embedding: Embedding vector
         """
-        if self.db_type == "sqlite":
-            from nexus.bricks.search.vector_db_sqlite import sqlite_store_embedding
-
-            sqlite_store_embedding(session, chunk_id, embedding)
-        elif self.db_type == "postgresql":
+        if self._is_postgresql:
             from nexus.bricks.search.vector_db_postgres import postgres_store_embedding
 
             postgres_store_embedding(session, chunk_id, embedding)
+        else:
+            from nexus.bricks.search.vector_db_sqlite import sqlite_store_embedding
+
+            sqlite_store_embedding(session, chunk_id, embedding)
 
     def vector_search(
         self,
@@ -153,18 +160,16 @@ class VectorDatabase:
         Returns:
             List of search results with scores
         """
-        if self.db_type == "sqlite":
-            from nexus.bricks.search.vector_db_sqlite import sqlite_vector_search
-
-            return sqlite_vector_search(session, query_embedding, limit, path_filter)
-        elif self.db_type == "postgresql":
+        if self._is_postgresql:
             from nexus.bricks.search.vector_db_postgres import postgres_vector_search
 
             return postgres_vector_search(
                 session, query_embedding, limit, path_filter, self.hnsw_config
             )
         else:
-            raise ValueError(f"Unsupported database type: {self.db_type}")
+            from nexus.bricks.search.vector_db_sqlite import sqlite_vector_search
+
+            return sqlite_vector_search(session, query_embedding, limit, path_filter)
 
     def keyword_search(
         self, session: Session, query: str, limit: int = 10, path_filter: str | None = None
@@ -200,16 +205,14 @@ class VectorDatabase:
 
         # Fall back to FTS
         logger.debug("[KEYWORD] Using FTS fallback")
-        if self.db_type == "sqlite":
-            from nexus.bricks.search.vector_db_sqlite import sqlite_keyword_search
-
-            return sqlite_keyword_search(session, query, limit, path_filter)
-        elif self.db_type == "postgresql":
+        if self._is_postgresql:
             from nexus.bricks.search.vector_db_postgres import postgres_keyword_search
 
             return postgres_keyword_search(session, query, limit, path_filter, self.bm25_available)
         else:
-            raise ValueError(f"Unsupported database type: {self.db_type}")
+            from nexus.bricks.search.vector_db_sqlite import sqlite_keyword_search
+
+            return sqlite_keyword_search(session, query, limit, path_filter)
 
     def _try_keyword_search_with_zoekt(
         self, query: str, limit: int, path_filter: str | None
@@ -404,6 +407,6 @@ class VectorDatabase:
         return {
             "vec_enabled": self.vec_available,
             "bm25_available": self.bm25_available,
-            "db_type": self.db_type,
+            "db_type": "postgresql" if self._is_postgresql else "sqlite",
             "initialized": self._initialized,
         }

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.types import OperationContext, Permission  # noqa: F401
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.enforcer import PermissionEnforcer as PermissionEnforcer
+    from nexus.rebac.enforcer import PermissionEnforcer as PermissionEnforcer
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def __getattr__(name: str) -> Any:
     """Lazy re-export to avoid circular import with services.permissions.enforcer."""
     if name == "PermissionEnforcer":
-        from nexus.services.permissions.enforcer import PermissionEnforcer
+        from nexus.rebac.enforcer import PermissionEnforcer
 
         return PermissionEnforcer
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,31 +1,16 @@
-"""Backward-compat shim — canonical: ``nexus.services.rebac.rebac_share_mixin``.
+"""Backward-compat shim — canonical: nexus.rebac.share_mixin.
 
-Issue #2132: Organized into domain subdirectory.
+Deprecated: import from nexus.rebac.share_mixin instead.
 """
 
-import importlib
 import warnings
-from typing import Any
 
-_MOVED = {
-    "ReBACShareMixin": "nexus.services.rebac.rebac_share_mixin",
-}
+warnings.warn(
+    "nexus.services.rebac_share_mixin is deprecated. Import from nexus.rebac.share_mixin instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
+from nexus.rebac.share_mixin import ReBACShareMixin  # noqa: F401, E402
 
-def __getattr__(name: str) -> Any:
-    if name in _MOVED:
-        warnings.warn(
-            f"Importing {name} from {__name__} is deprecated. "
-            f"Use 'from {_MOVED[name]} import {name}' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        mod = importlib.import_module(_MOVED[name])
-        attr = getattr(mod, name)
-        globals()[name] = attr  # Cache: warn once per process
-        return attr
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__() -> list[str]:
-    return list(_MOVED) + list(globals())
+__all__ = ["ReBACShareMixin"]

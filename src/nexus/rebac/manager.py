@@ -248,9 +248,7 @@ class ReBACManager:
 
         # Issue #1459 Phase 15+: Zone-aware graph traversal
         self._zone_traversal = ZoneAwareTraversal(
-            connection_factory=self._connection,
-            create_cursor=self._create_cursor,
-            fix_sql=self._fix_sql_placeholders,
+            engine=engine,
             get_namespace=self.get_namespace,
             evaluate_conditions=self._evaluate_conditions,
             zone_manager=self._zone_manager,
@@ -260,9 +258,6 @@ class ReBACManager:
         # Issue #1459 Phase 15+: Bulk permission checker
         self._bulk_checker = BulkPermissionChecker(
             engine=engine,
-            connection_factory=self._connection,
-            create_cursor=self._create_cursor,
-            fix_sql=self._fix_sql_placeholders,
             get_namespace=self.get_namespace,
             enforce_zone_isolation=enforce_zone_isolation,
             l1_cache=self._l1_cache,

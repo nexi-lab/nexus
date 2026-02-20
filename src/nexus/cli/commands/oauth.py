@@ -28,9 +28,9 @@ from rich.console import Console
 from rich.table import Table
 
 from nexus.auth.oauth.providers.x import XOAuthProvider
+from nexus.auth.oauth.token_manager import TokenManager
 from nexus.cli.utils import console
 from nexus.constants import ROOT_ZONE_ID
-from nexus.server.auth.token_manager import TokenManager
 
 # Rich console for output
 _console = Console()
@@ -378,7 +378,7 @@ def setup_gdrive(
         cred_id = await manager.store_credential(
             provider="google",
             user_email=user_email,
-            credential=credential,  # type: ignore[arg-type]
+            credential=credential,
             zone_id=zone_id or ROOT_ZONE_ID,
             created_by=user_email,
         )
@@ -540,7 +540,7 @@ def setup_x(
         cred_id = await manager.store_credential(
             provider="twitter",
             user_email=user_email,
-            credential=credential,  # type: ignore[arg-type]
+            credential=credential,
             zone_id=zone_id or ROOT_ZONE_ID,
             created_by=user_email,
         )

@@ -6,11 +6,19 @@ Auth providers live in nexus.auth brick.
 
 import warnings
 
+from nexus.auth.oauth.config import OAuthConfig, OAuthProviderConfig  # noqa: F401
+
 # OAuth components — now in nexus.auth.oauth brick (re-exported for backward compat)
 from nexus.auth.oauth.crypto import OAuthCrypto  # noqa: F401
 from nexus.auth.oauth.factory import OAuthProviderFactory  # noqa: F401
 from nexus.auth.oauth.providers.google import GoogleOAuthProvider  # noqa: F401
 from nexus.auth.oauth.providers.microsoft import MicrosoftOAuthProvider  # noqa: F401
+
+# TokenManager — canonical: nexus.auth.oauth.token_manager (Issue #2281)
+from nexus.auth.oauth.token_manager import TokenManager  # noqa: F401
+
+# OAuth types — canonical: nexus.auth.oauth.types (Issue #2281)
+from nexus.auth.oauth.types import OAuthCredential, OAuthError  # noqa: F401
 
 # Auth brick re-exports (moved to nexus.auth in Issue #1399)
 from nexus.auth.providers.base import AuthProvider, AuthResult  # noqa: F401
@@ -20,19 +28,12 @@ from nexus.auth.providers.discriminator import DiscriminatingAuthProvider  # noq
 from nexus.auth.providers.local import LocalAuth  # noqa: F401
 from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth  # noqa: F401
 from nexus.auth.providers.static_key import StaticAPIKeyAuth  # noqa: F401
-from nexus.auth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
 
 # Factory function — stays here but delegates to brick providers
 from nexus.server.auth.factory import create_auth_provider  # noqa: F401
 
-# Keep original OAuthCredential/OAuthProvider/OAuthError from server layer
-# (token_manager.py still uses mutable OAuthCredential)
-from nexus.server.auth.oauth_provider import (  # noqa: F401
-    OAuthCredential,
-    OAuthError,
-    OAuthProvider,
-)
-from nexus.server.auth.token_manager import TokenManager  # noqa: F401
+# Legacy OAuthProvider ABC still lives in server layer
+from nexus.server.auth.oauth_provider import OAuthProvider  # noqa: F401
 
 __all__ = [
     # Auth brick (canonical: nexus.auth)
@@ -78,6 +79,11 @@ def __getattr__(name: str) -> object:
         "OAuthProviderFactory",
         "GoogleOAuthProvider",
         "MicrosoftOAuthProvider",
+        "OAuthCredential",
+        "OAuthError",
+        "OAuthConfig",
+        "OAuthProviderConfig",
+        "TokenManager",
     }
     if name in _auth_brick_names:
         warnings.warn(

@@ -40,7 +40,7 @@ class WorkflowStore:
             record_store: RecordStoreABC for database access (uses async_session_factory).
             workflow_model: SQLAlchemy model class for workflows.
             execution_model: SQLAlchemy model class for workflow executions.
-            zone_id: Zone ID (defaults to "default").
+            zone_id: Zone ID (defaults to ROOT_ZONE_ID).
         """
         self.session_factory = record_store.async_session_factory
         self._workflow_model = workflow_model

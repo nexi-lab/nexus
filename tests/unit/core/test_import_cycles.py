@@ -162,6 +162,7 @@ def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     return cycles
 
 
+@pytest.mark.slow
 class TestImportCycles:
     """Verify no runtime import cycles exist in the nexus package."""
 

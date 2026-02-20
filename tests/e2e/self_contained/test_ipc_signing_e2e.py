@@ -193,10 +193,6 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
     )
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
-
     from types import SimpleNamespace
 
     db_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))

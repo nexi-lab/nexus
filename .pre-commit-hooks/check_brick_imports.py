@@ -98,11 +98,18 @@ def _module_name_from_path(file_path: Path) -> str | None:
     Example: .../src/nexus/bricks/memory/service.py -> 'nexus.bricks.memory.service'
     """
     parts = file_path.parts
+    # Prefer the "nexus" that follows "src/" to avoid matching repo directory names
+    # (e.g. on CI: /home/runner/work/nexus/nexus/src/nexus/bricks/...)
     try:
-        idx = parts.index("nexus")
+        src_idx = parts.index("src")
+        mod_parts = list(parts[src_idx + 1 :])
     except ValueError:
-        return None
-    mod_parts = list(parts[idx:])
+        # No src/ in path; fall back to first "nexus"
+        try:
+            idx = parts.index("nexus")
+        except ValueError:
+            return None
+        mod_parts = list(parts[idx:])
     # Strip .py from last part
     if mod_parts[-1].endswith(".py"):
         mod_parts[-1] = mod_parts[-1][:-3]
@@ -234,7 +241,6 @@ def main() -> int:
         print("     nexus.storage.*              (RecordStoreABC + storage utilities)")
         print("     nexus.bricks.<own_brick>.*   (same-brick internal imports)")
         print()
-        print("See docs/design/NEXUS-LEGO-ARCHITECTURE.md")
         print()
 
         return 1

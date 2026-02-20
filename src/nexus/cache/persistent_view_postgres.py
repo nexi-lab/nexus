@@ -1,3 +1,5 @@
-"""Backward-compatibility shim — moved to nexus.bricks.cache.persistent_view_postgres."""
+"""Backward-compatibility shim — moved to nexus.storage.persistent_view_postgres."""
 
-from nexus.bricks.cache.persistent_view_postgres import *  # noqa: F401, F403
+from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
+
+__all__ = ["PostgresPersistentViewStore"]

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend, FileInfo, HandlerStatusResponse
 from nexus.contracts.exceptions import BackendError
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext

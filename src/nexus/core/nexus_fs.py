@@ -353,11 +353,12 @@ class NexusFS(  # type: ignore[misc]
 
         # AutoParseWriteHook (post-write: background parsing)
         parser_reg = getattr(self, "parser_registry", None)
-        if parser_reg is not None and getattr(self, "auto_parse", False):
+        parse_fn = getattr(self, "parse", None)
+        if parser_reg is not None and parse_fn is not None and getattr(self, "auto_parse", False):
             pipeline.register_write_hook(
                 AutoParseWriteHook(
                     get_parser=parser_reg.get_parser,
-                    parse_fn=self.parse,  # type: ignore[attr-defined]
+                    parse_fn=parse_fn,
                 )
             )
 

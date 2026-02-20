@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
@@ -446,7 +446,7 @@ def create_nexus_fs(
     _wired = _boot_wired_services(nx, kernel_services, system_services, brick_services, _brick_on)
     nx._bind_wired_services(_wired)
     if _wired.get("metadata_export_service") is not None:
-        nx._metadata_export_service = _wired["metadata_export_service"]
+        cast(Any, nx)._metadata_export_service = _wired["metadata_export_service"]
 
     # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)
     _blm = getattr(system_services, "brick_lifecycle_manager", None)

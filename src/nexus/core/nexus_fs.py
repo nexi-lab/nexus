@@ -1983,15 +1983,24 @@ class NexusFS(  # type: ignore[misc]
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
-        return self.search_service.list(
-            path=path,
-            recursive=recursive,
-            details=details,
-            show_parsed=show_parsed,
-            context=context,
-            limit=limit,
-            cursor=cursor,
-        )
+        if self.search_service is not None:
+            return self.search_service.list(
+                path=path,
+                recursive=recursive,
+                details=details,
+                show_parsed=show_parsed,
+                context=context,
+                limit=limit,
+                cursor=cursor,
+            )
+        # Kernel-only fallback: delegate directly to metadata store
+        prefix = path if path != "/" else ""
+        if prefix and not prefix.endswith("/"):
+            prefix = prefix + "/"
+        entries = self.metadata.list(prefix=prefix, recursive=recursive)
+        if details:
+            return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
+        return [e.path for e in entries]
 
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
         return self.search_service.glob(pattern=pattern, path=path, context=context)

@@ -17,7 +17,7 @@ import time
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.services.permissions.namespace_manager import NamespaceManager
+from nexus.rebac.namespace_manager import NamespaceManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

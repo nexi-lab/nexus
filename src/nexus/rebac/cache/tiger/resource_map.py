@@ -14,7 +14,13 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from sqlalchemy import insert, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from nexus.storage.models.permissions import TigerResourceMapModel as TRM
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
@@ -36,9 +42,9 @@ class TigerResourceMap:
     See: Issue #979 - Cross-zone resource map optimization
     """
 
-    def __init__(self, engine: Engine, *, is_postgresql: bool = False):
+    def __init__(self, engine: Engine, *, is_postgresql: bool = False):  # noqa: ARG002
         self._engine = engine
-        self._is_postgresql = is_postgresql
+        self._is_postgresql = "postgresql" in str(engine.url)
 
         # In-memory cache for frequently accessed mappings
         # Key is (type, id) - zone excluded for cross-zone compatibility
@@ -71,81 +77,55 @@ class TigerResourceMap:
                 return self._uuid_to_int[key]
 
         # Query/insert in database
-        from sqlalchemy import text
+        select_stmt = select(TRM.resource_int_id).where(
+            TRM.resource_type == resource_type,
+            TRM.resource_id == resource_id,
+        )
 
         def do_get_or_create(connection: Connection) -> int:
             # Try to get existing (no zone filter)
-            query = text("""
-                SELECT resource_int_id FROM tiger_resource_map
-                WHERE resource_type = :resource_type
-                  AND resource_id = :resource_id
-            """)
-            result = connection.execute(
-                query,
-                {
-                    "resource_type": resource_type,
-                    "resource_id": resource_id,
-                },
-            )
-            row = result.fetchone()
+            row = connection.execute(select_stmt).first()
             if row:
                 return int(row.resource_int_id)
 
-            # Insert new
+            # Insert new with conflict handling
             if self._is_postgresql:
-                insert_query = text("""
-                    INSERT INTO tiger_resource_map (resource_type, resource_id, created_at)
-                    VALUES (:resource_type, :resource_id, NOW())
-                    ON CONFLICT (resource_type, resource_id) DO NOTHING
-                    RETURNING resource_int_id
-                """)
-                result = connection.execute(
-                    insert_query,
-                    {
-                        "resource_type": resource_type,
-                        "resource_id": resource_id,
-                    },
+                insert_stmt = (
+                    pg_insert(TRM)
+                    .values(
+                        resource_type=resource_type,
+                        resource_id=resource_id,
+                        created_at=datetime.now(UTC),
+                    )
+                    .on_conflict_do_nothing(
+                        index_elements=["resource_type", "resource_id"],
+                    )
+                    .returning(TRM.resource_int_id)
                 )
-                row = result.fetchone()
+                result = connection.execute(insert_stmt)
                 # Commit so the data persists (Issue #934 fix)
                 connection.commit()
+                row = result.first()
                 if row:
                     return int(row.resource_int_id)
                 # Conflict occurred, fetch again
-                result = connection.execute(
-                    query,
-                    {
-                        "resource_type": resource_type,
-                        "resource_id": resource_id,
-                    },
-                )
-                row = result.fetchone()
+                row = connection.execute(select_stmt).first()
                 return int(row.resource_int_id) if row else -1
             else:
                 # SQLite - use INSERT OR IGNORE then SELECT
-                # Need to commit after INSERT so SELECT can see the new row
-                insert_query = text("""
-                    INSERT OR IGNORE INTO tiger_resource_map (resource_type, resource_id, created_at)
-                    VALUES (:resource_type, :resource_id, datetime('now'))
-                """)
                 connection.execute(
-                    insert_query,
-                    {
-                        "resource_type": resource_type,
-                        "resource_id": resource_id,
-                    },
+                    insert(TRM)
+                    .prefix_with("OR IGNORE")
+                    .values(
+                        resource_type=resource_type,
+                        resource_id=resource_id,
+                        created_at=datetime.now(UTC),
+                    )
                 )
                 # Commit so the SELECT can see the inserted row
                 connection.commit()
                 # Get the ID (either newly inserted or existing)
-                result = connection.execute(
-                    query,
-                    {
-                        "resource_type": resource_type,
-                        "resource_id": resource_id,
-                    },
-                )
-                row = result.fetchone()
+                row = connection.execute(select_stmt).first()
                 return int(row.resource_int_id) if row else -1
 
         if conn:
@@ -179,17 +159,12 @@ class TigerResourceMap:
                 return self._int_to_uuid[int_id]
 
         # Query database
-        from sqlalchemy import text
-
-        query = text("""
-            SELECT resource_type, resource_id
-            FROM tiger_resource_map
-            WHERE resource_int_id = :int_id
-        """)
+        stmt = select(TRM.resource_type, TRM.resource_id).where(
+            TRM.resource_int_id == int_id,
+        )
 
         def execute(connection: Connection) -> tuple[str, str] | None:
-            result = connection.execute(query, {"int_id": int_id})
-            row = result.fetchone()
+            row = connection.execute(stmt).first()
             if row:
                 return (row.resource_type, row.resource_id)
             return None
@@ -222,8 +197,6 @@ class TigerResourceMap:
         Returns:
             Dict mapping resource tuples to their int IDs (None if not found)
         """
-        from sqlalchemy import text
-
         if not resources:
             return {}
 
@@ -242,45 +215,25 @@ class TigerResourceMap:
         if not to_fetch:
             return results
 
-        # Bulk fetch from database (no zone filter)
-        if self._is_postgresql:
-            # PostgreSQL: Use UNNEST for efficient bulk lookup
-            query = text("""
-                SELECT resource_type, resource_id, resource_int_id
-                FROM tiger_resource_map
-                WHERE (resource_type, resource_id) IN (
-                    SELECT UNNEST(:types), UNNEST(:ids)
-                )
-            """)
-            types = [r[0] for r in to_fetch]
-            ids = [r[1] for r in to_fetch]
-            result = conn.execute(query, {"types": types, "ids": ids})
-        else:
-            # SQLite: Use VALUES clause
-            if len(to_fetch) > 500:
-                # Batch for large sets
-                for i in range(0, len(to_fetch), 500):
-                    batch = to_fetch[i : i + 500]
-                    batch_results = self.bulk_get_int_ids(batch, conn)
-                    results.update(batch_results)
-                return results
+        # Bulk fetch from database using OR conditions (dialect-agnostic)
+        # Batch in groups to avoid too-large queries
+        batch_size = 500
+        for i in range(0, len(to_fetch), batch_size):
+            batch = to_fetch[i : i + batch_size]
+            conditions = [(TRM.resource_type == rt) & (TRM.resource_id == rid) for rt, rid in batch]
+            stmt = select(TRM.resource_type, TRM.resource_id, TRM.resource_int_id).where(
+                or_(*conditions)
+            )
+            result = conn.execute(stmt)
 
-            values = ", ".join(f"('{r[0]}', '{r[1]}')" for r in to_fetch)
-            query = text(f"""
-                SELECT resource_type, resource_id, resource_int_id
-                FROM tiger_resource_map
-                WHERE (resource_type, resource_id) IN (VALUES {values})
-            """)
-            result = conn.execute(query)
-
-        # Process results and update cache
-        with self._lock:
-            for row in result:
-                key = (row.resource_type, row.resource_id)
-                int_id = int(row.resource_int_id)
-                results[key] = int_id
-                self._uuid_to_int[key] = int_id
-                self._int_to_uuid[int_id] = key
+            # Process results and update cache
+            with self._lock:
+                for row in result:
+                    key = (row.resource_type, row.resource_id)
+                    int_id = int(row.resource_int_id)
+                    results[key] = int_id
+                    self._uuid_to_int[key] = int_id
+                    self._int_to_uuid[int_id] = key
 
         return results
 
@@ -312,45 +265,27 @@ class TigerResourceMap:
         if not missing:
             return result
 
-        # Query database for missing (no zone filter)
-        from sqlalchemy import text
+        # Query database for missing using OR conditions (dialect-agnostic)
+        batch_size = 500
+        stmt_batches: list[list[tuple[str, str]]] = [
+            missing[i : i + batch_size] for i in range(0, len(missing), batch_size)
+        ]
 
-        if self._is_postgresql:
-            # Use UNNEST for efficient batch lookup
-            query = text("""
-                SELECT resource_type, resource_id, resource_int_id
-                FROM tiger_resource_map
-                WHERE (resource_type, resource_id) IN (
-                    SELECT unnest(:types::text[]), unnest(:ids::text[])
+        def execute(connection: Connection) -> None:
+            for batch in stmt_batches:
+                conditions = [
+                    (TRM.resource_type == rt) & (TRM.resource_id == rid) for rt, rid in batch
+                ]
+                stmt = select(TRM.resource_type, TRM.resource_id, TRM.resource_int_id).where(
+                    or_(*conditions)
                 )
-            """)
-            types = [m[0] for m in missing]
-            ids = [m[1] for m in missing]
-
-            def execute(connection: Connection) -> None:
-                db_result = connection.execute(query, {"types": types, "ids": ids})
+                db_result = connection.execute(stmt)
                 for row in db_result:
                     key = (row.resource_type, row.resource_id)
                     result[key] = row.resource_int_id
                     with self._lock:
                         self._uuid_to_int[key] = row.resource_int_id
                         self._int_to_uuid[row.resource_int_id] = key
-        else:
-            # SQLite: Use individual queries (less efficient)
-            query = text("""
-                SELECT resource_int_id FROM tiger_resource_map
-                WHERE resource_type = :type AND resource_id = :id
-            """)
-
-            def execute(connection: Connection) -> None:
-                for key in missing:
-                    db_result = connection.execute(query, {"type": key[0], "id": key[1]})
-                    row = db_result.fetchone()
-                    if row:
-                        result[key] = row.resource_int_id
-                        with self._lock:
-                            self._uuid_to_int[key] = row.resource_int_id
-                            self._int_to_uuid[row.resource_int_id] = key
 
         if conn:
             execute(conn)
@@ -359,28 +294,6 @@ class TigerResourceMap:
                 execute(new_conn)
 
         return result
-
-    def resolve_ids_to_paths(self, int_ids: list[int], resource_type: str = "file") -> list[str]:
-        """Resolve integer IDs to resource paths, filtering by type.
-
-        Thread-safe. Returns paths for IDs that match the given resource_type.
-        Used by PermissionEnforcer to build the accessible paths list for
-        Rust-accelerated prefix matching (Issue #1565).
-
-        Args:
-            int_ids: List of integer IDs from a Roaring Bitmap
-            resource_type: Filter to this resource type (default: "file")
-
-        Returns:
-            List of resource paths (resource_id strings) matching the type
-        """
-        paths: list[str] = []
-        with self._lock:
-            for int_id in int_ids:
-                info = self._int_to_uuid.get(int_id)
-                if info and info[0] == resource_type:
-                    paths.append(info[1])
-        return paths
 
     def clear_cache(self) -> None:
         """Clear in-memory cache."""

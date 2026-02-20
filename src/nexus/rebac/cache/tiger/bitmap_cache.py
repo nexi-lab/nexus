@@ -20,11 +20,17 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pyroaring import BitMap as RoaringBitmap
+from sqlalchemy import delete, insert, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.storage.models.permissions import ReBACVersionSequenceModel as RVS
+from nexus.storage.models.permissions import TigerCacheModel as TC
+from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
+from nexus.storage.models.permissions import TigerResourceMapModel as TRM
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
@@ -40,15 +46,18 @@ logger = logging.getLogger(__name__)
 class CacheKey:
     """Key for Tiger Cache lookup.
 
-    zone_id is included for multi-zone federation isolation — each zone
-    gets its own cache partition to prevent cross-zone cache pollution.
+    Note: zone_id is intentionally excluded from the cache key.
+    Zone isolation is enforced during permission computation, not caching.
+    This allows shared resources (e.g., /skills in 'default' zone) to be
+    accessible across zones without cache misses.
+
+    See: Issue #979 - Tiger Cache persistence and cross-zone optimization
     """
 
     subject_type: str
     subject_id: str
     permission: str
     resource_type: str
-    zone_id: str = ""
 
     def __hash__(self) -> int:
         return hash(
@@ -57,7 +66,6 @@ class CacheKey:
                 self.subject_id,
                 self.permission,
                 self.resource_type,
-                self.zone_id,
             )
         )
 
@@ -83,9 +91,8 @@ class TigerCache:
         resource_map: TigerResourceMap | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         dragonfly_cache: TigerCacheProtocol | None = None,
-        l2_max_workers: int = 4,
         *,
-        is_postgresql: bool = False,
+        is_postgresql: bool = False,  # noqa: ARG002
     ):
         """Initialize Tiger Cache.
 
@@ -94,15 +101,13 @@ class TigerCache:
             resource_map: Resource mapping service (created if not provided)
             rebac_manager: ReBAC manager for permission computation
             dragonfly_cache: Optional Dragonfly cache for L2 distributed caching
-            l2_max_workers: Thread pool size for L2 dragonfly operations.
-            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
         from nexus.rebac.cache.tiger.resource_map import TigerResourceMap as _TRM
 
         self._engine = engine
-        self._resource_map = resource_map or _TRM(engine, is_postgresql=is_postgresql)
+        self._resource_map = resource_map or _TRM(engine)
         self._rebac_manager = rebac_manager
-        self._is_postgresql = is_postgresql
+        self._is_postgresql = "postgresql" in str(engine.url)
 
         # L2: Dragonfly distributed cache (optional)
         self._dragonfly: TigerCacheProtocol | None = dragonfly_cache
@@ -117,8 +122,12 @@ class TigerCache:
         self._lock = threading.RLock()
 
         # Persistent thread pool for L2 operations (avoid per-operation creation)
-        self._l2_max_workers = l2_max_workers
         self._l2_executor: Any | None = None
+
+    @property
+    def resource_map(self) -> TigerResourceMap:
+        """Public accessor for the resource map."""
+        return self._resource_map
 
     def set_dragonfly_cache(self, dragonfly_cache: TigerCacheProtocol | None) -> None:
         """Set or update the Dragonfly cache backend.
@@ -134,12 +143,12 @@ class TigerCache:
             # Cache URL for sync Redis operations
             _client = getattr(dragonfly_cache, "_client", None)
             self._dragonfly_url = getattr(_client, "_url", None) if _client else None
-            # Create persistent thread pool for L2 ops
+            # Create persistent thread pool (max 4 workers for L2 ops)
             import concurrent.futures
 
             if self._l2_executor is None:
                 self._l2_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=self._l2_max_workers, thread_name_prefix="tiger-l2"
+                    max_workers=4, thread_name_prefix="tiger-l2"
                 )
             logger.info("[TIGER] Dragonfly L2 cache enabled")
         else:
@@ -269,7 +278,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         conn: Connection | None = None,
     ) -> set[int]:
         """Get all resource integer IDs that subject can access.
@@ -279,13 +288,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID for cache partitioning
+            zone_id: Zone ID (kept for API compatibility)
             conn: Optional database connection
 
         Returns:
             Set of integer resource IDs
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         # Check in-memory cache first
         with self._lock:
@@ -371,7 +380,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         conn: Connection | None = None,
     ) -> bytes | None:
         """Get serialized bitmap bytes for Rust interop (Issue #896).
@@ -384,13 +393,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID for cache partitioning
+            zone_id: Zone ID (kept for API compatibility)
             conn: Optional database connection
 
         Returns:
             Serialized bitmap bytes if found, None if not in cache
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         # Check in-memory cache first
         with self._lock:
@@ -401,25 +410,15 @@ class TigerCache:
                     return bytes(bitmap.serialize())
 
         # Load from database and return raw bytes
-        from sqlalchemy import text
-
-        query = text("""
-            SELECT bitmap_data, revision FROM tiger_cache
-            WHERE subject_type = :subject_type
-              AND subject_id = :subject_id
-              AND permission = :permission
-              AND resource_type = :resource_type
-        """)
-
-        params = {
-            "subject_type": key.subject_type,
-            "subject_id": key.subject_id,
-            "permission": key.permission,
-            "resource_type": key.resource_type,
-        }
+        stmt = select(TC.bitmap_data, TC.revision).where(
+            TC.subject_type == key.subject_type,
+            TC.subject_id == key.subject_id,
+            TC.permission == key.permission,
+            TC.resource_type == key.resource_type,
+        )
 
         def execute(connection: Connection) -> bytes | None:
-            result = connection.execute(query, params)
+            result = connection.execute(stmt)
             row = result.fetchone()
             if row:
                 # Cache the deserialized bitmap in memory for future use
@@ -438,66 +437,13 @@ class TigerCache:
             with self._engine.connect() as new_conn:
                 return execute(new_conn)
 
-    def get_accessible_paths_list(
-        self,
-        subject_type: str,
-        subject_id: str,
-        permission: str,
-        resource_type: str,
-        zone_id: str,
-    ) -> list[str] | None:
-        """Get list of accessible resource paths for a subject (Issue #1565).
-
-        Combines bitmap lookup + resource map resolution into a single public API.
-        Returns None if no bitmap is available (caller should use fallback behavior).
-        Returns empty list if bitmap exists but has no matching paths.
-
-        Unlike get_accessible_paths() (which returns set for SQL pushdown),
-        this returns a list suitable for Rust prefix matching.
-
-        Args:
-            subject_type: Type of subject (e.g., "user", "agent")
-            subject_id: ID of subject
-            permission: Permission to check (e.g., "read")
-            resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID (passed through to get_bitmap_bytes)
-
-        Returns:
-            List of accessible paths, or None if no bitmap available
-        """
-        bitmap_bytes = self.get_bitmap_bytes(
-            subject_type=subject_type,
-            subject_id=subject_id,
-            permission=permission,
-            resource_type=resource_type,
-            zone_id=zone_id,
-        )
-
-        if bitmap_bytes is None:
-            return None
-
-        # Decode bitmap to get allowed int IDs
-        try:
-            import nexus_fast
-
-            allowed_ids = nexus_fast.decode_roaring_bitmap(bitmap_bytes)
-        except (ImportError, AttributeError):
-            bitmap = RoaringBitmap.deserialize(bitmap_bytes)
-            allowed_ids = list(bitmap)
-
-        if not allowed_ids:
-            return []
-
-        # Resolve int IDs to paths via the resource map
-        return self._resource_map.resolve_ids_to_paths(allowed_ids, resource_type)
-
     def get_cache_age(
         self,
         subject_type: str,
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str = "",
+        zone_id: str = "",  # noqa: ARG002 - Kept for API compatibility, not used in cache key
     ) -> float | None:
         """Get cache age in seconds for a specific entry (Issue #921).
 
@@ -509,12 +455,12 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID for cache partitioning
+            zone_id: Deprecated, kept for API compatibility
 
         Returns:
             Age in seconds if entry is in memory cache, None if not cached
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         with self._lock:
             if key in self._cache:
@@ -645,25 +591,15 @@ class TigerCache:
             # Dragonfly miss or unavailable, fall through to L3
 
         # L3: Fall back to PostgreSQL
-        from sqlalchemy import text
-
-        query = text("""
-            SELECT bitmap_data, revision FROM tiger_cache
-            WHERE subject_type = :subject_type
-              AND subject_id = :subject_id
-              AND permission = :permission
-              AND resource_type = :resource_type
-        """)
-
-        params = {
-            "subject_type": key.subject_type,
-            "subject_id": key.subject_id,
-            "permission": key.permission,
-            "resource_type": key.resource_type,
-        }
+        stmt = select(TC.bitmap_data, TC.revision).where(
+            TC.subject_type == key.subject_type,
+            TC.subject_id == key.subject_id,
+            TC.permission == key.permission,
+            TC.resource_type == key.resource_type,
+        )
 
         def execute(connection: Connection) -> Any:  # Returns Bitmap or None
-            result = connection.execute(query, params)
+            result = connection.execute(stmt)
             row = result.fetchone()
             if row:
                 bitmap = RoaringBitmap.deserialize(row.bitmap_data)
@@ -707,8 +643,6 @@ class TigerCache:
         Returns:
             Dict mapping cache keys to their bitmaps (missing keys not included)
         """
-        from sqlalchemy import text
-
         if not keys:
             return {}
 
@@ -731,62 +665,43 @@ class TigerCache:
         if not to_fetch:
             return results
 
-        # Bulk fetch from database (zone_id removed from cache key per Issue #979)
-        if self._is_postgresql:
-            query = text("""
-                SELECT subject_type, subject_id, permission, resource_type,
-                       bitmap_data, revision
-                FROM tiger_cache
-                WHERE (subject_type, subject_id, permission, resource_type) IN (
-                    SELECT UNNEST(:subj_types), UNNEST(:subj_ids), UNNEST(:perms),
-                           UNNEST(:res_types)
-                )
-            """)
-            params = {
-                "subj_types": [k.subject_type for k in to_fetch],
-                "subj_ids": [k.subject_id for k in to_fetch],
-                "perms": [k.permission for k in to_fetch],
-                "res_types": [k.resource_type for k in to_fetch],
-            }
-            db_result = conn.execute(query, params)
-        else:
-            # SQLite: Use VALUES clause
-            if len(to_fetch) > 100:
-                # Batch for large sets
-                for i in range(0, len(to_fetch), 100):
-                    batch = to_fetch[i : i + 100]
-                    batch_results = self._bulk_load_from_db(batch, conn)
-                    results.update(batch_results)
-                return results
+        # Bulk fetch from database using OR conditions (dialect-agnostic)
+        batch_size = 100
+        for i in range(0, len(to_fetch), batch_size):
+            batch = to_fetch[i : i + batch_size]
+            conditions = [
+                (TC.subject_type == k.subject_type)
+                & (TC.subject_id == k.subject_id)
+                & (TC.permission == k.permission)
+                & (TC.resource_type == k.resource_type)
+                for k in batch
+            ]
+            stmt = select(
+                TC.subject_type,
+                TC.subject_id,
+                TC.permission,
+                TC.resource_type,
+                TC.bitmap_data,
+                TC.revision,
+            ).where(or_(*conditions))
 
-            values = ", ".join(
-                f"('{k.subject_type}', '{k.subject_id}', '{k.permission}', '{k.resource_type}')"
-                for k in to_fetch
-            )
-            query = text(f"""
-                SELECT subject_type, subject_id, permission, resource_type,
-                       bitmap_data, revision
-                FROM tiger_cache
-                WHERE (subject_type, subject_id, permission, resource_type)
-                    IN (VALUES {values})
-            """)
-            db_result = conn.execute(query)
+            db_result = conn.execute(stmt)
 
-        # Process results and update cache
-        with self._lock:
-            for row in db_result:
-                key = CacheKey(
-                    row.subject_type,
-                    row.subject_id,
-                    row.permission,
-                    row.resource_type,
-                )
-                bitmap = RoaringBitmap.deserialize(row.bitmap_data)
-                results[key] = bitmap
+            # Process results and update cache
+            with self._lock:
+                for row in db_result:
+                    key = CacheKey(
+                        row.subject_type,
+                        row.subject_id,
+                        row.permission,
+                        row.resource_type,
+                    )
+                    bitmap = RoaringBitmap.deserialize(row.bitmap_data)
+                    results[key] = bitmap
 
-                # Update memory cache
-                self._evict_if_needed()
-                self._cache[key] = (bitmap, int(row.revision), time.time())
+                    # Update memory cache
+                    self._evict_if_needed()
+                    self._cache[key] = (bitmap, int(row.revision), time.time())
 
         return results
 
@@ -876,8 +791,6 @@ class TigerCache:
             revision: Current revision for staleness detection
             conn: Optional database connection
         """
-        from sqlalchemy import text
-
         logger.info(
             f"Tiger Cache UPDATE: {subject_type}:{subject_id} -> {permission} -> {resource_type} "
             f"(zone={zone_id}, {len(resource_int_ids)} resources, rev={revision}, "
@@ -888,57 +801,47 @@ class TigerCache:
         bitmap = RoaringBitmap(resource_int_ids)
 
         bitmap_data = bitmap.serialize()
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        now = datetime.now(UTC)
 
         # Upsert to database (zone_id removed from unique constraint per Issue #979)
         # Note: zone_id still included in INSERT for backward compatibility (NOT NULL column)
-        query: Any  # TextClause or tuple[TextClause, TextClause]
-        if self._is_postgresql:
-            query = text("""
-                INSERT INTO tiger_cache
-                    (subject_type, subject_id, permission, resource_type, zone_id, bitmap_data, revision, created_at, updated_at)
-                VALUES
-                    (:subject_type, :subject_id, :permission, :resource_type, :zone_id, :bitmap_data, :revision, NOW(), NOW())
-                ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
-                DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data, revision = EXCLUDED.revision, updated_at = NOW()
-            """)
-        else:
-            # SQLite: Try UPDATE first, then INSERT if no rows affected
-            update_query = text("""
-                UPDATE tiger_cache
-                SET bitmap_data = :bitmap_data, revision = :revision, updated_at = datetime('now')
-                WHERE subject_type = :subject_type
-                  AND subject_id = :subject_id
-                  AND permission = :permission
-                  AND resource_type = :resource_type
-            """)
-            insert_query = text("""
-                INSERT INTO tiger_cache
-                    (subject_type, subject_id, permission, resource_type, zone_id, bitmap_data, revision, created_at, updated_at)
-                VALUES
-                    (:subject_type, :subject_id, :permission, :resource_type, :zone_id, :bitmap_data, :revision, datetime('now'), datetime('now'))
-            """)
-            query = (update_query, insert_query)  # Tuple of queries for SQLite
-
         params = {
             "subject_type": subject_type,
             "subject_id": subject_id,
             "permission": permission,
             "resource_type": resource_type,
-            "zone_id": zone_id,  # Keep for backward compatibility
+            "zone_id": zone_id,
             "bitmap_data": bitmap_data,
             "revision": revision,
         }
 
         def execute(connection: Connection) -> None:
-            if isinstance(query, tuple):
-                # SQLite: Try UPDATE first
-                result = connection.execute(query[0], params)
-                if result.rowcount == 0:
-                    # No existing row, INSERT
-                    connection.execute(query[1], params)
+            if self._is_postgresql:
+                pg_stmt = pg_insert(TC).values(**params, created_at=now, updated_at=now)
+                pg_stmt = pg_stmt.on_conflict_do_update(
+                    constraint="uq_tiger_cache",
+                    set_={
+                        "bitmap_data": pg_stmt.excluded.bitmap_data,
+                        "revision": pg_stmt.excluded.revision,
+                        "updated_at": now,
+                    },
+                )
+                connection.execute(pg_stmt)
             else:
-                connection.execute(query, params)
+                # SQLite: Try UPDATE first, then INSERT if no rows affected
+                result = connection.execute(
+                    update(TC)
+                    .where(
+                        TC.subject_type == subject_type,
+                        TC.subject_id == subject_id,
+                        TC.permission == permission,
+                        TC.resource_type == resource_type,
+                    )
+                    .values(bitmap_data=bitmap_data, revision=revision, updated_at=now)
+                )
+                if result.rowcount == 0:
+                    connection.execute(insert(TC).values(**params, created_at=now, updated_at=now))
 
         try:
             if conn:
@@ -946,9 +849,6 @@ class TigerCache:
                 logger.info(f"[TIGER] L3 PostgreSQL write (via conn) for {key}")
             else:
                 with self._engine.begin() as new_conn:
-                    # Set short timeout for Tiger Cache ops - fail fast instead of blocking
-                    if not self._is_postgresql:
-                        new_conn.execute(text("PRAGMA busy_timeout=100"))
                     execute(new_conn)
                 # Transaction committed after exiting 'with' block
                 logger.info(f"[TIGER] L3 PostgreSQL write COMMITTED for {key}")
@@ -998,49 +898,37 @@ class TigerCache:
         Returns:
             Number of entries invalidated
         """
-        from sqlalchemy import text
-
         logger.info(
             f"Tiger Cache INVALIDATE: subject={subject_type}:{subject_id}, "
             f"permission={permission}, resource_type={resource_type}, zone={zone_id}"
         )
 
-        # Build WHERE clause
+        # Build WHERE conditions dynamically using ORM
         conditions = []
-        params: dict[str, Any] = {}
-
         if subject_type:
-            conditions.append("subject_type = :subject_type")
-            params["subject_type"] = subject_type
+            conditions.append(TC.subject_type == subject_type)
         if subject_id:
-            conditions.append("subject_id = :subject_id")
-            params["subject_id"] = subject_id
+            conditions.append(TC.subject_id == subject_id)
         if permission:
-            conditions.append("permission = :permission")
-            params["permission"] = permission
+            conditions.append(TC.permission == permission)
         if resource_type:
-            conditions.append("resource_type = :resource_type")
-            params["resource_type"] = resource_type
+            conditions.append(TC.resource_type == resource_type)
         if zone_id:
-            conditions.append("zone_id = :zone_id")
-            params["zone_id"] = zone_id
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
+            conditions.append(TC.zone_id == zone_id)
 
         # Delete from database
-        query = text(f"DELETE FROM tiger_cache WHERE {where_clause}")
+        stmt = delete(TC)
+        if conditions:
+            stmt = stmt.where(*conditions)
 
         def execute(connection: Connection) -> int:
-            result = connection.execute(query, params)
+            result = connection.execute(stmt)
             return result.rowcount
 
         if conn:
             count = execute(conn)
         else:
             with self._engine.begin() as new_conn:
-                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
-                if not self._is_postgresql:
-                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 count = execute(new_conn)
 
         # L2: Invalidate from Dragonfly cache (zone_id excluded per Issue #979)
@@ -1108,7 +996,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_id: int,
     ) -> bool:
         """Add a single resource to subject's permission bitmap (in-memory only).
@@ -1121,13 +1009,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID for cache partitioning
+            zone_id: Zone ID (kept for API compatibility)
             resource_int_id: Integer ID of the resource to add
 
         Returns:
             True if added successfully, False otherwise
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         with self._lock:
             if key in self._cache:
@@ -1185,9 +1073,7 @@ class TigerCache:
         Returns:
             True if persisted successfully, False on error
         """
-        from sqlalchemy import text
-
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         try:
             # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
@@ -1221,43 +1107,46 @@ class TigerCache:
                 # Step 3: Persist to database (zone_id removed from key per Issue #979)
                 # Note: zone_id still included in INSERT for backward compatibility
                 bitmap_data = bitmap.serialize()
+                now = datetime.now(UTC)
 
                 if self._is_postgresql:
-                    upsert_query = text("""
-                        INSERT INTO tiger_cache
-                            (subject_type, subject_id, permission, resource_type, zone_id,
-                             bitmap_data, revision, created_at, updated_at)
-                        VALUES
-                            (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
-                             :bitmap_data, :revision, NOW(), NOW())
-                        ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
-                        DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
-                                      revision = EXCLUDED.revision,
-                                      updated_at = NOW()
-                    """)
+                    pg_stmt = pg_insert(TC).values(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        permission=permission,
+                        resource_type=resource_type,
+                        zone_id=zone_id,
+                        bitmap_data=bitmap_data,
+                        revision=revision,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    pg_stmt = pg_stmt.on_conflict_do_update(
+                        constraint="uq_tiger_cache",
+                        set_={
+                            "bitmap_data": pg_stmt.excluded.bitmap_data,
+                            "revision": pg_stmt.excluded.revision,
+                            "updated_at": now,
+                        },
+                    )
+                    conn.execute(pg_stmt)
                 else:
                     # SQLite: Use INSERT OR REPLACE
-                    upsert_query = text("""
-                        INSERT OR REPLACE INTO tiger_cache
-                            (subject_type, subject_id, permission, resource_type, zone_id,
-                             bitmap_data, revision, created_at, updated_at)
-                        VALUES
-                            (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
-                             :bitmap_data, :revision, datetime('now'), datetime('now'))
-                    """)
-
-                conn.execute(
-                    upsert_query,
-                    {
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "permission": permission,
-                        "resource_type": resource_type,
-                        "zone_id": zone_id,
-                        "bitmap_data": bitmap_data,
-                        "revision": revision,
-                    },
-                )
+                    conn.execute(
+                        insert(TC)
+                        .prefix_with("OR REPLACE")
+                        .values(
+                            subject_type=subject_type,
+                            subject_id=subject_id,
+                            permission=permission,
+                            resource_type=resource_type,
+                            zone_id=zone_id,
+                            bitmap_data=bitmap_data,
+                            revision=revision,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
                 # Commit happens automatically when exiting 'with' block
 
             # Step 4: Update L2 cache (Dragonfly) for cross-instance consistency
@@ -1312,9 +1201,7 @@ class TigerCache:
         Returns:
             True if persisted successfully, False on error
         """
-        from sqlalchemy import text
-
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         try:
             with self._engine.begin() as conn:
@@ -1326,19 +1213,11 @@ class TigerCache:
 
                 if resource_int_id is None:
                     # Try to get from DB (no zone filter)
-                    query = text("""
-                        SELECT resource_int_id FROM tiger_resource_map
-                        WHERE resource_type = :resource_type
-                          AND resource_id = :resource_id
-                    """)
-                    result = conn.execute(
-                        query,
-                        {
-                            "resource_type": resource_type,
-                            "resource_id": resource_id,
-                        },
+                    trm_stmt = select(TRM.resource_int_id).where(
+                        TRM.resource_type == resource_type,
+                        TRM.resource_id == resource_id,
                     )
-                    row = result.fetchone()
+                    row = conn.execute(trm_stmt).fetchone()
                     if row:
                         resource_int_id = int(row.resource_int_id)
                     else:
@@ -1375,42 +1254,45 @@ class TigerCache:
                 # Step 4: Persist to database (zone_id removed from key per Issue #979)
                 # Note: zone_id still included in INSERT for backward compatibility
                 bitmap_data = bitmap.serialize()
+                now = datetime.now(UTC)
 
                 if self._is_postgresql:
-                    upsert_query = text("""
-                        INSERT INTO tiger_cache
-                            (subject_type, subject_id, permission, resource_type, zone_id,
-                             bitmap_data, revision, created_at, updated_at)
-                        VALUES
-                            (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
-                             :bitmap_data, :revision, NOW(), NOW())
-                        ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
-                        DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
-                                      revision = EXCLUDED.revision,
-                                      updated_at = NOW()
-                    """)
+                    pg_stmt = pg_insert(TC).values(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        permission=permission,
+                        resource_type=resource_type,
+                        zone_id=zone_id,
+                        bitmap_data=bitmap_data,
+                        revision=revision,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    pg_stmt = pg_stmt.on_conflict_do_update(
+                        constraint="uq_tiger_cache",
+                        set_={
+                            "bitmap_data": pg_stmt.excluded.bitmap_data,
+                            "revision": pg_stmt.excluded.revision,
+                            "updated_at": now,
+                        },
+                    )
+                    conn.execute(pg_stmt)
                 else:
-                    upsert_query = text("""
-                        INSERT OR REPLACE INTO tiger_cache
-                            (subject_type, subject_id, permission, resource_type, zone_id,
-                             bitmap_data, revision, created_at, updated_at)
-                        VALUES
-                            (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
-                             :bitmap_data, :revision, datetime('now'), datetime('now'))
-                    """)
-
-                conn.execute(
-                    upsert_query,
-                    {
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "permission": permission,
-                        "resource_type": resource_type,
-                        "zone_id": zone_id,
-                        "bitmap_data": bitmap_data,
-                        "revision": revision,
-                    },
-                )
+                    conn.execute(
+                        insert(TC)
+                        .prefix_with("OR REPLACE")
+                        .values(
+                            subject_type=subject_type,
+                            subject_id=subject_id,
+                            permission=permission,
+                            resource_type=resource_type,
+                            zone_id=zone_id,
+                            bitmap_data=bitmap_data,
+                            revision=revision,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
 
             # Step 5: Update L2 cache (Dragonfly) for cross-instance consistency
             if self._dragonfly:
@@ -1445,7 +1327,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_id: int,
     ) -> bool:
         """Remove a resource from subject's permission bitmap (write-through).
@@ -1458,7 +1340,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID for cache partitioning
+            zone_id: Zone ID (kept for API compatibility)
             resource_int_id: Integer ID of the resource to remove
 
         Returns:
@@ -1468,7 +1350,7 @@ class TigerCache:
             This is a write-through operation. For security, revocations
             should also invalidate L1 cache entries.
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         with self._lock:
             if key in self._cache:
@@ -1494,7 +1376,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        zone_id: str,
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_ids: set[int],
     ) -> int:
         """Add multiple resources to subject's permission bitmap in bulk.
@@ -1507,7 +1389,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type
             resource_type: Type of resource
-            zone_id: Zone ID for cache partitioning
+            zone_id: Zone ID (kept for API compatibility)
             resource_int_ids: Set of integer resource IDs to add
 
         Returns:
@@ -1516,7 +1398,7 @@ class TigerCache:
         if not resource_int_ids:
             return 0
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         with self._lock:
             if key in self._cache:
@@ -1545,7 +1427,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_int_ids: set[int],
-        zone_id: str = ROOT_ZONE_ID,
+        zone_id: str = "root",
     ) -> bool:
         """Persist bitmap to database after bulk read operations (Issue #979).
 
@@ -1573,12 +1455,10 @@ class TigerCache:
         Returns:
             True if persisted successfully, False on error
         """
-        from sqlalchemy import text
-
         if not resource_int_ids:
             return True
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         try:
             # Get current bitmap from memory (may have more entries than resource_int_ids)
@@ -1590,44 +1470,49 @@ class TigerCache:
                     revision = 0
 
             bitmap_data = bitmap.serialize()
+            now = datetime.now(UTC)
 
             # Note: zone_id still included in INSERT for backward compatibility
             if self._is_postgresql:
-                upsert_query = text("""
-                    INSERT INTO tiger_cache
-                        (subject_type, subject_id, permission, resource_type, zone_id,
-                         bitmap_data, revision, created_at, updated_at)
-                    VALUES
-                        (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
-                         :bitmap_data, :revision, NOW(), NOW())
-                    ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
-                    DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
-                                  revision = EXCLUDED.revision,
-                                  updated_at = NOW()
-                """)
-            else:
-                upsert_query = text("""
-                    INSERT OR REPLACE INTO tiger_cache
-                        (subject_type, subject_id, permission, resource_type, zone_id,
-                         bitmap_data, revision, created_at, updated_at)
-                    VALUES
-                        (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
-                         :bitmap_data, :revision, datetime('now'), datetime('now'))
-                """)
-
-            with self._engine.begin() as conn:
-                conn.execute(
-                    upsert_query,
-                    {
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "permission": permission,
-                        "resource_type": resource_type,
-                        "zone_id": zone_id,
-                        "bitmap_data": bitmap_data,
-                        "revision": revision,
+                pg_stmt = pg_insert(TC).values(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    resource_type=resource_type,
+                    zone_id=zone_id,
+                    bitmap_data=bitmap_data,
+                    revision=revision,
+                    created_at=now,
+                    updated_at=now,
+                )
+                pg_stmt = pg_stmt.on_conflict_do_update(
+                    constraint="uq_tiger_cache",
+                    set_={
+                        "bitmap_data": pg_stmt.excluded.bitmap_data,
+                        "revision": pg_stmt.excluded.revision,
+                        "updated_at": now,
                     },
                 )
+                upsert_stmt: Any = pg_stmt
+            else:
+                upsert_stmt = (
+                    insert(TC)
+                    .prefix_with("OR REPLACE")
+                    .values(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        permission=permission,
+                        resource_type=resource_type,
+                        zone_id=zone_id,
+                        bitmap_data=bitmap_data,
+                        revision=revision,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+
+            with self._engine.begin() as conn:
+                conn.execute(upsert_stmt)
 
             # L2: Also populate Dragonfly cache (write-through)
             if self._dragonfly:
@@ -1683,58 +1568,60 @@ class TigerCache:
         Returns:
             Grant ID if created, None if already exists
         """
-        from sqlalchemy import text
-
         # Normalize directory path (ensure trailing slash)
         if not directory_path.endswith("/"):
             directory_path = directory_path + "/"
 
+        now = datetime.now(UTC)
+
         try:
             if self._is_postgresql:
-                query = text("""
-                    INSERT INTO tiger_directory_grants
-                        (subject_type, subject_id, permission, directory_path, zone_id,
-                         grant_revision, include_future_files, expansion_status, expanded_count,
-                         created_at, updated_at)
-                    VALUES
-                        (:subject_type, :subject_id, :permission, :directory_path, :zone_id,
-                         :grant_revision, :include_future_files, 'pending', 0,
-                         NOW(), NOW())
-                    ON CONFLICT (zone_id, directory_path, permission, subject_type, subject_id)
-                    DO UPDATE SET
-                        grant_revision = EXCLUDED.grant_revision,
-                        include_future_files = EXCLUDED.include_future_files,
-                        updated_at = NOW()
-                    RETURNING grant_id
-                """)
-            else:
-                query = text("""
-                    INSERT OR REPLACE INTO tiger_directory_grants
-                        (subject_type, subject_id, permission, directory_path, zone_id,
-                         grant_revision, include_future_files, expansion_status, expanded_count,
-                         created_at, updated_at)
-                    VALUES
-                        (:subject_type, :subject_id, :permission, :directory_path, :zone_id,
-                         :grant_revision, :include_future_files, 'pending', 0,
-                         datetime('now'), datetime('now'))
-                """)
-
-            with self._engine.begin() as conn:
-                result = conn.execute(
-                    query,
-                    {
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "permission": permission,
-                        "directory_path": directory_path,
-                        "zone_id": zone_id,
-                        "grant_revision": grant_revision,
-                        "include_future_files": include_future_files,
-                    },
+                pg_stmt = pg_insert(TDG).values(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    directory_path=directory_path,
+                    zone_id=zone_id,
+                    grant_revision=grant_revision,
+                    include_future_files=include_future_files,
+                    expansion_status="pending",
+                    expanded_count=0,
+                    created_at=now,
+                    updated_at=now,
                 )
-                if self._is_postgresql:
+                upsert_stmt: Any = pg_stmt.on_conflict_do_update(
+                    constraint="uq_tiger_directory_grants",
+                    set_={
+                        "grant_revision": pg_stmt.excluded.grant_revision,
+                        "include_future_files": pg_stmt.excluded.include_future_files,
+                        "updated_at": now,
+                    },
+                ).returning(TDG.grant_id)
+
+                with self._engine.begin() as conn:
+                    result = conn.execute(upsert_stmt)
                     row = result.fetchone()
                     return int(row.grant_id) if row else None
+            else:
+                sqlite_stmt = (
+                    insert(TDG)
+                    .prefix_with("OR REPLACE")
+                    .values(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        permission=permission,
+                        directory_path=directory_path,
+                        zone_id=zone_id,
+                        grant_revision=grant_revision,
+                        include_future_files=include_future_files,
+                        expansion_status="pending",
+                        expanded_count=0,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                with self._engine.begin() as conn:
+                    conn.execute(sqlite_stmt)
                 return None
 
         except Exception as e:
@@ -1758,42 +1645,30 @@ class TigerCache:
         Returns:
             List of grant dictionaries with subject, permission, directory info
         """
-        from sqlalchemy import text
-
         # Generate all ancestor paths
         ancestors = self._get_ancestor_paths(path)
         if not ancestors:
             return []
 
         try:
-            if self._is_postgresql:
-                query = text("""
-                    SELECT grant_id, subject_type, subject_id, permission, directory_path,
-                           grant_revision, include_future_files
-                    FROM tiger_directory_grants
-                    WHERE zone_id = :zone_id
-                      AND directory_path = ANY(:ancestors)
-                      AND expansion_status = 'completed'
-                """)
-                params = {"zone_id": zone_id, "ancestors": ancestors}
-            else:
-                # SQLite: Use IN clause
-                placeholders = ", ".join([f":a{i}" for i in range(len(ancestors))])
-                query = text(f"""
-                    SELECT grant_id, subject_type, subject_id, permission, directory_path,
-                           grant_revision, include_future_files
-                    FROM tiger_directory_grants
-                    WHERE zone_id = :zone_id
-                      AND directory_path IN ({placeholders})
-                      AND expansion_status = 'completed'
-                """)
-                params = {"zone_id": zone_id}
-                for i, a in enumerate(ancestors):
-                    params[f"a{i}"] = a
+            # Dialect-agnostic: use .in_() which works for both PG and SQLite
+            stmt = select(
+                TDG.grant_id,
+                TDG.subject_type,
+                TDG.subject_id,
+                TDG.permission,
+                TDG.directory_path,
+                TDG.grant_revision,
+                TDG.include_future_files,
+            ).where(
+                TDG.zone_id == zone_id,
+                TDG.directory_path.in_(ancestors),
+                TDG.expansion_status == "completed",
+            )
 
             grants = []
             with self._engine.connect() as conn:
-                result = conn.execute(query, params)
+                result = conn.execute(stmt)
                 for row in result:
                     grants.append(
                         {
@@ -1992,59 +1867,38 @@ class TigerCache:
         error_message: str | None = None,
     ) -> None:
         """Update the status of a directory grant expansion."""
-        from sqlalchemy import text
-
-        updates: list[str] = []
-        params: dict[str, str | int] = {
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-            "permission": permission,
-            "directory_path": directory_path,
-            "zone_id": zone_id,
-        }
+        now = datetime.now(UTC)
+        values_dict: dict[str, Any] = {"updated_at": now}
 
         if status is not None:
-            updates.append("expansion_status = :status")
-            params["status"] = status
+            values_dict["expansion_status"] = status
             if status == "completed":
-                if self._is_postgresql:
-                    updates.append("completed_at = NOW()")
-                else:
-                    updates.append("completed_at = datetime('now')")
+                values_dict["completed_at"] = now
 
         if expanded_count is not None:
-            updates.append("expanded_count = :expanded_count")
-            params["expanded_count"] = expanded_count
+            values_dict["expanded_count"] = expanded_count
 
         if total_count is not None:
-            updates.append("total_count = :total_count")
-            params["total_count"] = total_count
+            values_dict["total_count"] = total_count
 
         if error_message is not None:
-            updates.append("error_message = :error_message")
-            params["error_message"] = error_message
+            values_dict["error_message"] = error_message
 
-        if not updates:
-            return
-
-        if self._is_postgresql:
-            updates.append("updated_at = NOW()")
-        else:
-            updates.append("updated_at = datetime('now')")
-
-        query = text(f"""
-            UPDATE tiger_directory_grants
-            SET {", ".join(updates)}
-            WHERE subject_type = :subject_type
-              AND subject_id = :subject_id
-              AND permission = :permission
-              AND directory_path = :directory_path
-              AND zone_id = :zone_id
-        """)
+        stmt = (
+            update(TDG)
+            .where(
+                TDG.subject_type == subject_type,
+                TDG.subject_id == subject_id,
+                TDG.permission == permission,
+                TDG.directory_path == directory_path,
+                TDG.zone_id == zone_id,
+            )
+            .values(**values_dict)
+        )
 
         try:
             with self._engine.begin() as conn:
-                conn.execute(query, params)
+                conn.execute(stmt)
         except Exception as e:
             logger.error(f"[TIGER] _update_grant_status failed: {e}")
 
@@ -2068,33 +1922,21 @@ class TigerCache:
         Returns:
             True if removed successfully
         """
-        from sqlalchemy import text
-
         # Normalize directory path
         if not directory_path.endswith("/"):
             directory_path = directory_path + "/"
 
         try:
-            query = text("""
-                DELETE FROM tiger_directory_grants
-                WHERE subject_type = :subject_type
-                  AND subject_id = :subject_id
-                  AND permission = :permission
-                  AND directory_path = :directory_path
-                  AND zone_id = :zone_id
-            """)
+            stmt = delete(TDG).where(
+                TDG.subject_type == subject_type,
+                TDG.subject_id == subject_id,
+                TDG.permission == permission,
+                TDG.directory_path == directory_path,
+                TDG.zone_id == zone_id,
+            )
 
             with self._engine.begin() as conn:
-                conn.execute(
-                    query,
-                    {
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "permission": permission,
-                        "directory_path": directory_path,
-                        "zone_id": zone_id,
-                    },
-                )
+                conn.execute(stmt)
 
             logger.info(
                 f"[TIGER] Removed directory grant: {directory_path} "
@@ -2180,33 +2022,42 @@ class TigerCache:
             # This enables revision-based consistency checks in list() to detect
             # concurrent writes and avoid returning stale results
             try:
-                from sqlalchemy import text
-
+                now = datetime.now(UTC)
                 if self._is_postgresql:
-                    # PostgreSQL: Atomic upsert with increment
-                    query = text("""
-                        INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                        VALUES (:zone_id, 1, NOW())
-                        ON CONFLICT (zone_id)
-                        DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
-                                      updated_at = NOW()
-                    """)
-                else:
-                    # SQLite: Use INSERT OR REPLACE
-                    query = text("""
-                        INSERT OR REPLACE INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                        VALUES (
-                            :zone_id,
-                            COALESCE((SELECT current_version FROM rebac_version_sequences WHERE zone_id = :zone_id), 0) + 1,
-                            CURRENT_TIMESTAMP
-                        )
-                    """)
-
-                with self._engine.begin() as conn:
-                    conn.execute(query, {"zone_id": zone_id})
-                    logger.debug(
-                        f"[TIGER] Incremented zone revision for {zone_id} after adding file to grants"
+                    pg_stmt = pg_insert(RVS).values(
+                        zone_id=zone_id, current_version=1, updated_at=now
                     )
+                    pg_stmt = pg_stmt.on_conflict_do_update(
+                        index_elements=["zone_id"],
+                        set_={
+                            "current_version": RVS.current_version + 1,
+                            "updated_at": now,
+                        },
+                    )
+                    with self._engine.begin() as conn:
+                        conn.execute(pg_stmt)
+                else:
+                    # SQLite: UPDATE first, INSERT if no row exists
+                    with self._engine.begin() as conn:
+                        result = conn.execute(
+                            update(RVS)
+                            .where(RVS.zone_id == zone_id)
+                            .values(
+                                current_version=RVS.current_version + 1,
+                                updated_at=now,
+                            )
+                        )
+                        if result.rowcount == 0:
+                            conn.execute(
+                                insert(RVS).values(
+                                    zone_id=zone_id,
+                                    current_version=1,
+                                    updated_at=now,
+                                )
+                            )
+                logger.debug(
+                    f"[TIGER] Incremented zone revision for {zone_id} after adding file to grants"
+                )
             except Exception as e:
                 logger.warning(f"[TIGER] Failed to increment zone revision: {e}")
 
@@ -2230,20 +2081,23 @@ class TigerCache:
                 asyncio.to_thread(tiger_cache.warm_from_db, limit=500)
             )
         """
-        from sqlalchemy import text
-
-        query = text("""
-            SELECT subject_type, subject_id, permission, resource_type,
-                   bitmap_data, revision
-            FROM tiger_cache
-            ORDER BY updated_at DESC
-            LIMIT :limit
-        """)
+        stmt = (
+            select(
+                TC.subject_type,
+                TC.subject_id,
+                TC.permission,
+                TC.resource_type,
+                TC.bitmap_data,
+                TC.revision,
+            )
+            .order_by(TC.updated_at.desc())
+            .limit(limit)
+        )
 
         loaded = 0
         try:
             with self._engine.connect() as conn:
-                result = conn.execute(query, {"limit": limit})
+                result = conn.execute(stmt)
 
                 with self._lock:
                     for row in result:

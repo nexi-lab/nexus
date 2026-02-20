@@ -9,7 +9,7 @@ TIER = "independent"
 RESULT_KEY = "reputation_service"
 
 
-def create(ctx: Any, _kernel: dict[str, Any]) -> Any:
+def create(ctx: Any, _system: dict[str, Any]) -> Any:
     """Create ReputationService. Lazy imports inside."""
     if ctx.record_store is None:
         return None

@@ -106,18 +106,18 @@ class TestHookPipelineOnNexusFS:
         assert nx._hook_pipeline.read_hook_count == 1
 
 
-class TestHookPipelineInjectionViaKernelServices:
-    """Verify hook_pipeline can be injected via KernelServices."""
+class TestHookPipelineInjectionViaSystemServices:
+    """Verify hook_pipeline can be injected via SystemServices."""
 
     def test_injected_pipeline_is_used(self, tmp_path):
-        from nexus.core.config import KernelServices
+        from nexus.core.config import SystemServices
 
         pipeline = VFSHookPipeline()
         hook = _TrackingReadHook()
         pipeline.register_read_hook(hook)
 
-        services = KernelServices(hook_pipeline=pipeline)
-        nx = make_test_nexus(tmp_path, services=services)
+        sys_svc = SystemServices(hook_pipeline=pipeline)
+        nx = make_test_nexus(tmp_path, system_services=sys_svc)
 
         assert nx._hook_pipeline is pipeline
         assert nx._hook_pipeline.read_hook_count == 1

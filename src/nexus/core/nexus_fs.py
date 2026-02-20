@@ -7,8 +7,7 @@ import builtins
 import contextlib
 import logging
 import threading
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.backends.backend import Backend
@@ -1899,16 +1898,11 @@ class NexusFS(  # type: ignore[misc]
         import fnmatch as _fnmatch
 
         # Check include patterns
-        if include_patterns:
-            if not any(_fnmatch.fnmatch(file_path, p) for p in include_patterns):
-                return False
+        if include_patterns and not any(_fnmatch.fnmatch(file_path, p) for p in include_patterns):
+            return False
 
         # Check exclude patterns
-        if exclude_patterns:
-            if any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns):
-                return False
-
-        return True
+        return not (exclude_patterns and any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns))
 
     # --- Search (list/glob/grep already have concrete impls below) ---
 

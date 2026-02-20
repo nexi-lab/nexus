@@ -140,15 +140,13 @@ def create_nexus_services(
 
     _factory_log = _factory_logging.getLogger(__name__)
 
+    from nexus.contracts.deployment_profile import DeploymentProfile
     from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import PermissionConfig as _PermissionConfig
     from nexus.core.config import SystemServices as _SystemServices
-
-    # --- Profile-based brick gating (Issue #1389) ---
-    from nexus.contracts.deployment_profile import DeploymentProfile
 
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()

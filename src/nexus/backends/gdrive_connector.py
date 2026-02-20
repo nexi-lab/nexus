@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError
-from nexus.core.hash_fast import hash_content
+from nexus.lib.hash_fast import hash_content
 from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:

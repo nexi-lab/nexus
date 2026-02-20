@@ -342,7 +342,7 @@ class TestBackwardCompatibility:
         """Test that new code can read existing single-blob files."""
         # Manually create a single-blob file (simulating old storage)
         content = b"This is old single-blob content"
-        from nexus.core.hash_fast import hash_content
+        from nexus.lib.hash_fast import hash_content
 
         content_hash = hash_content(content)
         content_path = backend._hash_to_path(content_hash)

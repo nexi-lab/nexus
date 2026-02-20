@@ -19,9 +19,11 @@ _rust_grep_bulk: Callable[..., list[dict[str, Any]]] | None = None
 _rust_grep_files_mmap: Callable[..., list[dict[str, Any]]] | None = None
 
 try:
-    from nexus_fast import grep_bulk as _rust_grep_bulk  # type: ignore[no-redef]
-    from nexus_fast import grep_files_mmap as _rust_grep_files_mmap  # type: ignore[no-redef]
+    from nexus_fast import grep_bulk as _imported_grep_bulk
+    from nexus_fast import grep_files_mmap as _imported_grep_files_mmap
 
+    _rust_grep_bulk = _imported_grep_bulk
+    _rust_grep_files_mmap = _imported_grep_files_mmap
     RUST_AVAILABLE = True
     MMAP_AVAILABLE = True
 except ImportError:

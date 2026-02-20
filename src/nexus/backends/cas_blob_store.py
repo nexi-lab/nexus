@@ -365,7 +365,7 @@ class CASBlobStore:
             ) from exc
 
         if verify:
-            from nexus.core.hash_fast import hash_content
+            from nexus.lib.hash_fast import hash_content
 
             actual_hash = hash_content(content)
             if actual_hash != content_hash:
@@ -445,7 +445,7 @@ class CASBlobStore:
         Returns:
             WriteResult with content_hash, total size, and whether blob was new.
         """
-        from nexus.core.hash_fast import create_hasher
+        from nexus.lib.hash_fast import create_hasher
 
         staging_dir = self.cas_root / ".staging"
         staging_dir.mkdir(parents=True, exist_ok=True)

@@ -23,8 +23,9 @@ RUST_AVAILABLE = False
 _rust_glob_match_bulk: Callable[[list[str], list[str]], list[str]] | None = None
 
 try:
-    from nexus_fast import glob_match_bulk as _rust_glob_match_bulk  # type: ignore[no-redef]
+    from nexus_fast import glob_match_bulk as _imported_glob_match_bulk
 
+    _rust_glob_match_bulk = _imported_glob_match_bulk
     RUST_AVAILABLE = True
 except ImportError:
     pass

@@ -5,7 +5,7 @@ import json
 import pytest
 
 from nexus.backends.cas_blob_store import CASBlobStore, CASMeta, cas_retry
-from nexus.core.hash_fast import hash_content
+from nexus.lib.hash_fast import hash_content
 
 # === CASMeta Tests ===
 

@@ -406,7 +406,7 @@ def put_to_local_disk_cache(
     try:
         content_hash = get_content_hash(ctx, path)
         if content_hash is None:
-            from nexus.core.hash_fast import hash_content
+            from nexus.lib.hash_fast import hash_content
 
             content_hash = hash_content(content)
 

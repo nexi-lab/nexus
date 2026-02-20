@@ -290,7 +290,7 @@ def _boot_independent_bricks(
         # Try to get Rust glob_match for performance (falls back to fnmatch)
         _glob_match_fn: Any = None
         try:
-            from nexus.core import glob_fast
+            from nexus.lib import glob_fast
 
             _glob_match_fn = glob_fast.glob_match
         except ImportError:

@@ -705,7 +705,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_tiny_content(self, benchmark):
         """Benchmark hashing tiny content (13 bytes)."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.lib.hash_fast import hash_content
 
         content = b"Hello, World!"
 
@@ -714,7 +714,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_1kb_content(self, benchmark):
         """Benchmark hashing 1 KB content."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.lib.hash_fast import hash_content
 
         content = b"x" * 1024
 
@@ -723,7 +723,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_64kb_content(self, benchmark):
         """Benchmark hashing 64 KB content."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.lib.hash_fast import hash_content
 
         content = b"x" * (64 * 1024)
 
@@ -733,7 +733,7 @@ class TestBlake3HashingBenchmarks:
     @pytest.mark.benchmark_ci
     def test_hash_1mb_content(self, benchmark):
         """Benchmark hashing 1 MB content."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.lib.hash_fast import hash_content
 
         content = b"x" * (1024 * 1024)
 
@@ -742,7 +742,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_10mb_content(self, benchmark):
         """Benchmark hashing 10 MB content."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.lib.hash_fast import hash_content
 
         content = b"x" * (10 * 1024 * 1024)
 
@@ -751,7 +751,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_smart_256kb_content(self, benchmark):
         """Benchmark smart hashing 256 KB content (threshold)."""
-        from nexus.core.hash_fast import hash_content_smart
+        from nexus.lib.hash_fast import hash_content_smart
 
         content = b"x" * (256 * 1024)
 
@@ -761,7 +761,7 @@ class TestBlake3HashingBenchmarks:
     @pytest.mark.benchmark_ci
     def test_hash_smart_1mb_content(self, benchmark):
         """Benchmark smart hashing 1 MB content (uses sampling)."""
-        from nexus.core.hash_fast import hash_content_smart
+        from nexus.lib.hash_fast import hash_content_smart
 
         content = b"x" * (1024 * 1024)
 
@@ -770,7 +770,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_smart_10mb_content(self, benchmark):
         """Benchmark smart hashing 10 MB content (uses sampling)."""
-        from nexus.core.hash_fast import hash_content_smart
+        from nexus.lib.hash_fast import hash_content_smart
 
         content = b"x" * (10 * 1024 * 1024)
 
@@ -799,7 +799,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_rust_availability(self):
         """Check if Rust acceleration is available."""
-        from nexus.core.hash_fast import is_rust_available
+        from nexus.lib.hash_fast import is_rust_available
 
         available = is_rust_available()
         print(f"\n[INFO] Rust BLAKE3 acceleration: {'AVAILABLE' if available else 'NOT AVAILABLE'}")

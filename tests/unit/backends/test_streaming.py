@@ -12,8 +12,8 @@ from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cas_blob_store import WriteResult
 from nexus.backends.local import LocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.factory import create_nexus_fs
+from nexus.lib.hash_fast import create_hasher, hash_content
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

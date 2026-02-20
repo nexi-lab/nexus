@@ -4,7 +4,7 @@ import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.hash_fast import hash_content
+from nexus.lib.hash_fast import hash_content
 
 
 @pytest.fixture

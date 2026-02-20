@@ -44,7 +44,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from nexus.core.hash_fast import hash_content
+from nexus.lib.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.backends.cas_blob_store import CASBlobStore

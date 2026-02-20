@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -273,26 +273,32 @@ class RustVFSLockManager:
     def __init__(self) -> None:
         from nexus_fast import VFSLockManager
 
-        self._inner = VFSLockManager()
+        self._inner: Any = VFSLockManager()
 
     def acquire(self, path: str, mode: str, timeout_ms: int = 0) -> int:
-        return self._inner.acquire(path, mode, timeout_ms)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        result: int = self._inner.acquire(path, mode, timeout_ms)
+        return result
 
     def release(self, handle: int) -> bool:
-        return self._inner.release(handle)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        result: bool = self._inner.release(handle)
+        return result
 
     def is_locked(self, path: str) -> bool:
-        return self._inner.is_locked(path)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        result: bool = self._inner.is_locked(path)
+        return result
 
     def holders(self, path: str) -> dict | None:
-        return self._inner.holders(path)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        result: dict | None = self._inner.holders(path)
+        return result
 
     def stats(self) -> dict:
-        return self._inner.stats()  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        result: dict = self._inner.stats()
+        return result
 
     @property
     def active_locks(self) -> int:
-        return self._inner.active_locks  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        result: int = self._inner.active_locks
+        return result
 
 
 # ---------------------------------------------------------------------------

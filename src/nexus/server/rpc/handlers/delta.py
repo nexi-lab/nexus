@@ -35,7 +35,7 @@ def handle_delta_read(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str,
     """
     import bsdiff4
 
-    from nexus.core.hash_fast import hash_content
+    from nexus.lib.hash_fast import hash_content
 
     # Read current file content
     content = nexus_fs.read(params.path, context=context)
@@ -130,7 +130,7 @@ def handle_delta_write(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str
     """
     import bsdiff4
 
-    from nexus.core.hash_fast import hash_content
+    from nexus.lib.hash_fast import hash_content
 
     delta = params.delta
     if isinstance(delta, str):

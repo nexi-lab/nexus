@@ -3237,7 +3237,7 @@ def _handle_delta_read(params: Any, context: Any) -> dict[str, Any]:
     """
     import bsdiff4
 
-    from nexus.core.hash_fast import hash_content
+    from nexus.lib.hash_fast import hash_content
 
     nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
@@ -3349,7 +3349,7 @@ def _handle_delta_write(params: Any, context: Any) -> dict[str, Any]:
     """
     import bsdiff4
 
-    from nexus.core.hash_fast import hash_content
+    from nexus.lib.hash_fast import hash_content
 
     nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None

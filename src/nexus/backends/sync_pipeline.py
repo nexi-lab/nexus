@@ -31,7 +31,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.types import OperationContext
-from nexus.core.hash_fast import hash_content
+from nexus.lib.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.backends.cache_mixin import CacheEntry, SyncResult
@@ -168,7 +168,7 @@ class SyncPipelineService:
         result: SyncResult,
     ) -> tuple[list[str], dict[str, str]]:
         """Step 1: Discover and filter files from backend."""
-        from nexus.core import glob_fast
+        from nexus.lib import glob_fast
 
         connector = self._connector
 

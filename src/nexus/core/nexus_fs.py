@@ -13,7 +13,7 @@ from nexus.backends.backend import Backend
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
-from nexus.core.hash_fast import hash_content
+from nexus.lib.hash_fast import hash_content
 from nexus.lib.mutation_hooks import MutationOp
 
 if TYPE_CHECKING:
@@ -241,7 +241,7 @@ class NexusFS(  # type: ignore[misc]
         if vfs_lock_manager is not None:
             self._vfs_lock_manager = vfs_lock_manager
         else:
-            from nexus.core.lock_fast import create_vfs_lock_manager
+            from nexus.lib.lock_fast import create_vfs_lock_manager
 
             self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)

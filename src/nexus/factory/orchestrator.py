@@ -406,7 +406,7 @@ def create_nexus_fs(
         _content_cache = ContentCache(max_size_mb=_cache_for_cc.content_cache_size_mb)
 
     # Create VFS lock manager (Issue #657)
-    from nexus.core.lock_fast import create_vfs_lock_manager
+    from nexus.lib.lock_fast import create_vfs_lock_manager
 
     _vfs_lock_manager = create_vfs_lock_manager()
 

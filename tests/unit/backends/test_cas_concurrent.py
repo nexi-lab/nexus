@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytest
 
 from nexus.backends.cas_blob_store import CASBlobStore
-from nexus.core.hash_fast import hash_content
+from nexus.lib.hash_fast import hash_content
 
 NUM_THREADS = 50
 

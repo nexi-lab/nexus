@@ -583,7 +583,7 @@ class ChunkedUploadService:
             )
 
         # Fallback: write chunk directly to CAS and track
-        from nexus.core.hash_fast import hash_content
+        from nexus.lib.hash_fast import hash_content
 
         chunk_hash = hash_content(data)
         response = await asyncio.to_thread(self._backend.write_content, data)

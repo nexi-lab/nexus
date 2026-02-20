@@ -49,9 +49,6 @@ if TYPE_CHECKING:
     from nexus.parsers.registry import ParserRegistry
     from nexus.parsers.types import ParseResult
 
-# Phase 2: Service imports moved to _wire_services() as lazy imports (Issue #1519)
-# NexusFSReBACMixin import removed (Issue #1387)
-from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -160,11 +157,8 @@ class NexusFS(  # type: ignore[misc]
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
 
-        # Initialize content cache — accept pre-built or create (Issue #657)
         if content_cache is not None:
             backend.content_cache = content_cache
-        elif cache.enable_content_cache and backend.has_root_path is True:
-            backend.content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
 
         # Store backend
         self.backend = backend

@@ -343,7 +343,7 @@ class AgentRPCService:
     def _ensure_agent_registry(self) -> None:
         if self._agent_registry is not None:
             return
-        if self._session_factory is None:
+        if self._session_factory is None or self._record_store is None:
             raise RuntimeError("AgentRegistry not initialized and no session_factory available.")
         from nexus.services.agents.agent_registry import AgentRegistry
 

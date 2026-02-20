@@ -1237,7 +1237,7 @@ class SearchService(SemanticSearchMixin):
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
         from nexus.core.metadata import PaginatedResult
-        from nexus.core.pagination import encode_cursor
+        from nexus.lib.pagination import encode_cursor
 
         context = context or self._default_context
         import time as _time

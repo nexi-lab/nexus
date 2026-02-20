@@ -71,10 +71,10 @@ def create_batch_router(
         _context_dep = get_context_override
     else:
         # Lazy import to avoid pulling in full server dependency chain in tests.
-        from nexus.server.fastapi_server import (
+        from nexus.server.dependencies import (
             get_auth_result as _real_get_auth_result,
         )
-        from nexus.server.fastapi_server import (
+        from nexus.server.dependencies import (
             get_operation_context as _real_get_operation_context,
         )
 

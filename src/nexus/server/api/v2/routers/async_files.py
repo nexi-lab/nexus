@@ -143,7 +143,7 @@ def create_async_files_router(
     router = APIRouter(tags=["files"])
 
     # Import auth dependencies from main server
-    from nexus.server.fastapi_server import get_auth_result, get_operation_context
+    from nexus.server.dependencies import get_auth_result, get_operation_context
 
     async def _get_fs() -> AsyncNexusFS:
         """Get AsyncNexusFS, supporting both direct and lazy modes."""

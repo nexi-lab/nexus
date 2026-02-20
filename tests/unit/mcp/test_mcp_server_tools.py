@@ -955,12 +955,9 @@ class TestSandboxAvailability:
         assert tool_exists(server, "nexus_sandbox_stop")
 
     def test_sandbox_not_available(self, mock_nx_no_sandbox):
-        """Test sandbox tools not registered when sandbox_available is False."""
-        # Explicitly set sandbox_available to False (Mock returns truthy by default)
-        mock_nx_no_sandbox.sandbox_available = False
-
-        server = create_mcp_server(nx=mock_nx_no_sandbox)
-
+        """Test sandbox tools not registered when SandboxService creation fails."""
+        with patch("nexus.services.sandbox_service.create_sandbox_service", return_value=None):
+            server = create_mcp_server(nx=mock_nx_no_sandbox)
         list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
         assert not tool_exists(server, "nexus_bash")
@@ -968,22 +965,23 @@ class TestSandboxAvailability:
         assert not tool_exists(server, "nexus_sandbox_list")
         assert not tool_exists(server, "nexus_sandbox_stop")
 
-    def test_sandbox_not_available_when_property_false(self, mock_nx_basic):
-        """Test sandbox not available when sandbox_available is False."""
-        mock_nx_basic.sandbox_available = False
-
-        server = create_mcp_server(nx=mock_nx_basic)
+    def test_sandbox_not_available_when_service_creation_fails(self, mock_nx_basic):
+        """Test sandbox not available when SandboxService creation fails."""
+        with patch("nexus.services.sandbox_service.create_sandbox_service", return_value=None):
+            server = create_mcp_server(nx=mock_nx_basic)
 
         list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
         assert not tool_exists(server, "nexus_bash")
 
-    def test_sandbox_detection_handles_missing_attribute(self, mock_nx_basic):
-        """Test sandbox detection gracefully handles missing sandbox_available."""
-        mock_nx_basic.sandbox_available = False
-
-        # Should not raise, sandbox tools should just not be registered
-        server = create_mcp_server(nx=mock_nx_basic)
+    def test_sandbox_detection_handles_import_error(self, mock_nx_basic):
+        """Test sandbox detection gracefully handles ImportError."""
+        with patch(
+            "nexus.services.sandbox_service.create_sandbox_service",
+            side_effect=ImportError("no module"),
+        ):
+            # Should not raise, sandbox tools should just not be registered
+            server = create_mcp_server(nx=mock_nx_basic)
 
         list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")

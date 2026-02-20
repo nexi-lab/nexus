@@ -999,21 +999,19 @@ def create_mcp_server(
         )
 
     # Check if sandbox support is available
-    # First check the explicit sandbox_available property, then probe internals
     sandbox_available = False
     try:
-        sa = getattr(_default_nx, "sandbox_available", None)
-        if sa is False:
-            sandbox_available = False
-        elif sa is True:
+        # Local mode: create SandboxService from kernel params
+        from nexus.services.sandbox_service import create_sandbox_service
+
+        _sandbox_svc = create_sandbox_service(_default_nx)
+        if _sandbox_svc is not None:
             sandbox_available = True
-        elif hasattr(_default_nx, "_ensure_sandbox_manager"):
-            _default_nx._ensure_sandbox_manager()
-            mgr = getattr(_default_nx, "_sandbox_manager", None)
-            if mgr is not None and getattr(mgr, "providers", None):
-                sandbox_available = True
     except Exception:
-        sandbox_available = False
+        pass
+    if not sandbox_available and type(_default_nx).__name__ == "RemoteNexusFS":
+        # Remote mode: RemoteNexusFS dispatches sandbox_* via RPC auto-dispatch
+        sandbox_available = True
 
     # Only register sandbox tools if available
     if sandbox_available:
@@ -1030,8 +1028,8 @@ def create_mcp_server(
             Returns:
                 Execution result with stdout, stderr, exit_code, and execution time
             """
-            nx_instance = _get_nexus_instance(ctx)
-            result = nx_instance.sandbox_run(
+            nx: Any = _get_nexus_instance(ctx)
+            result = nx.sandbox_run(
                 sandbox_id=sandbox_id, language="python", code=code, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1048,8 +1046,8 @@ def create_mcp_server(
             Returns:
                 Execution result with stdout, stderr, exit_code, and execution time
             """
-            nx_instance = _get_nexus_instance(ctx)
-            result = nx_instance.sandbox_run(
+            nx: Any = _get_nexus_instance(ctx)
+            result = nx.sandbox_run(
                 sandbox_id=sandbox_id, language="bash", code=command, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1068,8 +1066,8 @@ def create_mcp_server(
             Returns:
                 JSON string with sandbox_id and metadata
             """
-            nx_instance = _get_nexus_instance(ctx)
-            result = nx_instance.sandbox_create(name=name, ttl_minutes=ttl_minutes)
+            nx: Any = _get_nexus_instance(ctx)
+            result = nx.sandbox_create(name=name, ttl_minutes=ttl_minutes)
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1080,8 +1078,8 @@ def create_mcp_server(
             Returns:
                 JSON string with list of sandboxes
             """
-            nx_instance = _get_nexus_instance(ctx)
-            result = nx_instance.sandbox_list()
+            nx: Any = _get_nexus_instance(ctx)
+            result = nx.sandbox_list()
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1095,8 +1093,8 @@ def create_mcp_server(
             Returns:
                 Success message or error
             """
-            nx_instance = _get_nexus_instance(ctx)
-            nx_instance.sandbox_stop(sandbox_id)
+            nx: Any = _get_nexus_instance(ctx)
+            nx.sandbox_stop(sandbox_id)
             return f"Successfully stopped sandbox {sandbox_id}"
 
     # =========================================================================

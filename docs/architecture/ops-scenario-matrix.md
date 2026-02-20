@@ -383,6 +383,7 @@ Memory operations have distinct properties from File I/O:
 **Step 1 Analysis:** Unique domain — external compute environment management. Local-only (sandboxes run on the same machine or via E2B API). No federation impact.
 
 **Decision: Keep as separate domain — Sandbox Execution.**
+**Service:** `services/sandbox_service.py` (`SandboxService`) — extracted from NexusFS kernel. 12 `@rpc_expose` async methods, lazy-init `SandboxManager`. Factory: `create_sandbox_service()`. Protocol: `services/protocols/sandbox.py` (`SandboxProtocol`). Implementation: `bricks/sandbox/sandbox_manager.py`.
 
 ### 1.18 Lifecycle Hooks
 

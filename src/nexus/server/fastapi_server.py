@@ -1411,6 +1411,16 @@ def create_app(
             app.state.memory_service = _memory_svc  # for cleanup in lifespan
     except Exception as _exc:
         logger.debug("MemoryService unavailable: %s", _exc)
+    # Issue #637: SandboxService lives outside kernel — created by factory func
+    try:
+        from nexus.services.sandbox_service import create_sandbox_service
+
+        _sandbox_svc = create_sandbox_service(nexus_fs)
+        if _sandbox_svc is not None:
+            _brick_sources.append(_sandbox_svc)
+            app.state.sandbox_service = _sandbox_svc
+    except Exception as _exc:
+        logger.debug("SandboxService unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)

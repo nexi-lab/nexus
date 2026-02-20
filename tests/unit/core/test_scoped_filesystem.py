@@ -367,17 +367,6 @@ class TestWorkspaceOperations:
         assert result["workspace_path"] == "/workspace"
 
 
-class TestSandboxOperations:
-    """Test that sandbox operations are passed through without path scoping."""
-
-    def test_sandbox_create(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test sandbox_create is passed through."""
-        mock_fs.sandbox_create.return_value = {"sandbox_id": "sb-123"}
-        result = scoped_fs.sandbox_create("test-sandbox")
-        mock_fs.sandbox_create.assert_called_once_with("test-sandbox", 10, "e2b", None, None)
-        assert result["sandbox_id"] == "sb-123"
-
-
 class TestLifecycleManagement:
     """Test lifecycle management."""
 

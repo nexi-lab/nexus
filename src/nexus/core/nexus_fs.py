@@ -246,8 +246,8 @@ class NexusFS(  # type: ignore[misc]
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
         # Service attributes — set to None by default.
-        # Wired by service_wiring.wire_services() during __init__.
-        # Issue #643: kernel no longer creates services.
+        # Wired by factory via _bind_wired_services() after construction.
+        # Issue #643/#2133: kernel never imports or creates services.
         self.rebac_service: Any = None
         self.mount_service: Any = None
         self._gateway: Any = None
@@ -277,8 +277,7 @@ class NexusFS(  # type: ignore[misc]
         )
         self._post_mutation_hooks: builtins.list[Any] = []
 
-        # Wire self-dependent services, then register hooks
-        self._wire_services()
+        # Register VFS hooks (services wired by factory via _bind_wired_services)
         self._register_vfs_hooks()
 
         # Read-set-aware cache (Issue #1169)
@@ -314,15 +313,6 @@ class NexusFS(  # type: ignore[misc]
             warm_cache_fn=getattr(self, "warm_tiger_cache", None),
         )
         self._tiger_cache_manager.initialize()
-
-    def _wire_services(self) -> None:
-        """Wire services that require a reference to self (NexusFS).
-
-        Delegates to nexus.core.service_wiring.wire_services() (Issue #2033).
-        """
-        from nexus.core.service_wiring import wire_services
-
-        wire_services(self)
 
     def _register_vfs_hooks(self) -> None:
         """Register VFS hook implementations on the pipeline."""

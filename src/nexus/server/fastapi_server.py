@@ -473,12 +473,12 @@ async def lifespan(_app: FastAPI) -> Any:
     write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
     if write_back_enabled and _app.state.nexus_fs:
         try:
-            from nexus.services.change_log_store import ChangeLogStore
-            from nexus.services.conflict_log_store import ConflictLogStore
-            from nexus.services.conflict_resolution import ConflictStrategy
             from nexus.services.gateway import NexusFSGateway
-            from nexus.services.sync_backlog_store import SyncBacklogStore
-            from nexus.services.write_back_service import WriteBackService
+            from nexus.system_services.sync.change_log_store import ChangeLogStore
+            from nexus.system_services.sync.conflict_log_store import ConflictLogStore
+            from nexus.system_services.sync.conflict_resolution import ConflictStrategy
+            from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
+            from nexus.system_services.sync.write_back_service import WriteBackService
 
             gw = NexusFSGateway(_app.state.nexus_fs)
 
@@ -813,7 +813,7 @@ async def lifespan(_app: FastAPI) -> Any:
         logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
     elif _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.services.chunked_upload_service import (
+            from nexus.services.upload.chunked_upload_service import (
                 ChunkedUploadConfig,
                 ChunkedUploadService,
             )
@@ -962,8 +962,8 @@ async def lifespan(_app: FastAPI) -> Any:
             import asyncpg
 
             from nexus.bricks.pay.credits import CreditsService
-            from nexus.bricks.scheduler.queue import TaskQueue
-            from nexus.bricks.scheduler.service import SchedulerService
+            from nexus.services.scheduler.queue import TaskQueue
+            from nexus.services.scheduler.service import SchedulerService
 
             # Convert SQLAlchemy URL to asyncpg DSN
             pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
@@ -1275,7 +1275,7 @@ def create_app(
     app.state.auth_provider = auth_provider
 
     # Issue #1399: BrickContainer for DI (auth brick + future bricks)
-    from nexus.core.brick_container import BrickContainer
+    from nexus.lib.brick_container import BrickContainer
 
     app.state.brick_container = BrickContainer()
     if auth_provider is not None:

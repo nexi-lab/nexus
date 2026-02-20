@@ -12,6 +12,7 @@ Services:
 - LLMService: LLM-powered document reading with citations
 - OAuthService: OAuth credential management and provider integration
 - SkillService: Skill lifecycle management and governance
+- SchedulerService: Fair-share priority scheduler (Astraea) — System Service, not a Brick
 
 Subsystem ABC (Issue #1287):
 - Subsystem: ABC for service lifecycle wrappers (health_check, cleanup)
@@ -22,15 +23,16 @@ Phase 2: Core Refactoring (Issue #988)
 """
 
 from nexus.contracts.types import ContextIdentity, extract_context_identity
-from nexus.services.llm_service import LLMService
-from nexus.services.mcp_service import MCPService
-from nexus.services.mount_service import MountService
-from nexus.services.oauth_service import OAuthService
-from nexus.services.rebac_service import ReBACService
-from nexus.services.search_service import SearchService
-from nexus.services.skill_service import SkillService  # backward compat shim (Issue #2035)
+from nexus.services.llm.llm_service import LLMService
+from nexus.services.mcp.mcp_service import MCPService
+from nexus.services.mount.mount_service import MountService
+from nexus.services.oauth.oauth_service import OAuthService
+from nexus.services.rebac.rebac_service import ReBACService
+from nexus.services.scheduler import SchedulerService
+from nexus.services.search.search_service import SearchService
+from nexus.services.skills.skill_service import SkillService  # backward compat shim (Issue #2035)
 from nexus.services.subsystem import Subsystem
-from nexus.services.version_service import VersionService
+from nexus.services.versioning.version_service import VersionService
 
 __all__ = [
     "SearchService",
@@ -41,6 +43,7 @@ __all__ = [
     "LLMService",
     "OAuthService",
     "SkillService",
+    "SchedulerService",
     "Subsystem",
     "ContextIdentity",
     "extract_context_identity",

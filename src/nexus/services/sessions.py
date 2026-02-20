@@ -1,324 +1,38 @@
-"""Session management for Nexus (v0.5.0).
+"""Backward-compat shim — canonical: ``nexus.system_services.lifecycle.sessions``.
 
-Manages user sessions with support for:
-- Temporary sessions (with TTL)
-- Persistent sessions (no TTL, "Remember me")
-- Session-scoped resources (auto-cleanup)
-- Background cleanup task
-
-See: docs/design/AGENT_IDENTITY_AND_SESSIONS.md
+Issue #2132: Organized into domain subdirectory.
 """
 
-from __future__ import annotations
+import importlib
+import warnings
+from typing import Any
 
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
-from nexus.storage.models import (
-    MemoryConfigModel,
-    MemoryModel,
-    UserSessionModel,
-    WorkspaceConfigModel,
-)
-
-
-def create_session(
-    session: Session,
-    user_id: str,
-    agent_id: str | None = None,
-    zone_id: str | None = None,
-    ttl: timedelta | None = None,
-    ip_address: str | None = None,
-    user_agent: str | None = None,
-) -> UserSessionModel:
-    """Create a new session.
-
-    Args:
-        session: Database session
-        user_id: User identifier
-        agent_id: Optional agent identifier (if agent session)
-        zone_id: Organization identifier
-        ttl: Time-to-live (None = persistent session, "Remember me")
-        ip_address: Client IP
-        user_agent: Client user agent
-
-    Returns:
-        UserSessionModel
-
-    Examples:
-        >>> # Temporary session (8 hours)
-        >>> sess = create_session(
-        ...     db,
-        ...     user_id="alice",
-        ...     ttl=timedelta(hours=8)
-        ... )
-
-        >>> # Persistent session ("Remember me")
-        >>> sess = create_session(
-        ...     db,
-        ...     user_id="alice",
-        ...     ttl=None
-        ... )
-    """
-    expires_at = None
-    if ttl:
-        expires_at = datetime.now(UTC) + ttl
-
-    user_session = UserSessionModel(
-        user_id=user_id,
-        agent_id=agent_id,
-        zone_id=zone_id,
-        expires_at=expires_at,
-        ip_address=ip_address,
-        user_agent=user_agent,
-    )
-
-    session.add(user_session)
-    session.flush()
-
-    return user_session
+_MOVED = {
+    "create_session": "nexus.system_services.lifecycle.sessions",
+    "get_session": "nexus.system_services.lifecycle.sessions",
+    "update_session_activity": "nexus.system_services.lifecycle.sessions",
+    "delete_session_resources": "nexus.system_services.lifecycle.sessions",
+    "delete_session": "nexus.system_services.lifecycle.sessions",
+    "cleanup_expired_sessions": "nexus.system_services.lifecycle.sessions",
+    "list_user_sessions": "nexus.system_services.lifecycle.sessions",
+    "cleanup_inactive_sessions": "nexus.system_services.lifecycle.sessions",
+}
 
 
-def get_session(session: Session, session_id: str) -> UserSessionModel | None:
-    """Get session by ID.
-
-    Args:
-        session: Database session
-        session_id: Session identifier
-
-    Returns:
-        UserSessionModel or None if not found/expired
-    """
-    from sqlalchemy import select
-
-    user_session = (
-        session.execute(select(UserSessionModel).where(UserSessionModel.session_id == session_id))
-        .scalars()
-        .first()
-    )
-
-    if not user_session:
-        return None
-
-    # Check expiration
-    if user_session.is_expired():
-        return None
-
-    return user_session
-
-
-def update_session_activity(session: Session, session_id: str) -> bool:
-    """Update last_activity timestamp.
-
-    Call this on every request to track session activity.
-
-    Args:
-        session: Database session
-        session_id: Session identifier
-
-    Returns:
-        True if updated, False if session not found
-    """
-    from sqlalchemy import select
-
-    user_session = (
-        session.execute(select(UserSessionModel).where(UserSessionModel.session_id == session_id))
-        .scalars()
-        .first()
-    )
-
-    if not user_session:
-        return False
-
-    user_session.last_activity = datetime.now(UTC)
-    session.flush()
-    return True
-
-
-def delete_session_resources(session: Session, session_id: str) -> dict[str, int]:
-    """Delete all resources associated with a session.
-
-    Called when:
-    - Session expires (background task)
-    - User logs out explicitly
-
-    Args:
-        session: Database session
-        session_id: Session to clean up
-
-    Returns:
-        Dict with counts: {"workspaces": N, "memories": N, "memory_configs": N}
-    """
-    from typing import Any
-
-    from sqlalchemy import delete
-
-    counts: dict[str, int] = {}
-
-    # Delete session-scoped workspace configs
-    ws_result: Any = session.execute(
-        delete(WorkspaceConfigModel).where(WorkspaceConfigModel.session_id == session_id)
-    )
-    counts["workspace_configs"] = ws_result.rowcount
-
-    # Delete session-scoped memory configs
-    mc_result: Any = session.execute(
-        delete(MemoryConfigModel).where(MemoryConfigModel.session_id == session_id)
-    )
-    counts["memory_configs"] = mc_result.rowcount
-
-    # Delete session-scoped memories
-    mem_result: Any = session.execute(
-        delete(MemoryModel).where(MemoryModel.session_id == session_id)
-    )
-    counts["memories"] = mem_result.rowcount
-
-    session.flush()
-    return counts
-
-
-def delete_session(session: Session, session_id: str) -> bool:
-    """Delete session and all session-scoped resources.
-
-    Args:
-        session: Database session
-        session_id: Session to delete
-
-    Returns:
-        True if deleted, False if not found
-    """
-    from typing import Any
-
-    from sqlalchemy import delete
-
-    # 1. Delete session-scoped resources
-    delete_session_resources(session, session_id)
-
-    # 2. Delete session
-    del_result: Any = session.execute(
-        delete(UserSessionModel).where(UserSessionModel.session_id == session_id)
-    )
-
-    session.flush()
-    return bool(del_result.rowcount > 0)
-
-
-def cleanup_expired_sessions(session: Session) -> dict[str, int | dict[str, int]]:
-    """Background task: Clean up expired sessions.
-
-    Only deletes sessions with expires_at < now.
-    Sessions with expires_at=None are preserved (persistent sessions).
-
-    Args:
-        session: Database session
-
-    Returns:
-        Dict with counts: {"sessions": N, "resources": {...}}
-
-    Examples:
-        >>> # Run as background task (every hour)
-        >>> with SessionLocal() as db:
-        ...     result = cleanup_expired_sessions(db)
-        ...     db.commit()
-        ...     print(f"Cleaned up {result['sessions']} sessions")
-    """
-    from sqlalchemy import select
-
-    # Find expired sessions
-    expired = list(
-        session.execute(
-            select(UserSessionModel).where(UserSessionModel.expires_at < datetime.now(UTC))
+def __getattr__(name: str) -> Any:
+    if name in _MOVED:
+        warnings.warn(
+            f"Importing {name} from {__name__} is deprecated. "
+            f"Use 'from {_MOVED[name]} import {name}' instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        .scalars()
-        .all()
-    )
-
-    total_resources = {"workspace_configs": 0, "memory_configs": 0, "memories": 0}
-
-    for user_session in expired:
-        # Delete resources
-        resource_counts = delete_session_resources(session, user_session.session_id)
-        for key, count in resource_counts.items():
-            total_resources[key] = total_resources.get(key, 0) + count
-
-        # Delete session
-        session.delete(user_session)
-
-    session.flush()
-
-    return {"sessions": len(expired), "resources": total_resources}
+        mod = importlib.import_module(_MOVED[name])
+        attr = getattr(mod, name)
+        globals()[name] = attr  # Cache: warn once per process
+        return attr
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def list_user_sessions(
-    session: Session, user_id: str, include_expired: bool = False
-) -> list[UserSessionModel]:
-    """List all sessions for a user.
-
-    Args:
-        session: Database session
-        user_id: User identifier
-        include_expired: Include expired sessions
-
-    Returns:
-        List of UserSessionModel
-    """
-    from sqlalchemy import select
-
-    stmt = select(UserSessionModel).where(UserSessionModel.user_id == user_id)
-
-    if not include_expired:
-        # Filter out expired sessions
-        stmt = stmt.where(
-            (UserSessionModel.expires_at.is_(None))
-            | (UserSessionModel.expires_at > datetime.now(UTC))
-        )
-
-    return list(session.execute(stmt).scalars().all())
-
-
-def cleanup_inactive_sessions(
-    session: Session, inactive_threshold: timedelta = timedelta(days=30)
-) -> int:
-    """Clean up sessions inactive for threshold period.
-
-    Optional: Clean up sessions that haven't been used in N days,
-    even if they haven't expired.
-
-    Args:
-        session: Database session
-        inactive_threshold: Inactivity period (default: 30 days)
-
-    Returns:
-        Number of sessions deleted
-    """
-    from sqlalchemy import delete, select
-
-    cutoff = datetime.now(UTC) - inactive_threshold
-
-    # Collect all inactive session IDs in a single query
-    inactive_ids = [
-        row[0]
-        for row in session.execute(
-            select(UserSessionModel.session_id).where(UserSessionModel.last_activity < cutoff)
-        ).all()
-    ]
-
-    if not inactive_ids:
-        return 0
-
-    # Bulk-delete related resources (avoids N+1 per-session queries)
-    session.execute(
-        delete(WorkspaceConfigModel).where(WorkspaceConfigModel.session_id.in_(inactive_ids))
-    )
-
-    session.execute(delete(MemoryConfigModel).where(MemoryConfigModel.session_id.in_(inactive_ids)))
-
-    session.execute(delete(MemoryModel).where(MemoryModel.session_id.in_(inactive_ids)))
-
-    session.execute(delete(UserSessionModel).where(UserSessionModel.session_id.in_(inactive_ids)))
-
-    session.flush()
-    return len(inactive_ids)
+def __dir__() -> list[str]:
+    return list(_MOVED) + list(globals())

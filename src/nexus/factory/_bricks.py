@@ -238,7 +238,7 @@ def _boot_independent_bricks(
         try:
             import os as _os
 
-            from nexus.services.chunked_upload_service import (
+            from nexus.services.upload.chunked_upload_service import (
                 ChunkedUploadConfig,
                 ChunkedUploadService,
             )
@@ -362,7 +362,7 @@ def _boot_independent_bricks(
         logger.debug("[BOOT:BRICK] Scheduler/TaskQueue brick disabled by profile")
     else:
         try:
-            from nexus.services.task_queue_service import TaskQueueService
+            from nexus.system_services.lifecycle.task_queue_service import TaskQueueService
 
             task_queue_service = TaskQueueService(
                 db_path=_resolve_tasks_db_path(ctx.backend),
@@ -424,7 +424,7 @@ def _boot_independent_bricks(
     # --- VersionService (Issue #2034: moved from kernel to brick tier) ---
     version_service: Any = None
     try:
-        from nexus.services.version_service import VersionService
+        from nexus.services.versioning.version_service import VersionService
 
         version_service = VersionService(
             metadata_store=ctx.metadata_store,

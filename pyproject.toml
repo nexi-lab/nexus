@@ -336,6 +336,9 @@ log_cli_level = "WARNING"
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+filterwarnings = [
+    "ignore:Importing .* from nexus\\.services\\..* is deprecated:DeprecationWarning",
+]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
@@ -509,12 +512,10 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.services.search_listing_mixin",
-    "nexus.services.search_grep_mixin",
-    "nexus.services.rebac_share_mixin",
+    "nexus.services.rebac.rebac_share_mixin",
 ]
 # Mixin classes access `self.*` attributes defined on the concrete class
-# (SearchService / ReBACService). Mypy cannot see across mixin boundaries.
+# (ReBACService). Mypy cannot see across mixin boundaries.
 disable_error_code = ["attr-defined", "no-any-return"]
 
 [[tool.mypy.overrides]]
@@ -617,6 +618,9 @@ module = [
     "nexus.core.agent_registry",
     "nexus.identity.key_service",
     "nexus.core.reputation_service",
+    "nexus.rebac.cache.iterator",
+    "nexus.rebac.cache.boundary",
+    "nexus.rebac.cache.result_cache",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -682,8 +686,8 @@ module = [
     "nexus.core.nexus_fs_core",
     "nexus.core.nexus_fs_share_links",
     "nexus.core.nexus_fs_search",
-    "nexus.services.version_service",
-    "nexus.services.search_service",
+    "nexus.services.versioning.version_service",
+    "nexus.services.search.search_service",
     "nexus.services.gateway",
     "nexus.server.fastapi_server",
     "nexus.storage.database",

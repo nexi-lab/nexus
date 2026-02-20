@@ -29,11 +29,11 @@ def wire_services(fs: Any) -> None:
     fs.version_service = brk_svc.version_service
 
     # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
-    from nexus.services.llm_service import LLMService
-    from nexus.services.mcp_service import MCPService
-    from nexus.services.mount_service import MountService
-    from nexus.services.oauth_service import OAuthService
-    from nexus.services.search_service import SearchService
+    from nexus.services.llm.llm_service import LLMService
+    from nexus.services.mcp.mcp_service import MCPService
+    from nexus.services.mount.mount_service import MountService
+    from nexus.services.oauth.oauth_service import OAuthService
+    from nexus.services.search.search_service import SearchService
 
     # ReBACService: Permission and access control operations
     # Must be created before AgentRPCService and UserProvisioningService
@@ -43,7 +43,7 @@ def wire_services(fs: Any) -> None:
     if _pre_rebac is not None:
         fs.rebac_service = _pre_rebac
     else:
-        from nexus.services.rebac_service import ReBACService
+        from nexus.services.rebac.rebac_service import ReBACService
 
         fs.rebac_service = ReBACService(
             rebac_manager=fs._rebac_manager,
@@ -157,19 +157,19 @@ def wire_services(fs: Any) -> None:
     fs._gateway = NexusFSGateway(fs)
 
     # Mount/sync services: always built at wire time (Issue #2034)
-    from nexus.services.mount_core_service import MountCoreService
+    from nexus.services.mount.mount_core_service import MountCoreService
 
     fs._mount_core_service = MountCoreService(fs._gateway)
 
-    from nexus.services.sync_service import SyncService
+    from nexus.system_services.sync.sync_service import SyncService
 
     fs._sync_service = SyncService(fs._gateway)
 
-    from nexus.services.sync_job_service import SyncJobService
+    from nexus.system_services.sync.sync_job_service import SyncJobService
 
     fs._sync_job_service = SyncJobService(fs._gateway, fs._sync_service)
 
-    from nexus.services.mount_persist_service import MountPersistService
+    from nexus.services.mount.mount_persist_service import MountPersistService
 
     fs._mount_persist_service = MountPersistService(
         mount_manager=getattr(fs, "mount_manager", None),
@@ -182,7 +182,7 @@ def wire_services(fs: Any) -> None:
         fs.task_queue_service = brk_svc.task_queue_service
 
     # SkillService: Skill management
-    from nexus.services.skill_service import SkillService as _SkillService
+    from nexus.services.skills.skill_service import SkillService as _SkillService
 
     fs.skill_service = _SkillService(gateway=fs._gateway)
 
@@ -207,7 +207,7 @@ def wire_services(fs: Any) -> None:
         )
 
     # ShareLinkService: Share link operations
-    from nexus.services.share_link_service import ShareLinkService
+    from nexus.services.share_link.share_link_service import ShareLinkService
 
     fs.share_link_service = ShareLinkService(
         gateway=fs._gateway,
@@ -219,7 +219,7 @@ def wire_services(fs: Any) -> None:
     if _pre_events is not None:
         fs.events_service = _pre_events
     else:
-        from nexus.services.events_service import EventsService
+        from nexus.system_services.lifecycle.events_service import EventsService
 
         metadata_cache = None
         if hasattr(fs.metadata, "_cache"):
@@ -266,3 +266,22 @@ def wire_services(fs: Any) -> None:
         recall_max_age_hours=fs._memory_recall_max_age_hours,
         memory_config=fs._memory_config,
     )
+
+    # Zone lifecycle: register Cache + Mount finalizers (Issue #2061)
+    # These depend on file_cache / mount_service which are only available
+    # after service wiring, so they can't be registered at boot in _system.py.
+    zl = getattr(fs, "_zone_lifecycle", None)
+    if zl is not None:
+        try:
+            from nexus.services.zone_finalizers import CacheZoneFinalizer, MountZoneFinalizer
+
+            file_cache = getattr(fs, "_file_cache", None)
+            if file_cache is not None:
+                l2_cache = getattr(fs, "_l2_cache", None)
+                zl.register_finalizer(CacheZoneFinalizer(file_cache, l2_cache))
+
+            mount_svc = getattr(fs, "_mount_core_service", None)
+            if mount_svc is not None:
+                zl.register_finalizer(MountZoneFinalizer(mount_svc))
+        except Exception:
+            pass  # finalizers are optional; Search + ReBAC registered at boot

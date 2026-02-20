@@ -135,7 +135,8 @@ def create_zone(
         domain=domain,
         description=description,
         settings=settings,
-        is_active=1,
+        phase="Active",
+        finalizers="[]",
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )

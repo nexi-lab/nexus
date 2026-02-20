@@ -215,7 +215,7 @@ def _boot_system_services(
     # --- Mount Manager ---
     mount_manager: Any = None
     try:
-        from nexus.services.mount_manager import MountManager
+        from nexus.services.mount.mount_manager import MountManager
 
         mount_manager = MountManager(ctx.record_store)
         logger.debug("[BOOT:SYSTEM] MountManager created")
@@ -226,7 +226,7 @@ def _boot_system_services(
     workspace_manager: Any = None
     try:
         from nexus.services.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.workspace_manager import WorkspaceManager
+        from nexus.system_services.workspace.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager(
             metadata=ctx.metadata_store,
@@ -375,8 +375,8 @@ def _boot_system_services(
     # --- Context Branch Service (Issue #1315) ---
     context_branch_service: Any = None
     try:
-        from nexus.services.context_branch import ContextBranchService
         from nexus.services.protocols.rebac import ReBACBrickProtocol
+        from nexus.system_services.workspace.context_branch import ContextBranchService
 
         context_branch_service = ContextBranchService(
             workspace_manager=workspace_manager,
@@ -394,7 +394,7 @@ def _boot_system_services(
     try:
         from nexus.plugins.async_hooks import AsyncHookEngine
         from nexus.plugins.hooks import PluginHooks
-        from nexus.services.hook_engine import ScopedHookEngine
+        from nexus.system_services.lifecycle.hook_engine import ScopedHookEngine
 
         plugin_hooks = PluginHooks()
         async_hook_engine = AsyncHookEngine(inner=plugin_hooks)
@@ -406,7 +406,7 @@ def _boot_system_services(
     # --- Brick Lifecycle Manager (Issue #1704) ---
     brick_lifecycle_manager: Any = None
     try:
-        from nexus.services.brick_lifecycle import BrickLifecycleManager
+        from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
         brick_lifecycle_manager = BrickLifecycleManager(hook_engine=scoped_hook_engine)
         logger.debug(
@@ -420,12 +420,40 @@ def _boot_system_services(
     brick_reconciler: Any = None
     if brick_lifecycle_manager is not None:
         try:
-            from nexus.services.brick_reconciler import BrickReconciler
+            from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 
             brick_reconciler = BrickReconciler(lifecycle_manager=brick_lifecycle_manager)
             logger.debug("[BOOT:SYSTEM] BrickReconciler created")
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
+
+    # --- Zone Lifecycle Service (Issue #2061) ---
+    zone_lifecycle: Any = None
+    session_factory = getattr(ctx.record_store, "session_factory", None)
+    if session_factory is not None:
+        try:
+            from nexus.services.zone_lifecycle import ZoneLifecycleService
+
+            zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
+
+            # Register session-based finalizers (available at boot).
+            # Cache + Mount finalizers are registered later in service_wiring
+            # when their dependencies (file_cache, mount_service) exist.
+            try:
+                from nexus.services.zone_finalizers import (
+                    ReBACZoneFinalizer,
+                    SearchZoneFinalizer,
+                )
+
+                zone_lifecycle.register_finalizer(SearchZoneFinalizer(session_factory))
+                # ReBAC finalizer (MUST be last — Decision #13A)
+                zone_lifecycle.register_finalizer(ReBACZoneFinalizer(session_factory))
+            except Exception as exc:
+                logger.warning("[BOOT:SYSTEM] Zone finalizer registration failed: %s", exc)
+
+            logger.debug("[BOOT:SYSTEM] ZoneLifecycleService created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
 
     # =====================================================================
     # Assemble result
@@ -459,6 +487,7 @@ def _boot_system_services(
         "brick_reconciler": brick_reconciler,
         "scoped_hook_engine": scoped_hook_engine,
         "eviction_manager": eviction_manager,
+        "zone_lifecycle": zone_lifecycle,
     }
 
     elapsed = time.perf_counter() - t0

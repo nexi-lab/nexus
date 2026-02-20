@@ -1,6 +1,7 @@
 """Deployment profiles for Nexus feature gating.
 
 Issue #1389: Feature flags for deployment modes (full/lite/embedded).
+Issue #2194: Kernel-only boot mode for minimal deployments.
 
 Each DeploymentProfile defines a default set of enabled bricks.
 Individual brick overrides are supported via FeaturesConfig or env vars.
@@ -9,7 +10,7 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    embedded ⊂ lite ⊂ full ⊆ cloud
+    kernel ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
 """
 
 from __future__ import annotations
@@ -97,12 +98,14 @@ class DeploymentProfile(StrEnum):
     """Deployment profile controlling which bricks are enabled by default.
 
     Profiles define capability tiers for different deployment targets:
+    - kernel: Bare VFS kernel — storage only, no system services (Issue #2194)
     - embedded: MCU / WASM (<1 MB) — storage + eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
     """
 
+    KERNEL = "kernel"
     EMBEDDED = "embedded"
     LITE = "lite"
     FULL = "full"
@@ -130,9 +133,14 @@ class DeploymentProfile(StrEnum):
 # Profile-to-brick mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 
-_EMBEDDED_BRICKS: frozenset[str] = frozenset(
+_KERNEL_BRICKS: frozenset[str] = frozenset(
     {
         BRICK_STORAGE,
+    }
+)
+
+_EMBEDDED_BRICKS: frozenset[str] = _KERNEL_BRICKS | frozenset(
+    {
         BRICK_EVENTLOG,
     }
 )
@@ -173,6 +181,7 @@ _CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset(
 )
 
 _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
+    DeploymentProfile.KERNEL: _KERNEL_BRICKS,
     DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
     DeploymentProfile.LITE: _LITE_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,

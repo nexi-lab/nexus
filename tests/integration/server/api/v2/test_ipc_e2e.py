@@ -377,7 +377,8 @@ class TestIPCE2EInputValidation:
             },
         )
         assert resp.status_code == 400
-        assert "Invalid agent_id" in resp.json()["detail"]
+        detail = resp.json()["detail"]
+        assert "path separators" in detail or "Invalid agent_id" in detail
 
     def test_backslash_in_agent_id_rejected(
         self,

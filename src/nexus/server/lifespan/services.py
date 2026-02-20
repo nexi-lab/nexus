@@ -491,10 +491,10 @@ async def _startup_scheduler(app: FastAPI) -> None:
         import asyncpg
 
         from nexus.bricks.pay.credits import CreditsService
-        from nexus.bricks.scheduler.events import AgentStateEmitter
-        from nexus.bricks.scheduler.policies.fair_share import FairShareCounter
-        from nexus.bricks.scheduler.queue import TaskQueue
-        from nexus.bricks.scheduler.service import SchedulerService
+        from nexus.services.scheduler.events import AgentStateEmitter
+        from nexus.services.scheduler.policies.fair_share import FairShareCounter
+        from nexus.services.scheduler.queue import TaskQueue
+        from nexus.services.scheduler.service import SchedulerService
 
         # Convert SQLAlchemy URL to asyncpg DSN
         pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
@@ -575,7 +575,7 @@ async def _startup_scheduler(app: FastAPI) -> None:
         _sys = getattr(_nx, "_system_services", None) if _nx else None
         scoped_hook_engine = getattr(_sys, "scoped_hook_engine", None) if _sys else None
         if scoped_hook_engine is not None:
-            from nexus.services.hook_engine import create_agent_cleanup_handler
+            from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler
 
             state_emitter.add_handler(create_agent_cleanup_handler(scoped_hook_engine))
             logger.debug("Hook cleanup handler registered on AgentStateEmitter")

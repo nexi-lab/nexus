@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.services.memory.memory_api import Memory
 from nexus.storage.models import Base, MemoryModel
 from tests.helpers.in_memory_record_store import InMemoryRecordStore

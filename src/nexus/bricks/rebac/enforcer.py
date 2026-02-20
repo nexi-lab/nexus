@@ -1,6 +1,6 @@
 """PermissionEnforcer — ReBAC permission enforcement for Nexus (v0.6.0+).
 
-Canonical location: nexus.rebac.enforcer (moved from services/permissions/ per
+Canonical location: nexus.bricks.rebac.enforcer (moved from services/permissions/ per
 Issue #1847 — the enforcer is a brick-level component that belongs with the
 ReBAC manager, not in the services tier).
 """

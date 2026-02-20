@@ -34,11 +34,11 @@ from nexus.fuse.cache import FUSECacheManager
 from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.namespace_manager import NamespaceManager
     from nexus.contracts.types import OperationContext
     from nexus.core.filesystem import NexusFilesystem
     from nexus.fuse.mount import MountMode
     from nexus.fuse.ops._events import FUSEEventDispatcher
-    from nexus.rebac.namespace_manager import NamespaceManager
 
 # Import readahead for sequential read optimization (Issue #1073)
 try:

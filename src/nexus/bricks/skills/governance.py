@@ -15,7 +15,7 @@ from nexus.bricks.skills.exceptions import SkillPermissionDeniedError, SkillVali
 
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
-    from nexus.rebac.manager import ReBACManager
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ class SkillGovernance:
 
     def __init__(
         self,
-        rebac_manager: ReBACManager | None = None,
+        rebac_manager: ReBACBrickProtocol | None = None,
         cache_store: CacheStoreABC | None = None,
     ):
         """Initialize governance system.

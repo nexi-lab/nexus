@@ -362,7 +362,7 @@ class NexusFSGateway:
         """Get the ReBAC manager instance.
 
         Returns:
-            EnhancedReBACManager if available, None otherwise
+            ReBACManager if available, None otherwise
         """
         return self._fs._rebac_manager
 

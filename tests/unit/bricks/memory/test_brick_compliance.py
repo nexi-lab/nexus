@@ -2,7 +2,7 @@
 
 Validates that the Memory brick:
 1. Has zero runtime imports from nexus.core.* (except tolerated leaf modules)
-2. Has zero runtime imports from nexus.rebac.*
+2. Has zero runtime imports from nexus.bricks.rebac.*
 3. Satisfies MemoryProtocol via isinstance check
 """
 
@@ -70,7 +70,7 @@ class TestZeroCoreImports:
             )
 
     def test_no_rebac_imports(self) -> None:
-        """No nexus.rebac.* imports in brick code (except lazy/TYPE_CHECKING)."""
+        """No nexus.bricks.rebac.* imports in brick code (except lazy/TYPE_CHECKING)."""
         violations: list[str] = []
         for py_file in self._get_brick_py_files():
             rel = py_file.relative_to(BRICK_ROOT)
@@ -78,14 +78,14 @@ class TestZeroCoreImports:
             tree = ast.parse(source)
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module:
-                    if node.module.startswith("nexus.rebac."):
+                    if node.module.startswith("nexus.bricks.rebac."):
                         # Check if inside a function (lazy import) or TYPE_CHECKING
                         # We'll allow function-scoped lazy imports
                         # Simple heuristic: check if parent is FunctionDef
                         violations.append(f"{rel}: {node.module}")
                 elif isinstance(node, ast.Import):
                     for alias in node.names:
-                        if alias.name.startswith("nexus.rebac."):
+                        if alias.name.startswith("nexus.bricks.rebac."):
                             violations.append(f"{rel}: {alias.name}")
 
         # Filter out lazy imports (inside functions) and TYPE_CHECKING

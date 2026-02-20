@@ -1,7 +1,7 @@
 """Verify backward-compatibility shims for consistency module (Issue #2179).
 
 After extraction to ``nexus.bricks.rebac.consistency``, both
-``nexus.rebac.consistency`` and ``nexus.services.permissions.consistency``
+``nexus.bricks.rebac.consistency`` and ``nexus.services.permissions.consistency``
 should resolve to the canonical brick implementation.
 """
 
@@ -12,7 +12,7 @@ class TestShimReExports:
     """Verify all public symbols are accessible via old import paths."""
 
     def test_zone_isolation_error_resolves_from_rebac(self):
-        from nexus.rebac.consistency.zone_manager import ZoneIsolationError
+        from nexus.bricks.rebac.consistency.zone_manager import ZoneIsolationError
 
         assert ZoneIsolationError.__module__ == "nexus.bricks.rebac.consistency.zone_manager"
 
@@ -22,23 +22,23 @@ class TestShimReExports:
         assert ZoneIsolationError.__module__ == "nexus.bricks.rebac.consistency.zone_manager"
 
     def test_zone_manager_resolves(self):
-        from nexus.rebac.consistency.zone_manager import ZoneManager
+        from nexus.bricks.rebac.consistency.zone_manager import ZoneManager
 
         assert ZoneManager.__module__ == "nexus.bricks.rebac.consistency.zone_manager"
 
     def test_increment_version_token_resolves(self):
-        from nexus.rebac.consistency.revision import increment_version_token
+        from nexus.bricks.rebac.consistency.revision import increment_version_token
 
         assert increment_version_token.__module__ == "nexus.bricks.rebac.consistency.revision"
 
     def test_get_zone_revision_for_grant_resolves(self):
-        from nexus.rebac.consistency.revision import get_zone_revision_for_grant
+        from nexus.bricks.rebac.consistency.revision import get_zone_revision_for_grant
 
         assert get_zone_revision_for_grant.__module__ == "nexus.bricks.rebac.consistency.revision"
 
     def test_package_init_exports_all(self):
         """Verify the package __init__.py re-exports all 4 symbols."""
-        from nexus.rebac.consistency import (
+        from nexus.bricks.rebac.consistency import (
             ZoneIsolationError,
             ZoneManager,
             get_zone_revision_for_grant,

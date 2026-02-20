@@ -25,7 +25,7 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from nexus.rebac.namespace_manager import NamespaceMount
+from nexus.bricks.rebac.namespace_manager import NamespaceMount
 from nexus.services.event_subsystem.log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol

@@ -17,7 +17,7 @@ import time
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.rebac.namespace_manager import NamespaceManager
+from nexus.bricks.rebac.namespace_manager import NamespaceManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ def engine():
 @pytest.fixture
 def rebac_manager(engine):
     """Create an EnhancedReBACManager with 200 grants for benchmarking."""
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,

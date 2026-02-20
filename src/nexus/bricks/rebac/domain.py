@@ -509,3 +509,51 @@ class ChangelogEntry:
             object=Entity(data["object_type"], data["object_id"]),
             created_at=datetime.fromisoformat(data["created_at"]),
         )
+
+
+# ---------------------------------------------------------------------------
+# Canonical relation-to-permissions mapping (Issue #2179 Phase 2)
+#
+# Single source of truth for which permissions each relation name grants.
+# Both ReBACManager and CacheCoordinator MUST import from here — never
+# define local copies.
+# ---------------------------------------------------------------------------
+
+RELATION_TO_PERMISSIONS: dict[str, list[str]] = {
+    # Direct relation variants
+    "direct_viewer": ["read"],
+    "direct_editor": ["read", "write"],
+    "direct_owner": ["read", "write", "execute"],
+    # Standard relations
+    "viewer": ["read"],
+    "editor": ["read", "write"],
+    "owner": ["read", "write", "execute"],
+    # Suffixed relations
+    "viewer-of": ["read"],
+    "owner-of": ["read", "write", "execute"],
+    # Shared relations
+    "shared-viewer": ["read"],
+    "shared-editor": ["read", "write"],
+    "shared-owner": ["read", "write", "execute"],
+    # Traversal
+    "traverser-of": ["read"],
+    # Aliases
+    "reader": ["read"],
+    "writer": ["read", "write"],
+    # Parent-inherited
+    "parent_viewer": ["read"],
+    "parent_editor": ["read", "write"],
+    "parent_owner": ["read", "write", "execute"],
+    # Group-inherited
+    "group_viewer": ["read"],
+    "group_editor": ["read", "write"],
+    "group_owner": ["read", "write", "execute"],
+    # Capability-style (used by CacheCoordinator)
+    "can_read": ["read"],
+    "can_write": ["read", "write"],
+    # Admin
+    "admin": ["read", "write", "admin"],
+    # Membership (read implied)
+    "member": ["read"],
+    "member-of": ["read"],
+}

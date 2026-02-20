@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.rebac.consistency.zone_manager import (
+from nexus.bricks.rebac.consistency.zone_manager import (
     ZoneIsolationError,
     ZoneManager,
 )

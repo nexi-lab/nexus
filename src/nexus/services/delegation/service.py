@@ -52,9 +52,9 @@ from nexus.services.delegation.models import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.rebac.entity_registry import EntityRegistry
-    from nexus.rebac.manager import EnhancedReBACManager
-    from nexus.rebac.namespace_manager import NamespaceManager
+    from nexus.bricks.rebac.entity_registry import EntityRegistry
+    from nexus.bricks.rebac.manager import ReBACManager
+    from nexus.bricks.rebac.namespace_manager import NamespaceManager
     from nexus.services.agents.agent_registry import AgentRegistry
     from nexus.services.reputation.reputation_service import ReputationService
     from nexus.storage.record_store import RecordStoreABC
@@ -78,7 +78,7 @@ class DelegationService:
     def __init__(
         self,
         record_store: RecordStoreABC,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: ReBACManager,
         namespace_manager: NamespaceManager | None = None,
         entity_registry: EntityRegistry | None = None,
         agent_registry: AgentRegistry | None = None,

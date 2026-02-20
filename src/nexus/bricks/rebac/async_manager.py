@@ -31,7 +31,7 @@ class AsyncReBACManager:
         """Initialize with a sync ReBACManager instance.
 
         Args:
-            sync_manager: A ReBACManager (or EnhancedReBACManager) instance.
+            sync_manager: A ReBACManager (or ReBACManager) instance.
         """
         self._sync = sync_manager
 

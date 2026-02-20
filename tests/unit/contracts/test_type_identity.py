@@ -49,41 +49,41 @@ class TestLLMTypesIdentity:
 
 
 class TestReBACTypesIdentity:
-    """Verify nexus.contracts.rebac_types ↔ nexus.rebac.* identity."""
+    """Verify nexus.contracts.rebac_types ↔ nexus.bricks.rebac.* identity."""
 
     def test_entity_identity(self) -> None:
+        from nexus.bricks.rebac.domain import Entity as shim
         from nexus.contracts.rebac_types import Entity as canonical
-        from nexus.rebac.domain import Entity as shim
 
         assert canonical is shim
 
     def test_wildcard_subject_identity(self) -> None:
+        from nexus.bricks.rebac.domain import WILDCARD_SUBJECT as shim
         from nexus.contracts.rebac_types import WILDCARD_SUBJECT as canonical
-        from nexus.rebac.domain import WILDCARD_SUBJECT as shim
 
         assert canonical is shim
 
     def test_consistency_level_identity(self) -> None:
+        from nexus.bricks.rebac.types import ConsistencyLevel as shim
         from nexus.contracts.rebac_types import ConsistencyLevel as canonical
-        from nexus.rebac.types import ConsistencyLevel as shim
 
         assert canonical is shim
 
     def test_graph_limits_identity(self) -> None:
+        from nexus.bricks.rebac.types import GraphLimits as shim
         from nexus.contracts.rebac_types import GraphLimits as canonical
-        from nexus.rebac.types import GraphLimits as shim
 
         assert canonical is shim
 
     def test_traversal_stats_identity(self) -> None:
+        from nexus.bricks.rebac.types import TraversalStats as shim
         from nexus.contracts.rebac_types import TraversalStats as canonical
-        from nexus.rebac.types import TraversalStats as shim
 
         assert canonical is shim
 
     def test_cross_zone_allowed_relations_identity(self) -> None:
+        from nexus.bricks.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS as shim
         from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS as canonical
-        from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS as shim
 
         assert canonical is shim
 

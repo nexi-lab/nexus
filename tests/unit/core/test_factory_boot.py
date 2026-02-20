@@ -197,7 +197,7 @@ class TestBootSystemServices:
         ctx = _make_boot_context()
 
         with patch(
-            "nexus.rebac.manager.EnhancedReBACManager.__init__",
+            "nexus.bricks.rebac.manager.EnhancedReBACManager.__init__",
             side_effect=RuntimeError("bad engine"),
         ):
             with pytest.raises(BootError) as exc_info:
@@ -241,7 +241,7 @@ class TestBootSystemServices:
                 side_effect=RuntimeError("agent fail"),
             ),
             patch(
-                "nexus.rebac.namespace_factory.create_namespace_manager",
+                "nexus.bricks.rebac.namespace_factory.create_namespace_manager",
                 side_effect=RuntimeError("ns fail"),
             ),
             patch(

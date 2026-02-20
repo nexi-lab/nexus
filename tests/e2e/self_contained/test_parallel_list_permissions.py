@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.contracts.types import OperationContext
-from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.services.search_service import SearchService
 
 # ---------------------------------------------------------------------------

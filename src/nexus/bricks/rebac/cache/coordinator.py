@@ -1,6 +1,6 @@
 """Cache Coordinator - Unified cache invalidation orchestrator.
 
-Consolidates scattered cache invalidation logic from EnhancedReBACManager
+Consolidates scattered cache invalidation logic from ReBACManager
 into a single coordinator that manages all cache layers.
 
 When a permission tuple is written/deleted, the coordinator ensures
@@ -30,6 +30,8 @@ import time as time_module
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.rebac.domain import RELATION_TO_PERMISSIONS
+
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
 
@@ -43,26 +45,14 @@ logger = logging.getLogger(__name__)
 # Default zone when none specified
 _ROOT_ZONE_ID = "root"
 
-# Relations that map to common permission names for boundary cache invalidation
-_RELATION_TO_PERMISSIONS: dict[str, list[str]] = {
-    "owner": ["read", "write", "admin", "owner"],
-    "direct_owner": ["read", "write", "admin", "owner"],
-    "editor": ["read", "write"],
-    "writer": ["read", "write"],
-    "can_write": ["read", "write"],
-    "viewer": ["read"],
-    "reader": ["read"],
-    "can_read": ["read"],
-    "admin": ["read", "write", "admin"],
-    "member": ["read"],
-    "member-of": ["read"],
-}
+# Canonical mapping from domain.py — local alias for backward compat.
+_RELATION_TO_PERMISSIONS = RELATION_TO_PERMISSIONS
 
 
 class CacheCoordinator:
     """Unified cache invalidation orchestrator.
 
-    Replaces scattered invalidation calls in EnhancedReBACManager with
+    Replaces scattered invalidation calls in ReBACManager with
     a single entry point for cache coherence.
 
     Example:

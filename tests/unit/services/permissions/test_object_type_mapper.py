@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.rebac.object_type_mapper import ObjectTypeMapper
+from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
 
 
 @pytest.fixture

@@ -17,8 +17,8 @@ import pytest
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 
-from nexus.rebac.domain import Entity, NamespaceConfig
-from nexus.rebac.manager import ReBACManager
+from nexus.bricks.rebac.domain import Entity, NamespaceConfig
+from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 
@@ -848,7 +848,7 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
 @pytest.fixture
 def enhanced_rebac_manager(engine):
     """Create an EnhancedReBACManager for testing rebac_list_objects."""
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,

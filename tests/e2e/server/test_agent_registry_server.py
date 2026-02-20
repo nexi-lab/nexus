@@ -14,8 +14,8 @@ import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.manager import EnhancedReBACManager
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.server.api.v2.routers.delegation import (
     DelegateRequest,
     DelegateResponse,

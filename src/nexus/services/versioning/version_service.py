@@ -23,10 +23,10 @@ from nexus.lib.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
-    from nexus.rebac.async_permissions import AsyncPermissionEnforcer
     from nexus.services.protocols.rebac import ReBACBrickProtocol
     from nexus.storage.record_store import RecordStoreABC
 

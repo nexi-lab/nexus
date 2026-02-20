@@ -18,10 +18,10 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 
+from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
 from nexus.contracts.exceptions import NexusPermissionError
 from nexus.contracts.types import OperationContext
 from nexus.core.async_nexus_fs import AsyncNexusFS
-from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 # === Fixtures ===

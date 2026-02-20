@@ -7,6 +7,7 @@ Includes temporal query operators (Issue #1023) for time-based filtering.
 Includes version tracking (#1184) for memory audit trails.
 """
 
+import importlib
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -14,7 +15,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from nexus.rebac.entity_registry import EntityRegistry
+from nexus.services.protocols.memory_deps import MemoryEntityRegistryProtocol
 from nexus.storage.models import MemoryModel, VersionHistoryModel
 
 
@@ -24,7 +25,7 @@ class MemoryViewRouter:
     def __init__(
         self,
         session: Session | None = None,
-        entity_registry: EntityRegistry | None = None,
+        entity_registry: MemoryEntityRegistryProtocol | None = None,
         *,
         session_factory: Any | None = None,
     ):
@@ -48,7 +49,9 @@ class MemoryViewRouter:
         else:
             from types import SimpleNamespace
 
-            self.entity_registry = EntityRegistry(
+            _mod = importlib.import_module("nexus.bricks.rebac.entity_registry")
+            _EntityRegistry = _mod.EntityRegistry
+            self.entity_registry = _EntityRegistry(
                 SimpleNamespace(session_factory=lambda: self.session)
             )
 
@@ -572,11 +575,12 @@ class MemoryViewRouter:
             if owner_id:
                 from sqlalchemy import Engine
 
-                from nexus.rebac.manager import EnhancedReBACManager
+                _rebac_mod = importlib.import_module("nexus.bricks.rebac.manager")
+                ReBACManager = _rebac_mod.ReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
-                rebac = EnhancedReBACManager(bind)
+                rebac = ReBACManager(bind)
 
                 rebac.rebac_write(
                     subject=("user", owner_id),
@@ -644,11 +648,12 @@ class MemoryViewRouter:
             if user_id:
                 from sqlalchemy import Engine
 
-                from nexus.rebac.manager import EnhancedReBACManager
+                _rebac_mod = importlib.import_module("nexus.bricks.rebac.manager")
+                ReBACManager = _rebac_mod.ReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
-                rebac = EnhancedReBACManager(bind)
+                rebac = ReBACManager(bind)
 
                 # Grant owner permission to the memory
                 rebac.rebac_write(

@@ -194,7 +194,7 @@ class TestBootSystemServices:
 
         ctx = _make_mock_ctx()
         with patch(
-            "nexus.rebac.manager.EnhancedReBACManager",
+            "nexus.bricks.rebac.manager.EnhancedReBACManager",
             side_effect=RuntimeError("db connection failed"),
         ):
             with pytest.raises(BootError) as exc_info:
@@ -319,7 +319,7 @@ class TestBootBrickServices:
         with (
             caplog.at_level(logging.WARNING, logger="nexus.factory"),
             patch(
-                "nexus.rebac.circuit_breaker.AsyncCircuitBreaker",
+                "nexus.bricks.rebac.circuit_breaker.AsyncCircuitBreaker",
                 side_effect=RuntimeError("circuit breaker config error"),
             ),
         ):
@@ -532,7 +532,7 @@ class TestCreateNexusServicesIntegration:
 
         with (
             patch(
-                "nexus.rebac.manager.EnhancedReBACManager",
+                "nexus.bricks.rebac.manager.EnhancedReBACManager",
                 side_effect=RuntimeError("fatal"),
             ),
             pytest.raises(BootError),

@@ -14,12 +14,20 @@ all affected caches are properly invalidated in the correct order:
 7. Leopard cache (transitive group closure) - via callbacks
 8. Tiger cache (materialized bitmaps) - via callbacks
 
-Related: Issue #1459 (decomposition), Issue #1244, Issue #1077, Issue #922, Issue #919
+Also handles:
+- L2 (database) cache invalidation with precise targeting (Issue #2179 Step 2.5)
+- Eager cache recomputation for simple direct relations (PR #969)
+- Expired tuple/cache cleanup (maintenance)
+- Cache statistics (monitoring)
+
+Related: Issue #1459 (decomposition), Issue #2179 (rebac-brick), Issue #1244, Issue #1077
 """
 
 from __future__ import annotations
 
 import logging
+import time as time_module
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -28,8 +36,12 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.boundary import PermissionBoundaryCache
     from nexus.bricks.rebac.cache.iterator import IteratorCache
     from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
+    from nexus.bricks.rebac.domain import Entity
 
 logger = logging.getLogger(__name__)
+
+# Default zone when none specified
+_ROOT_ZONE_ID = "root"
 
 # Relations that map to common permission names for boundary cache invalidation
 _RELATION_TO_PERMISSIONS: dict[str, list[str]] = {
@@ -75,6 +87,21 @@ class CacheCoordinator:
         boundary_cache: PermissionBoundaryCache | None = None,
         iterator_cache: IteratorCache | None = None,
         zone_graph_cache: MutableMapping[str, Any] | None = None,
+        *,
+        # Database access callbacks (Issue #2179 Step 2.5)
+        connection_factory: Callable[..., Any] | None = None,
+        get_connection: Callable[[], Any] | None = None,
+        close_connection: Callable[[Any], None] | None = None,
+        create_cursor: Callable[[Any], Any] | None = None,
+        fix_sql: Callable[[str], str] | None = None,
+        # Eager recompute callbacks
+        get_namespace_cb: Callable[[str], Any] | None = None,
+        compute_permission_cb: Callable[..., bool] | None = None,
+        cache_check_result_cb: Callable[..., None] | None = None,
+        # Stats / cleanup
+        cache_ttl_seconds: int = 300,
+        get_tuple_version: Callable[[], int] | None = None,
+        set_tuple_version: Callable[[int], None] | None = None,
     ) -> None:
         """Initialize the coordinator.
 
@@ -83,11 +110,39 @@ class CacheCoordinator:
             boundary_cache: Permission boundary cache
             iterator_cache: Paginated query iterator cache
             zone_graph_cache: Zone tuple graph cache dict (shared reference)
+            connection_factory: Context manager for database connections
+            get_connection: Get a raw DBAPI connection
+            close_connection: Close a raw DBAPI connection
+            create_cursor: Create a cursor from a connection
+            fix_sql: Adapt SQL placeholders for the DB dialect
+            get_namespace_cb: Lookup namespace config by object type
+            compute_permission_cb: Compute a permission (for eager recompute)
+            cache_check_result_cb: Store a check result in cache
+            cache_ttl_seconds: L2 cache TTL for stats reporting
+            get_tuple_version: Get current tuple version counter
+            set_tuple_version: Set tuple version counter
         """
         self._l1_cache = l1_cache
         self._boundary_cache = boundary_cache
         self._iterator_cache = iterator_cache
         self._zone_graph_cache = zone_graph_cache
+
+        # Database access
+        self._connection_factory = connection_factory
+        self._get_connection = get_connection
+        self._close_connection = close_connection
+        self._create_cursor = create_cursor
+        self._fix_sql = fix_sql
+
+        # Eager recompute
+        self._get_namespace_cb = get_namespace_cb
+        self._compute_permission_cb = compute_permission_cb
+        self._cache_check_result_cb = cache_check_result_cb
+
+        # Stats / cleanup
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._get_tuple_version = get_tuple_version
+        self._set_tuple_version = set_tuple_version
 
         # Callback registries for external caches (boundary, visibility, etc.)
         self._boundary_invalidators: list[
@@ -207,7 +262,7 @@ class CacheCoordinator:
         return False
 
     # ------------------------------------------------------------------
-    # Unified invalidation
+    # Unified invalidation (L1 + callback-based)
     # ------------------------------------------------------------------
 
     def invalidate_for_write(
@@ -285,7 +340,485 @@ class CacheCoordinator:
                 self._iterator_cache.clear()
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Deep invalidation (L1 + L2 database) — Issue #2179 Step 2.5
+    # ------------------------------------------------------------------
+
+    def invalidate_for_tuple_change(
+        self,
+        subject: Entity,
+        relation: str,
+        obj: Entity,
+        zone_id: str | None = None,
+        subject_relation: str | None = None,
+        expires_at: datetime | None = None,
+        conn: Any | None = None,
+    ) -> None:
+        """Invalidate and optionally recompute cache entries affected by tuple change.
+
+        When a tuple is added or removed, we need to invalidate cache entries that
+        might be affected. This uses PRECISE invalidation to minimize cache churn:
+
+        1. Direct: Invalidate (subject, *, object) - permissions on this specific pair
+        2. Transitive (if subject has subject_relation): Invalidate members of this group
+        3. Transitive (for object): Invalidate derived permissions on related objects
+
+        OPTIMIZATION: For simple direct relations, we RECOMPUTE and UPDATE the cache
+        instead of just invalidating. This means the next read is instant (<1ms) instead
+        of requiring expensive graph traversal (50-500ms).
+
+        Args:
+            subject: Subject entity
+            relation: Relation type (used for precise invalidation)
+            obj: Object entity
+            zone_id: Optional zone ID for zone-scoped invalidation
+            subject_relation: Optional subject relation for userset-as-subject
+            expires_at: Optional expiration time (disables eager recomputation)
+            conn: Optional database connection to reuse
+        """
+        effective_zone_id = zone_id if zone_id is not None else _ROOT_ZONE_ID
+
+        # Track write for adaptive TTL (Phase 4)
+        if self._l1_cache:
+            self._l1_cache.track_write(obj.entity_id)
+
+        # Use provided connection or create new one (avoids SQLite lock contention)
+        should_close = conn is None
+        if conn is None and self._get_connection is not None:
+            conn = self._get_connection()
+        if conn is None:
+            return  # No DB access configured
+
+        try:
+            cursor = self._create_cursor(conn) if self._create_cursor else None
+            if cursor is None:
+                return
+
+            # 1. DIRECT: For simple direct relations, try to eagerly recompute
+            should_eager_recompute = (
+                expires_at is None
+                and subject_relation is None
+                and relation not in ("member-of", "member", "parent")
+                and subject.entity_type != "*"
+                and subject.entity_id != "*"
+            )
+
+            # BUG FIX (PR #969): ALWAYS invalidate L1 cache first
+            if self._l1_cache:
+                self._l1_cache.invalidate_subject_object_pair(
+                    subject.entity_type,
+                    subject.entity_id,
+                    obj.entity_type,
+                    obj.entity_id,
+                    zone_id,
+                )
+
+            if should_eager_recompute:
+                self._eager_recompute(subject, relation, obj, zone_id, conn)
+
+            # If we didn't do eager recomputation, invalidate L2 cache
+            if not should_eager_recompute and self._fix_sql:
+                cursor.execute(
+                    self._fix_sql(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE zone_id = ?
+                          AND subject_type = ? AND subject_id = ?
+                          AND object_type = ? AND object_id = ?
+                        """
+                    ),
+                    (
+                        effective_zone_id,
+                        subject.entity_type,
+                        subject.entity_id,
+                        obj.entity_type,
+                        obj.entity_id,
+                    ),
+                )
+
+            # 2. TRANSITIVE (Groups): If subject is a group/set, invalidate cache
+            #    for potential members accessing the object
+            if self._fix_sql:
+                cursor.execute(
+                    self._fix_sql(
+                        """
+                        SELECT subject_relation FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        subject.entity_type,
+                        subject.entity_id,
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                    ),
+                )
+                row = cursor.fetchone()
+                has_subject_relation = row and row["subject_relation"]
+
+                if has_subject_relation:
+                    if self._l1_cache:
+                        self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, zone_id)
+                    cursor.execute(
+                        self._fix_sql(
+                            """
+                            DELETE FROM rebac_check_cache
+                            WHERE zone_id = ?
+                              AND object_type = ? AND object_id = ?
+                            """
+                        ),
+                        (effective_zone_id, obj.entity_type, obj.entity_id),
+                    )
+
+            # 3. TRANSITIVE (Hierarchy): membership changes invalidate subject's permissions
+            if relation in ("member-of", "member", "parent"):
+                if self._l1_cache:
+                    self._l1_cache.invalidate_subject(
+                        subject.entity_type, subject.entity_id, zone_id
+                    )
+                if self._fix_sql:
+                    cursor.execute(
+                        self._fix_sql(
+                            """
+                            DELETE FROM rebac_check_cache
+                            WHERE zone_id = ?
+                              AND subject_type = ? AND subject_id = ?
+                            """
+                        ),
+                        (effective_zone_id, subject.entity_type, subject.entity_id),
+                    )
+
+            # 4. PARENT PERMISSION CHANGE: invalidate child paths
+            if obj.entity_type == "file" and relation in (
+                "direct_owner",
+                "direct_editor",
+                "direct_viewer",
+                "owner",
+                "editor",
+                "viewer",
+                "shared-viewer",
+                "shared-editor",
+                "shared-owner",
+            ):
+                if self._l1_cache:
+                    self._l1_cache.invalidate_object_prefix(obj.entity_type, obj.entity_id, zone_id)
+                if self._fix_sql:
+                    cursor.execute(
+                        self._fix_sql(
+                            """
+                            DELETE FROM rebac_check_cache
+                            WHERE zone_id = ?
+                              AND object_type = ?
+                              AND (object_id = ? OR object_id LIKE ?)
+                            """
+                        ),
+                        (
+                            effective_zone_id,
+                            obj.entity_type,
+                            obj.entity_id,
+                            obj.entity_id + "/%",
+                        ),
+                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(
+                            "Invalidated cache for %s and all children (parent permission change)",
+                            obj,
+                        )
+
+            # 5. USERSET-AS-SUBJECT: clear ALL cache (aggressive but safe)
+            if subject_relation is not None:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Userset-as-subject detected (%s#%s), clearing ALL cache for safety",
+                        subject,
+                        subject_relation,
+                    )
+                if self._l1_cache:
+                    self._l1_cache.clear()
+                if self._fix_sql:
+                    cursor.execute(
+                        self._fix_sql(
+                            """
+                            DELETE FROM rebac_check_cache
+                            WHERE zone_id = ?
+                            """
+                        ),
+                        (effective_zone_id,),
+                    )
+
+            conn.commit()
+        finally:
+            if should_close and self._close_connection is not None:
+                self._close_connection(conn)
+
+    def _eager_recompute(
+        self,
+        subject: Entity,
+        relation: str,
+        obj: Entity,
+        zone_id: str | None,
+        conn: Any,
+    ) -> None:
+        """Eagerly recompute and cache permissions for simple direct relations.
+
+        Instead of just invalidating, we recompute the permission so the next
+        read is instant (<1ms) instead of requiring graph traversal (50-500ms).
+        """
+        if not (
+            self._get_namespace_cb and self._compute_permission_cb and self._cache_check_result_cb
+        ):
+            return
+
+        namespace = self._get_namespace_cb(obj.entity_type)
+        if not (namespace and namespace.config and "relations" in namespace.config):
+            return
+
+        # Find permissions that this relation affects
+        affected_permissions: list[str] = []
+        relations = namespace.config.get("relations", {})
+        for perm, rel_spec in relations.items():
+            if isinstance(rel_spec, dict) and "union" in rel_spec and relation in rel_spec["union"]:
+                affected_permissions.append(perm)
+
+        for permission in affected_permissions[:5]:  # Limit to 5 most common
+            try:
+                start_time = time_module.perf_counter()
+                result = self._compute_permission_cb(
+                    subject,
+                    permission,
+                    obj,
+                    set(),  # visited
+                    0,  # depth
+                    None,  # context
+                    zone_id,
+                )
+                delta = time_module.perf_counter() - start_time
+                self._cache_check_result_cb(subject, permission, obj, result, zone_id, conn, delta)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Eager cache update: (%s, %s, %s) = %s",
+                        subject,
+                        permission,
+                        obj,
+                        result,
+                    )
+            except Exception as e:  # fail-safe: fall back to invalidation
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Eager recomputation failed, falling back to invalidation: %s", e)
+                break
+
+    def invalidate_for_namespace_change(self, object_type: str) -> None:
+        """Invalidate all cache entries for objects of a given type in both L1 and L2.
+
+        When a namespace configuration is updated, all cached permission checks
+        for objects of that type may be stale and must be invalidated.
+
+        Args:
+            object_type: Type of object whose namespace was updated
+        """
+        # L1 cache invalidation - clear all (conservative approach)
+        if self._l1_cache:
+            self._l1_cache.clear()
+            logger.info("Cleared L1 cache due to namespace '%s' config update", object_type)
+
+        # L2 cache invalidation
+        if self._connection_factory and self._fix_sql and self._create_cursor:
+            with self._connection_factory() as conn:
+                cursor = self._create_cursor(conn)
+                cursor.execute(
+                    self._fix_sql(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE object_type = ?
+                        """
+                    ),
+                    (object_type,),
+                )
+                conn.commit()
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Invalidated all cached checks for namespace '%s' "
+                        "due to config update (deleted %s cache entries)",
+                        object_type,
+                        cursor.rowcount,
+                    )
+
+    # ------------------------------------------------------------------
+    # Maintenance — Issue #2179 Step 2.5
+    # ------------------------------------------------------------------
+
+    def cleanup_expired_cache(self) -> int:
+        """Remove expired cache entries.
+
+        Returns:
+            Number of cache entries removed
+        """
+        if not (self._connection_factory and self._fix_sql and self._create_cursor):
+            return 0
+
+        with self._connection_factory() as conn:
+            cursor = self._create_cursor(conn)
+            cursor.execute(
+                self._fix_sql("DELETE FROM rebac_check_cache WHERE expires_at <= ?"),
+                (datetime.now(UTC).isoformat(),),
+            )
+            conn.commit()
+            return int(cursor.rowcount) if cursor.rowcount else 0
+
+    def cleanup_expired_tuples(self) -> int:
+        """Remove expired relationship tuples and invalidate their caches.
+
+        Returns:
+            Number of tuples removed
+        """
+        if not (self._connection_factory and self._fix_sql and self._create_cursor):
+            return 0
+
+        from nexus.bricks.rebac.domain import Entity
+
+        with self._connection_factory() as conn:
+            cursor = self._create_cursor(conn)
+
+            # Get expired tuples for changelog
+            cursor.execute(
+                self._fix_sql(
+                    """
+                    SELECT tuple_id, subject_type, subject_id, subject_relation,
+                           relation, object_type, object_id, zone_id
+                    FROM rebac_tuples
+                    WHERE expires_at IS NOT NULL AND expires_at <= ?
+                    """
+                ),
+                (datetime.now(UTC).isoformat(),),
+            )
+            expired_tuples = cursor.fetchall()
+
+            # Delete expired tuples
+            cursor.execute(
+                self._fix_sql(
+                    """
+                    DELETE FROM rebac_tuples
+                    WHERE expires_at IS NOT NULL AND expires_at <= ?
+                    """
+                ),
+                (datetime.now(UTC).isoformat(),),
+            )
+
+            # Log to changelog and invalidate caches for expired tuples
+            for row in expired_tuples:
+                tuple_id = row["tuple_id"]
+                subject_type = row["subject_type"]
+                subject_id = row["subject_id"]
+                subject_relation = row["subject_relation"]
+                relation = row["relation"]
+                object_type = row["object_type"]
+                object_id = row["object_id"]
+                zone_id = row["zone_id"]
+
+                # Issue #773: include zone_id in changelog
+                cursor.execute(
+                    self._fix_sql(
+                        """
+                        INSERT INTO rebac_changelog (
+                            change_type, tuple_id, subject_type, subject_id,
+                            relation, object_type, object_id, zone_id, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """
+                    ),
+                    (
+                        "DELETE",
+                        tuple_id,
+                        subject_type,
+                        subject_id,
+                        relation,
+                        object_type,
+                        object_id,
+                        zone_id or _ROOT_ZONE_ID,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+
+                # Invalidate cache for this tuple
+                # Pass a dummy expires_at to prevent eager recomputation during cleanup
+                # FIX: Pass conn to avoid opening new connection (pool exhaustion)
+                subject = Entity(subject_type, subject_id)
+                obj = Entity(object_type, object_id)
+                self.invalidate_for_tuple_change(
+                    subject,
+                    relation,
+                    obj,
+                    zone_id,
+                    subject_relation,
+                    expires_at=datetime.now(UTC),
+                    conn=conn,
+                )
+
+            conn.commit()
+            if expired_tuples and self._set_tuple_version and self._get_tuple_version:
+                self._set_tuple_version(self._get_tuple_version() + 1)
+            return len(expired_tuples)
+
+    # ------------------------------------------------------------------
+    # Stats and monitoring — Issue #2179 Step 2.5
+    # ------------------------------------------------------------------
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache statistics for monitoring and debugging.
+
+        Returns comprehensive statistics about both L1 (in-memory) and L2 (database)
+        cache performance, including hit rates, sizes, and latency metrics.
+        """
+        stats: dict[str, Any] = {
+            "l1_enabled": self._l1_cache is not None,
+            "l2_enabled": True,
+            "l2_ttl_seconds": self._cache_ttl_seconds,
+        }
+
+        # L1 cache stats
+        if self._l1_cache:
+            stats["l1_stats"] = self._l1_cache.get_stats()
+        else:
+            stats["l1_stats"] = None
+
+        # L2 cache stats (query database)
+        if self._connection_factory and self._fix_sql and self._create_cursor:
+            with self._connection_factory(readonly=True) as conn:
+                cursor = self._create_cursor(conn)
+                cursor.execute(
+                    self._fix_sql(
+                        """
+                        SELECT COUNT(*) as count
+                        FROM rebac_check_cache
+                        WHERE expires_at > ?
+                        """
+                    ),
+                    (datetime.now(UTC).isoformat(),),
+                )
+                row = cursor.fetchone()
+                stats["l2_size"] = row["count"] if row else 0
+        else:
+            stats["l2_size"] = 0
+
+        return stats
+
+    def reset_cache_stats(self) -> None:
+        """Reset cache statistics counters.
+
+        Useful for benchmarking and monitoring. Resets hit/miss counters
+        and timing metrics for L1 cache.
+
+        Note: Only resets metrics, does not clear cache entries.
+        """
+        if self._l1_cache:
+            self._l1_cache.reset_stats()
+            logger.info("Cache statistics reset")
+
+    # ------------------------------------------------------------------
+    # Internal helpers (L1 + zone graph)
     # ------------------------------------------------------------------
 
     def _invalidate_zone_graph(self, zone_id: str | None = None) -> None:
@@ -424,7 +957,7 @@ class CacheCoordinator:
         self._iterator_cache.invalidate_zone(zone_id)
 
     # ------------------------------------------------------------------
-    # Metrics
+    # Coordinator metrics
     # ------------------------------------------------------------------
 
     def get_stats(self) -> dict[str, Any]:

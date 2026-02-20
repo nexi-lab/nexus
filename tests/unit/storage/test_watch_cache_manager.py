@@ -1,10 +1,9 @@
 """Unit tests for WatchCacheManager (Issue #2065).
 
-TDD: These tests were written BEFORE the implementation was finalized.
-
-Tests the Kubernetes Informer-style watch cache that polls MetastoreABC
-for replication changes and routes them through ReadSetAwareCache for
-proactive cache invalidation in multi-node deployments.
+Tests the Kubernetes Informer-style watch cache that polls a
+ChangeTrackingProtocol source for replication changes and routes them
+through ReadSetAwareCache for proactive cache invalidation in
+multi-node deployments.
 """
 
 from __future__ import annotations
@@ -14,9 +13,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.change_tracking import ChangeTrackingProtocol
+from nexus.contracts.metadata_change import MetadataChange
 from nexus.core.metadata import FileMetadata
-from nexus.core.metadata_change import MetadataChange
-from nexus.core.metastore import MetastoreABC
 from nexus.core.read_set import ReadSetRegistry
 from nexus.storage.cache import MetadataCache
 from nexus.storage.read_set_cache import ReadSetAwareCache
@@ -53,38 +52,17 @@ def _make_meta(path: str) -> FileMetadata:
 
 
 # ---------------------------------------------------------------------------
-# Phase 1: MetastoreABC default
+# Phase 1: ChangeTrackingProtocol compliance
 # ---------------------------------------------------------------------------
 
 
-class TestMetastoreABCDefault:
-    """MetastoreABC.drain_changes() returns [] by default."""
+class TestChangeTrackingProtocol:
+    """InMemoryMetastore satisfies ChangeTrackingProtocol (structural)."""
 
-    def test_drain_changes_empty_by_default(self):
-        """Default implementation returns an empty list."""
-
-        class MinimalStore(MetastoreABC):
-            def get(self, path):
-                return None
-
-            def put(self, metadata, *, consistency="sc"):
-                pass
-
-            def delete(self, path, *, consistency="sc"):
-                return None
-
-            def exists(self, path):
-                return False
-
-            def list(self, prefix="", recursive=True, **kw):
-                return []
-
-            def close(self):
-                pass
-
-        store = MinimalStore()
-        assert store.drain_changes() == []
-        assert store.drain_changes(since_revision=100) == []
+    def test_in_memory_metastore_is_change_tracking(self):
+        """InMemoryMetastore implements ChangeTrackingProtocol structurally."""
+        store = InMemoryMetastore()
+        assert isinstance(store, ChangeTrackingProtocol)
 
 
 # ---------------------------------------------------------------------------

@@ -23,13 +23,11 @@ This ABC defines the *operations* over those fields.
 from __future__ import annotations
 
 import asyncio
-import builtins
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.core.metadata import FileMetadata, PaginatedResult
-from nexus.core.metadata_change import MetadataChange
 
 
 class MetastoreABC(ABC):
@@ -153,25 +151,6 @@ class MetastoreABC(ABC):
             result[path] = metadata.etag if metadata else None
         return result
 
-    def drain_changes(
-        self,
-        since_revision: int = 0,  # noqa: ARG002
-    ) -> builtins.list[MetadataChange]:
-        """Drain metadata changes since the given revision.
-
-        Returns revision-ordered list of changes and clears them from
-        the internal buffer.  The default implementation returns an empty
-        list (no-op) — concrete stores that support change tracking
-        (e.g. Raft ring buffer) override this.
-
-        Args:
-            since_revision: Only return changes with revision > this value.
-
-        Returns:
-            List of ``MetadataChange`` events, ordered by revision.
-        """
-        return []
-
     @abstractmethod
     def close(self) -> None:
         """Close the metadata store and release resources."""
@@ -233,10 +212,6 @@ class AsyncMetastoreWrapper:
 
     async def aput_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
         return await asyncio.to_thread(self._store.put_batch, metadata_list)
-
-    def drain_changes(self, since_revision: int = 0) -> builtins.list[MetadataChange]:
-        """Drain metadata changes directly (no to_thread — non-blocking)."""
-        return self._store.drain_changes(since_revision)
 
     async def abatch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         return await asyncio.to_thread(self._store.batch_get_content_ids, paths)

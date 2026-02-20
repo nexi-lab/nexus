@@ -1,10 +1,10 @@
 """WatchCacheManager — Kubernetes Informer-style watch cache for metadata.
 
-Polls ``MetastoreABC.drain_changes()`` on a configurable interval and routes
-each change through ``ReadSetAwareCache.invalidate_for_write()`` — the SSOT
-invalidation gateway.  This closes the staleness window for shared metadata
-reads in multi-node / federation deployments where Raft replication updates
-the local redb but the Python LRU cache is unaware.
+Polls ``ChangeTrackingProtocol.drain_changes()`` on a configurable interval
+and routes each change through ``ReadSetAwareCache.invalidate_for_write()``
+— the SSOT invalidation gateway.  This closes the staleness window for
+shared metadata reads in multi-node / federation deployments where Raft
+replication updates the local redb but the Python LRU cache is unaware.
 
 Design choices:
     - Polling (not push): avoids GIL contention; Rust ring buffer is polled
@@ -14,6 +14,9 @@ Design choices:
     - Fire-and-forget error policy: same as ``PostMutationHook`` — a poll
       failure is logged but never crashes the task.
     - asyncio.Task lifecycle: same pattern as WriteBuffer / Scheduler.
+
+Depends on ``ChangeTrackingProtocol`` (contracts/), NOT ``MetastoreABC``.
+MetastoreABC is inode CRUD; change tracking is a Raft replication concern.
 
 Issue #2065.
 """
@@ -26,20 +29,20 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.metadata_change import MetadataChange
-    from nexus.core.metastore import MetastoreABC
+    from nexus.contracts.change_tracking import ChangeTrackingProtocol
+    from nexus.contracts.metadata_change import MetadataChange
     from nexus.storage.read_set_cache import ReadSetAwareCache
 
 logger = logging.getLogger(__name__)
 
 
 class WatchCacheManager:
-    """Polls metastore for changes and invalidates the read-set cache.
+    """Polls a change-tracking metastore and invalidates the read-set cache.
 
     Constructor DI — no global state, fully testable.
 
     Args:
-        metastore: Source of changes (``drain_changes()``).
+        change_source: Source of changes (``ChangeTrackingProtocol``).
         invalidation_gateway: SSOT cache invalidation
             (``ReadSetAwareCache.invalidate_for_write()``).
         poll_interval_ms: Polling interval in milliseconds (default 10).
@@ -49,13 +52,13 @@ class WatchCacheManager:
 
     def __init__(
         self,
-        metastore: MetastoreABC,
+        change_source: ChangeTrackingProtocol,
         invalidation_gateway: ReadSetAwareCache,
         *,
         poll_interval_ms: int = 10,
         buffer_overflow_threshold: int = 4096,
     ) -> None:
-        self._metastore = metastore
+        self._change_source = change_source
         self._gateway = invalidation_gateway
         self._poll_interval_s = poll_interval_ms / 1000.0
         self._buffer_overflow_threshold = buffer_overflow_threshold
@@ -100,7 +103,7 @@ class WatchCacheManager:
         logger.info("WatchCacheManager stopped")
 
     def request_stop(self) -> None:
-        """Signal the poll loop to exit (synchronous, safe from NexusFS.close).
+        """Signal the poll loop to exit (synchronous, safe for shutdown).
 
         The loop will stop after its current sleep cycle.  The asyncio.Task
         may still be alive briefly but will not call ``drain_changes()`` again.
@@ -119,7 +122,7 @@ class WatchCacheManager:
                 # event loop if the underlying store (e.g. Raft FFI) holds
                 # a mutex or does disk I/O.
                 changes = await asyncio.to_thread(
-                    self._metastore.drain_changes,
+                    self._change_source.drain_changes,
                     since_revision=self._last_revision,
                 )
                 self._process_changes(changes)
@@ -132,7 +135,7 @@ class WatchCacheManager:
 
     def _poll_once(self) -> None:
         """Execute a single poll cycle (synchronous, for tests)."""
-        changes = self._metastore.drain_changes(since_revision=self._last_revision)
+        changes = self._change_source.drain_changes(since_revision=self._last_revision)
         self._process_changes(changes)
 
     def _process_changes(self, changes: list[MetadataChange]) -> None:

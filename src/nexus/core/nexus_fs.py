@@ -304,19 +304,6 @@ class NexusFS(  # type: ignore[misc]
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
-        # Issue #2065: Watch cache — polls metastore for replication changes
-        # and proactively invalidates the read-set cache.
-        self._watch_cache_manager = None
-        if self._cache_config.enable_watch_cache and self._read_set_cache is not None:
-            from nexus.storage.watch_cache_manager import WatchCacheManager
-
-            self._watch_cache_manager = WatchCacheManager(
-                metastore=self.metadata,
-                invalidation_gateway=self._read_set_cache,
-                poll_interval_ms=self._cache_config.watch_poll_interval_ms,
-                buffer_overflow_threshold=self._cache_config.watch_buffer_size,
-            )
-
         # Tiger Cache (Issue #2133: injected via SystemServices, fallback for tests)
         ssvc = self._system_services
         _injected_tcm = getattr(ssvc, "tiger_cache_manager", None) if ssvc else None
@@ -333,6 +320,9 @@ class NexusFS(  # type: ignore[misc]
                 warm_cache_fn=getattr(self, "warm_tiger_cache", None),
             )
             self._tiger_cache_manager.initialize()
+
+        # WatchCacheManager — created by factory/orchestrator, not NexusFS (Issue #2065).
+        self._watch_cache_manager: Any | None = None
 
     def _bind_wired_services(self, wired: WiredServices | dict[str, Any]) -> None:
         """Bind wired services from factory two-phase init.
@@ -2093,31 +2083,8 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "llm_service") and self._semantic_search is not None:
             self.llm_service._semantic_search_engine = self._semantic_search
 
-    # ------------------------------------------------------------------
-    # Watch cache lifecycle (Issue #2065)
-    # ------------------------------------------------------------------
-
-    async def start_watch_cache(self) -> None:
-        """Start the WatchCacheManager background poll task."""
-        if self._watch_cache_manager is not None:
-            await self._watch_cache_manager.start()
-
-    async def stop_watch_cache(self) -> None:
-        """Stop the WatchCacheManager background poll task."""
-        if self._watch_cache_manager is not None:
-            await self._watch_cache_manager.stop()
-
-    @property
-    def watch_cache_manager(self) -> Any:
-        """Access the WatchCacheManager for stats / introspection."""
-        return self._watch_cache_manager
-
     def close(self) -> None:
         """Close the filesystem and release resources."""
-        # Stop WatchCacheManager to prevent polling a closed metastore (Issue #2065)
-        if hasattr(self, "_watch_cache_manager") and self._watch_cache_manager is not None:
-            self._watch_cache_manager.request_stop()
-
         # Stop DeferredPermissionBuffer first to flush pending permissions
         if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
             self._deferred_permission_buffer.stop()

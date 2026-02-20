@@ -415,6 +415,30 @@ def create_nexus_fs(
         brick_services=brick_services,
     )
 
+    # --- Issue #2065: Create WatchCacheManager (factory-managed, not NexusFS) ---
+    # WatchCacheManager depends on ChangeTrackingProtocol, not MetastoreABC.
+    # Only created if the metastore supports change tracking (e.g. Raft).
+    if cache is None:
+        from nexus.core.config import CacheConfig as _WCC
+
+        _cache_for_wcm = _WCC()
+    else:
+        _cache_for_wcm = cache
+    _rsc = getattr(nx, "_read_set_cache", None)
+    if _cache_for_wcm.enable_watch_cache and _rsc is not None:
+        from nexus.contracts.change_tracking import ChangeTrackingProtocol
+
+        if isinstance(metadata_store, ChangeTrackingProtocol):
+            from nexus.storage.watch_cache_manager import WatchCacheManager
+
+            nx._watch_cache_manager = WatchCacheManager(
+                change_source=metadata_store,
+                invalidation_gateway=_rsc,
+                poll_interval_ms=_cache_for_wcm.watch_poll_interval_ms,
+                buffer_overflow_threshold=_cache_for_wcm.watch_buffer_size,
+            )
+            logger.debug("[BOOT] WatchCacheManager created (factory-managed)")
+
     # --- Phase 1b: Register VFS hook implementations (Issue #690) ---
     # Hooks are service-tier policy (S15/P17), registered via factory so core/
     # never imports services/.

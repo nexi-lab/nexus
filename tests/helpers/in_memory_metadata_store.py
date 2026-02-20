@@ -10,8 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from nexus.contracts.metadata_change import MetadataChange
 from nexus.core.metadata import FileMetadata
-from nexus.core.metadata_change import MetadataChange
 from nexus.core.metastore import MetastoreABC
 
 

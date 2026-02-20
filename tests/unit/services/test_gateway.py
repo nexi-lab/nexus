@@ -65,8 +65,15 @@ def mock_fs():
 
 @pytest.fixture
 def gateway(mock_fs):
-    """Create a NexusFSGateway with mock NexusFS."""
-    return NexusFSGateway(mock_fs)
+    """Create a NexusFSGateway with mock NexusFS and injected dependencies."""
+    return NexusFSGateway(
+        mock_fs,
+        hierarchy_manager=mock_fs._hierarchy_manager,
+        descendant_checker=mock_fs._descendant_checker,
+        get_routing_params_fn=mock_fs._get_routing_params,
+        get_backend_directory_entries_fn=mock_fs._get_backend_directory_entries,
+        record_read_if_tracking_fn=mock_fs._record_read_if_tracking,
+    )
 
 
 @pytest.fixture
@@ -267,7 +274,7 @@ class TestReBACOperations:
 
     def test_rebac_manager_property(self, gateway, mock_fs):
         """rebac_manager property returns the manager."""
-        assert gateway.rebac_manager is mock_fs._rebac_manager
+        assert gateway.rebac_manager is mock_fs.rebac_manager
 
 
 # =============================================================================

@@ -146,11 +146,11 @@ class SyncPipelineService:
             f"skipped={result.files_skipped}, errors={len(result.errors)}"
         )
 
-        # Notify Zoekt to reindex if files were synced
+        # Notify search indexer to reindex if files were synced (Issue #2188: DI callback)
         if result.files_synced > 0:
-            from nexus.bricks.search.zoekt_client import notify_zoekt_sync_complete
-
-            notify_zoekt_sync_complete(result.files_synced)
+            _on_sync = getattr(self._connector, "on_sync_callback", None)
+            if _on_sync is not None:
+                _on_sync(result.files_synced)
 
         return result
 

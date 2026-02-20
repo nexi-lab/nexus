@@ -7,6 +7,7 @@ threshold-based triggering, and idempotency.
 from __future__ import annotations
 
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -17,6 +18,7 @@ from nexus.storage.merkle_checkpoint import MerkleCheckpointTask
 from nexus.storage.models._base import Base
 from nexus.storage.models.audit_checkpoint import AuditCheckpointModel
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
+from nexus.storage.record_store import RecordStoreABC
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -37,14 +39,21 @@ def session_factory(engine):
 
 
 @pytest.fixture
-def audit_logger(session_factory):
-    return ExchangeAuditLogger(session_factory=session_factory)
+def record_store(session_factory):
+    mock_rs = MagicMock(spec=RecordStoreABC)
+    mock_rs.session_factory = session_factory
+    return mock_rs
 
 
 @pytest.fixture
-def checkpoint_task(session_factory, audit_logger):
+def audit_logger(record_store):
+    return ExchangeAuditLogger(record_store=record_store)
+
+
+@pytest.fixture
+def checkpoint_task(record_store, audit_logger):
     return MerkleCheckpointTask(
-        session_factory=session_factory,
+        record_store=record_store,
         audit_logger=audit_logger,
         interval_seconds=60,
         threshold=3,  # Low threshold for testing

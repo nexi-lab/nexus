@@ -22,7 +22,9 @@ from nexus.storage.models.dispute import DisputeModel
 from nexus.storage.session_mixin import SessionMixin
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import Session
+
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class DisputeService(SessionMixin):
     """Dispute lifecycle management with state machine enforcement.
 
     Args:
-        session_factory: SQLAlchemy sessionmaker for database access.
+        record_store: RecordStoreABC providing database access.
     """
 
     VALID_TRANSITIONS: ClassVar[dict[str, set[str]]] = {
@@ -46,9 +48,9 @@ class DisputeService(SessionMixin):
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        record_store: RecordStoreABC,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
 
     def file_dispute(
         self,

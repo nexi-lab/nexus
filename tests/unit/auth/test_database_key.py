@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -37,9 +38,15 @@ def session_factory(db_engine):
 
 
 @pytest.fixture()
-def auth_provider(session_factory):
+def record_store(session_factory):
+    """Wrap session_factory in a SimpleNamespace to mimic RecordStoreABC."""
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture()
+def auth_provider(record_store):
     """DatabaseAPIKeyAuth provider for tests."""
-    return DatabaseAPIKeyAuth(session_factory=session_factory, require_expiry=False)
+    return DatabaseAPIKeyAuth(record_store=record_store, require_expiry=False)
 
 
 def _create_key(
@@ -196,7 +203,7 @@ class TestUpdateLastUsedBackground:
         failing_factory.return_value = failing_session
 
         auth_provider_failing = DatabaseAPIKeyAuth(
-            session_factory=failing_factory, require_expiry=False
+            record_store=SimpleNamespace(session_factory=failing_factory), require_expiry=False
         )
 
         # Should not raise — just log WARNING
@@ -220,7 +227,7 @@ class TestUpdateLastUsedBackground:
         failing_factory.return_value = failing_session
 
         auth_provider_failing = DatabaseAPIKeyAuth(
-            session_factory=failing_factory, require_expiry=False
+            record_store=SimpleNamespace(session_factory=failing_factory), require_expiry=False
         )
 
         # Should raise — RuntimeError is NOT caught by the narrowed handler

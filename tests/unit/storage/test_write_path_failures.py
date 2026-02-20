@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.contracts.exceptions import AuditLogError
 from nexus.core.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel
+from nexus.storage.record_store import RecordStoreABC
 from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,13 @@ def session_factory(engine):
     return factory
 
 
+@pytest.fixture
+def record_store(session_factory):
+    mock_rs = MagicMock(spec=RecordStoreABC)
+    mock_rs.session_factory = session_factory
+    return mock_rs
+
+
 # ---------------------------------------------------------------------------
 # Test: RecordStoreWriteObserver raises AuditLogError on failure (strict mode)
 # ---------------------------------------------------------------------------
@@ -85,9 +93,9 @@ def session_factory(engine):
 class TestSyncerRaisesOnFailure:
     """RecordStoreWriteObserver raises AuditLogError in strict_mode (default)."""
 
-    def test_on_write_propagates_db_error(self, session_factory) -> None:
+    def test_on_write_propagates_db_error(self, record_store) -> None:
         """Database errors in on_write should propagate to caller."""
-        syncer = RecordStoreWriteObserver(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(record_store=record_store)
 
         with (
             patch(
@@ -102,9 +110,9 @@ class TestSyncerRaisesOnFailure:
                 path="/test/file.txt",
             )
 
-    def test_on_write_propagates_version_recorder_error(self, session_factory) -> None:
+    def test_on_write_propagates_version_recorder_error(self, record_store) -> None:
         """VersionRecorder errors in on_write should propagate to caller."""
-        syncer = RecordStoreWriteObserver(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(record_store=record_store)
 
         with (
             patch(
@@ -119,9 +127,9 @@ class TestSyncerRaisesOnFailure:
                 path="/test/file.txt",
             )
 
-    def test_on_delete_propagates_error(self, session_factory) -> None:
+    def test_on_delete_propagates_error(self, record_store) -> None:
         """Errors in on_delete should propagate to caller."""
-        syncer = RecordStoreWriteObserver(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(record_store=record_store)
 
         with (
             patch(

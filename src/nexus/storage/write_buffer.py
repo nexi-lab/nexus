@@ -15,7 +15,7 @@ Architecture:
     Retry with exponential backoff, events preserved
 
 Usage:
-    buffer = WriteBuffer(session_factory, flush_interval_ms=100, max_buffer_size=100)
+    buffer = WriteBuffer(record_store, flush_interval_ms=100, max_buffer_size=100)
     buffer.start()
 
     # Hot path — returns immediately
@@ -30,10 +30,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,7 @@ class WriteBuffer:
 
     def __init__(
         self,
-        session_factory: Callable[..., Any],
+        record_store: RecordStoreABC,
         *,
         flush_interval_ms: int = 100,
         max_buffer_size: int = 100,
@@ -90,12 +92,12 @@ class WriteBuffer:
         """Initialize the write buffer.
 
         Args:
-            session_factory: SQLAlchemy session factory (from RecordStore).
+            record_store: RecordStoreABC instance providing session factory.
             flush_interval_ms: Flush interval in milliseconds.
             max_buffer_size: Flush when buffer reaches this many events.
             max_retries: Max retries on flush failure before dropping events.
         """
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._flush_interval = flush_interval_ms / 1000.0  # convert to seconds
         self._max_buffer_size = max_buffer_size
         self._max_retries = max_retries

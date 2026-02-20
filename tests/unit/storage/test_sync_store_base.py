@@ -26,14 +26,18 @@ from nexus.storage.sync_store_base import SyncStoreBase
 def sqlite_store() -> SyncStoreBase:
     """SyncStoreBase configured for SQLite."""
     session = MagicMock()
-    return SyncStoreBase(lambda: session, is_postgresql=False)
+    mock_rs = MagicMock()
+    mock_rs.session_factory = lambda: session
+    return SyncStoreBase(mock_rs, is_postgresql=False)
 
 
 @pytest.fixture
 def pg_store() -> SyncStoreBase:
     """SyncStoreBase configured for PostgreSQL."""
     session = MagicMock()
-    return SyncStoreBase(lambda: session, is_postgresql=True)
+    mock_rs = MagicMock()
+    mock_rs.session_factory = lambda: session
+    return SyncStoreBase(mock_rs, is_postgresql=True)
 
 
 @pytest.fixture
@@ -52,7 +56,9 @@ class TestInit:
 
     def test_stores_session_factory(self):
         factory = MagicMock()
-        store = SyncStoreBase(factory)
+        mock_rs = MagicMock()
+        mock_rs.session_factory = factory
+        store = SyncStoreBase(mock_rs)
         assert store._session_factory is factory
 
     def test_default_dialect_is_sqlite(self):
@@ -194,7 +200,9 @@ class TestWithSession:
     def test_commits_on_success(self):
         """Session should be committed on successful block execution."""
         session = MagicMock()
-        store = SyncStoreBase(lambda: session)
+        mock_rs = MagicMock()
+        mock_rs.session_factory = lambda: session
+        store = SyncStoreBase(mock_rs)
 
         with store._with_session() as s:
             s.execute("SELECT 1")
@@ -205,7 +213,9 @@ class TestWithSession:
     def test_rollback_on_exception(self):
         """Session should be rolled back on exception."""
         session = MagicMock()
-        store = SyncStoreBase(lambda: session)
+        mock_rs = MagicMock()
+        mock_rs.session_factory = lambda: session
+        store = SyncStoreBase(mock_rs)
 
         with pytest.raises(ValueError, match="boom"), store._with_session() as _s:
             raise ValueError("boom")
@@ -218,7 +228,9 @@ class TestWithSession:
         """Session.close() must be called even if commit raises."""
         session = MagicMock()
         session.commit.side_effect = RuntimeError("commit failed")
-        store = SyncStoreBase(lambda: session)
+        mock_rs = MagicMock()
+        mock_rs.session_factory = lambda: session
+        store = SyncStoreBase(mock_rs)
 
         with pytest.raises(RuntimeError, match="commit failed"), store._with_session():
             pass  # Success path triggers commit, which fails
@@ -236,7 +248,9 @@ class TestWithSession:
     def test_yields_session_object(self):
         """The yielded object should be the session from the factory."""
         session = MagicMock()
-        store = SyncStoreBase(lambda: session)
+        mock_rs = MagicMock()
+        mock_rs.session_factory = lambda: session
+        store = SyncStoreBase(mock_rs)
 
         with store._with_session() as s:
             assert s is session

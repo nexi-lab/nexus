@@ -183,9 +183,7 @@ class MountManager:
             if priority is not None:
                 mount_model.priority = priority
             if readonly is not None:
-                mount_model.readonly = int(
-                    bool(readonly)
-                )  # Convert to int for SQLite/PostgreSQL compatibility
+                mount_model.readonly = bool(readonly)
             if description is not None:
                 mount_model.description = description
 

@@ -7,13 +7,16 @@ import hmac
 import logging
 import secrets
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.auth.constants import API_KEY_MIN_LENGTH, API_KEY_PREFIX, HMAC_SALT
 from nexus.auth.providers.base import AuthProvider, AuthResult
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +32,9 @@ class DatabaseAPIKeyAuth(AuthProvider):
     - Audit trail of key usage
     """
 
-    def __init__(self, session_factory: Any, require_expiry: bool = False) -> None:
-        self.session_factory = session_factory
+    def __init__(self, record_store: RecordStoreABC, require_expiry: bool = False) -> None:
+        self._record_store = record_store
+        self.session_factory = record_store.session_factory
         self.require_expiry = require_expiry
         logger.info("Initialized DatabaseAPIKeyAuth (require_expiry=%s)", require_expiry)
 

@@ -162,7 +162,7 @@ async def tiger_cache_queue_task(
 
 
 async def version_gc_task(
-    session_factory: Any,
+    record_store: Any,
     config: VersionGCSettings | None = None,
     *,
     is_postgresql: bool = False,
@@ -176,14 +176,14 @@ async def version_gc_task(
     Always preserves the latest version for each resource.
 
     Args:
-        session_factory: SQLAlchemy session factory
+        record_store: RecordStoreABC instance for database access.
         config: GC configuration (uses VersionGCSettings.from_env() if None)
         is_postgresql: Whether the database is PostgreSQL (config-time flag).
 
     Examples:
         >>> # Start version GC task in server
         >>> config = VersionGCSettings(retention_days=30, max_versions_per_resource=100)
-        >>> asyncio.create_task(version_gc_task(SessionLocal, config))
+        >>> asyncio.create_task(version_gc_task(record_store, config))
     """
     config = config or VersionGCSettings.from_env()
     interval_seconds = config.run_interval_hours * 3600
@@ -196,7 +196,7 @@ async def version_gc_task(
     # Wait for server to fully start
     await asyncio.sleep(10)
 
-    gc = VersionHistoryGC(session_factory, is_postgresql=is_postgresql)
+    gc = VersionHistoryGC(record_store, is_postgresql=is_postgresql)
 
     while True:
         if config.enabled:
@@ -393,7 +393,7 @@ async def checkpoint_cleanup_task(
 
 
 def start_background_tasks(
-    session_factory: Any,
+    record_store: Any,
     sandbox_manager: Any | None = None,
     agent_registry: Any | None = None,
     *,
@@ -402,7 +402,7 @@ def start_background_tasks(
     """Start all background tasks.
 
     Args:
-        session_factory: SQLAlchemy session factory
+        record_store: RecordStoreABC instance for database access.
         sandbox_manager: Optional SandboxManager for sandbox cleanup (Issue #372)
         agent_registry: Optional AgentRegistry for heartbeat flush (Issue #1240)
         is_postgresql: Whether the database is PostgreSQL (config-time flag).
@@ -413,13 +413,13 @@ def start_background_tasks(
     Examples:
         >>> # In server startup
         >>> from nexus.server.background_tasks import start_background_tasks
-        >>> tasks = start_background_tasks(SessionLocal, sandbox_mgr, agent_registry)
+        >>> tasks = start_background_tasks(record_store, sandbox_mgr, agent_registry)
         >>> # Tasks run in background
     """
     tasks = [
-        asyncio.create_task(session_cleanup_task(session_factory)),
+        asyncio.create_task(session_cleanup_task(record_store.session_factory)),
         # Uncomment to enable inactive session cleanup:
-        # asyncio.create_task(inactive_session_cleanup_task(session_factory)),
+        # asyncio.create_task(inactive_session_cleanup_task(record_store.session_factory)),
     ]
 
     # Add sandbox cleanup if manager provided (Issue #372)
@@ -431,7 +431,7 @@ def start_background_tasks(
     if gc_config.enabled:
         tasks.append(
             asyncio.create_task(
-                version_gc_task(session_factory, gc_config, is_postgresql=is_postgresql)
+                version_gc_task(record_store, gc_config, is_postgresql=is_postgresql)
             )
         )
 

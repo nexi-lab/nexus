@@ -166,7 +166,7 @@ class TestVersionHistoryGC:
             nx.write(path, f"Version {i + 1}".encode())
 
         # Run GC with very aggressive settings (0 retention, 1 max version)
-        gc = VersionHistoryGC(record_store.session_factory)
+        gc = VersionHistoryGC(record_store)
         config = VersionGCSettings(
             retention_days=0,  # This would delete everything by age
             max_versions_per_resource=1,  # Keep only latest
@@ -198,7 +198,7 @@ class TestVersionHistoryGC:
             initial_count = session.scalar(select(func.count()).select_from(VersionHistoryModel))
 
         # Run GC in dry run mode
-        gc = VersionHistoryGC(record_store.session_factory)
+        gc = VersionHistoryGC(record_store)
         config = VersionGCSettings(retention_days=1, max_versions_per_resource=1)
         stats = gc.run_gc(config, dry_run=True)
 
@@ -229,7 +229,7 @@ class TestVersionHistoryGC:
             resource_id = file_path.path_id
 
         # Run GC with max 3 versions
-        gc = VersionHistoryGC(record_store.session_factory)
+        gc = VersionHistoryGC(record_store)
         config = VersionGCSettings(
             retention_days=365,  # Don't delete by age
             max_versions_per_resource=3,
@@ -260,7 +260,7 @@ class TestVersionHistoryGC:
         path = "/workspace/stats_test.txt"
         nx.write(path, b"Content")
 
-        gc = VersionHistoryGC(record_store.session_factory)
+        gc = VersionHistoryGC(record_store)
         table_stats = gc.get_stats()
 
         assert "total_versions" in table_stats
@@ -281,7 +281,7 @@ class TestVersionHistoryGC:
                 nx.write(path, f"File {file_num} Version {version}".encode())
 
         # Run GC with max 2 versions
-        gc = VersionHistoryGC(record_store.session_factory)
+        gc = VersionHistoryGC(record_store)
         config = VersionGCSettings(
             retention_days=365,
             max_versions_per_resource=2,
@@ -304,7 +304,7 @@ class TestVersionHistoryGC:
         for i in range(5):
             nx.write(path, f"V{i}".encode())
 
-        gc = VersionHistoryGC(record_store.session_factory)
+        gc = VersionHistoryGC(record_store)
         default_config = VersionGCSettings(
             retention_days=365,
             max_versions_per_resource=100,
@@ -337,7 +337,7 @@ class TestVersionHistoryGC:
         )
 
         try:
-            gc = VersionHistoryGC(rs_empty.session_factory)
+            gc = VersionHistoryGC(rs_empty)
             config = VersionGCSettings()
             stats = gc.run_gc(config, dry_run=False)
 

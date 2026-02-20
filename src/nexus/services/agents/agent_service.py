@@ -839,8 +839,16 @@ class AgentService:
 
                 try:
                     ctx = _parse_context(_context)
-                    if self._fs.exists(agent_dir, context=ctx):
-                        self._fs.rmdir(agent_dir, recursive=True, context=ctx, is_admin=True)
+                    admin_ctx = OperationContext(
+                        user_id=ctx.user_id,
+                        groups=ctx.groups,
+                        zone_id=ctx.zone_id,
+                        agent_id=ctx.agent_id,
+                        is_admin=True,
+                        is_system=ctx.is_system,
+                    )
+                    if self._fs.exists(agent_dir, context=admin_ctx):
+                        self._fs.rmdir(agent_dir, recursive=True, context=admin_ctx)
                 except Exception as e:
                     logger.warning("Failed to delete agent directory %s: %s", agent_dir, e)
 

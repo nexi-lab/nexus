@@ -439,6 +439,18 @@ def create_nexus_fs(
     if _mds is not None:
         cast(Any, nx)._metadata_export_service = _mds
 
+    # Wire PermissionChecker from services/ (not core/) — Issue #874
+    # Factory DI: kernel calls self._permission_checker.check() duck-typed,
+    # without importing or knowing the concrete class.
+    from nexus.services.permissions.checker import PermissionChecker as _PC
+
+    cast(Any, nx)._permission_checker = _PC(
+        permission_enforcer=nx._permission_enforcer,
+        metadata_store=nx.metadata,
+        default_context=nx._default_context,
+        enforce_permissions=nx._enforce_permissions,
+    )
+
     # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)
     _blm = getattr(system_services, "brick_lifecycle_manager", None)
     if _blm is not None:

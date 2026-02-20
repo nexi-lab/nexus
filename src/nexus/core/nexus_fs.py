@@ -272,16 +272,6 @@ class NexusFS(  # type: ignore[misc]
         )
         self._post_mutation_hooks: builtins.list[Any] = []
 
-        # PermissionChecker: core module, safe to create here (Issue #2133)
-        from nexus.core.permission_checker import PermissionChecker
-
-        self._permission_checker = PermissionChecker(
-            permission_enforcer=self._permission_enforcer,
-            metadata_store=self.metadata,
-            default_context=self._default_context,
-            enforce_permissions=self._enforce_permissions,
-        )
-
         # Read-set-aware cache (Issue #1169)
         self._read_set_cache = None
         metadata_cache = getattr(self.metadata, "_cache", None)

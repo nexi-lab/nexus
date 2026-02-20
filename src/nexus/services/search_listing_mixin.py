@@ -89,7 +89,7 @@ class SearchListingMixin:
                 context=context,
             )
         # Phase 2 Integration (v0.4.0): Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if path and MemoryViewRouter.is_memory_path(path):
             return self._list_memory_path(path, details)
@@ -1066,8 +1066,8 @@ class SearchListingMixin:
             logger.warning("session_factory not provided, cannot list memory paths")
             return []
 
+        from nexus.bricks.memory.router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.services.memory.memory_router import MemoryViewRouter
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()

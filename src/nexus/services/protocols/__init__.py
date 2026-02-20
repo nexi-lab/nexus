@@ -54,6 +54,10 @@ from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.services.protocols.lock import LockProtocol
 from nexus.services.protocols.mcp import MCPProtocol
 from nexus.services.protocols.memory import MemoryProtocol
+from nexus.services.protocols.memory_deps import (
+    MemoryEntityRegistryProtocol,
+    MemoryPermissionProtocol,
+)
 from nexus.services.protocols.mount import MountProtocol, ProgressCallback
 from nexus.services.protocols.mount_core import MountCoreProtocol
 from nexus.services.protocols.mount_persist import MountPersistProtocol
@@ -103,6 +107,8 @@ __all__ = [
     "LLMServiceProtocol",
     "LockProtocol",
     "MCPProtocol",
+    "MemoryEntityRegistryProtocol",
+    "MemoryPermissionProtocol",
     "MemoryProtocol",
     "MetadataStoreProtocol",
     "MountCoreProtocol",

@@ -415,11 +415,6 @@ def create_nexus_fs(
         brick_services=brick_services,
     )
 
-    # --- Phase 1b: Wire service-layer components onto NexusFS ---
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
-
     # --- Phase 2: Wire services needing NexusFS reference (Issue #643) ---
     # Resolve enabled_bricks for brick gating (same pattern as create_nexus_services)
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP

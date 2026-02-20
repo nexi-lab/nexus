@@ -25,11 +25,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Generator
-from contextlib import contextmanager
+from dataclasses import replace
 from graphlib import CycleError, TopologicalSorter
 from typing import Any
 
+from nexus.services._tracing import lazy_tracer, record_span_result
 from nexus.services.protocols.brick_lifecycle import (
     POST_MOUNT,
     POST_UNMOUNT,
@@ -54,57 +54,11 @@ DEFAULT_START_TIMEOUT: float = 5.0
 
 # ---------------------------------------------------------------------------
 # OTel tracing — zero-overhead when telemetry is not enabled
+# Shared implementation in nexus.services._tracing
 # ---------------------------------------------------------------------------
 
-_tracer: Any = None
-_tracer_resolved: bool = False
-
-
-def _get_tracer() -> Any:
-    """Lazy-resolve the OTel tracer (returns None if unavailable)."""
-    global _tracer, _tracer_resolved  # noqa: PLW0603
-    if _tracer_resolved:
-        return _tracer
-    _tracer_resolved = True
-    try:
-        from nexus.server.telemetry import get_tracer
-
-        _tracer = get_tracer("nexus.brick_lifecycle")
-    except Exception:
-        _tracer = None
-    return _tracer
-
-
-@contextmanager
-def _lifecycle_span(operation: str, brick_name: str, **attrs: Any) -> Generator[Any, None, None]:
-    """Context manager for a brick lifecycle OTel span.
-
-    Zero-overhead: if no tracer, yields None immediately.
-    """
-    tracer = _get_tracer()
-    if tracer is None:
-        yield None
-        return
-    with tracer.start_as_current_span(f"brick.{operation}") as span:
-        span.set_attribute("brick.name", brick_name)
-        for k, v in attrs.items():
-            span.set_attribute(f"brick.{k}", v)
-        yield span
-
-
-def _record_span_result(span: Any, *, state: str, error: str | None = None) -> None:
-    """Record final state and optional error on a span."""
-    if span is None:
-        return
-    span.set_attribute("brick.state", state)
-    if error:
-        span.set_attribute("brick.error", error)
-        try:
-            from opentelemetry.trace import StatusCode
-
-            span.set_status(StatusCode.ERROR, error)
-        except Exception:
-            pass
+_get_tracer, _lifecycle_span = lazy_tracer("nexus.brick_lifecycle")
+_record_span_result = record_span_result
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +399,73 @@ class BrickLifecycleManager:
         """Return all brick specs keyed by name."""
         return {name: entry.spec for name, entry in self._bricks.items()}
 
+    def iter_bricks(self) -> list[tuple[str, BrickSpec, BrickState, int, Any]]:
+        """Iterate all bricks as (name, spec, state, retry_count, instance) tuples.
+
+        Public API for the reconciler — avoids direct ``_bricks`` dict access.
+        Returns a snapshot list (safe to iterate while mutations happen).
+        """
+        return [
+            (name, entry.spec, entry.state, entry.retry_count, entry.instance)
+            for name, entry in list(self._bricks.items())
+        ]
+
+    def get_retry_count(self, name: str) -> int:
+        """Return the current retry count for a brick."""
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+        return entry.retry_count
+
+    def update_spec(self, name: str, *, enabled: bool | None = None) -> BrickSpec:
+        """Update a brick's spec fields. Returns the new spec.
+
+        Only ``enabled`` is currently updatable. Uses ``dataclasses.replace()``
+        for immutability — creates a new spec, doesn't mutate.
+
+        Raises:
+            KeyError: If brick not found.
+        """
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+        kwargs: dict[str, Any] = {}
+        if enabled is not None:
+            kwargs["enabled"] = enabled
+        if kwargs:
+            entry.spec = replace(entry.spec, **kwargs)
+        return entry.spec
+
+    def reset_for_retry(self, name: str) -> int:
+        """Reset a FAILED brick for retry, preserving and incrementing retry_count.
+
+        Unlike ``reset()`` (which clears retry_count to 0 for manual resets),
+        this method increments the counter so the reconciler can track attempts.
+
+        Returns the new retry_count after increment.
+
+        Raises:
+            KeyError: If brick not found.
+            InvalidTransitionError: If brick is not in FAILED state.
+        """
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+        new_retry = entry.retry_count + 1
+        self._transition(name, "reset")
+        entry.error = None
+        entry.started_at = None
+        entry.stopped_at = None
+        entry.retry_count = new_retry
+        return new_retry
+
+    def clear_retry_count(self, name: str) -> None:
+        """Clear retry counter for a brick (called on successful mount)."""
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+        entry.retry_count = 0
+
     def fail_brick(self, name: str, error: str) -> None:
         """Transition a brick to FAILED state with an error message.
 
@@ -464,6 +485,17 @@ class BrickLifecycleManager:
     # ------------------------------------------------------------------
     # DAG ordering
     # ------------------------------------------------------------------
+
+    def _deps_satisfied(self, name: str) -> bool:
+        """Check if all dependencies of a brick are ACTIVE."""
+        entry = self._bricks.get(name)
+        if entry is None:
+            return False
+        for dep_name in entry.depends_on:
+            dep = self._bricks.get(dep_name)
+            if dep is None or dep.state != BrickState.ACTIVE:
+                return False
+        return True
 
     def compute_startup_order(self) -> list[list[str]]:
         """Compute DAG-ordered startup levels.
@@ -678,11 +710,14 @@ class BrickLifecycleManager:
         t0 = time.monotonic()
         levels = self.compute_startup_order()
         for level in levels:
-            # Filter to only REGISTERED bricks (skip already-mounted or failed)
+            # Filter to only REGISTERED bricks whose dependencies are all ACTIVE.
+            # This prevents mounting a brick whose dependency failed earlier.
             to_mount = [
                 name
                 for name in level
-                if name in self._bricks and self._bricks[name].state == BrickState.REGISTERED
+                if name in self._bricks
+                and self._bricks[name].state == BrickState.REGISTERED
+                and self._deps_satisfied(name)
             ]
             if not to_mount:
                 continue

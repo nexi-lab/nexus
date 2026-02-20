@@ -18,7 +18,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
@@ -60,6 +60,20 @@ class BrickState(Enum):
     STOPPING = "stopping"
     UNREGISTERED = "unregistered"
     FAILED = "failed"
+
+
+class DriftAction(StrEnum):
+    """Actions the reconciler can take to resolve drift.
+
+    Inherits from ``StrEnum`` so values serialize cleanly in REST responses
+    and match statements work with string comparisons.
+    """
+
+    SKIP = "skip"
+    RESET = "reset"
+    MOUNT = "mount"
+    UNMOUNT = "unmount"
+    HEALTH_CHECK_FAILED = "health_check_failed"
 
 
 # ---------------------------------------------------------------------------
@@ -137,14 +151,12 @@ class BrickSpec:
         protocol_name: Protocol type name this brick implements.
         depends_on: Tuple of brick names this brick depends on.
         enabled: Whether the brick should be active (desired state).
-        generation: Monotonically increasing version; bumped on spec change.
     """
 
     name: str
     protocol_name: str
     depends_on: tuple[str, ...] = ()
     enabled: bool = True
-    generation: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +174,7 @@ class DriftReport:
     brick_name: str
     spec_state: str
     actual_state: BrickState
-    action: str
+    action: DriftAction
     detail: str = ""
 
 

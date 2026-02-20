@@ -6,50 +6,25 @@ TDD: Tests written FIRST, implementation follows.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from nexus.services.brick_lifecycle import BrickLifecycleManager
 from nexus.services.brick_reconciler import BrickReconciler
 from nexus.services.protocols.brick_lifecycle import (
-    BrickLifecycleProtocol,
     BrickState,
+    DriftAction,
 )
-
-# ---------------------------------------------------------------------------
-# Test helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_lifecycle_brick(name: str = "test") -> MagicMock:
-    """Create a mock brick that satisfies BrickLifecycleProtocol."""
-    brick = AsyncMock(spec=BrickLifecycleProtocol)
-    brick.start = AsyncMock(return_value=None)
-    brick.stop = AsyncMock(return_value=None)
-    brick.health_check = AsyncMock(return_value=True)
-    brick.__class__.__name__ = f"{name.capitalize()}Brick"
-    return brick
-
-
-def _make_stateless_brick(name: str = "pay") -> MagicMock:
-    """Create a mock brick without lifecycle methods (stateless)."""
-    brick = MagicMock()
-    brick.__class__.__name__ = f"{name.capitalize()}Brick"
-    if hasattr(brick, "start"):
-        del brick.start
-    if hasattr(brick, "stop"):
-        del brick.stop
-    if hasattr(brick, "health_check"):
-        del brick.health_check
-    return brick
-
-
-def _make_failing_brick(error: Exception | None = None) -> MagicMock:
-    """Create a mock brick whose start() raises."""
-    brick = _make_lifecycle_brick("failing")
-    brick.start = AsyncMock(side_effect=error or RuntimeError("Connection refused"))
-    return brick
+from tests.unit.services.conftest import (
+    make_failing_brick as _make_failing_brick,
+)
+from tests.unit.services.conftest import (
+    make_lifecycle_brick as _make_lifecycle_brick,
+)
+from tests.unit.services.conftest import (
+    make_stateless_brick as _make_stateless_brick,
+)
 
 
 @pytest.fixture
@@ -115,7 +90,7 @@ class TestReconcileDetectDrift:
         assert result.drifted >= 1
         drifts = [d for d in result.drifts if d.brick_name == "idle"]
         assert len(drifts) == 1
-        assert drifts[0].action == "mount"
+        assert drifts[0].action is DriftAction.MOUNT
 
     @pytest.mark.asyncio
     async def test_detect_active_disabled_brick(
@@ -134,7 +109,7 @@ class TestReconcileDetectDrift:
         result = await reconciler.reconcile()
         drifts = [d for d in result.drifts if d.brick_name == "disabled"]
         assert len(drifts) == 1
-        assert drifts[0].action == "unmount"
+        assert drifts[0].action is DriftAction.UNMOUNT
 
     @pytest.mark.asyncio
     async def test_drift_report_contains_correct_fields(
@@ -148,7 +123,7 @@ class TestReconcileDetectDrift:
         assert drift.brick_name == "idle"
         assert drift.spec_state == "enabled"
         assert drift.actual_state == BrickState.REGISTERED
-        assert drift.action == "mount"
+        assert drift.action is DriftAction.MOUNT
 
     @pytest.mark.asyncio
     async def test_no_drift_for_disabled_unregistered(
@@ -206,18 +181,19 @@ class TestReconcileSelfHealing:
         await manager.mount("hopeless")
 
         # Reconcile 3 times — each time it tries and fails again
+        # Clear backoff between passes so retries aren't delayed by exponential backoff
         for _ in range(3):
+            reconciler._next_retry_after.clear()
             await reconciler.reconcile()
 
         # After 3 retries, the brick should still be FAILED
         assert manager.get_status("hopeless").state == BrickState.FAILED  # type: ignore[union-attr]
-        entry = manager._bricks["hopeless"]
-        assert entry.retry_count >= 3
+        assert manager.get_retry_count("hopeless") >= 3
 
         # 4th reconcile should skip (max retries exceeded)
         result = await reconciler.reconcile()
         skip_drifts = [
-            d for d in result.drifts if d.brick_name == "hopeless" and d.action == "skip"
+            d for d in result.drifts if d.brick_name == "hopeless" and d.action is DriftAction.SKIP
         ]
         assert len(skip_drifts) == 1
 
@@ -278,7 +254,7 @@ class TestReconcileSelfHealing:
         b_drifts = [d for d in result.drifts if d.brick_name == "b"]
         assert len(b_drifts) >= 1
         # B's drift should note blocked dependency
-        assert any(d.action in ("skip", "mount") for d in b_drifts)
+        assert any(d.action in (DriftAction.SKIP, DriftAction.MOUNT) for d in b_drifts)
 
     @pytest.mark.asyncio
     async def test_cascading_recovery(
@@ -397,8 +373,13 @@ class TestReconcileLoop:
     async def test_periodic_loop_fires_reconcile(
         self,
         manager: BrickLifecycleManager,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Verify reconcile called every interval."""
+        import nexus.services.brick_reconciler as _mod
+
+        monkeypatch.setattr(_mod, "_JITTER_MAX", 0.0)
+
         reconciler = BrickReconciler(
             lifecycle_manager=manager,
             reconcile_interval=0.05,
@@ -437,20 +418,25 @@ class TestReconcileLoop:
     async def test_start_stop_lifecycle(
         self, manager: BrickLifecycleManager, reconciler: BrickReconciler
     ) -> None:
-        """start creates task, stop cancels it."""
+        """start creates task, stop cancels and clears it."""
         await reconciler.start()
         assert reconciler._task is not None
         assert not reconciler._task.done()
 
         await reconciler.stop()
-        assert reconciler._task.done() or reconciler._task.cancelled()
+        assert reconciler._task is None
 
     @pytest.mark.asyncio
     async def test_reconcile_error_doesnt_crash_loop(
         self,
         manager: BrickLifecycleManager,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Exception in reconcile → log + continue."""
+        import nexus.services.brick_reconciler as _mod
+
+        monkeypatch.setattr(_mod, "_JITTER_MAX", 0.0)
+
         reconciler = BrickReconciler(
             lifecycle_manager=manager,
             reconcile_interval=0.05,
@@ -551,7 +537,7 @@ class TestReconcileIntegration:
         manager.register("b", brick_b, protocol_name="BP", depends_on=("a",))
 
         await manager.mount_all()
-        # A failed, B either got mounted (fail-forward) or stayed registered
+        # A failed → B stays REGISTERED (deps not satisfied)
 
         # Reconcile — A should recover
         await reconciler.reconcile()
@@ -577,3 +563,68 @@ class TestReconcileIntegration:
         assert result.drifted == 1  # idle
         assert result.actions_taken == 1  # mount idle
         assert result.errors == 0
+
+
+# ---------------------------------------------------------------------------
+# TestConcurrentReconcile (~2 tests)
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentReconcile:
+    """Test concurrent reconcile + manual mount don't race."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_reconcile_and_manual_mount(
+        self,
+    ) -> None:
+        """Reconcile and manual mount on the same brick should not corrupt state."""
+        manager = BrickLifecycleManager()
+        reconciler = BrickReconciler(
+            lifecycle_manager=manager,
+            reconcile_interval=30.0,
+        )
+
+        brick = _make_lifecycle_brick("race")
+        manager.register("race", brick, protocol_name="RP")
+
+        # Run reconcile and manual mount concurrently
+        await asyncio.gather(
+            reconciler.reconcile(),
+            manager.mount("race"),
+            return_exceptions=True,
+        )
+
+        # Brick should be in a valid final state — either ACTIVE or FAILED
+        status = manager.get_status("race")
+        assert status is not None
+        assert status.state in (BrickState.ACTIVE, BrickState.FAILED)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_double_reconcile(
+        self,
+    ) -> None:
+        """Two concurrent reconcile() calls should not corrupt state."""
+        manager = BrickLifecycleManager()
+        reconciler = BrickReconciler(
+            lifecycle_manager=manager,
+            reconcile_interval=30.0,
+        )
+
+        brick = _make_lifecycle_brick("shared")
+        manager.register("shared", brick, protocol_name="SP")
+
+        # Two reconcile passes at once
+        results = await asyncio.gather(
+            reconciler.reconcile(),
+            reconciler.reconcile(),
+            return_exceptions=True,
+        )
+
+        # At least one should succeed without exception
+        successes = [r for r in results if not isinstance(r, Exception)]
+        assert len(successes) >= 1
+
+        # Final state should be valid
+        status = manager.get_status("shared")
+        assert status is not None
+        assert status.state in (BrickState.ACTIVE, BrickState.FAILED)

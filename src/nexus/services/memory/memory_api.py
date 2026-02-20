@@ -135,8 +135,8 @@ class Memory:
             from nexus.rebac.entity_registry import EntityRegistry
 
             _concrete_entity_registry = EntityRegistry(
-                SimpleNamespace(session_factory=lambda: session)
-            )  # type: ignore[arg-type]
+                SimpleNamespace(session_factory=lambda: session)  # type: ignore[arg-type]
+            )
             entity_registry = _concrete_entity_registry
         self.entity_registry = entity_registry
         self.memory_router = MemoryViewRouter(session, self.entity_registry)

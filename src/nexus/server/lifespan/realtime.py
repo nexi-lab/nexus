@@ -196,7 +196,15 @@ async def _startup_writeback(app: FastAPI) -> None:
         from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
         from nexus.system_services.sync.write_back_service import WriteBackService
 
-        gw = NexusFSGateway(app.state.nexus_fs)
+        _nfs = app.state.nexus_fs
+        gw = NexusFSGateway(
+            _nfs,
+            hierarchy_manager=getattr(_nfs, "_hierarchy_manager", None),
+            descendant_checker=getattr(_nfs, "_descendant_checker", None),
+            get_routing_params_fn=getattr(_nfs, "_get_routing_params", None),
+            get_backend_directory_entries_fn=getattr(_nfs, "_get_backend_directory_entries", None),
+            record_read_if_tracking_fn=getattr(_nfs, "_record_read_if_tracking", None),
+        )
 
         # ConflictLogStore is always available for the REST API
         _is_pg = gw.is_postgresql

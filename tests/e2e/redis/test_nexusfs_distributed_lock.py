@@ -85,6 +85,9 @@ async def nx_with_lock(temp_dir, redis_client, isolated_db):
     nx = NexusFS(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )
+    from nexus.services.service_wiring import wire_services
+
+    wire_services(nx)
 
     # Inject lock manager (redis_client is already connected by fixture)
     nx._lock_manager = RedisLockManager(redis_client)
@@ -123,6 +126,10 @@ async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
     nx2 = NexusFS(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )
+    from nexus.services.service_wiring import wire_services
+
+    wire_services(nx1)
+    wire_services(nx2)
 
     # Both share the same Redis lock manager (distributed lock)
     lock_manager = RedisLockManager(redis_client)
@@ -166,6 +173,9 @@ def nx_sync_with_lock(temp_dir, isolated_db):
     nx = NexusFS(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )
+    from nexus.services.service_wiring import wire_services
+
+    wire_services(nx)
     nx._lock_manager = lock_manager
     nx.events_service._lock_manager = nx._lock_manager
 
@@ -408,6 +418,9 @@ class TestWriteWithLock:
                 metadata_store=metadata_store,
                 permissions=PermissionConfig(enforce=False),
             )
+            from nexus.services.service_wiring import wire_services
+
+            wire_services(nx)
             nx._lock_manager = RedisLockManager(stub_client)
             nx.events_service._lock_manager = nx._lock_manager
             return nx
@@ -678,6 +691,9 @@ class TestEdgeCases:
             metadata_store=metadata_store,
             permissions=PermissionConfig(enforce=False),
         )
+        from nexus.services.service_wiring import wire_services
+
+        wire_services(nx)
 
         # No lock manager configured - should warn but succeed (LWW)
         result = nx.write("/test.txt", b"content", lock=True)
@@ -819,6 +835,9 @@ class TestMultiThreadingContention:
                         metadata_store=metadata_store,
                         permissions=PermissionConfig(enforce=False),
                     )
+                    from nexus.services.service_wiring import wire_services
+
+                    wire_services(nx)
                     nx._lock_manager = RedisLockManager(client)
                     nx.events_service._lock_manager = nx._lock_manager
                     try:
@@ -1195,6 +1214,9 @@ class TestLockIsolation:
                 metadata_store=metadata_store,
                 permissions=PermissionConfig(enforce=False),
             )
+            from nexus.services.service_wiring import wire_services
+
+            wire_services(nx)
             nx._lock_manager = RedisLockManager(client)
             nx.events_service._lock_manager = nx._lock_manager
 

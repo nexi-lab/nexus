@@ -49,6 +49,9 @@ def main() -> int:
     backend = LocalBackend(root_path=data_dir)
     metadata_store = RaftMetadataStore.embedded(str(db_url).replace(".db", ""))
     nx = NexusFS(backend=backend, metadata_store=metadata_store)
+    from nexus.services.service_wiring import wire_services
+
+    wire_services(nx)
     print("✓ NexusFS initialized")
     print()
 

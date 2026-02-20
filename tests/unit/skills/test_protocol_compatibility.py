@@ -83,6 +83,9 @@ def test_nexus_fs_satisfies_narrow_protocol() -> None:
             metadata_store=metadata_store,
             permissions=PermissionConfig(audit_strict_mode=False),
         )
+        from nexus.services.service_wiring import wire_services
+
+        wire_services(nx)
 
         # Verify all required methods exist and are callable
         for method_name in REQUIRED_METHODS:

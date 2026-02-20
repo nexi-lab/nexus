@@ -182,6 +182,9 @@ def app_with_db_auth(tmp_path, db_session_factory, api_keys):
         permissions=PermissionConfig(enforce=False),
         memory=MemoryConfig(enable_paging=True, main_capacity=10),
     )
+    from nexus.services.service_wiring import wire_services
+
+    wire_services(nx)
 
     # Match production wiring: DiscriminatingAuthProvider routes sk-* tokens
     # to DatabaseAPIKeyAuth (same as `nexus serve --auth-type database`)

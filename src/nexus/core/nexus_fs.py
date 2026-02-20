@@ -303,17 +303,20 @@ class NexusFS(  # type: ignore[misc]
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
-        # Tiger Cache
-        from nexus.services.tiger_cache_manager import TigerCacheManager
+        # Tiger Cache (Issue #2133: injected via KernelServices, fallback for tests)
+        if ksvc.tiger_cache_manager is not None:
+            self._tiger_cache_manager = ksvc.tiger_cache_manager
+        else:
+            from nexus.services.tiger_cache_manager import TigerCacheManager
 
-        self._tiger_cache_manager = TigerCacheManager(
-            rebac_manager=self._rebac_manager,
-            metadata_store=self.metadata,
-            default_zone_id=self._default_context.zone_id or "root",
-            process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
-            warm_cache_fn=getattr(self, "warm_tiger_cache", None),
-        )
-        self._tiger_cache_manager.initialize()
+            self._tiger_cache_manager = TigerCacheManager(
+                rebac_manager=self._rebac_manager,
+                metadata_store=self.metadata,
+                default_zone_id=self._default_context.zone_id or "root",
+                process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
+                warm_cache_fn=getattr(self, "warm_tiger_cache", None),
+            )
+            self._tiger_cache_manager.initialize()
 
     def _register_vfs_hooks(self) -> None:
         """Register VFS hook implementations on the pipeline."""
@@ -2222,17 +2225,17 @@ class NexusFS(  # type: ignore[misc]
 
     @staticmethod
     def _extract_zone_id(context: dict | Any | None) -> str | None:
-        """Extract zone_id from context — delegates to AgentRPCService."""
-        from nexus.services.agents.agent_rpc_service import AgentRPCService
+        """Extract zone_id from context."""
+        from nexus.contracts.agent_utils import extract_zone_id
 
-        return AgentRPCService._extract_zone_id(context)
+        return extract_zone_id(context)
 
     @staticmethod
     def _extract_user_id(context: dict | Any | None) -> str | None:
-        """Extract user_id from context — delegates to AgentRPCService."""
-        from nexus.services.agents.agent_rpc_service import AgentRPCService
+        """Extract user_id from context."""
+        from nexus.contracts.agent_utils import extract_user_id
 
-        return AgentRPCService._extract_user_id(context)
+        return extract_user_id(context)
 
     @staticmethod
     def _create_agent_config_data(
@@ -2244,10 +2247,10 @@ class NexusFS(  # type: ignore[misc]
         metadata: dict | None = None,
         api_key: str | None = None,
     ) -> dict[str, Any]:
-        """Create agent config data — delegates to AgentRPCService."""
-        from nexus.services.agents.agent_rpc_service import AgentRPCService
+        """Create agent config data."""
+        from nexus.contracts.agent_utils import create_agent_config_data
 
-        return AgentRPCService._create_agent_config_data(
+        return create_agent_config_data(
             agent_id=agent_id,
             name=name,
             user_id=user_id,

@@ -163,6 +163,16 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
                 strict_mode=ctx.perm.audit_strict_mode,
             )
 
+        # --- Tiger Cache Manager (Issue #2133: moved from NexusFS.__init__) ---
+        from nexus.services.tiger_cache_manager import TigerCacheManager
+
+        tiger_cache_manager = TigerCacheManager(
+            rebac_manager=rebac_manager,
+            metadata_store=ctx.metadata_store,
+            default_zone_id=ctx.zone_id or "root",
+        )
+        tiger_cache_manager.initialize()
+
         result = {
             "rebac_manager": rebac_manager,
             "dir_visibility_cache": dir_visibility_cache,
@@ -175,6 +185,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             "mount_manager": mount_manager,
             "workspace_manager": workspace_manager,
             "write_observer": write_observer,
+            "tiger_cache_manager": tiger_cache_manager,
         }
 
         elapsed = time.perf_counter() - t0

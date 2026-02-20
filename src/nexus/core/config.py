@@ -153,6 +153,9 @@ class KernelServices:
     # Write sync
     write_observer: WriteObserverProtocol | None = None
 
+    # Tiger Cache manager (Issue #2133: moved from NexusFS.__init__)
+    tiger_cache_manager: Any = None
+
     # VFS hook pipeline (Issue #2033 Phase 5)
     hook_pipeline: Any = None
 

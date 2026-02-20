@@ -72,19 +72,15 @@ class AgentRPCService:
 
     @staticmethod
     def _extract_zone_id(context: dict | Any | None) -> str | None:
-        if not context:
-            return None
-        if isinstance(context, dict):
-            return context.get("zone_id")
-        return getattr(context, "zone_id", None)
+        from nexus.contracts.agent_utils import extract_zone_id
+
+        return extract_zone_id(context)
 
     @staticmethod
     def _extract_user_id(context: dict | Any | None) -> str | None:
-        if not context:
-            return None
-        if isinstance(context, dict):
-            return context.get("user_id")
-        return getattr(context, "user_id", None)
+        from nexus.contracts.agent_utils import extract_user_id
+
+        return extract_user_id(context)
 
     # ------------------------------------------------------------------
     # Config Helpers
@@ -100,18 +96,17 @@ class AgentRPCService:
         metadata: dict | None = None,
         api_key: str | None = None,
     ) -> dict[str, Any]:
-        config_data: dict[str, Any] = {
-            "agent_id": agent_id,
-            "name": name,
-            "user_id": user_id,
-            "description": description,
-            "created_at": created_at,
-        }
-        if metadata:
-            config_data["metadata"] = metadata.copy()
-        if api_key is not None:
-            config_data["api_key"] = api_key
-        return config_data
+        from nexus.contracts.agent_utils import create_agent_config_data
+
+        return create_agent_config_data(
+            agent_id=agent_id,
+            name=name,
+            user_id=user_id,
+            description=description,
+            created_at=created_at,
+            metadata=metadata,
+            api_key=api_key,
+        )
 
     def _write_agent_config(
         self,

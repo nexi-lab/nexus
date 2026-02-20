@@ -22,47 +22,21 @@ import pytest
 class TestVectorDatabaseErrors:
     """Test VectorDatabase error conditions."""
 
-    def test_initialize_unsupported_dialect(self) -> None:
-        """VectorDatabase.initialize should raise for unsupported dialect."""
+    def test_default_is_sqlite(self) -> None:
+        """VectorDatabase defaults to SQLite (is_postgresql=False)."""
         from nexus.bricks.search.vector_db import VectorDatabase
 
         engine = MagicMock()
-        engine.dialect.name = "mysql"
-
         vdb = VectorDatabase(engine)
-        with pytest.raises(ValueError, match="Unsupported database type: mysql"):
-            vdb.initialize()
+        assert vdb.db_type == "sqlite"
 
-    def test_vector_search_unsupported_dialect(self) -> None:
-        """vector_search should raise for unsupported dialect."""
+    def test_postgresql_flag(self) -> None:
+        """VectorDatabase with is_postgresql=True reports postgresql."""
         from nexus.bricks.search.vector_db import VectorDatabase
 
         engine = MagicMock()
-        engine.dialect.name = "oracle"
-
-        vdb = VectorDatabase(engine)
-        session = MagicMock()
-
-        with pytest.raises(ValueError, match="Unsupported database type"):
-            vdb.vector_search(session, [0.1, 0.2], limit=5)
-
-    def test_keyword_search_unsupported_dialect(self) -> None:
-        """keyword_search should raise for unsupported dialect (FTS fallback)."""
-        from nexus.bricks.search.vector_db import VectorDatabase
-
-        engine = MagicMock()
-        engine.dialect.name = "oracle"
-
-        vdb = VectorDatabase(engine)
-        vdb._initialized = True
-        session = MagicMock()
-
-        with (
-            patch.object(vdb, "_try_keyword_search_with_zoekt", return_value=None),
-            patch.object(vdb, "_try_keyword_search_with_bm25s", return_value=None),
-            pytest.raises(ValueError, match="Unsupported database type"),
-        ):
-            vdb.keyword_search(session, "test", limit=5)
+        vdb = VectorDatabase(engine, is_postgresql=True)
+        assert vdb.db_type == "postgresql"
 
 
 # =============================================================================

@@ -137,7 +137,8 @@ class SemanticSearchMixin:
         chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
 
         # --- Core components ---
-        vector_db = VectorDatabase(record_store_engine)
+        _is_pg = not str(record_store_engine.url).startswith("sqlite")
+        vector_db = VectorDatabase(record_store_engine, is_postgresql=_is_pg)
         vector_db.initialize()
 
         chunker = DocumentChunker(
@@ -388,7 +389,8 @@ class SemanticSearchMixin:
             raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
 
         engine = self._record_store.engine
-        vector_db = VectorDatabase(engine)
+        _is_pg = not str(engine.url).startswith("sqlite")
+        vector_db = VectorDatabase(engine, is_postgresql=_is_pg)
         vector_db.initialize()
 
         chunker = DocumentChunker(

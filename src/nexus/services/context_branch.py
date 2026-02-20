@@ -44,7 +44,7 @@ from nexus.storage.models import ContextBranchModel, WorkspaceSnapshotModel
 _VALID_STRATEGIES = frozenset({"fail", "source-wins"})
 
 if TYPE_CHECKING:
-    from nexus.rebac.manager import ReBACManager
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
     from nexus.services.workspace_manager import WorkspaceManager
     from nexus.storage.record_store import RecordStoreABC
 
@@ -149,7 +149,7 @@ class ContextBranchService:
         self,
         workspace_manager: WorkspaceManager,
         record_store: RecordStoreABC,
-        rebac_manager: ReBACManager | None = None,
+        rebac_manager: ReBACBrickProtocol | None = None,
         default_zone_id: str | None = None,
         default_agent_id: str | None = None,
     ):

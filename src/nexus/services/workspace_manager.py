@@ -19,7 +19,7 @@ from nexus.storage.models import WorkspaceSnapshotModel
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.metastore import MetastoreABC
-    from nexus.rebac.manager import ReBACManager
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class WorkspaceManager:
         self,
         metadata: MetastoreABC,
         backend: Backend,
-        rebac_manager: ReBACManager | None = None,
+        rebac_manager: ReBACBrickProtocol | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
         record_store: RecordStoreABC | None = None,

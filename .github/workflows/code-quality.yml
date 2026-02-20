@@ -3,12 +3,6 @@ name: Code Quality Standards
 on:
   pull_request:
     branches: [main, develop]
-    paths:
-      - 'src/**/*.py'
-      - 'tests/**/*.py'
-      - '.pre-commit-hooks/**'
-      - '.pre-commit-config.yaml'
-      - 'pyproject.toml'
   push:
     branches: [main, develop, refactor/**]
     paths:
@@ -26,8 +20,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect whether Python files were changed so required checks can skip
+  # gracefully on non-Python PRs (e.g. Rust-only changes).
+  detect-changes:
+    name: Detect Python Changes
+    runs-on: ubuntu-latest
+    outputs:
+      python_changed: ${{ steps.filter.outputs.python_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for Python file changes
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE=${{ github.event.pull_request.base.sha }}
+            HEAD=${{ github.event.pull_request.head.sha }}
+            CHANGED=$(git diff --name-only "$BASE"..."$HEAD" | grep -E '\.(py|yaml)$' | grep -E '^(src/|tests/|\.pre-commit)' || true)
+          else
+            CHANGED=$(git diff --name-only HEAD^...HEAD | grep -E '\.py$' | grep -E '^(src/|tests/)' || true)
+          fi
+          if [ -n "$CHANGED" ]; then
+            echo "python_changed=true" >> $GITHUB_OUTPUT
+            echo "Python files changed:"
+            echo "$CHANGED"
+          else
+            echo "python_changed=false" >> $GITHUB_OUTPUT
+            echo "No Python files changed — required checks will pass cleanly"
+          fi
+
   file-size-check:
     name: Check File Size Limits
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,8 +75,19 @@ jobs:
         run: |
           echo "::error::Files exceed 2000 line limit. See job logs for details."
 
+  # Skip-pass job for branch protection when no Python files changed
+  file-size-check-skip:
+    name: Check File Size Limits
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No Python files changed — skipping file size check"
+
   type-ignore-check:
     name: Block New Type Ignores
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +119,15 @@ jobs:
         if: failure()
         run: |
           echo "::error::New type: ignore comments detected. Fix type errors properly instead."
+
+  # Skip-pass job for branch protection when no Python files changed
+  type-ignore-check-skip:
+    name: Block New Type Ignores
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No Python files changed — skipping type ignore check"
 
   code-metrics:
     name: Code Quality Metrics

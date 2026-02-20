@@ -327,7 +327,7 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
                     return
 
             # Perform undo via service layer (S24: Operations Undo)
-            from nexus.services.operation_undo_service import OperationUndoService
+            from nexus.services.versioning.operation_undo_service import OperationUndoService
 
             # Bind to Any — undo needs concrete NexusFS attrs (router, backend)
             # not on the NexusFilesystem protocol.

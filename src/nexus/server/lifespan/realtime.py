@@ -189,12 +189,12 @@ async def _startup_writeback(app: FastAPI) -> None:
         return
 
     try:
-        from nexus.services.change_log_store import ChangeLogStore
-        from nexus.services.conflict_log_store import ConflictLogStore
-        from nexus.services.conflict_resolution import ConflictStrategy
         from nexus.services.gateway import NexusFSGateway
-        from nexus.services.sync_backlog_store import SyncBacklogStore
-        from nexus.services.write_back_service import WriteBackService
+        from nexus.system_services.sync.change_log_store import ChangeLogStore
+        from nexus.system_services.sync.conflict_log_store import ConflictLogStore
+        from nexus.system_services.sync.conflict_resolution import ConflictStrategy
+        from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
+        from nexus.system_services.sync.write_back_service import WriteBackService
 
         gw = NexusFSGateway(app.state.nexus_fs)
 

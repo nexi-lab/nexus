@@ -56,7 +56,7 @@ def _boot_wired_services(
     # --- ReBACService: Permission and access control operations ---
     rebac_service: Any = None
     try:
-        from nexus.services.rebac_service import ReBACService
+        from nexus.services.rebac.rebac_service import ReBACService
 
         rebac_service = ReBACService(
             rebac_manager=system_services.rebac_manager,
@@ -74,7 +74,7 @@ def _boot_wired_services(
     mcp_service: Any = None
     if _on("mcp"):
         try:
-            from nexus.services.mcp_service import MCPService
+            from nexus.services.mcp.mcp_service import MCPService
 
             mcp_service = MCPService(filesystem=nx)
             logger.debug("[BOOT:WIRED] MCPService created")
@@ -88,7 +88,7 @@ def _boot_wired_services(
     llm_subsystem: Any = None
     if _on("llm"):
         try:
-            from nexus.services.llm_service import LLMService
+            from nexus.services.llm.llm_service import LLMService
 
             llm_service = LLMService(nexus_fs=nx)
 
@@ -107,7 +107,7 @@ def _boot_wired_services(
         try:
             import os
 
-            from nexus.services.oauth_service import OAuthService
+            from nexus.services.oauth.oauth_service import OAuthService
 
             oauth_service = OAuthService(
                 oauth_factory=None,
@@ -130,7 +130,7 @@ def _boot_wired_services(
     mount_core_service: Any = None
     if gateway is not None:
         try:
-            from nexus.services.mount_core_service import MountCoreService
+            from nexus.services.mount.mount_core_service import MountCoreService
 
             mount_core_service = MountCoreService(gateway)
             logger.debug("[BOOT:WIRED] MountCoreService created")
@@ -141,7 +141,7 @@ def _boot_wired_services(
     sync_service: Any = None
     if gateway is not None:
         try:
-            from nexus.services.sync_service import SyncService
+            from nexus.system_services.sync.sync_service import SyncService
 
             sync_service = SyncService(gateway)
             logger.debug("[BOOT:WIRED] SyncService created")
@@ -152,7 +152,7 @@ def _boot_wired_services(
     sync_job_service: Any = None
     if gateway is not None and sync_service is not None:
         try:
-            from nexus.services.sync_job_service import SyncJobService
+            from nexus.system_services.sync.sync_job_service import SyncJobService
 
             sync_job_service = SyncJobService(gateway, sync_service)
             logger.debug("[BOOT:WIRED] SyncJobService created")
@@ -163,7 +163,7 @@ def _boot_wired_services(
     mount_persist_service: Any = None
     if mount_core_service is not None:
         try:
-            from nexus.services.mount_persist_service import MountPersistService
+            from nexus.services.mount.mount_persist_service import MountPersistService
 
             mount_persist_service = MountPersistService(
                 mount_manager=system_services.mount_manager,
@@ -178,7 +178,7 @@ def _boot_wired_services(
     # Moved after sub-services so DI deps are available (Issue #636).
     mount_service: Any = None
     try:
-        from nexus.services.mount_service import MountService
+        from nexus.services.mount.mount_service import MountService
 
         mount_service = MountService(
             router=kernel_services.router,
@@ -198,7 +198,7 @@ def _boot_wired_services(
     skill_service: Any = brick_services.skill_service
     if skill_service is None and _on("skills") and gateway is not None:
         try:
-            from nexus.services.skill_service import SkillService as _SkillService
+            from nexus.services.skills.skill_service import SkillService as _SkillService
 
             skill_service = _SkillService(gateway=gateway)
             logger.debug("[BOOT:WIRED] SkillService created")
@@ -226,7 +226,7 @@ def _boot_wired_services(
     search_service: Any = None
     if _on("search"):
         try:
-            from nexus.services.search_service import SearchService
+            from nexus.services.search.search_service import SearchService
 
             search_service = SearchService(
                 metadata_store=nx.metadata,
@@ -248,7 +248,7 @@ def _boot_wired_services(
     share_link_service: Any = None
     if _on("discovery"):
         try:
-            from nexus.services.share_link_service import ShareLinkService
+            from nexus.services.share_link.share_link_service import ShareLinkService
 
             share_link_service = ShareLinkService(
                 gateway=gateway,
@@ -264,7 +264,7 @@ def _boot_wired_services(
     events_service: Any = None
     if _on("ipc"):
         try:
-            from nexus.services.events_service import EventsService
+            from nexus.system_services.lifecycle.events_service import EventsService
 
             metadata_cache = None
             if hasattr(nx.metadata, "_cache"):

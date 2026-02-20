@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from nexus.server.dependencies import require_auth
 
 if TYPE_CHECKING:
-    from nexus.services.chunked_upload_service import ChunkedUploadService
+    from nexus.services.upload.chunked_upload_service import ChunkedUploadService
 
 logger = logging.getLogger(__name__)
 

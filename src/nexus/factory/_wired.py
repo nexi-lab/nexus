@@ -292,6 +292,146 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] EventsService disabled by profile")
 
+    # --- RPC / helper services (Issue #2133: migrated from service_wiring.py) ---
+    workspace_rpc_service: Any = None
+    try:
+        from nexus.services.workspace_rpc_service import WorkspaceRPCService
+
+        workspace_rpc_service = WorkspaceRPCService(
+            workspace_manager=kernel_services.workspace_manager,
+            workspace_registry=kernel_services.workspace_registry,
+            vfs=nx,
+            default_context=getattr(nx, "_default_context", None),
+            snapshot_service=brick_services.snapshot_service,
+        )
+        logger.debug("[BOOT:WIRED] WorkspaceRPCService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] WorkspaceRPCService unavailable: %s", exc)
+
+    agent_rpc_service: Any = None
+    try:
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
+
+        agent_rpc_service = AgentRPCService(
+            vfs=nx,
+            metastore=nx.metadata,
+            session_factory=getattr(nx, "SessionLocal", None),
+            record_store=nx._record_store,
+            agent_registry=getattr(nx, "_agent_registry", None),
+            entity_registry=kernel_services.entity_registry,
+            rebac_manager=kernel_services.rebac_manager,
+            wallet_provisioner=brick_services.wallet_provisioner,
+            api_key_creator=brick_services.api_key_creator,
+            key_service=getattr(nx, "_key_service", None),
+            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
+            rebac_list_tuples_fn=(rebac_service.rebac_list_tuples_sync if rebac_service else None),
+            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
+        )
+        logger.debug("[BOOT:WIRED] AgentRPCService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] AgentRPCService unavailable: %s", exc)
+
+    user_provisioning_service: Any = None
+    try:
+        from nexus.services.user_provisioning import UserProvisioningService
+
+        user_provisioning_service = UserProvisioningService(
+            vfs=nx,
+            session_factory=getattr(nx, "SessionLocal", None),
+            entity_registry=kernel_services.entity_registry,
+            api_key_creator=brick_services.api_key_creator,
+            backend=nx.backend,
+            rebac_manager=kernel_services.rebac_manager,
+            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
+            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
+            register_workspace_fn=(
+                workspace_rpc_service.register_workspace if workspace_rpc_service else None
+            ),
+            register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
+            skills_import_fn=getattr(nx, "skills_import", None),
+            list_cache=getattr(nx, "_list_cache", None),
+            exists_cache=getattr(nx, "_exists_cache", None),
+        )
+        logger.debug("[BOOT:WIRED] UserProvisioningService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] UserProvisioningService unavailable: %s", exc)
+
+    sandbox_rpc_service: Any = None
+    if _on("sandbox"):
+        try:
+            from nexus.sandbox.sandbox_rpc_service import SandboxRPCService
+
+            sandbox_rpc_service = SandboxRPCService(
+                session_factory=getattr(nx, "SessionLocal", None),
+                default_context=getattr(nx, "_default_context", None),
+                config=nx._config,
+            )
+            logger.debug("[BOOT:WIRED] SandboxRPCService created")
+        except ImportError:
+            logger.debug("[BOOT:WIRED] SandboxRPCService not installed")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] SandboxRPCService unavailable: %s", exc)
+
+    metadata_export_service: Any = None
+    try:
+        from nexus.services.metadata_export import MetadataExportService
+
+        metadata_export_service = MetadataExportService(
+            metadata=nx.metadata,
+        )
+        logger.debug("[BOOT:WIRED] MetadataExportService created")
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] MetadataExportService unavailable: %s", exc)
+
+    ace_rpc_service: Any = None
+    try:
+        from nexus.services.ace_rpc_service import ACERPCService
+
+        ace_rpc_service = ACERPCService(
+            session_factory=getattr(nx, "SessionLocal", None),
+            backend=nx.backend,
+            default_context=getattr(nx, "_default_context", None),
+            entity_registry=kernel_services.entity_registry,
+            ensure_entity_registry_fn=getattr(nx, "_ensure_entity_registry", None),
+        )
+        logger.debug("[BOOT:WIRED] ACERPCService created")
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] ACERPCService unavailable: %s", exc)
+
+    descendant_checker: Any = None
+    try:
+        from nexus.services.descendant_access import DescendantAccessChecker
+
+        descendant_checker = DescendantAccessChecker(
+            rebac_manager=kernel_services.rebac_manager,
+            rebac_service=rebac_service,
+            dir_visibility_cache=kernel_services.dir_visibility_cache,
+            permission_enforcer=kernel_services.permission_enforcer,
+            metadata_store=nx.metadata,
+        )
+        logger.debug("[BOOT:WIRED] DescendantAccessChecker created")
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] DescendantAccessChecker unavailable: %s", exc)
+
+    memory_provider: Any = None
+    try:
+        from nexus.services.memory_provider import MemoryProvider
+
+        memory_provider = MemoryProvider(
+            session_factory=getattr(nx, "SessionLocal", None),
+            backend=nx.backend,
+            entity_registry=kernel_services.entity_registry,
+            enable_paging=getattr(nx, "_enable_memory_paging", True),
+            main_capacity=getattr(nx, "_memory_main_capacity", 100),
+            recall_max_age_hours=getattr(nx, "_memory_recall_max_age_hours", 24.0),
+            memory_config=getattr(nx, "_memory_config", None),
+        )
+        logger.debug("[BOOT:WIRED] MemoryProvider created")
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] MemoryProvider unavailable: %s", exc)
+
     result = _WiredServices(
         rebac_service=rebac_service,
         mount_service=mount_service,
@@ -310,6 +450,14 @@ def _boot_wired_services(
         share_link_service=share_link_service,
         events_service=events_service,
         task_queue_service=brick_services.task_queue_service,
+        workspace_rpc_service=workspace_rpc_service,
+        agent_rpc_service=agent_rpc_service,
+        user_provisioning_service=user_provisioning_service,
+        sandbox_rpc_service=sandbox_rpc_service,
+        metadata_export_service=metadata_export_service,
+        ace_rpc_service=ace_rpc_service,
+        descendant_checker=descendant_checker,
+        memory_provider=memory_provider,
     )
 
     elapsed = time.perf_counter() - t0

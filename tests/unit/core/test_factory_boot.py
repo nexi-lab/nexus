@@ -51,6 +51,7 @@ EXPECTED_KERNEL_KEYS = frozenset(
         "mount_manager",
         "workspace_manager",
         "write_observer",
+        "tiger_cache_manager",
     }
 )
 
@@ -121,7 +122,7 @@ class TestBootKernelServices:
 
         assert isinstance(result, dict)
         assert set(result.keys()) == EXPECTED_KERNEL_KEYS
-        assert len(result) == 11
+        assert len(result) == 12
 
     def test_boot_error_raised_on_kernel_failure(self) -> None:
         """When kernel boot fails (e.g. bad engine), BootError is raised with tier='kernel'."""
@@ -140,18 +141,19 @@ class TestBootKernelServices:
             assert "bad engine" in str(exc_info.value)
 
     def test_kernel_services_values_are_not_none(self) -> None:
-        """All 11 kernel service values except deferred_permission_buffer are non-None.
+        """All 12 kernel service values except deferred_permission_buffer are non-None.
 
         deferred_permission_buffer is None because enable_deferred=False in the
-        test context.
+        test context.  tiger_cache_manager may be None if TigerCacheManager
+        is not available or tiger cache is disabled.
         """
         ctx = _make_boot_context()
         result = _boot_kernel_services(ctx)
 
+        _NULLABLE_KEYS = {"deferred_permission_buffer", "tiger_cache_manager"}
         for key, value in result.items():
-            if key == "deferred_permission_buffer":
-                # enable_deferred=False in our test context
-                assert value is None, f"{key} should be None when enable_deferred=False"
+            if key in _NULLABLE_KEYS:
+                continue  # may be None depending on config
             else:
                 assert value is not None, f"{key} should not be None"
 

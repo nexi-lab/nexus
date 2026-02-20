@@ -281,6 +281,16 @@ class NexusFS(  # type: ignore[misc]
         # Register VFS hooks (services wired by factory via _bind_wired_services)
         self._register_vfs_hooks()
 
+        # PermissionChecker: core module, safe to create here (Issue #2133)
+        from nexus.core.permission_checker import PermissionChecker
+
+        self._permission_checker = PermissionChecker(
+            permission_enforcer=self._permission_enforcer,
+            metadata_store=self.metadata,
+            default_context=self._default_context,
+            enforce_permissions=self._enforce_permissions,
+        )
+
         # Read-set-aware cache (Issue #1169)
         self._read_set_cache = None
         metadata_cache = getattr(self.metadata, "_cache", None)
@@ -401,6 +411,14 @@ class NexusFS(  # type: ignore[misc]
             self.share_link_service = wired.get("share_link_service")
             self.events_service = wired.get("events_service")
             self.task_queue_service = wired.get("task_queue_service")
+            self._workspace_rpc_service = wired.get("workspace_rpc_service")
+            self._agent_rpc_service = wired.get("agent_rpc_service")
+            self._user_provisioning_service = wired.get("user_provisioning_service")
+            self._sandbox_rpc_service = wired.get("sandbox_rpc_service")
+            self._metadata_export_service = wired.get("metadata_export_service")
+            self._ace_rpc_service = wired.get("ace_rpc_service")
+            self._descendant_checker = wired.get("descendant_checker")
+            self._memory_provider = wired.get("memory_provider")
             return
         self.rebac_service = wired.rebac_service
         self.mount_service = wired.mount_service
@@ -419,6 +437,14 @@ class NexusFS(  # type: ignore[misc]
         self.share_link_service = wired.share_link_service
         self.events_service = wired.events_service
         self.task_queue_service = wired.task_queue_service
+        self._workspace_rpc_service = wired.workspace_rpc_service
+        self._agent_rpc_service = wired.agent_rpc_service
+        self._user_provisioning_service = wired.user_provisioning_service
+        self._sandbox_rpc_service = wired.sandbox_rpc_service
+        self._metadata_export_service = wired.metadata_export_service
+        self._ace_rpc_service = wired.ace_rpc_service
+        self._descendant_checker = wired.descendant_checker
+        self._memory_provider = wired.memory_provider
 
     @property
     def _service_extras(self) -> dict[str, Any]:

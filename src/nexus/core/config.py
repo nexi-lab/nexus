@@ -307,6 +307,16 @@ class WiredServices:
     events_service: Any = None
     task_queue_service: Any = None
 
+    # RPC services (Issue #2133: migrated from service_wiring.py)
+    workspace_rpc_service: Any = None
+    agent_rpc_service: Any = None
+    user_provisioning_service: Any = None
+    sandbox_rpc_service: Any = None
+    metadata_export_service: Any = None
+    ace_rpc_service: Any = None
+    descendant_checker: Any = None
+    memory_provider: Any = None
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

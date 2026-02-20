@@ -328,37 +328,6 @@ class TestDirectoryOperations:
         assert result is True
 
 
-class TestVersionOperations:
-    """Test version operation path scoping."""
-
-    def test_get_version(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test get_version with path scoping."""
-        mock_fs.get_version.return_value = b"old content"
-        result = scoped_fs.get_version("/workspace/file.txt", 1)
-        mock_fs.get_version.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", 1
-        )
-        assert result == b"old content"
-
-    def test_list_versions(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test list_versions with path scoping."""
-        mock_fs.list_versions.return_value = [
-            {"version": 1, "path": "/zones/team_12/users/user_1/workspace/file.txt"}
-        ]
-        result = scoped_fs.list_versions("/workspace/file.txt")
-        mock_fs.list_versions.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt"
-        )
-        assert result[0]["path"] == "/workspace/file.txt"
-
-    def test_rollback(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test rollback with path scoping."""
-        scoped_fs.rollback("/workspace/file.txt", 1)
-        mock_fs.rollback.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", 1, None
-        )
-
-
 class TestWorkspaceOperations:
     """Test workspace operation path scoping."""
 

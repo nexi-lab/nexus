@@ -119,7 +119,7 @@ class AgentRPCService:
         config_data: dict[str, Any],
         context: dict | Any | None,
     ) -> None:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         config_yaml = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
         ctx = parse_operation_context(context)
@@ -348,7 +348,7 @@ class AgentRPCService:
         from nexus.services.agents.agent_registry import AgentRegistry
 
         self._agent_registry = AgentRegistry(
-            record_store=self._record_store,  # type: ignore[arg-type]
+            record_store=self._record_store,
             entity_registry=self._entity_registry,
         )
 

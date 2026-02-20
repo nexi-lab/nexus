@@ -341,7 +341,9 @@ def create_nexus_fs(
             distributed = _dc_replace(_base_dist, enable_events=False)
             logger.debug("EventBus disabled: no CacheStore provided (KERNEL-ARCHITECTURE §2)")
 
-    # Create services if record_store is provided and no pre-built services
+    # Create services if record_store is provided and no pre-built services.
+    # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
+    # this branch is skipped — bare kernel with empty SystemServices/BrickServices.
     if kernel_services is None and record_store is not None:
         kernel_services, system_services, brick_services = create_nexus_services(
             record_store=record_store,

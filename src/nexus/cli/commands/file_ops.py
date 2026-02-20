@@ -17,6 +17,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    is_standalone,
 )
 
 
@@ -117,14 +118,13 @@ def cat(
             # Time-travel: Read file at historical operation point
             # Import at function level to avoid scoping issues
             try:
-                from nexus.core.nexus_fs import NexusFS
                 from nexus.storage.time_travel import TimeTravelReader
             except ImportError as e:
                 console.print(f"[red]Error:[/red] Failed to import time-travel modules: {e}")
                 nx.close()
                 return
 
-            if not isinstance(nx, NexusFS):
+            if not is_standalone(nx):
                 console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
                 nx.close()
                 return

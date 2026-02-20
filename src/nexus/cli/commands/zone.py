@@ -32,6 +32,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    is_standalone,
 )
 from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 
@@ -460,7 +461,6 @@ def export_zone(
         nexus zone export acme-corp -o /backup/acme.nexus --after 2025-01-01T00:00:00
     """
     try:
-        from nexus.core.nexus_fs import NexusFS
         from nexus.portability import ZoneExportOptions, ZoneExportService
 
         # Parse after time if provided
@@ -477,7 +477,7 @@ def export_zone(
 
         # Get filesystem
         nx = get_filesystem(backend_config)
-        if not isinstance(nx, NexusFS):
+        if not is_standalone(nx):
             console.print("[red]Error:[/red] Zone export requires NexusFS instance")
             nx.close()
             sys.exit(1)
@@ -604,7 +604,6 @@ def import_zone(
         nexus zone import /backup/acme.nexus --dry-run
     """
     try:
-        from nexus.core.nexus_fs import NexusFS
         from nexus.portability import ConflictMode, ZoneImportOptions, ZoneImportService
 
         # Parse path remappings
@@ -619,7 +618,7 @@ def import_zone(
 
         # Get filesystem
         nx = get_filesystem(backend_config)
-        if not isinstance(nx, NexusFS):
+        if not is_standalone(nx):
             console.print("[red]Error:[/red] Zone import requires NexusFS instance")
             nx.close()
             sys.exit(1)

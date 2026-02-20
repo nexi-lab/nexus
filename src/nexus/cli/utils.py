@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 import click
 from rich.console import Console
@@ -358,6 +361,19 @@ def get_default_filesystem() -> NexusFilesystem:
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
+
+
+def is_standalone(nx: NexusFilesystem) -> TypeGuard[NexusFS]:
+    """Check whether *nx* is a local NexusFS instance (not a remote client).
+
+    Many CLI features (time-travel, metadata export, zone portability, etc.)
+    require direct access to the local metadata store and are unavailable
+    when connected to a remote server.  This helper centralises the runtime
+    check so individual commands don't need to import the concrete class.
+    """
+    from nexus.core.nexus_fs import NexusFS as _NexusFS
+
+    return isinstance(nx, _NexusFS)
 
 
 def get_subject_from_env() -> tuple[str, str] | None:

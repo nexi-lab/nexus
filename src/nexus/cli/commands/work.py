@@ -13,6 +13,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    is_standalone,
 )
 
 
@@ -51,12 +52,10 @@ def work(
         nexus work ready --json
     """
     try:
-        from nexus.core.nexus_fs import NexusFS
-
         nx = get_filesystem(backend_config)
 
         # Only standalone mode has metadata store with work views
-        if not isinstance(nx, NexusFS):
+        if not is_standalone(nx):
             console.print("[red]Error:[/red] Work views are only available in standalone mode")
             nx.close()
             sys.exit(1)

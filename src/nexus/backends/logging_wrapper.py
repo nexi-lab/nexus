@@ -37,7 +37,7 @@ from nexus.backends.delegating import DelegatingBackend
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
-    from nexus.core.response import HandlerResponse
+    from nexus.lib.response import HandlerResponse
 
 logger = logging.getLogger(__name__)
 

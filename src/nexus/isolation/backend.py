@@ -15,7 +15,6 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.core.response import HandlerResponse
 from nexus.isolation._pool import IsolatedPool
 from nexus.isolation.config import IsolationConfig
 from nexus.isolation.errors import (
@@ -23,6 +22,7 @@ from nexus.isolation.errors import (
     IsolationError,
     IsolationTimeoutError,
 )
+from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

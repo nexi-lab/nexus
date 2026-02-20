@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from nexus.backends.backend import FileInfo, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
-    from nexus.core.response import HandlerResponse
+    from nexus.lib.response import HandlerResponse
 
 
 @runtime_checkable

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)

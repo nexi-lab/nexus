@@ -94,14 +94,6 @@ def build_v1_registry() -> RouterRegistry:
     except ImportError as e:
         logger.warning("Failed to import cache router: %s", e)
 
-    # ---- Share router (Issue #227) ----
-    try:
-        from nexus.server.api.v1.routers.share import router as share_router
-
-        registry.add(RouterEntry(router=share_router, name="share", endpoint_count=3))
-    except ImportError as e:
-        logger.warning("Failed to import share router: %s", e)
-
     # ---- Events router (Issue #1116, #1117) ----
     try:
         from nexus.server.api.v1.routers.events import router as events_router

@@ -28,10 +28,12 @@ from nexus.ipc.conventions import dead_letter_path
 from nexus.ipc.exceptions import CrossZoneDeliveryError, DLQReason
 
 if TYPE_CHECKING:
-    from nexus.ipc.protocols import HotPathPublisher
+    from nexus.ipc.protocols import (
+        AgentLookupProtocol,
+        HotPathPublisher,
+        PermissionCheckProtocol,
+    )
     from nexus.ipc.storage.protocol import IPCStorageDriver
-    from nexus.services.protocols.agent_registry import AgentRegistryProtocol
-    from nexus.services.protocols.permission import PermissionProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +65,9 @@ class CrossZoneStorageDriver:
     def __init__(
         self,
         inner: IPCStorageDriver,
-        agent_registry: AgentRegistryProtocol,
+        agent_registry: AgentLookupProtocol,
         local_zone_id: str,
-        permission_checker: PermissionProtocol | None = None,
+        permission_checker: PermissionCheckProtocol | None = None,
         hot_publisher: HotPathPublisher | None = None,
         cache_ttl_seconds: int = 30,
     ) -> None:

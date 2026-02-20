@@ -6,61 +6,31 @@ TDD: Tests written FIRST, implementation follows.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from hypothesis import settings
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule
 
-# ---------------------------------------------------------------------------
-# Import the implementation (will exist after RED phase)
-# ---------------------------------------------------------------------------
 from nexus.services.brick_lifecycle import (
     BrickLifecycleManager,
     CyclicDependencyError,
     InvalidTransitionError,
 )
 from nexus.services.protocols.brick_lifecycle import (
-    BrickLifecycleProtocol,
     BrickSpec,
     BrickState,
 )
-
-# ---------------------------------------------------------------------------
-# Test helpers — mock bricks
-# ---------------------------------------------------------------------------
-
-
-def _make_lifecycle_brick(name: str = "test") -> MagicMock:
-    """Create a mock brick that satisfies BrickLifecycleProtocol."""
-    brick = AsyncMock(spec=BrickLifecycleProtocol)
-    brick.start = AsyncMock(return_value=None)
-    brick.stop = AsyncMock(return_value=None)
-    brick.health_check = AsyncMock(return_value=True)
-    brick.__class__.__name__ = f"{name.capitalize()}Brick"
-    return brick
-
-
-def _make_stateless_brick(name: str = "pay") -> MagicMock:
-    """Create a mock brick without lifecycle methods (stateless)."""
-    brick = MagicMock()
-    brick.__class__.__name__ = f"{name.capitalize()}Brick"
-    # Explicitly remove lifecycle methods
-    if hasattr(brick, "start"):
-        del brick.start
-    if hasattr(brick, "stop"):
-        del brick.stop
-    if hasattr(brick, "health_check"):
-        del brick.health_check
-    return brick
-
-
-def _make_failing_brick(error: Exception | None = None) -> MagicMock:
-    """Create a mock brick whose start() raises."""
-    brick = _make_lifecycle_brick("failing")
-    brick.start = AsyncMock(side_effect=error or RuntimeError("Connection refused"))
-    return brick
-
+from tests.unit.services.conftest import (
+    make_failing_brick as _make_failing_brick,
+)
+from tests.unit.services.conftest import (
+    make_lifecycle_brick as _make_lifecycle_brick,
+)
+from tests.unit.services.conftest import (
+    make_stateless_brick as _make_stateless_brick,
+)
 
 # ---------------------------------------------------------------------------
 # BrickLifecycleManager — Registration tests
@@ -606,11 +576,9 @@ class TestResetAndSpec:
         await manager.mount_all()
 
         assert manager.get_status("a").state == BrickState.FAILED  # type: ignore[union-attr]
-        # B depends on A, but mount_all only mounts REGISTERED bricks.
-        # B stays REGISTERED because it's at level 1, and A (at level 0) failed.
-        # mount_all filters to_mount by state==REGISTERED, so B gets mounted anyway
-        # (fail-forward design). But B should still be ACTIVE since B itself doesn't fail.
-        assert manager.get_status("b").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        # B depends on A; mount_all skips bricks whose deps aren't ACTIVE.
+        # B stays REGISTERED — the reconciler will mount it once A recovers.
+        assert manager.get_status("b").state == BrickState.REGISTERED  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------
@@ -619,15 +587,28 @@ class TestResetAndSpec:
 
 
 class BrickLifecycleStateMachine(RuleBasedStateMachine):
-    """Property-based test: random lifecycle operations should never corrupt state."""
+    """Property-based test: random lifecycle operations should never corrupt state.
+
+    Uses a single event loop per test case instead of ``asyncio.run()`` per rule
+    to avoid creating/destroying loops on every step (asyncio.Lock objects bind
+    to the running loop, so a shared loop prevents cross-loop issues).
+    """
 
     bricks = Bundle("bricks")
 
     def __init__(self) -> None:
         super().__init__()
+        self._loop = asyncio.new_event_loop()
         self.manager = BrickLifecycleManager()
         self._mounted: set[str] = set()
         self._counter = 0
+
+    def teardown(self) -> None:
+        self._loop.close()
+
+    def _run(self, coro: Any) -> Any:  # noqa: ANN401
+        """Run an async coroutine on the shared event loop."""
+        return self._loop.run_until_complete(coro)
 
     @initialize(target=bricks)
     def init_brick(self) -> str:
@@ -649,14 +630,14 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
     def mount_brick(self, name: str) -> None:
         status = self.manager.get_status(name)
         if status is not None and status.state == BrickState.REGISTERED:
-            asyncio.run(self.manager.mount(name))
+            self._run(self.manager.mount(name))
             self._mounted.add(name)
 
     @rule(name=bricks)
     def unmount_brick(self, name: str) -> None:
         status = self.manager.get_status(name)
         if status is not None and status.state == BrickState.ACTIVE:
-            asyncio.run(self.manager.unmount(name))
+            self._run(self.manager.unmount(name))
             self._mounted.discard(name)
 
     @rule()
@@ -665,7 +646,6 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
         report = self.manager.health()
         assert report.total == len(self.manager._bricks)
         assert report.active + report.failed <= report.total
-        # Every brick in report should have a valid state
         for brick_status in report.bricks:
             assert isinstance(brick_status.state, BrickState)
 

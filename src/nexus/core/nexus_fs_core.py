@@ -892,7 +892,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
@@ -1839,7 +1839,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._write_memory_path(path, content)
@@ -2998,7 +2998,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
@@ -4013,8 +4013,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
+        from nexus.bricks.memory.router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.services.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.SessionLocal()
@@ -4098,8 +4098,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
+        from nexus.bricks.memory.router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.services.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.SessionLocal()

@@ -262,6 +262,10 @@ class BrickServices:
     # --- Version Brick (Issue #2034: moved from KernelServices) ---
     version_service: Any = None  # VersionService (file history, rollback, diff)
 
+    # --- Memory Brick (Issue #2177) ---
+    memory_router: Any = None  # MemoryViewRouter singleton
+    memory_permission: Any = None  # MemoryPermissionProtocol adapter
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

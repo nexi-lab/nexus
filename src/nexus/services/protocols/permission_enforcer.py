@@ -1,11 +1,12 @@
-"""Permission enforcer kernel protocol (Issue #2133).
+"""Permission enforcer service protocol (Issue #2133).
 
-Defines the contract for path-level permission enforcement.
+Service contract for path-level permission enforcement.
 Existing implementation: ``nexus.rebac.enforcer.PermissionEnforcer`` (sync).
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - Issue #2133: Break circular runtime imports between services/ and core/
+    - Issue #2359: Moved from core/protocols/ to services/protocols/ (service tier)
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class PermissionEnforcerProtocol(Protocol):
-    """Kernel contract for path-level permission enforcement.
+    """Service contract for path-level permission enforcement.
 
     Do NOT use ``isinstance()`` checks in hot paths — use structural
     typing via Protocol matching instead.

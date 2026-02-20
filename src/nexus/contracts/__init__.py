@@ -11,6 +11,7 @@ Usage:
 """
 
 from nexus.contracts.constants import TIER_ALIASES, PriorityTier
+from nexus.contracts.describable import Describable
 from nexus.contracts.exceptions import (
     AccessDeniedError,
     AuditLogError,
@@ -74,6 +75,7 @@ from nexus.contracts.types import (
     Permission,
     extract_context_identity,
 )
+from nexus.contracts.wirable_fs import WirableFS
 from nexus.contracts.write_observer import WriteObserverProtocol
 from nexus.lib.validators import (
     EmailAddress,
@@ -139,6 +141,8 @@ __all__ = [
     "UploadOffsetMismatchError",
     "ValidationError",
     # Protocols
+    "Describable",
+    "WirableFS",
     "WriteObserverProtocol",
     # ReBAC types (Issue #2190)
     "CheckResult",

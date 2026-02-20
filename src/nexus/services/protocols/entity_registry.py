@@ -1,11 +1,12 @@
-"""Entity registry kernel protocol (Issue #2133).
+"""Entity registry service protocol (Issue #2133).
 
-Defines the contract for entity registration and lookup.
+Service contract for entity registration and lookup.
 Existing implementation: ``nexus.rebac.entity_registry.EntityRegistry`` (sync).
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - Issue #2133: Break circular runtime imports between services/ and core/
+    - Issue #2359: Moved from core/protocols/ to services/protocols/ (service tier)
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class EntityRegistryProtocol(Protocol):
-    """Kernel contract for entity registration and lookup.
+    """Service contract for entity registration and lookup.
 
     Do NOT use ``isinstance()`` checks in hot paths — use structural
     typing via Protocol matching instead.

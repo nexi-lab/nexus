@@ -1,7 +1,7 @@
 """Watch service — OS-native file change detection.
 
-Provides cross-platform file watching using inotify (Linux) or
-ReadDirectoryChangesW (Windows). macOS is not currently supported.
+Provides cross-platform file watching using watchfiles (Rust-backed).
+Supports Linux, macOS, Windows.
 
 Moved from nexus.core.file_watcher (Issue #706).
 """

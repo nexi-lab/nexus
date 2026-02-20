@@ -27,6 +27,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.services.change_log_store import ChangeLogStore
 from nexus.storage.models import BackendChangeLogModel
+from nexus.storage.record_store import RecordStoreABC
 
 # ============================================================================
 # Skip if PostgreSQL is not available
@@ -57,6 +58,30 @@ pytestmark = pytest.mark.skipif(
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+
+class _TestRecordStore(RecordStoreABC):
+    """Minimal RecordStoreABC wrapper for test-owned engine/session_factory."""
+
+    def __init__(self, engine, sf):
+        self._engine = engine
+        self._sf = sf
+
+    @property
+    def engine(self):
+        return self._engine
+
+    @property
+    def session_factory(self):
+        return self._sf
+
+    def close(self):
+        pass  # Engine lifecycle managed by pg_engine fixture
+
+
+# ============================================================================
 # Fixtures
 # ============================================================================
 
@@ -83,9 +108,15 @@ def pg_session_factory(pg_engine):
 
 
 @pytest.fixture()
-def store(pg_session_factory):
+def pg_record_store(pg_engine, pg_session_factory):
+    """RecordStoreABC wrapper for the test PostgreSQL engine."""
+    return _TestRecordStore(pg_engine, pg_session_factory)
+
+
+@pytest.fixture()
+def store(pg_record_store):
     """Create a ChangeLogStore backed by real PostgreSQL."""
-    return ChangeLogStore(pg_session_factory, is_postgresql=True)
+    return ChangeLogStore(record_store=pg_record_store, is_postgresql=True)
 
 
 @pytest.fixture(autouse=True)

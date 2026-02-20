@@ -73,7 +73,7 @@ class TestReplayProperties:
             rs = SQLAlchemyRecordStore(db_path=Path(tmpdir) / "test.db")
             try:
                 _seed_events(rs.session_factory, n_events)
-                service = EventReplayService(rs.session_factory)
+                service = EventReplayService(record_store=rs)
 
                 all_ids: list[str] = []
                 cursor = None
@@ -101,7 +101,7 @@ class TestReplayProperties:
             rs = SQLAlchemyRecordStore(db_path=Path(tmpdir) / "test.db")
             try:
                 _seed_events(rs.session_factory, n_events)
-                service = EventReplayService(rs.session_factory)
+                service = EventReplayService(record_store=rs)
 
                 all_seqs: list[int] = []
                 cursor = None
@@ -133,7 +133,7 @@ class TestReplayProperties:
             rs = SQLAlchemyRecordStore(db_path=Path(tmpdir) / "test.db")
             try:
                 _seed_events(rs.session_factory, n_events)
-                service = EventReplayService(rs.session_factory)
+                service = EventReplayService(record_store=rs)
 
                 # Get first page
                 result1 = service.replay(limit=page_size)

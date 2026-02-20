@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cryptography.fernet import Fernet, InvalidToken
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +26,9 @@ class OAuthCrypto:
         self,
         encryption_key: str | None = None,
         *,
-        session_factory: Any = None,
+        record_store: RecordStoreABC | None = None,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory if record_store else None
 
         if encryption_key is not None:
             if logger.isEnabledFor(logging.DEBUG):
@@ -33,7 +36,7 @@ class OAuthCrypto:
             self._init_fernet(encryption_key)
             return
 
-        if session_factory:
+        if record_store:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("OAuthCrypto: Trying to load key from database")
             db_key = self._load_or_create_key_from_db()
@@ -48,7 +51,7 @@ class OAuthCrypto:
 
         logger.warning(
             "Generating random OAuth encryption key. This key will NOT persist "
-            "across restarts! Pass encryption_key or session_factory "
+            "across restarts! Pass encryption_key or record_store "
             "for production use."
         )
         key_bytes: bytes = Fernet.generate_key()

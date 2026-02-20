@@ -27,7 +27,9 @@ from nexus.storage.models.reputation_score import ReputationScoreModel
 from nexus.storage.session_mixin import SessionMixin
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import Session
+
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +52,14 @@ class ReputationService(SessionMixin):
     All reads go directly to the database.
 
     Args:
-        session_factory: SQLAlchemy sessionmaker for database access.
+        record_store: RecordStoreABC providing database access.
     """
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        record_store: RecordStoreABC,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
 
     def submit_feedback(
         self,

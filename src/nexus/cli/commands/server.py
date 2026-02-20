@@ -862,11 +862,11 @@ def serve(
                                     m["mount_point"] == mount_point for m in existing_mounts
                                 )
 
-                                # Create backend instance with session factory for caching
+                                # Create backend instance with record store for caching
                                 backend = create_backend_from_config(
                                     backend_type,
                                     backend_cfg,
-                                    session_factory=nx.SessionLocal,
+                                    record_store=nx._record_store,
                                 )
 
                                 # Add mount to router
@@ -991,7 +991,7 @@ def serve(
 
             # Create composite provider that routes tokens to appropriate handler
             auth_provider = DiscriminatingAuthProvider(
-                api_key_provider=DatabaseAPIKeyAuth(session_factory=session_factory),
+                api_key_provider=DatabaseAPIKeyAuth(record_store=_record_store),
                 jwt_provider=DatabaseLocalAuth(
                     session_factory=session_factory,
                     jwt_secret=jwt_secret,

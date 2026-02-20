@@ -127,7 +127,7 @@ class TestExporterRegistryIntegration:
         mock_registry.dispatch_batch = AsyncMock(return_value={})
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             exporter_registry=mock_registry,
         )
         count = worker._poll_and_dispatch()
@@ -156,7 +156,7 @@ class TestExporterRegistryIntegration:
         mock_registry.dispatch_batch = AsyncMock(side_effect=mock_dispatch)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             exporter_registry=mock_registry,
         )
         worker._poll_and_dispatch()
@@ -169,7 +169,7 @@ class TestExporterRegistryIntegration:
 
         _insert_undelivered(record_store.session_factory)
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         count = worker._poll_and_dispatch()
 
         # Should still work without registry
@@ -194,7 +194,7 @@ class TestDLQRouting:
         mock_bus.publish = AsyncMock(side_effect=ConnectionError("down"))
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             max_retries=2,
         )
@@ -225,7 +225,7 @@ class TestDLQRouting:
         mock_bus.publish = AsyncMock(side_effect=sometimes_fail)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             max_retries=3,
         )

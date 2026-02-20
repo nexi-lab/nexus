@@ -14,9 +14,6 @@ Tests cover:
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from nexus.contracts.agent_types import AgentState
 from nexus.services.agents.agent_registry import (
@@ -24,7 +21,7 @@ from nexus.services.agents.agent_registry import (
     InvalidTransitionError,
     StaleAgentError,
 )
-from nexus.storage.models import Base
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -32,27 +29,17 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database for testing (thread-safe)."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    """Create in-memory RecordStore for testing."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session_factory(engine):
-    """Create a session factory."""
-    return sessionmaker(bind=engine, expire_on_commit=False)
-
-
-@pytest.fixture
-def registry(session_factory):
+def registry(record_store):
     """Create an AgentRegistry for testing."""
-    return AgentRegistry(session_factory=session_factory, flush_interval=60)
+    return AgentRegistry(record_store=record_store, flush_interval=60)
 
 
 # ---------------------------------------------------------------------------
@@ -290,18 +277,18 @@ class TestHeartbeat:
         assert record is not None
         assert record.last_heartbeat is not None
 
-    def test_flush_interval_respected(self, session_factory):
+    def test_flush_interval_respected(self, record_store):
         """Heartbeats don't auto-flush before flush_interval."""
-        reg = AgentRegistry(session_factory=session_factory, flush_interval=9999)
+        reg = AgentRegistry(record_store=record_store, flush_interval=9999)
         reg.register("agent-1", "alice")
         reg.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         reg.heartbeat("agent-1")
         # Buffer should NOT have been auto-flushed
         assert "agent-1" in reg._heartbeat_buffer._buffer
 
-    def test_auto_flush_on_interval(self, session_factory):
+    def test_auto_flush_on_interval(self, record_store):
         """Heartbeats auto-flush when flush_interval elapses."""
-        reg = AgentRegistry(session_factory=session_factory, flush_interval=0)
+        reg = AgentRegistry(record_store=record_store, flush_interval=0)
         reg.register("agent-1", "alice")
         reg.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         reg.heartbeat("agent-1")
@@ -555,27 +542,27 @@ class TestToDict:
 class TestBridgeReliability:
     """Tests for entity_registry bridge error handling."""
 
-    def test_bridge_success(self, session_factory):
+    def test_bridge_success(self, record_store):
         """Bridge registers in entity_registry on successful register()."""
         from nexus.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
 
         reg.register("agent-1", "alice", name="Test")
         entity = entity_reg.get_entity("agent", "agent-1")
         assert entity is not None
         assert entity.parent_id == "alice"
 
-    def test_bridge_failure_raises(self, session_factory):
+    def test_bridge_failure_raises(self, record_store):
         """Bridge failure raises exception instead of swallowing."""
 
         class FailingRegistry:
             def register_entity(self, **kwargs):
                 raise RuntimeError("DB connection lost")
 
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=FailingRegistry())
+        reg = AgentRegistry(record_store=record_store, entity_registry=FailingRegistry())
         with pytest.raises(RuntimeError, match="DB connection lost"):
             reg.register("agent-1", "alice")
 
@@ -585,13 +572,13 @@ class TestBridgeReliability:
         record = registry.register("agent-1", "alice")
         assert record.agent_id == "agent-1"
 
-    def test_unregister_bridge_failure_raises(self, session_factory):
+    def test_unregister_bridge_failure_raises(self, record_store):
         """Unregister bridge failure raises exception."""
         from nexus.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
         reg.register("agent-1", "alice")
 
         # Now make entity_registry fail on delete
@@ -612,14 +599,12 @@ class TestBridgeReliability:
 class TestHeartbeatCapacityWarning:
     """Tests for heartbeat buffer 80% capacity warning."""
 
-    def test_warns_at_80_percent(self, session_factory, caplog):
+    def test_warns_at_80_percent(self, record_store, caplog):
         """Warning is emitted when heartbeat buffer reaches 80% capacity."""
         import logging
 
         # Small buffer (max 10) so 80% = 8
-        reg = AgentRegistry(
-            session_factory=session_factory, flush_interval=9999, max_buffer_size=10
-        )
+        reg = AgentRegistry(record_store=record_store, flush_interval=9999, max_buffer_size=10)
         # Register 9 agents
         for i in range(9):
             reg.register(f"agent-{i}", "alice")
@@ -648,13 +633,13 @@ class TestHeartbeatCapacityWarning:
 class TestRegistrationWithBridge:
     """Tests for registration with EntityRegistry bridge (migrated from test_agents.py)."""
 
-    def test_entity_registry_creation(self, session_factory):
+    def test_entity_registry_creation(self, record_store):
         """Registration creates entity in EntityRegistry via bridge."""
         from nexus.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
 
         reg.register("agent_test", "alice", name="Test Agent")
 
@@ -665,13 +650,13 @@ class TestRegistrationWithBridge:
         assert entity.parent_type == "user"
         assert entity.parent_id == "alice"
 
-    def test_multi_agent_same_user(self, session_factory):
+    def test_multi_agent_same_user(self, record_store):
         """Multiple agents for same user are all tracked."""
         from nexus.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
 
         reg.register("agent1", "alice", name="Agent 1")
         reg.register("agent2", "alice", name="Agent 2")
@@ -681,13 +666,13 @@ class TestRegistrationWithBridge:
         agent_ids = {c.entity_id for c in children}
         assert agent_ids == {"agent1", "agent2"}
 
-    def test_unregister_preserves_others(self, session_factory):
+    def test_unregister_preserves_others(self, record_store):
         """Unregistering one agent doesn't affect others."""
         from nexus.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
 
         reg.register("agent1", "alice")
         reg.register("agent2", "alice")

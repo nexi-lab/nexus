@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    pass
 
 from nexus.storage.repositories.snapshot_lookup import DatabaseSnapshotLookup
 

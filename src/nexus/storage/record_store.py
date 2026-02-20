@@ -1,6 +1,7 @@
 """RecordStore: The "Truth" pillar of the Nexus Quartet.
 
 Provides relational data storage for entities, relationships, logs, and vectors.
+Provides relational data storage for entities, relationships, logs, and vectors.
 This is one of the Four Pillars (Metastore, RecordStore, ObjectStore, CacheStore).
 
 OS Analogy: Windows Registry / Systemd state DB (but more structured).
@@ -36,11 +37,14 @@ import logging
 import os
 import threading
 from abc import ABC, abstractmethod
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPIConnection
+    from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.pool import ConnectionPoolEntry
 
 logger = logging.getLogger(__name__)
@@ -75,7 +79,7 @@ class RecordStoreABC(ABC):
 
     @property
     @abstractmethod
-    def session_factory(self) -> Any:
+    def session_factory(self) -> sessionmaker[Session]:
         """Session factory (sessionmaker) for creating database sessions (primary/write)."""
         ...
 
@@ -123,6 +127,28 @@ class RecordStoreABC(ABC):
     def has_read_replica(self) -> bool:
         """Whether a separate read replica is configured."""
         return False
+
+    @contextmanager
+    def session(self) -> Generator[Session, None, None]:
+        """Transactional session scope with Nexus error translation.
+
+        Delegates to session_scope() for commit/rollback/close + error mapping.
+        """
+        from nexus.storage.session_scope import session_scope
+
+        with session_scope(self.session_factory) as sess:
+            yield sess
+
+    @contextmanager
+    def read_session(self) -> Generator[Session, None, None]:
+        """Read-only session using read replica (falls back to primary).
+
+        Uses read_session_factory when a read replica is configured.
+        """
+        from nexus.storage.session_scope import session_scope
+
+        with session_scope(self.read_session_factory) as sess:
+            yield sess
 
     @abstractmethod
     def close(self) -> None:

@@ -32,13 +32,10 @@ from nexus.services.upload_session import UploadSession, UploadStatus
 from nexus.storage.models.upload_session import UploadSessionModel
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from sqlalchemy.orm import Session
-
     from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
     from nexus.core.metastore import MetastoreABC
     from nexus.core.protocols.connector import ConnectorProtocol
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +92,12 @@ class ChunkedUploadService:
 
     def __init__(
         self,
-        session_factory: Callable[[], Session],
+        record_store: RecordStoreABC,
         backend: ConnectorProtocol,
         metadata_store: MetastoreABC | None = None,
         config: ChunkedUploadConfig | None = None,
     ):
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._backend = backend
         self._metadata_store = metadata_store
         self._config = config or ChunkedUploadConfig()

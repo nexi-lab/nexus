@@ -56,13 +56,13 @@ def _get_replay_service(request: Request) -> Any:
     if service is not None:
         return service
 
-    session_factory = getattr(request.app.state, "session_factory", None)
-    if session_factory is None or not callable(session_factory):
+    record_store = getattr(request.app.state, "record_store", None)
+    if record_store is None:
         raise HTTPException(status_code=503, detail="Database not configured")
 
     from nexus.services.event_log.replay_service import EventReplayService
 
-    service = EventReplayService(session_factory)
+    service = EventReplayService(record_store)
     request.app.state.replay_service = service
     return service
 

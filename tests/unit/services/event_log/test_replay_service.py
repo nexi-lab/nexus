@@ -47,7 +47,7 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 @pytest.fixture
 def service(record_store: SQLAlchemyRecordStore) -> EventReplayService:
-    return EventReplayService(record_store.session_factory)
+    return EventReplayService(record_store=record_store)
 
 
 def _insert_event(

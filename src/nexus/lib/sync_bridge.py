@@ -15,7 +15,7 @@ cleanly shut down via ``shutdown_sync_bridge()``.
 
 Usage::
 
-    from nexus.core.sync_bridge import run_sync
+    from nexus.lib.sync_bridge import run_sync
 
     # Works from ANY context (sync, async, thread pool worker)
     result = run_sync(some_async_function(arg1, arg2))

@@ -202,7 +202,7 @@ class EnrichmentPipeline:
             return
 
         try:
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             embedding_vec = run_sync(provider.embed_text(text))
             result.embedding_json = json.dumps(embedding_vec)

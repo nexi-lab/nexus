@@ -246,3 +246,8 @@ def invalidate_cache(index_path: str) -> None:
             _invalidate_trigram_cache(index_path)
         except (OSError, ValueError, RuntimeError):
             logger.debug("Failed to invalidate trigram cache for %s", index_path, exc_info=True)
+
+
+# Public API aliases (Issue #2123: search primitives migration)
+build_trigram_index = build_index
+search_trigram = grep

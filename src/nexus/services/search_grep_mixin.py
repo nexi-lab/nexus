@@ -23,8 +23,8 @@ from nexus.contracts.search_types import (
     GREP_PARALLEL_WORKERS,
     SearchStrategy,
 )
-from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.lib.rpc_decorator import rpc_expose
+from nexus.search.primitives import glob_fast, grep_fast, trigram_fast
 
 logger = logging.getLogger(__name__)
 

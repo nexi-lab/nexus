@@ -103,7 +103,10 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import for heavy dependencies."""
+    """Lazy import for heavy dependencies.
+
+    Also provides backward compatibility for search primitives (Issue #2123).
+    """
     # Check cache first
     if name in _lazy_imports_cache:
         return _lazy_imports_cache[name]
@@ -115,6 +118,24 @@ def __getattr__(name: str) -> Any:
 
         module = importlib.import_module(module_path)
         value = getattr(module, attr_name)
+        _lazy_imports_cache[name] = value
+        return value
+
+    # Backward compatibility for search primitives (Issue #2123)
+    # Deprecated: moved from nexus.core.* to nexus.search.primitives.*
+    if name in ("grep_fast", "glob_fast", "trigram_fast"):
+        import warnings
+
+        warnings.warn(
+            f"Importing {name} from nexus.core is deprecated. "
+            f"Use: from nexus.search.primitives import {name}",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        import importlib
+
+        module = importlib.import_module("nexus.search.primitives")
+        value = getattr(module, name)
         _lazy_imports_cache[name] = value
         return value
 

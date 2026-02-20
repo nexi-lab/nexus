@@ -883,7 +883,7 @@ impl PyZoneHandle {
     pub fn get_metadata(&self, py: Python<'_>, path: &str) -> PyResult<Option<Vec<u8>>> {
         let node = self.node.clone();
         let path = path.to_string();
-        py.allow_threads(|| {
+        py.detach(|| {
             self.runtime_handle.block_on(async {
                 node.with_state_machine(|sm| sm.get_metadata(&path))
                     .await
@@ -925,7 +925,7 @@ impl PyZoneHandle {
     pub fn list_metadata(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<(String, Vec<u8>)>> {
         let node = self.node.clone();
         let prefix = prefix.to_string();
-        py.allow_threads(|| {
+        py.detach(|| {
             self.runtime_handle.block_on(async {
                 node.with_state_machine(|sm| sm.list_metadata(&prefix))
                     .await
@@ -1007,7 +1007,7 @@ impl PyZoneHandle {
     pub fn get_lock(&self, py: Python<'_>, path: &str) -> PyResult<Option<PyLockInfo>> {
         let node = self.node.clone();
         let path = path.to_string();
-        py.allow_threads(|| {
+        py.detach(|| {
             self.runtime_handle.block_on(async {
                 node.with_state_machine(|sm| sm.get_lock(&path))
                     .await
@@ -1027,7 +1027,7 @@ impl PyZoneHandle {
     ) -> PyResult<Vec<PyLockInfo>> {
         let node = self.node.clone();
         let prefix = prefix.to_string();
-        py.allow_threads(|| {
+        py.detach(|| {
             self.runtime_handle.block_on(async {
                 node.with_state_machine(|sm| sm.list_locks(&prefix, limit))
                     .await
@@ -1057,7 +1057,7 @@ impl PyZoneHandle {
     /// True Local-First EC write — bypasses Raft, returns WAL token.
     fn propose_command_ec_local(&self, py: Python<'_>, cmd: Command) -> PyResult<u64> {
         let node = self.node.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             self.runtime_handle
                 .block_on(node.propose_ec_local(cmd))
                 .map_err(|e| PyRuntimeError::new_err(format!("EC local write failed: {}", e)))
@@ -1076,7 +1076,7 @@ impl PyZoneHandle {
 
     fn propose_command_raw(&self, py: Python<'_>, cmd: Command) -> PyResult<CommandResult> {
         let node = self.node.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             self.runtime_handle
                 .block_on(node.propose(cmd))
                 .map_err(|e| PyRuntimeError::new_err(format!("Propose failed: {}", e)))

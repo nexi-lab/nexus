@@ -13,9 +13,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from nexus.contracts.agent_types import AgentState, EvictionReason
 from nexus.core.performance_tuning import EvictionTuning
@@ -23,31 +20,21 @@ from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.agents.eviction_manager import EvictionManager
 from nexus.services.agents.eviction_policy import LRUEvictionPolicy
 from nexus.services.agents.resource_monitor import ResourceMonitor
-from nexus.storage.models import Base
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database for testing."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    """Create in-memory record store for testing."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session_factory(engine):
-    """Create a session factory."""
-    return sessionmaker(bind=engine, expire_on_commit=False)
-
-
-@pytest.fixture
-def registry(session_factory):
+def registry(record_store):
     """Create an AgentRegistry."""
-    return AgentRegistry(session_factory=session_factory, flush_interval=9999)
+    return AgentRegistry(record_store=record_store, flush_interval=9999)
 
 
 @pytest.fixture

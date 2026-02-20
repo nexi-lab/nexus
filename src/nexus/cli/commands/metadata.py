@@ -18,6 +18,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    is_standalone,
 )
 
 
@@ -34,8 +35,6 @@ def info(
         nexus info /workspace/data.txt
     """
     try:
-        from nexus.core.nexus_fs import NexusFS
-
         nx = get_filesystem(backend_config)
 
         # Check if file exists first
@@ -46,7 +45,7 @@ def info(
 
         # Get file metadata from metadata store
         # Note: Only NexusFS mode has direct metadata access
-        if not isinstance(nx, NexusFS):
+        if not is_standalone(nx):
             console.print("[red]Error:[/red] File info is only available for NexusFS instances")
             nx.close()
             return
@@ -132,13 +131,12 @@ def export_metadata(
         nexus export zone.jsonl --zone-id acme-corp
     """
     try:
-        from nexus.core.nexus_fs import NexusFS
         from nexus.lib.export_import import ExportFilter
 
         nx = get_filesystem(backend_config)
 
         # Note: Only standalone mode supports metadata export
-        if not isinstance(nx, NexusFS):
+        if not is_standalone(nx):
             console.print("[red]Error:[/red] Metadata export is only available in standalone mode")
             nx.close()
             sys.exit(1)
@@ -230,13 +228,12 @@ def import_metadata(
         nexus import metadata-backup.jsonl --conflict-mode=remap
     """
     try:
-        from nexus.core.nexus_fs import NexusFS
         from nexus.lib.export_import import ImportOptions
 
         nx = get_filesystem(backend_config)
 
         # Note: Only standalone mode supports metadata import
-        if not isinstance(nx, NexusFS):
+        if not is_standalone(nx):
             console.print("[red]Error:[/red] Metadata import is only available in standalone mode")
             nx.close()
             sys.exit(1)

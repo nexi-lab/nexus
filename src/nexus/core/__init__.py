@@ -8,22 +8,6 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any
 
-# =============================================================================
-# Lightweight imports (always loaded) - these are fast
-# =============================================================================
-from nexus.contracts.exceptions import (
-    AccessDeniedError,
-    BackendError,
-    InvalidPathError,
-    MetadataError,
-    NexusError,
-    NexusFileNotFoundError,
-    NexusPermissionError,
-    PathNotMountedError,
-    PermissionDeniedError,
-    ValidationError,
-)
-
 
 def setup_uvloop() -> bool:
     """Install uvloop as the default asyncio event loop policy.
@@ -148,15 +132,4 @@ __all__ = [
     "NexusFilesystem",
     "NexusFS",
     "ScopedFilesystem",
-    # Exceptions (always loaded - lightweight)
-    "AccessDeniedError",
-    "BackendError",
-    "InvalidPathError",
-    "MetadataError",
-    "NexusError",
-    "NexusFileNotFoundError",
-    "NexusPermissionError",
-    "PathNotMountedError",
-    "PermissionDeniedError",
-    "ValidationError",
 ]

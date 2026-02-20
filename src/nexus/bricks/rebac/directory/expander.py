@@ -119,12 +119,11 @@ class DirectoryExpander:
         tiger_cache: TigerCache | None = None,
         metadata_store: Any | None = None,
         *,
-        is_postgresql: bool = False,
+        is_postgresql: bool = False,  # noqa: ARG002
     ) -> None:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._metadata_store = metadata_store
-        self._is_postgresql = is_postgresql
 
     def set_metadata_store(self, metadata_store: Any) -> None:
         """Set the metadata store reference for directory queries."""
@@ -309,20 +308,24 @@ class DirectoryExpander:
             except (RuntimeError, OperationalError) as e:
                 logger.warning("[LEOPARD] Metadata store query failed: %s", e)
 
-        # Fallback: query file_paths table directly
-        from sqlalchemy import text
+        # Fallback: query file_paths table via ORM
+        from sqlalchemy import or_, select
+
+        from nexus.storage.models.file_path import FilePathModel
 
         try:
-            query = text("""
-                SELECT virtual_path
-                FROM file_paths
-                WHERE virtual_path LIKE :prefix
-                  AND deleted_at IS NULL
-                  AND (zone_id = :zone_id OR zone_id = 'root' OR zone_id IS NULL)
-            """)
+            stmt = select(FilePathModel.virtual_path).where(
+                FilePathModel.virtual_path.like(f"{directory_path}%"),
+                FilePathModel.deleted_at.is_(None),
+                or_(
+                    FilePathModel.zone_id == zone_id,
+                    FilePathModel.zone_id == "root",
+                    FilePathModel.zone_id.is_(None),
+                ),
+            )
 
             with self._engine.connect() as conn:
-                result = conn.execute(query, {"prefix": f"{directory_path}%", "zone_id": zone_id})
+                result = conn.execute(stmt)
                 return [row.virtual_path for row in result]
         except (RuntimeError, OperationalError) as e:
             logger.error("[LEOPARD] Failed to query descendants: %s", e)

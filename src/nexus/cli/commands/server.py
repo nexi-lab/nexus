@@ -497,6 +497,13 @@ def unmount(mount_point: str) -> None:
 @click.option("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
 @click.option("--port", default=2026, type=int, help="Server port (default: 2026)")
 @click.option(
+    "--profile",
+    type=click.Choice(["kernel", "embedded", "lite", "full", "cloud"]),
+    default=None,
+    envvar="NEXUS_PROFILE",
+    help="Deployment profile (kernel=bare VFS, embedded, lite, full, cloud)",
+)
+@click.option(
     "--api-key",
     default=None,
     help="API key for authentication (optional, for simple static key auth)",
@@ -544,6 +551,7 @@ def unmount(mount_point: str) -> None:
 def serve(
     host: str,
     port: int,
+    profile: str | None,
     api_key: str | None,
     auth_type: str | None,
     init: bool,
@@ -593,6 +601,11 @@ def serve(
     import subprocess
 
     from nexus.server.logging_config import configure_logging
+
+    # Issue #2194: Propagate --profile to environment so factory picks it up
+    if profile is not None:
+        os.environ["NEXUS_PROFILE"] = profile
+        logger.info("Deployment profile set via CLI: %s", profile)
 
     # Set up structured logging with secret redaction (Issue #86 + #1002)
     # configure_logging() reads NEXUS_LOG_REDACTION_ENABLED env var internally
@@ -788,6 +801,8 @@ def serve(
             sys.exit(1)
 
         console.print(f"  Mode: [cyan]{raw_server_mode}[/cyan]")
+        _active_profile = os.getenv("NEXUS_PROFILE", "full")
+        console.print(f"  Profile: [cyan]{_active_profile}[/cyan]")
 
         nx = get_filesystem(
             backend_config,

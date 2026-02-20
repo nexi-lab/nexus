@@ -20,8 +20,8 @@ Domain configs:
 - EvictionTuning: agent eviction watermarks, batch sizes (Issue #2170)
 
 Profile hierarchy matches DeploymentProfile:
-    embedded ⊂ lite ⊂ full ⊆ cloud
-    (minimal)  (conservative)  (balanced)  (aggressive)
+    kernel ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
+    (bare)  (minimal)  (conservative)  (balanced)  (aggressive)
 """
 
 from __future__ import annotations
@@ -288,6 +288,74 @@ class ProfileTuning:
 # ---------------------------------------------------------------------------
 # Profile-to-tuning mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
+
+_KERNEL_TUNING = ProfileTuning(
+    concurrency=ConcurrencyTuning(
+        default_workers=1,
+        thread_pool_size=4,
+        max_async_concurrency=1,
+        task_runner_workers=1,
+    ),
+    network=NetworkTuning(
+        default_http_timeout=15.0,
+        webhook_timeout=5.0,
+        long_operation_timeout=30.0,
+    ),
+    storage=StorageTuning(
+        write_buffer_flush_ms=500,
+        write_buffer_max_size=5,
+        changelog_chunk_size=25,
+        db_pool_size=1,
+        db_max_overflow=2,
+    ),
+    search=SearchTuning(
+        grep_parallel_workers=1,
+        list_parallel_workers=1,
+        search_max_concurrency=1,
+        vector_pool_workers=1,
+    ),
+    cache=CacheTuning(
+        tiger_max_workers=1,
+        tiger_batch_size=25,
+    ),
+    background_task=BackgroundTaskTuning(
+        sandbox_cleanup_interval=900,
+        session_cleanup_interval=14400,
+        daily_gc_interval=86400,
+        heartbeat_flush_interval=300,
+        stale_agent_check_interval=900,
+        stale_agent_threshold=900,
+    ),
+    resiliency=ResiliencyTuning(
+        default_max_retries=1,
+        retry_base_backoff_ms=50,
+        circuit_breaker_failure_threshold=3,
+        circuit_breaker_timeout=15.0,
+    ),
+    connector=ConnectorTuning(
+        blob_operation_timeout=30.0,
+        large_upload_timeout=120.0,
+        connector_max_workers=1,
+    ),
+    pool=PoolTuning(
+        asyncpg_min_size=1,
+        asyncpg_max_size=1,
+        httpx_max_connections=5,
+        remote_pool_maxsize=2,
+    ),
+    eviction=EvictionTuning(
+        memory_high_watermark_pct=95,
+        memory_low_watermark_pct=90,
+        max_active_agents=10,
+        eviction_batch_size=2,
+        checkpoint_timeout_seconds=3.0,
+        eviction_cooldown_seconds=300,
+        eviction_poll_interval_seconds=900,
+        checkpoint_cleanup_interval_seconds=14400,
+        checkpoint_max_age_seconds=86400,
+        max_concurrent_transitions=2,
+    ),
+)
 
 _EMBEDDED_TUNING = ProfileTuning(
     concurrency=ConcurrencyTuning(
@@ -567,6 +635,7 @@ def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
     from nexus.contracts.deployment_profile import DeploymentProfile
 
     return {
+        DeploymentProfile.KERNEL: _KERNEL_TUNING,
         DeploymentProfile.EMBEDDED: _EMBEDDED_TUNING,
         DeploymentProfile.LITE: _LITE_TUNING,
         DeploymentProfile.FULL: _FULL_TUNING,

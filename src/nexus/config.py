@@ -115,8 +115,8 @@ class NexusConfig(BaseModel):
         default="full",
         description=(
             "Deployment profile controlling which bricks are enabled: "
-            "embedded (storage+eventlog only), lite (core services), "
-            "full (all bricks), cloud (all + federation)"
+            "kernel (bare VFS, storage only), embedded (storage+eventlog), "
+            "lite (core services), full (all bricks), cloud (all + federation)"
         ),
     )
 
@@ -348,9 +348,9 @@ class NexusConfig(BaseModel):
     def validate_profile(cls, v: str) -> str:
         """Validate deployment profile.
 
-        Valid profiles: embedded, lite, full, cloud, auto
+        Valid profiles: kernel, embedded, lite, full, cloud, auto
         """
-        allowed = ["embedded", "lite", "full", "cloud", "auto"]
+        allowed = ["kernel", "embedded", "lite", "full", "cloud", "auto"]
         if v not in allowed:
             raise ValueError(f"profile must be one of {allowed}, got '{v}'")
         return v

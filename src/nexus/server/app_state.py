@@ -149,7 +149,7 @@ class NexusAppState:
     # These are managed by lifespan and not part of public API
 
 
-def init_app_state(app: FastAPI, nexus_fs: WirableFS | None = None, **overrides: Any) -> None:
+def init_app_state(app: FastAPI, nexus_fs: Any = None, **overrides: Any) -> None:
     """Initialize all app.state fields from NexusAppState defaults.
 
     Replaces 60+ lines of ``app.state.x = None`` in ``create_app()``.
@@ -185,7 +185,7 @@ def init_app_state(app: FastAPI, nexus_fs: WirableFS | None = None, **overrides:
         _flatten_nexus_fs(app, nexus_fs)
 
 
-def _flatten_nexus_fs(app: FastAPI, nexus_fs: WirableFS) -> None:
+def _flatten_nexus_fs(app: FastAPI, nexus_fs: Any) -> None:
     """Flatten NexusFS private attrs onto app.state for typed access."""
     # Direct NexusFS attrs
     app.state.system_services = getattr(nexus_fs, "_system_services", None)

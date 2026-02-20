@@ -123,7 +123,7 @@ async def mark_for_relearning(
     try:
         feedback_manager.mark_for_relearning(
             trajectory_id=request.trajectory_id,
-            _reason=request.reason,
+            reason=request.reason,
             priority=request.priority,
         )
 

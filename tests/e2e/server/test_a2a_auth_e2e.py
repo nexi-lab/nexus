@@ -216,9 +216,11 @@ class TestA2APersistenceE2E:
             assert resp.status_code == 200
             task_id = resp.json()["result"]["id"]
 
-        # Check disk — tasks now live under /agents/{agent_id}/tasks/
+        # Check disk — tasks live under /root/agents/{agent_id}/tasks/
+        # (zone-scoped: LocalStorageDriver stores under <root>/<zone_id>/)
         data_dir = auth_server["data_dir"]
-        agents_dir = data_dir / "agents"
+        zone_dir = data_dir / "root"
+        agents_dir = zone_dir / "agents"
         assert agents_dir.exists(), f"Agents directory not found: {agents_dir}"
 
         # Find the task JSON file under any agent's tasks/ directory
@@ -280,8 +282,10 @@ class TestA2APersistenceE2E:
             assert cancel_resp.json()["result"]["status"]["state"] == "canceled"
 
         # Verify canceled state is persisted on disk under agent-scoped path
+        # (zone-scoped: LocalStorageDriver stores under <root>/<zone_id>/)
         data_dir = auth_server["data_dir"]
-        agents_dir = data_dir / "agents"
+        zone_dir = data_dir / "root"
+        agents_dir = zone_dir / "agents"
         task_files = list(agents_dir.rglob(f"*_{task_id}.json"))
         assert len(task_files) == 1
         content = json.loads(task_files[0].read_bytes())

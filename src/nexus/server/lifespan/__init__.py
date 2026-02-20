@@ -138,18 +138,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Collect all background tasks for clean shutdown
     bg_tasks: list[asyncio.Task] = []
 
+    # Issue #2168: startup tracker for health probes
+    from nexus.server.health import StartupPhase
+
+    tracker = getattr(app.state, "startup_tracker", None)
+
+    def _done(phase: StartupPhase) -> None:
+        if tracker is not None:
+            tracker.complete(phase)
+
     # --- Startup (order matters: observability first, then core, then services) ---
 
     await startup_observability(app)
+    _done(StartupPhase.OBSERVABILITY)
+
     _compute_features_info(app)
+    _done(StartupPhase.FEATURES)
+
     bg_tasks.extend(await startup_permissions(app))
+    _done(StartupPhase.PERMISSIONS)
+
     bg_tasks.extend(await startup_realtime(app))
+    _done(StartupPhase.REALTIME)
+
     bg_tasks.extend(await startup_search(app))
+    _done(StartupPhase.SEARCH)
+
     bg_tasks.extend(await startup_services(app))
+    _done(StartupPhase.SERVICES)
+
     bg_tasks.extend(await startup_bricks(app))
+    _done(StartupPhase.BRICKS)
+
     bg_tasks.extend(await startup_uploads(app))
+    _done(StartupPhase.UPLOADS)
+
     bg_tasks.extend(await startup_ipc(app))
+    _done(StartupPhase.IPC)
+
     bg_tasks.extend(await startup_a2a_grpc(app))
+    _done(StartupPhase.A2A_GRPC)
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
     _wire_query_observer(app)

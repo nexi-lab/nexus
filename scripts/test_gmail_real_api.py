@@ -90,6 +90,7 @@ def get_db_url_from_docker():
 def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
     """Test Gmail connector with real API calls."""
     from nexus.backends.gmail_connector import GmailConnectorBackend
+    from nexus.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
     try:
@@ -110,7 +111,7 @@ def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
 
         # Create operation context
         context = OperationContext(
-            user_id=user_email, groups=[], zone_id="default", backend_path=""
+            user_id=user_email, groups=[], zone_id=ROOT_ZONE_ID, backend_path=""
         )
 
         # Get Gmail service

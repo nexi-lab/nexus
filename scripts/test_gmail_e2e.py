@@ -606,6 +606,7 @@ def main():
 
     # Import after path setup
     from nexus.backends.gmail_connector import GmailConnectorBackend
+    from nexus.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
     # Create backend
@@ -619,7 +620,7 @@ def main():
     context = OperationContext(
         user_id=user_email,
         groups=[],
-        zone_id="default",
+        zone_id=ROOT_ZONE_ID,
     )
 
     # Create temp directory for output

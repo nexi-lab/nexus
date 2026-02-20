@@ -27,7 +27,8 @@ class MountZoneFinalizer:
         """Remove all mounts for *zone_id*."""
         mounts = self._mount_service.list_mounts()
         zone_mounts = [
-            m for m in mounts
+            m
+            for m in mounts
             if m.get("zone_id") == zone_id or m.get("path", "").startswith(f"/{zone_id}/")
         ]
 
@@ -40,11 +41,13 @@ class MountZoneFinalizer:
             except Exception as exc:
                 logger.warning(
                     "[MountFinalizer] Failed to remove mount %s: %s",
-                    mount_point, exc,
+                    mount_point,
+                    exc,
                 )
                 raise
 
         logger.info(
             "[MountFinalizer] Removed %d mounts for zone %s",
-            removed, zone_id,
+            removed,
+            zone_id,
         )

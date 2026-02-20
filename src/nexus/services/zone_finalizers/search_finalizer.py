@@ -47,5 +47,7 @@ class SearchZoneFinalizer:
 
         logger.info(
             "[SearchFinalizer] Deleted %d entities + %d relationships for zone %s",
-            entities_deleted, rels_deleted, zone_id,
+            entities_deleted,
+            rels_deleted,
+            zone_id,
         )

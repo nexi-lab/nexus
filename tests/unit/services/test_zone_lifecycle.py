@@ -167,9 +167,7 @@ class TestPartialFailure:
         """If one finalizer fails, zone stays Terminating with pending list."""
         svc = ZoneLifecycleService(session_factory=_make_session_factory())
         f_ok = _make_finalizer("nexus.core/cache")
-        f_fail = _make_finalizer(
-            "nexus.core/search", side_effect=RuntimeError("index corrupted")
-        )
+        f_fail = _make_finalizer("nexus.core/search", side_effect=RuntimeError("index corrupted"))
         f_rebac = _make_finalizer("nexus.core/rebac")
         svc.register_finalizer(f_ok)
         svc.register_finalizer(f_fail)
@@ -226,6 +224,7 @@ class TestConcurrencyOrdering:
                 call_order.append(key)
                 # Small delay to ensure concurrent tasks overlap
                 await asyncio.sleep(0.01)
+
             return _fn
 
         svc = ZoneLifecycleService(session_factory=_make_session_factory())
@@ -282,9 +281,7 @@ class TestWriteGatingIntegration:
     async def test_zone_stays_in_terminating_set_on_failure(self):
         """Zone stays in _terminating_zones if finalizer fails."""
         svc = ZoneLifecycleService(session_factory=_make_session_factory())
-        f_fail = _make_finalizer(
-            "nexus.core/cache", side_effect=RuntimeError("boom")
-        )
+        f_fail = _make_finalizer("nexus.core/cache", side_effect=RuntimeError("boom"))
         svc.register_finalizer(f_fail)
 
         zone = _make_zone_model()

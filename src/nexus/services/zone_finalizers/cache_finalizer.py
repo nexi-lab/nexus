@@ -15,9 +15,7 @@ logger = logging.getLogger(__name__)
 class CacheZoneFinalizer:
     """Finalizer that cleans L1 file cache and optional L2 distributed cache."""
 
-    def __init__(
-        self, file_cache: Any, l2_cache: Any | None = None
-    ) -> None:
+    def __init__(self, file_cache: Any, l2_cache: Any | None = None) -> None:
         self._file_cache = file_cache
         self._l2_cache = l2_cache
 
@@ -31,7 +29,8 @@ class CacheZoneFinalizer:
         deleted = self._file_cache.delete_zone(zone_id)
         logger.info(
             "[CacheFinalizer] Deleted %d L1 cache entries for zone %s",
-            deleted, zone_id,
+            deleted,
+            zone_id,
         )
 
         # L2: distributed cache (optional)
@@ -39,5 +38,6 @@ class CacheZoneFinalizer:
             l2_deleted = await self._l2_cache.delete_by_pattern(f"zone:{zone_id}:*")
             logger.info(
                 "[CacheFinalizer] Deleted %d L2 cache entries for zone %s",
-                l2_deleted, zone_id,
+                l2_deleted,
+                zone_id,
             )

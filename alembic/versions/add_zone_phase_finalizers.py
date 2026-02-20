@@ -37,9 +37,7 @@ def upgrade() -> None:
 
     # Step 2: Migrate data — map is_active to phase
     op.execute(
-        "UPDATE zones SET phase = CASE "
-        "WHEN is_active = 1 THEN 'Active' "
-        "ELSE 'Terminated' END"
+        "UPDATE zones SET phase = CASE WHEN is_active = 1 THEN 'Active' ELSE 'Terminated' END"
     )
 
     # Step 3: Drop old column and index
@@ -59,11 +57,7 @@ def downgrade() -> None:
     )
 
     # Migrate data back
-    op.execute(
-        "UPDATE zones SET is_active = CASE "
-        "WHEN phase = 'Active' THEN 1 "
-        "ELSE 0 END"
-    )
+    op.execute("UPDATE zones SET is_active = CASE WHEN phase = 'Active' THEN 1 ELSE 0 END")
 
     # Drop new columns and index
     op.drop_index("idx_zones_phase", table_name="zones")

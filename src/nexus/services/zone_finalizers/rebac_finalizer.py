@@ -39,5 +39,6 @@ class ReBACZoneFinalizer:
 
         logger.info(
             "[ReBACFinalizer] Deleted %d tuples for zone %s",
-            deleted, zone_id,
+            deleted,
+            zone_id,
         )

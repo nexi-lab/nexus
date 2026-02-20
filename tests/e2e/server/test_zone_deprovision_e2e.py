@@ -59,9 +59,7 @@ class TestZoneDeprovisionFlow:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         # 202 = finalization started, 503 = lifecycle service unavailable
-        assert response.status_code in (202, 503), (
-            f"Got {response.status_code}: {response.text}"
-        )
+        assert response.status_code in (202, 503), f"Got {response.status_code}: {response.text}"
         if response.status_code == 202:
             data = response.json()
             assert data["zone_id"] == zone_id
@@ -113,9 +111,7 @@ class TestZoneDeprovisionFlow:
             "/api/zones/nonexistent-zone",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert response.status_code in (403, 404), (
-            f"Got {response.status_code}: {response.text}"
-        )
+        assert response.status_code in (403, 404), f"Got {response.status_code}: {response.text}"
 
 
 class TestZoneResponseFormat:

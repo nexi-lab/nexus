@@ -59,13 +59,9 @@ class ZoneLifecycleService:
         which is always executed last (Decision #13A).
         """
         if not isinstance(finalizer, ZoneFinalizerProtocol):
-            raise TypeError(
-                f"Expected ZoneFinalizerProtocol, got {type(finalizer).__name__}"
-            )
+            raise TypeError(f"Expected ZoneFinalizerProtocol, got {type(finalizer).__name__}")
         self._finalizers.append(finalizer)
-        logger.debug(
-            "[ZoneLifecycle] Registered finalizer: %s", finalizer.finalizer_key
-        )
+        logger.debug("[ZoneLifecycle] Registered finalizer: %s", finalizer.finalizer_key)
 
     # ------------------------------------------------------------------
     # Write-gating (Decision #4A / #14A)
@@ -97,9 +93,7 @@ class ZoneLifecycleService:
     # Deprovision orchestration
     # ------------------------------------------------------------------
 
-    async def deprovision_zone(
-        self, zone_id: str, session: Any
-    ) -> ZoneDeprovisionResult:
+    async def deprovision_zone(self, zone_id: str, session: Any) -> ZoneDeprovisionResult:
         """Begin or continue zone deprovisioning.
 
         - If Active → sets phase to Terminating, runs finalizers.
@@ -167,9 +161,7 @@ class ZoneLifecycleService:
             session.commit()
             return result
 
-    async def _run_finalizers(
-        self, zone_id: str, pending_keys: list[str]
-    ) -> ZoneDeprovisionResult:
+    async def _run_finalizers(self, zone_id: str, pending_keys: list[str]) -> ZoneDeprovisionResult:
         """Execute finalizers with concurrent-then-sequential ordering.
 
         Decision #13A: Cache + Search + Mount run concurrently (Phase 1),

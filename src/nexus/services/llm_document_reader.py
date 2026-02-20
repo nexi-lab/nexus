@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.llm.message import Message, MessageRole, TextContent
+from nexus.contracts.llm_types import Message, MessageRole, TextContent
 from nexus.services.llm_citation import Citation, CitationExtractor, DocumentReadResult
 from nexus.services.llm_context_builder import ChunkLike, ContextBuilder
 

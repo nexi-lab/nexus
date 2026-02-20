@@ -249,7 +249,8 @@ class NexusFS(  # type: ignore[misc]
         self.mount_manager = ksvc.mount_manager
         self._workspace_manager = ksvc.workspace_manager
         self._write_observer = ksvc.write_observer
-        self._overlay_resolver = ksvc.overlay_resolver
+        # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
+        self._overlay_resolver = None
 
         # =====================================================================
         # Tier 1: SYSTEM services (Issue #2034: from SystemServices)
@@ -270,6 +271,8 @@ class NexusFS(  # type: ignore[misc]
         self._wallet_provisioner = brk_svc.wallet_provisioner
         self._snapshot_service = brk_svc.snapshot_service
         self._api_key_creator = brk_svc.api_key_creator
+        # Version Brick (Issue #2034: moved from kernel)
+        self.version_service = brk_svc.version_service
 
         # DT_PIPE: Kernel pipe manager for IPC ring buffers (Task #808)
         from nexus.core.pipe_manager import PipeManager
@@ -308,7 +311,7 @@ class NexusFS(  # type: ignore[misc]
         # Service attributes — set to None by default.
         # Wired by factory.py two-phase init via _bind_wired_services().
         # Issue #643: kernel no longer creates services.
-        self.version_service: Any = None
+        # Note: version_service moved to BrickServices (Issue #2034), set above.
         self.rebac_service: Any = None
         self.mount_service: Any = None
         self._gateway: Any = None
@@ -346,9 +349,10 @@ class NexusFS(  # type: ignore[misc]
             )
             self._read_tracking_enabled = True
 
-        # Issue #1519: Cache observer — decouples kernel from ReadSetAwareCache
-        self._cache_observer = ksvc.cache_observer
-        if self._cache_observer is None and self._read_set_cache is not None:
+        # Issue #1519/#2034: Cache observer — created internally from read-set cache.
+        # (Removed from KernelServices — NexusFS owns the cache observer lifecycle.)
+        self._cache_observer = None
+        if self._read_set_cache is not None:
             from nexus.core.cache_invalidation import ReadSetCacheObserver
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
@@ -392,7 +396,7 @@ class NexusFS(  # type: ignore[misc]
         Args:
             wired: Dict of service_name -> instance (from _boot_wired_services).
         """
-        self.version_service = wired.get("version_service")
+        # version_service removed (Issue #2034) — now set from BrickServices in __init__
         self.rebac_service = wired.get("rebac_service")
         self.mount_service = wired.get("mount_service")
         self._gateway = wired.get("gateway")

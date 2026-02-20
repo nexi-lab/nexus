@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
 logger = logging.getLogger(__name__)
 

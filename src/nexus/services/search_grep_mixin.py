@@ -19,7 +19,7 @@ import os
 import re
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.bricks.search.strategies import (
+from nexus.contracts.search_types import (
     GREP_PARALLEL_WORKERS,
     SearchStrategy,
 )

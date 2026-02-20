@@ -177,7 +177,7 @@ def export_metadata(
             console.print("  [yellow]Including deleted files[/yellow]")
 
         with console.status("[yellow]Exporting metadata...[/yellow]", spinner="dots"):
-            count = nx.export_metadata(output, filter=export_filter)
+            count = cast(Any, nx).export_metadata(output, filter=export_filter)
 
         nx.close()
 
@@ -257,7 +257,7 @@ def import_metadata(
             console.print("  [yellow]Not preserving original IDs[/yellow]")
 
         with console.status("[yellow]Importing metadata...[/yellow]", spinner="dots"):
-            result = nx.import_metadata(input_file, options=import_options)
+            result = cast(Any, nx).import_metadata(input_file, options=import_options)
 
         nx.close()
 

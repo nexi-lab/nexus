@@ -483,8 +483,6 @@ def test_list_all_exposed_methods():
         "Batch/Import/Export": [
             "write_batch",
             "batch_get_content_ids",
-            "export_metadata",
-            "import_metadata",
         ],
         "Other": [],
     }

@@ -1,9 +1,10 @@
-"""Metadata Export/Import RPC Service — replaces NexusFS export/import facades.
+"""Metadata export/import service (Issue #841).
 
-Wraps MetastoreABC with @rpc_expose + standalone logic.
-No dependency on NexusFS.
+Extracted from NexusFS kernel — provides JSONL export/import of file metadata
+for backup, migration, and disaster recovery.
 
-Issue #2033 — Phase 2.4 of LEGO microkernel decomposition.
+Architecture: System Service (server-layer), wired into _brick_sources
+via factory function. Receives MetastoreABC via dependency injection.
 """
 
 from __future__ import annotations
@@ -14,8 +15,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nexus.contracts.rpc import rpc_expose
-from nexus.contracts.types import OperationContext
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -23,54 +22,26 @@ from nexus.core.export_import import (
     ImportResult,
 )
 from nexus.core.metadata import FileMetadata
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
 
 class MetadataExportService:
-    """RPC surface for metadata export/import operations.
+    """Handles JSONL metadata export/import operations.
 
-    Replaces ~460 LOC of facades in NexusFS (export_metadata, import_metadata).
+    Dependencies (injected via constructor):
+        metadata: MetastoreABC for reading/writing file metadata.
+        created_by: Static string for tracking who performed imports.
     """
 
     def __init__(
         self,
-        *,
-        metastore: Any,
-        default_context: OperationContext,
+        metadata: Any,
+        created_by: str | None = None,
     ) -> None:
-        self._metastore = metastore
-        self._default_context = default_context
-
-    def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
-        """Get the created_by value for version history tracking."""
-        user = None
-        agent = None
-
-        if context is None:
-            user = getattr(self._default_context, "user_id", None)
-            agent = self._default_context.agent_id
-        elif hasattr(context, "agent_id"):
-            user = getattr(context, "user_id", None)
-            agent = context.agent_id
-        elif isinstance(context, dict):
-            user = context.get("user_id")
-            agent = context.get("agent_id")
-        else:
-            user = getattr(self._default_context, "user_id", None)
-            agent = self._default_context.agent_id
-
-        parts = []
-        if user:
-            parts.append(f"user:{user}")
-        if agent:
-            parts.append(f"agent:{agent}")
-
-        return ",".join(parts) if parts else None
-
-    # ------------------------------------------------------------------
-    # Public RPC Methods
-    # ------------------------------------------------------------------
+        self._metadata: Any = metadata
+        self._created_by = created_by
 
     @rpc_expose(description="Export metadata to JSONL file")
     def export_metadata(
@@ -81,23 +52,9 @@ class MetadataExportService:
     ) -> int:
         """Export metadata to JSONL file for backup and migration.
 
-        Each line in the output file is a JSON object containing:
-        - path: Virtual file path
-        - backend_name: Backend identifier
-        - physical_path: Physical storage path (content hash in CAS)
-        - size: File size in bytes
-        - etag: Content hash (SHA-256)
-        - mime_type: MIME type (optional)
-        - created_at: Creation timestamp (ISO format)
-        - modified_at: Modification timestamp (ISO format)
-        - version: Version number
-        - custom_metadata: Dict of custom key-value metadata (optional)
-
-        Output is sorted by path for clean git diffs.
-
         Args:
             output_path: Path to output JSONL file
-            filter: Export filter options (zone_id, path_prefix, after_time, include_deleted)
+            filter: Export filter options
             prefix: (Deprecated) Path prefix filter for backward compatibility
 
         Returns:
@@ -111,11 +68,11 @@ class MetadataExportService:
         elif prefix:
             filter.path_prefix = prefix
 
-        from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+        from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
         all_files = [
             m
-            for m in self._metastore.list_iter(filter.path_prefix)
+            for m in self._metadata.list_iter(filter.path_prefix)
             if not m.path.startswith(SYSTEM_PATH_PREFIX)
         ]
 
@@ -176,9 +133,6 @@ class MetadataExportService:
     ) -> ImportResult:
         """Import metadata from JSONL file.
 
-        IMPORTANT: This only imports metadata records, not the actual file content.
-        The content must already exist in the CAS storage (matched by content hash).
-
         Args:
             input_path: Path to input JSONL file
             options: Import options (conflict mode, dry-run, preserve IDs)
@@ -187,10 +141,6 @@ class MetadataExportService:
 
         Returns:
             ImportResult with counts and collision details
-
-        Raises:
-            ValueError: If JSONL format is invalid
-            FileNotFoundError: If input file doesn't exist
         """
         input_file = Path(input_path)
         if not input_file.exists():
@@ -231,56 +181,50 @@ class MetadataExportService:
                     if metadata_dict.get("modified_at"):
                         modified_at = datetime.fromisoformat(metadata_dict["modified_at"])
 
-                    existing = self._metastore.get(path)
+                    existing = self._metadata.get(path)
                     imported_etag = metadata_dict.get("etag")
 
                     if existing:
                         self._handle_collision(
+                            result,
+                            options,
                             existing,
-                            imported_etag,
                             metadata_dict,
                             path,
                             original_path,
-                            created_at,
-                            modified_at,
-                            options,
-                            result,
-                        )
-                    else:
-                        self._handle_new_entry(
-                            path,
-                            metadata_dict,
                             imported_etag,
                             created_at,
                             modified_at,
-                            options,
+                        )
+                    else:
+                        self._handle_new_file(
                             result,
+                            options,
+                            metadata_dict,
+                            path,
+                            imported_etag,
+                            created_at,
+                            modified_at,
                         )
 
                 except json.JSONDecodeError as e:
                     raise ValueError(f"Invalid JSON at line {line_num}: {e}") from e
                 except Exception as e:
-                    if isinstance(e, ValueError):
-                        raise
                     raise ValueError(f"Error processing line {line_num}: {e}") from e
 
         return result
 
-    # ------------------------------------------------------------------
-    # Private Helpers
-    # ------------------------------------------------------------------
-
     def _handle_collision(
         self,
+        result: ImportResult,
+        options: ImportOptions,
         existing: Any,
-        imported_etag: str | None,
         metadata_dict: dict[str, Any],
         path: str,
         original_path: str,
+        imported_etag: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
-        options: ImportOptions,
-        result: ImportResult,
     ) -> None:
         """Handle import collision with existing file."""
         existing_etag = existing.etag
@@ -290,6 +234,7 @@ class MetadataExportService:
             if options.dry_run:
                 result.updated += 1
                 return
+
             file_meta = FileMetadata(
                 path=path,
                 backend_name=metadata_dict["backend_name"],
@@ -300,69 +245,72 @@ class MetadataExportService:
                 created_at=created_at or existing.created_at,
                 modified_at=modified_at or existing.modified_at,
                 version=metadata_dict.get("version", existing.version),
-                created_by=self._get_created_by(),
+                created_by=self._created_by,
             )
-            self._metastore.put(file_meta)
+            self._metadata.put(file_meta)
             self._import_custom_metadata(path, metadata_dict)
             result.updated += 1
             return
 
-        handler = {
-            "skip": self._collision_skip,
-            "overwrite": self._collision_overwrite,
-            "remap": self._collision_remap,
-            "auto": self._collision_auto,
-        }.get(options.conflict_mode, self._collision_skip)
-
-        handler(
-            existing,
-            existing_etag,
-            imported_etag,
-            metadata_dict,
-            path,
-            original_path,
-            created_at,
-            modified_at,
-            options,
-            result,
-        )
-
-    def _collision_skip(
-        self,
-        existing: Any,  # noqa: ARG002
-        existing_etag: str | None,
-        imported_etag: str | None,
-        metadata_dict: dict[str, Any],  # noqa: ARG002
-        path: str,
-        original_path: str,  # noqa: ARG002
-        created_at: datetime | None,  # noqa: ARG002
-        modified_at: datetime | None,  # noqa: ARG002
-        options: ImportOptions,  # noqa: ARG002
-        result: ImportResult,
-    ) -> None:
-        result.skipped += 1
-        result.collisions.append(
-            CollisionDetail(
-                path=path,
-                existing_etag=existing_etag,
-                imported_etag=imported_etag,
-                resolution="skip",
-                message="Skipped: existing file has different content",
+        if options.conflict_mode == "skip":
+            result.skipped += 1
+            result.collisions.append(
+                CollisionDetail(
+                    path=path,
+                    existing_etag=existing_etag,
+                    imported_etag=imported_etag,
+                    resolution="skip",
+                    message="Skipped: existing file has different content",
+                )
             )
-        )
+        elif options.conflict_mode == "overwrite":
+            self._handle_overwrite(
+                result,
+                options,
+                existing,
+                metadata_dict,
+                path,
+                existing_etag,
+                imported_etag,
+                created_at,
+                modified_at,
+            )
+        elif options.conflict_mode == "remap":
+            self._handle_remap(
+                result,
+                options,
+                metadata_dict,
+                path,
+                original_path,
+                existing_etag,
+                imported_etag,
+                created_at,
+                modified_at,
+            )
+        elif options.conflict_mode == "auto":
+            self._handle_auto(
+                result,
+                options,
+                existing,
+                metadata_dict,
+                path,
+                existing_etag,
+                imported_etag,
+                created_at,
+                modified_at,
+            )
 
-    def _collision_overwrite(
+    def _handle_overwrite(
         self,
+        result: ImportResult,
+        options: ImportOptions,
         existing: Any,
-        existing_etag: str | None,
-        imported_etag: str | None,
         metadata_dict: dict[str, Any],
         path: str,
-        original_path: str,  # noqa: ARG002
+        existing_etag: str | None,
+        imported_etag: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
-        options: ImportOptions,
-        result: ImportResult,
     ) -> None:
         if options.dry_run:
             result.updated += 1
@@ -387,9 +335,9 @@ class MetadataExportService:
             created_at=created_at or existing.created_at,
             modified_at=modified_at,
             version=metadata_dict.get("version", existing.version + 1),
-            created_by=self._get_created_by(),
+            created_by=self._created_by,
         )
-        self._metastore.put(file_meta)
+        self._metadata.put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
         result.updated += 1
         result.collisions.append(
@@ -402,21 +350,20 @@ class MetadataExportService:
             )
         )
 
-    def _collision_remap(
+    def _handle_remap(
         self,
-        existing: Any,  # noqa: ARG002
-        existing_etag: str | None,
-        imported_etag: str | None,
+        result: ImportResult,
+        options: ImportOptions,
         metadata_dict: dict[str, Any],
         path: str,
         original_path: str,
+        existing_etag: str | None,
+        imported_etag: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
-        options: ImportOptions,
-        result: ImportResult,
     ) -> None:
         suffix = 1
-        while self._metastore.exists(f"{path}_imported{suffix}"):
+        while self._metadata.exists(f"{path}_imported{suffix}"):
             suffix += 1
         remapped_path = f"{path}_imported{suffix}"
 
@@ -443,9 +390,9 @@ class MetadataExportService:
             created_at=created_at,
             modified_at=modified_at,
             version=metadata_dict.get("version", 1),
-            created_by=self._get_created_by(),
+            created_by=self._created_by,
         )
-        self._metastore.put(file_meta)
+        self._metadata.put(file_meta)
         self._import_custom_metadata(remapped_path, metadata_dict)
         result.remapped += 1
         result.collisions.append(
@@ -458,18 +405,17 @@ class MetadataExportService:
             )
         )
 
-    def _collision_auto(
+    def _handle_auto(
         self,
+        result: ImportResult,
+        options: ImportOptions,
         existing: Any,
-        existing_etag: str | None,
-        imported_etag: str | None,
         metadata_dict: dict[str, Any],
         path: str,
-        original_path: str,  # noqa: ARG002
+        existing_etag: str | None,
+        imported_etag: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
-        options: ImportOptions,
-        result: ImportResult,
     ) -> None:
         existing_time = existing.modified_at or existing.created_at
         imported_time = modified_at or created_at
@@ -503,9 +449,9 @@ class MetadataExportService:
                 created_at=created_at or existing.created_at,
                 modified_at=modified_at,
                 version=metadata_dict.get("version", existing.version + 1),
-                created_by=self._get_created_by(),
+                created_by=self._created_by,
             )
-            self._metastore.put(file_meta)
+            self._metadata.put(file_meta)
             self._import_custom_metadata(path, metadata_dict)
             result.updated += 1
             result.collisions.append(
@@ -529,17 +475,17 @@ class MetadataExportService:
                 )
             )
 
-    def _handle_new_entry(
+    def _handle_new_file(
         self,
-        path: str,
+        result: ImportResult,
+        options: ImportOptions,
         metadata_dict: dict[str, Any],
+        path: str,
         imported_etag: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
-        options: ImportOptions,
-        result: ImportResult,
     ) -> None:
-        """Handle importing a new entry with no collision."""
+        """Handle importing a file that doesn't exist yet."""
         if options.dry_run:
             result.created += 1
             return
@@ -554,9 +500,10 @@ class MetadataExportService:
             created_at=created_at,
             modified_at=modified_at,
             version=metadata_dict.get("version", 1),
-            created_by=self._get_created_by(),
+            created_by=self._created_by,
         )
-        self._metastore.put(file_meta)
+
+        self._metadata.put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
         result.created += 1
 
@@ -567,6 +514,6 @@ class MetadataExportService:
             if isinstance(custom_meta, dict):
                 for key, value in custom_meta.items():
                     try:
-                        self._metastore.set_file_metadata(path, key, value)
+                        self._metadata.set_file_metadata(path, key, value)
                     except Exception as e:
                         logger.debug("Failed to set custom metadata %s for %s: %s", key, path, e)

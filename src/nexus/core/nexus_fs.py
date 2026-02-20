@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import builtins
 import contextlib
 import logging
@@ -40,7 +39,6 @@ from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.parsers.registry import ParserRegistry
-    from nexus.parsers.types import ParseResult
 
 from nexus.storage.record_store import RecordStoreABC
 
@@ -1950,60 +1948,6 @@ class NexusFS(  # type: ignore[misc]
             search_mode=search_mode,
             context=context,
         )
-
-    @rpc_expose(description="Batch get content IDs for multiple paths")
-    def batch_get_content_ids(self, paths: builtins.list[str]) -> dict[str, str | None]:
-        """Get content hashes for multiple paths in a single query."""
-        return self.metadata.batch_get_content_ids(paths)
-
-    async def parse(
-        self,
-        path: str,
-        store_result: bool = True,
-    ) -> ParseResult:
-        """Parse a file using the appropriate parser."""
-        # Validate path
-        path = self._validate_path(path)
-
-        # Read file content with system bypass for background parsing
-        # Auto-parse is a system operation that should not be subject to user permissions
-        parse_ctx = OperationContext(
-            user_id="system_parser", groups=[], zone_id=None, is_system=True
-        )
-        content = self.read(path, context=parse_ctx)
-
-        # Type narrowing: when return_metadata=False (default), result is bytes
-        assert isinstance(content, bytes), "Expected bytes from read()"
-
-        # Get file metadata for MIME type
-        meta = self.metadata.get(path)
-        mime_type = meta.mime_type if meta else None
-
-        # Get appropriate parser
-        parser = self.parser_registry.get_parser(path, mime_type)
-
-        # Parse the content
-        parse_metadata = {
-            "path": path,
-            "mime_type": mime_type,
-            "size": len(content),
-        }
-        result = await parser.parse(content, parse_metadata)
-
-        # Optionally store parsed text as file metadata
-        if store_result and result.text:
-            # Store parsed text in custom metadata
-            await asyncio.to_thread(
-                self.metadata.set_file_metadata, path, "parsed_text", result.text
-            )
-            await asyncio.to_thread(
-                self.metadata.set_file_metadata, path, "parsed_at", datetime.now(UTC).isoformat()
-            )
-            await asyncio.to_thread(
-                self.metadata.set_file_metadata, path, "parser_name", parser.name
-            )
-
-        return result
 
     @staticmethod
     def _run_async(coro: Any) -> Any:

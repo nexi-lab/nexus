@@ -36,22 +36,6 @@ def _basename(path: str) -> str:
     return path.rstrip("/").rsplit("/", 1)[-1]
 
 
-def _dialect_insert(session: Any) -> Any:
-    """Return the dialect-specific ``insert()`` function.
-
-    Both PostgreSQL and SQLite support ``on_conflict_do_update`` /
-    ``on_conflict_do_nothing`` via their respective dialect insert.
-    """
-    dialect = session.bind.dialect.name
-    if dialect == "postgresql":
-        from sqlalchemy.dialects import postgresql
-
-        return postgresql.insert
-    from sqlalchemy.dialects import sqlite
-
-    return sqlite.insert
-
-
 class RecordStoreStorageDriver:
     """Stores IPC messages via RecordStoreABC.
 
@@ -89,20 +73,25 @@ class RecordStoreStorageDriver:
 
         def _write() -> None:
             with self._session_factory() as session:
-                insert = _dialect_insert(session)
-                stmt = insert(IPCMessageModel).values(
-                    zone_id=zone_id,
-                    path=path,
-                    dir_path=dir_path,
-                    filename=filename,
-                    data=data,
-                    is_dir=False,
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["zone_id", "path"],
-                    set_={"data": data},
-                )
-                session.execute(stmt)
+                existing = session.execute(
+                    select(IPCMessageModel).where(
+                        IPCMessageModel.zone_id == zone_id,
+                        IPCMessageModel.path == path,
+                    )
+                ).scalar_one_or_none()
+                if existing is not None:
+                    existing.data = data
+                else:
+                    session.add(
+                        IPCMessageModel(
+                            zone_id=zone_id,
+                            path=path,
+                            dir_path=dir_path,
+                            filename=filename,
+                            data=data,
+                            is_dir=False,
+                        )
+                    )
                 session.commit()
 
         await asyncio.to_thread(_write)
@@ -186,20 +175,26 @@ class RecordStoreStorageDriver:
 
         def _mkdir() -> None:
             with self._session_factory() as session:
-                insert = _dialect_insert(session)
-                stmt = insert(IPCMessageModel).values(
-                    zone_id=zone_id,
-                    path=normalized,
-                    dir_path=dir_path,
-                    filename=filename,
-                    data=b"",
-                    is_dir=True,
-                )
-                stmt = stmt.on_conflict_do_nothing(
-                    index_elements=["zone_id", "path"],
-                )
-                session.execute(stmt)
-                session.commit()
+                existing = session.execute(
+                    select(IPCMessageModel.id)
+                    .where(
+                        IPCMessageModel.zone_id == zone_id,
+                        IPCMessageModel.path == normalized,
+                    )
+                    .limit(1)
+                ).first()
+                if existing is None:
+                    session.add(
+                        IPCMessageModel(
+                            zone_id=zone_id,
+                            path=normalized,
+                            dir_path=dir_path,
+                            filename=filename,
+                            data=b"",
+                            is_dir=True,
+                        )
+                    )
+                    session.commit()
 
         await asyncio.to_thread(_mkdir)
 

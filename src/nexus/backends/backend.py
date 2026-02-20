@@ -770,7 +770,7 @@ class Backend(ABC):
         """
         Map backend path to ReBAC object type.
 
-        Override in subclasses (e.g. IPCVFSDriver) for custom object type mapping.
+        Override in subclasses for custom object type mapping.
         Called by ObjectTypeMapper as the virtual dispatch target.
 
         Used by the permission enforcer to determine what type of object

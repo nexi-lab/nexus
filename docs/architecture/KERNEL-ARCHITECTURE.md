@@ -342,8 +342,8 @@ Two-layer pipe architecture (matches Linux `kfifo` + `fs/pipe.c`):
 - **SPSC → MPMC**: RingBuffer is lock-free SPSC (GIL-atomic). PipeManager wraps with
   per-pipe `asyncio.Lock` for MPMC safety using lock→try→unlock→wait→retry (deadlock-free).
 
-> **Gap:** Services currently receive concrete `PipeManager` via DI. Should depend on
-> `PipeManagerProtocol` instead (matching architecture invariant: services → kernel interfaces).
+Services depend on `PipeManagerProtocol` (defined in `core/pipe_manager.py`,
+matching `VFSLockManagerProtocol` pattern). Kernel creates the concrete `PipeManager`.
 
 See `federation-memo.md` §7j for Pipe design rationale.
 

@@ -128,13 +128,13 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_available(self):
         """Check if Rust grep is available."""
-        from nexus.core.grep_fast import RUST_AVAILABLE
+        from nexus.bricks.search.primitives.grep_fast import RUST_AVAILABLE
 
         print(f"\n[INFO] Rust grep available: {RUST_AVAILABLE}")
 
     def test_rust_grep_1k_lines(self, benchmark):
         """Benchmark Rust grep in 1K lines."""
-        from nexus.core.grep_fast import RUST_AVAILABLE, grep_bulk
+        from nexus.bricks.search.primitives.grep_fast import RUST_AVAILABLE, grep_bulk
 
         content = generate_log_content(1000)
         file_contents = {"/test.log": content}
@@ -163,7 +163,7 @@ class TestRustGrepBenchmarks:
     @pytest.mark.benchmark_ci
     def test_rust_grep_10k_lines(self, benchmark):
         """Benchmark Rust grep in 10K lines."""
-        from nexus.core.grep_fast import grep_bulk
+        from nexus.bricks.search.primitives.grep_fast import grep_bulk
 
         content = generate_log_content(10000)
         file_contents = {"/test.log": content}
@@ -184,7 +184,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_multiple_files(self, benchmark):
         """Benchmark Rust grep across multiple files."""
-        from nexus.core.grep_fast import grep_bulk
+        from nexus.bricks.search.primitives.grep_fast import grep_bulk
 
         # Create 10 files with 1K lines each
         file_contents = {f"/file_{i}.log": generate_log_content(1000) for i in range(10)}
@@ -206,7 +206,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_regex_pattern(self, benchmark):
         """Benchmark Rust grep with regex pattern."""
-        from nexus.core.grep_fast import grep_bulk
+        from nexus.bricks.search.primitives.grep_fast import grep_bulk
 
         content = generate_code_content(5000)
         file_contents = {"/code.py": content}
@@ -230,7 +230,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_case_insensitive(self, benchmark):
         """Benchmark Rust grep with case-insensitive search."""
-        from nexus.core.grep_fast import grep_bulk
+        from nexus.bricks.search.primitives.grep_fast import grep_bulk
 
         content = generate_log_content(5000)
         file_contents = {"/test.log": content}
@@ -284,13 +284,13 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_grep_available(self):
         """Check if mmap grep is available."""
-        from nexus.core.grep_fast import MMAP_AVAILABLE
+        from nexus.bricks.search.primitives.grep_fast import MMAP_AVAILABLE
 
         print(f"\n[INFO] Mmap grep available: {MMAP_AVAILABLE}")
 
     def test_mmap_grep_single_file(self, benchmark):
         """Benchmark mmap grep on a single file."""
-        from nexus.core.grep_fast import MMAP_AVAILABLE, grep_files_mmap
+        from nexus.bricks.search.primitives.grep_fast import MMAP_AVAILABLE, grep_files_mmap
 
         def search():
             result = grep_files_mmap("ERROR", [self.large_file], ignore_case=False)
@@ -317,7 +317,7 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_grep_multiple_files(self, benchmark):
         """Benchmark mmap grep across multiple files."""
-        from nexus.core.grep_fast import MMAP_AVAILABLE, grep_files_mmap
+        from nexus.bricks.search.primitives.grep_fast import MMAP_AVAILABLE, grep_files_mmap
 
         file_paths = list(self.test_files.keys())
 
@@ -347,7 +347,11 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_vs_bulk_grep_comparison(self, benchmark):
         """Compare mmap grep vs bulk grep (read + grep)."""
-        from nexus.core.grep_fast import MMAP_AVAILABLE, grep_bulk, grep_files_mmap
+        from nexus.bricks.search.primitives.grep_fast import (
+            MMAP_AVAILABLE,
+            grep_bulk,
+            grep_files_mmap,
+        )
 
         file_paths = list(self.test_files.keys())
 
@@ -377,7 +381,7 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_grep_case_insensitive(self, benchmark):
         """Benchmark mmap grep with case-insensitive search."""
-        from nexus.core.grep_fast import grep_files_mmap
+        from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
 
         def search():
             result = grep_files_mmap("error", [self.large_file], ignore_case=True)
@@ -398,7 +402,7 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_grep_regex_pattern(self, benchmark):
         """Benchmark mmap grep with regex pattern."""
-        from nexus.core.grep_fast import grep_files_mmap
+        from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
 
         # Create code files for regex testing
         code_content = generate_code_content(5000)
@@ -459,7 +463,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_simple(self, benchmark):
         """Benchmark Rust glob for simple patterns (if available)."""
-        from nexus.core.glob_fast import RUST_AVAILABLE, glob_match_bulk
+        from nexus.bricks.search.primitives.glob_fast import RUST_AVAILABLE, glob_match_bulk
 
         paths = [f"/dir/file_{i:04d}.txt" for i in range(1000)]
         paths += [f"/dir/file_{i:04d}.py" for i in range(1000)]
@@ -482,7 +486,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_multiple_patterns(self, benchmark):
         """Benchmark Rust glob with multiple patterns."""
-        from nexus.core.glob_fast import glob_match_bulk
+        from nexus.bricks.search.primitives.glob_fast import glob_match_bulk
 
         paths = [f"/dir/file_{i:04d}.txt" for i in range(500)]
         paths += [f"/dir/file_{i:04d}.py" for i in range(500)]
@@ -504,7 +508,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_recursive_pattern(self, benchmark):
         """Benchmark Rust glob with recursive pattern (**/*)."""
-        from nexus.core.glob_fast import glob_match_bulk
+        from nexus.bricks.search.primitives.glob_fast import glob_match_bulk
 
         # Generate paths with directory structure
         paths = []
@@ -708,7 +712,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_build_1k_files(self, benchmark):
         """Benchmark building trigram index from 1K files."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -730,7 +734,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_literal(self, benchmark):
         """Benchmark trigram search for literal pattern."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -747,7 +751,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_regex(self, benchmark):
         """Benchmark trigram search for regex pattern."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -764,7 +768,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_no_match(self, benchmark):
         """Benchmark trigram search for non-matching pattern."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -782,7 +786,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_vs_mmap_grep(self, benchmark):
         """Compare trigram index search vs mmap grep."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")

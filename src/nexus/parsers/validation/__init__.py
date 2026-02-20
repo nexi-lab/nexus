@@ -4,21 +4,21 @@ Runs heuristic-based linters locally before CI access, returning structured
 feedback to agents for self-correction. Inspired by Stripe's Minions pattern.
 
 Usage:
-    from nexus.validation import ValidationRunner, ValidationResult
+    from nexus.parsers.validation import ValidationRunner, ValidationResult
 
     runner = ValidationRunner()
     results = await runner.validate(sandbox_id, provider)
 """
 
-from nexus.validation.config import ValidatorConfigLoader
-from nexus.validation.detector import detect_project_validators
-from nexus.validation.models import (
+from nexus.parsers.validation.config import ValidatorConfigLoader
+from nexus.parsers.validation.detector import detect_project_validators
+from nexus.parsers.validation.models import (
     ValidationError,
     ValidationPipelineConfig,
     ValidationResult,
     ValidatorConfig,
 )
-from nexus.validation.runner import ValidationRunner
+from nexus.parsers.validation.runner import ValidationRunner
 
 __all__ = [
     "ValidationError",

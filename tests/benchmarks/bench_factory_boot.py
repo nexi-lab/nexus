@@ -79,8 +79,8 @@ def _make_boot_context() -> Any:
         DistributedConfig,
         PermissionConfig,
     )
-    from nexus.core.performance_tuning import resolve_profile_tuning
     from nexus.factory import _BootContext
+    from nexus.lib.performance_tuning import resolve_profile_tuning
 
     perm = PermissionConfig()
     cache_cfg = CacheConfig()

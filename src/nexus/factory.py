@@ -1413,20 +1413,6 @@ def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] ReBACService unavailable: %s", exc)
 
-    # --- MountService: Dynamic backend mounting operations ---
-    mount_service: Any = None
-    try:
-        from nexus.services.mount_service import MountService
-
-        mount_service = MountService(
-            router=kernel_services.router,
-            mount_manager=kernel_services.mount_manager,
-            nexus_fs=nx,
-        )
-        logger.debug("[BOOT:WIRED] MountService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
-
     # --- MCPService: Model Context Protocol operations ---
     mcp_service: Any = None
     if _on("mcp"):
@@ -1530,6 +1516,26 @@ def _boot_wired_services(
             logger.debug("[BOOT:WIRED] MountPersistService created")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] MountPersistService unavailable: %s", exc)
+
+    # --- MountService: Dynamic backend mounting operations ---
+    # Moved after sub-services so DI deps are available (Issue #636).
+    mount_service: Any = None
+    try:
+        from nexus.services.mount_service import MountService
+
+        mount_service = MountService(
+            router=kernel_services.router,
+            mount_manager=kernel_services.mount_manager,
+            nexus_fs=nx,
+            sync_service=sync_service,
+            sync_job_service=sync_job_service,
+            mount_core_service=mount_core_service,
+            mount_persist_service=mount_persist_service,
+            oauth_service=oauth_service,
+        )
+        logger.debug("[BOOT:WIRED] MountService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
 
     # --- SkillService: Skill management (Issue #2035) ---
     skill_service: Any = brick_services.skill_service

@@ -29,10 +29,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.rebac.manager import (
-        EnhancedReBACManager,
-        WriteResult,
-    )
+    from nexus.rebac.manager import WriteResult
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +247,7 @@ def load_profiles_from_dict(raw: dict[str, Any]) -> ToolProfileConfig:
 
 
 def grant_tools_for_profile(
-    rebac_manager: EnhancedReBACManager,
+    rebac_manager: ReBACBrickProtocol,
     subject: tuple[str, str],
     profile: ToolProfile,
     zone_id: str | None = None,
@@ -292,7 +290,7 @@ def grant_tools_for_profile(
 
 
 def revoke_tools_by_tuple_ids(
-    rebac_manager: EnhancedReBACManager,
+    rebac_manager: ReBACBrickProtocol,
     tuple_ids: list[str],
 ) -> int:
     """Revoke tool grants by their tuple IDs.

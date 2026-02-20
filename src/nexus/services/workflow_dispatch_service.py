@@ -122,12 +122,12 @@ class WorkflowDispatchService:
                 logger.warning("Workflow pipe full, dropping event: %s", label)
         else:
             # Fallback: fire-and-forget (CLI mode or pre-startup, no pipe yet)
-            from nexus.core.sync_bridge import fire_and_forget
+            from nexus.lib.sync_bridge import fire_and_forget
 
             fire_and_forget(self._workflow_engine.fire_event(trigger_type, event_context))
 
         if self._subscription_manager:
-            from nexus.core.sync_bridge import fire_and_forget
+            from nexus.lib.sync_bridge import fire_and_forget
 
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(

@@ -1,7 +1,7 @@
 """Minimal sync-to-async bridge for Memory brick.
 
 Brick-local copy of the essential run_sync() function (Issue #2177).
-Avoids importing nexus.core.sync_bridge which is a kernel internal.
+Avoids importing nexus.lib.sync_bridge for brick isolation.
 """
 
 from __future__ import annotations

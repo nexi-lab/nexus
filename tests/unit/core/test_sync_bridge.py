@@ -1,4 +1,4 @@
-"""Tests for nexus.core.sync_bridge — unified sync-to-async bridge.
+"""Tests for nexus.lib.sync_bridge — unified sync-to-async bridge.
 
 Tests cover:
   - run_sync() from sync context (no running loop)
@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus.core.sync_bridge import (
+from nexus.lib.sync_bridge import (
     _ensure_background_loop,
     fire_and_forget,
     run_sync,
@@ -237,7 +237,7 @@ class TestFireAndForget:
 
     def test_error_is_logged_not_raised(self) -> None:
         """Errors in fire_and_forget coroutines are logged, not raised."""
-        with patch("nexus.core.sync_bridge.logger") as mock_logger:
+        with patch("nexus.lib.sync_bridge.logger") as mock_logger:
             fire_and_forget(_fail())
             # Give background loop time to process.
             time.sleep(0.1)

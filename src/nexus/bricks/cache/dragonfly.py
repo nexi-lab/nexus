@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from nexus.core.protocols import CacheStoreABC
+from nexus.bricks.cache.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 

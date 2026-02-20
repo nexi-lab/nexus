@@ -391,6 +391,11 @@ def create_app(
 
     app.state.startup_tracker = StartupTracker()
 
+    # Issue #2168: startup tracker for k8s health probes
+    from nexus.server.health import StartupTracker
+
+    app.state.startup_tracker = StartupTracker()
+
     # Initialize subscription manager if we have a metadata store
     try:
         if hasattr(nexus_fs, "SessionLocal"):

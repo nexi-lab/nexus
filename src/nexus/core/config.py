@@ -317,6 +317,13 @@ class BrickServices:
     memory_router: Any = None  # MemoryViewRouter singleton
     memory_permission: Any = None  # MemoryPermissionProtocol adapter
 
+    # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
+    parse_fn: Any = None  # Callable for parsing files (ParsersBrick)
+    content_cache: Any = None  # ContentCache instance
+    parser_registry: Any = None  # ParserRegistry (file format detection)
+    provider_registry: Any = None  # ProviderRegistry (parsing providers)
+    vfs_lock_manager: Any = None  # VFS lock manager (fine-grained file locks)
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

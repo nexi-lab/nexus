@@ -940,9 +940,6 @@ class NexusTestServer:
             is_admin=True,  # Admin for testing
             enforce_permissions=False,  # Simplified for testing
         )
-        from nexus.services.service_wiring import wire_services
-
-        wire_services(self.nexus_fs)
 
         # Ensure workspace directory exists (may already exist by default)
         with contextlib.suppress(FileExistsError):

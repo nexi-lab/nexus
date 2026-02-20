@@ -24,8 +24,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.services.event_bus.protocol import AckableEvent
+from nexus.services.event_subsystem.bus.protocol import AckableEvent
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 # ============================================================================
 # Fixtures
@@ -36,7 +36,7 @@ from nexus.services.event_bus.protocol import AckableEvent
 def mock_nats_connect():
     """Patch nats.connect to return a mock NATS client."""
     with patch(
-        "nexus.services.event_bus.nats.nats.connect", new_callable=AsyncMock
+        "nexus.services.event_subsystem.bus.nats.nats.connect", new_callable=AsyncMock
     ) as mock_connect:
         nc = AsyncMock()
         nc.is_connected = True
@@ -56,7 +56,7 @@ def make_bus():
     """Create a NatsEventBus with default test settings."""
 
     def _make(**kwargs):
-        from nexus.services.event_bus.nats import NatsEventBus
+        from nexus.services.event_subsystem.bus.nats import NatsEventBus
 
         defaults = {"nats_url": "nats://test:4222"}
         defaults.update(kwargs)
@@ -772,7 +772,7 @@ class TestNatsEventBusErrors:
         from nats.errors import NoServersError
 
         with patch(
-            "nexus.services.event_bus.nats.nats.connect",
+            "nexus.services.event_subsystem.bus.nats.nats.connect",
             new_callable=AsyncMock,
             side_effect=NoServersError,
         ):

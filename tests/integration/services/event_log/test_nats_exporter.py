@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 # Skip if testcontainers or nats not installed
 pytest.importorskip("testcontainers")
@@ -53,8 +53,8 @@ def nats_url(nats_container) -> str:
 
 @pytest.fixture
 def exporter(nats_url: str):
-    from nexus.services.event_log.exporters.config import NatsExporterConfig
-    from nexus.services.event_log.exporters.nats_exporter import NatsExporter
+    from nexus.services.event_subsystem.log.exporters.config import NatsExporterConfig
+    from nexus.services.event_subsystem.log.exporters.nats_exporter import NatsExporter
 
     config = NatsExporterConfig(
         servers=nats_url,

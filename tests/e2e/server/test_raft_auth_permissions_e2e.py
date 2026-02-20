@@ -338,7 +338,7 @@ class TestAdminFileOperations:
         assert result.get("error") is None, f"List failed: {result}"
         items = result.get("result", {})
         # Should contain at least admin_test.txt
-        assert isinstance(items, (list, dict))
+        assert isinstance(items, list | dict)
 
     def test_admin_get_metadata(self, admin_client: httpx.Client) -> None:
         """Admin gets metadata for a file."""

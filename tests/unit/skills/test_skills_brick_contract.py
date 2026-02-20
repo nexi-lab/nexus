@@ -236,7 +236,7 @@ def _is_type_checking_guarded(tree: ast.Module, import_node: ast.ImportFrom) -> 
 def _is_function_scoped(tree: ast.Module, import_node: ast.ImportFrom) -> bool:
     """Check if an import node is inside a function or method body."""
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             for child in ast.walk(node):
                 if child is import_node:
                     return True

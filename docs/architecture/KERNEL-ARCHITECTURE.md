@@ -53,10 +53,11 @@ system (like systemd): creates selected services and injects them via
 `KernelServices` dataclass. Different distros select different service sets at
 startup — `nexus-server` loads all 22+, `nexus-embedded` loads zero.
 
-> *Resolved (Issue #643, #666):* NexusFS constructor performs kernel-only init — no
-> service imports. Two-tier wiring: `services.service_wiring.wire_services(nx)` attaches
-> base services (gateway, permissions, events), then `factory._boot_wired_services(nx, ...)`
-> adds profile-gated services. `NexusFSGateway` uses constructor DI (no private-attr access).
+> *Resolved (Issue #643):* `factory.py` gates all services via `DeploymentProfile` +
+> `enabled_bricks` frozenset (see §5.1). `_wire_services()` migrated to
+> `factory._boot_wired_services()` — NexusFS constructor no longer imports or creates
+> services. Two-phase init: `NexusFS(...)` → `_boot_wired_services(nx, ...)` →
+> `nx._bind_wired_services(dict)`.
 
 **Phase 2 — Runtime hot-swap (Linux LKM model).** A `ServiceRegistry` manages
 in-process service modules following the Loadable Kernel Module pattern:
@@ -132,7 +133,7 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 
 ---
 
-## 3. Kernel Interfaces & Primitives
+## 3. Kernel vs Services Boundary
 
 ### Kernel Interfaces (`nexus.core`)
 
@@ -142,19 +143,9 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
 | `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
-| `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW locking with hierarchy awareness |
-| `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
 
 `MetastoreABC` is kernel because it IS the inode layer — the typed contract
 between VFS and storage. Without it, the kernel cannot describe files.
-
-`VFSLockManager` (`core/lock_fast.py`) provides rwsem semantics with hierarchical
-ancestor/descendant conflict detection. Rust-accelerated (PyO3), Python fallback.
-Distinct from service-layer advisory locking (LockProtocol / `ops-scenario-matrix.md` S9).
-
-> **Gap:** VFSLockManager is created in `NexusFS.__init__` but not yet wired into the
-> write path. Intent: local coroutine concurrency lock, complementing the distributed
-> RaftLockManager — like Linux `i_rwsem` (local) coexisting with `flock(2)` (distributed).
 
 ### NexusFS — Syscall Dispatch Layer
 
@@ -168,7 +159,10 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 + services and wires them together. NexusFS receives pre-built dependencies via its
 constructor and never auto-creates services.
 
-> *Remaining:* replace `KernelServices` dataclass with `ServiceRegistry`.
+> *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
+> `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
+> `_wire_services()` deleted — all service creation moved to `factory._boot_wired_services()` (#643).
+> Remaining: replace `KernelServices` dataclass with `ServiceRegistry`.
 
 ### Service Protocols (`nexus.services.protocols`)
 
@@ -317,31 +311,7 @@ Three tiers, mirroring Linux's kernel → system → user space communication:
 
 **Selection rule:** Consensus write path → System (gRPC, 1:1). Agent-to-agent messaging → System (IPC, 1:1 queue). Notification read path → User Space (EventBus, 1:N fan-out to 100s of observers). Internal signaling → Kernel (Pipe, zero-copy).
 
-### Kernel Tier: Native Pipes
-
-Two-layer pipe architecture (matches Linux `kfifo` + `fs/pipe.c`):
-
-```
-┌─────────────────────────────────────────┐
-│ PipeManager (core/pipe_manager.py)      │  ← fs/pipe.c: VFS named pipe
-│   mkpipe() / destroy() / pipe_read()   │     lifecycle, per-pipe lock (MPMC)
-│   DT_PIPE inode in MetastoreABC        │
-├─────────────────────────────────────────┤
-│ RingBuffer (core/pipe.py)              │  ← kfifo: kernel-internal SPSC
-│   write_nowait() / read_nowait()       │     deque + asyncio.Event pair
-│   Process heap memory (no pillar)      │
-└─────────────────────────────────────────┘
-```
-
-- **Inode** (DT_PIPE FileMetadata) in MetastoreABC — VFS path visibility, ReBAC, observability
-- **Data** (bytes in ring buffer) in process heap — like Linux `kmalloc`'d pipe buffer
-- **SPSC → MPMC**: RingBuffer is lock-free SPSC (GIL-atomic). PipeManager wraps with
-  per-pipe `asyncio.Lock` for MPMC safety using lock→try→unlock→wait→retry (deadlock-free).
-
-Services depend on `PipeManagerProtocol` (defined in `core/pipe_manager.py`,
-matching `VFSLockManagerProtocol` pattern). Kernel creates the concrete `PipeManager`.
-
-See `federation-memo.md` §7j for Pipe design rationale.
+See `federation-memo.md` §7j for Pipe design.
 
 ### System Tier
 
@@ -362,6 +332,14 @@ Linux analogue: `dbus-daemon` (1:N broadcast). Consumed by `WatchProtocol` (S8) 
 (preferred long-term). All should route through `CacheStoreABC` pub/sub.
 
 **Federation gap:** EventBus is currently zone-local. Cross-zone event propagation not yet designed.
+
+---
+
+## 7. RecordStoreABC Pattern
+
+Services consume `RecordStoreABC.session_factory` + SQLAlchemy ORM.
+Direct SQL or raw driver access is an abstraction break.
+This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code changes.
 
 ---
 

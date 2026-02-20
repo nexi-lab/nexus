@@ -577,7 +577,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     ) -> dict[str, Any]:
         serialized_edits: builtins.list[dict[str, Any]] = []
         for edit_op in edits:
-            if isinstance(edit_op, (tuple, builtins.list)) and len(edit_op) >= 2:
+            if isinstance(edit_op, tuple | builtins.list) and len(edit_op) >= 2:
                 serialized_edits.append({"old_str": edit_op[0], "new_str": edit_op[1]})
             elif isinstance(edit_op, dict):
                 serialized_edits.append(edit_op)

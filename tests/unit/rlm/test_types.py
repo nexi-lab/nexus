@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
 from nexus.rlm.types import (
     REPLResult,
     RLMBudgetExceededError,
@@ -58,7 +57,7 @@ class TestRLMInferenceRequest:
         req = RLMInferenceRequest(query="What is X?")
         assert req.query == "What is X?"
         assert req.context_paths == ()
-        assert req.zone_id == ROOT_ZONE_ID
+        assert req.zone_id == "default"
         assert req.model == "claude-sonnet-4-20250514"
         assert req.sub_model is None
         assert req.max_iterations == 15

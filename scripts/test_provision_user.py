@@ -40,9 +40,6 @@ def test_provision_user() -> bool:
     # Use in-memory SQLite database for testing
     metadata_store = RaftMetadataStore.embedded("sqlite:///:memory:".replace(".db", ""))
     nx = nexus.NexusFS(backend=backend, metadata_store=metadata_store)
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
     print("   ✓ NexusFS initialized with LocalBackend and in-memory database")
     print("   - Root path: /tmp/nexus_test")
     print("   - Database: sqlite:///:memory:")

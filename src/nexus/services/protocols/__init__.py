@@ -26,7 +26,7 @@ References:
 """
 
 from nexus.rebac.namespace_manager import NamespaceMount
-from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
+from nexus.services.event_subsystem.log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol

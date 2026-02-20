@@ -415,13 +415,6 @@ def create_nexus_fs(
         brick_services=brick_services,
     )
 
-    # --- Phase 1b: Register VFS hook implementations (Issue #690) ---
-    # Hooks are service-tier policy (S15/P17), registered via factory so core/
-    # never imports services/.
-    from nexus.factory._wired import register_vfs_hooks
-
-    register_vfs_hooks(nx)
-
     # --- Phase 2: Wire services needing NexusFS reference (Issue #643) ---
     # Resolve enabled_bricks for brick gating (same pattern as create_nexus_services)
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP

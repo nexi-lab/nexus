@@ -215,7 +215,7 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
                 (user_id,),
             )
             for row in cursor.fetchall():
-                zid = row[0] if isinstance(row, (tuple, list)) else row["zone_id"]
+                zid = row[0] if isinstance(row, tuple | list) else row["zone_id"]
                 if zid and zid not in zone_ids:
                     zone_ids.append(zid)
     except Exception:

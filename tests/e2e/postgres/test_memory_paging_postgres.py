@@ -183,9 +183,6 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
         permissions=PermissionConfig(enforce=True),  # Production: permissions ON
         memory=MemoryConfig(enable_paging=True, main_capacity=10),
     )
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
 
     # Production wiring: DiscriminatingAuthProvider wrapping DatabaseAPIKeyAuth
     from types import SimpleNamespace

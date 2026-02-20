@@ -19,7 +19,7 @@ from nexus.fuse.ops._shared import (
 
 # Import event types
 try:
-    from nexus.core.event_bus import FileEventType
+    from nexus.services.event_subsystem.types import FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:

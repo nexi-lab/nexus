@@ -6,12 +6,12 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
-from nexus.services.vfs_hook_impls import (
+from nexus.core.vfs_hook_impls import (
     AutoParseWriteHook,
     DynamicViewerReadHook,
     TigerCacheRenameHook,
 )
+from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
 
 # =========================================================================
 # DynamicViewerReadHook

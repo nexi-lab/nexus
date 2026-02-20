@@ -155,7 +155,7 @@ class NexusFSCoreMixin:
             return
 
         try:
-            from nexus.core.event_bus import FileEvent, FileEventType
+            from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
             # Map string to enum
             type_map = {
@@ -1619,7 +1619,7 @@ class NexusFSCoreMixin:
             if hasattr(self, "_hierarchy_manager"):
                 try:
                     logger.info(
-                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
+                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
                         path, zone_id=ctx.zone_id or "root"

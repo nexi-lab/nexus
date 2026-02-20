@@ -38,7 +38,6 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
 
         # Issue #2071: source max_indexing_concurrency from profile tuning
         _search_tuning = getattr(app.state, "profile_tuning", None)
-<<<<<<< HEAD
         _max_indexing = _search_tuning.search.search_max_concurrency if _search_tuning else None
 
         _daemon_kwargs: dict = {

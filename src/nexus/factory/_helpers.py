@@ -1,4 +1,4 @@
-"""Factory helpers — _safe_create, _resolve_tasks_db_path, brick registration."""
+"""Factory helpers — _safe_create, _make_gate, _resolve_tasks_db_path, brick registration."""
 
 from __future__ import annotations
 
@@ -7,6 +7,28 @@ from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Profile gating helper (Issue #2193: DRY for _on() closure)
+# ---------------------------------------------------------------------------
+
+
+def _make_gate(brick_on: Callable[[str], bool] | None) -> Callable[[str], bool]:
+    """Create a profile gate closure.
+
+    Replaces the repeated ``_on()`` inner function pattern across tier modules.
+
+    Args:
+        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+            When None, returns a gate that enables everything.
+
+    Returns:
+        A ``(name: str) -> bool`` callable for gating service creation.
+    """
+    if brick_on is None:
+        return lambda _name: True
+    return brick_on
 
 
 # ---------------------------------------------------------------------------
@@ -79,11 +101,16 @@ def _safe_create(
     factory_fn: Callable[[], Any],
     brick_on: Callable[[str], bool],
     tier: str = "BRICK",
-    log_level: str = "debug",
+    severity: str = "debug",
 ) -> Any:
     """Create a service with profile gating + error handling.
 
-    Returns the created service, or None if gated or on failure.
+    Severity levels (Issue #2193):
+        ``"debug"``   — Brick-tier default.  Log at DEBUG on failure, return None.
+        ``"warning"`` — System-tier degradable.  Log at WARNING on failure, return None.
+        ``"critical"``— System-tier critical.  Log at CRITICAL and raise ``BootError``.
+
+    Returns the created service, or None if gated or on non-critical failure.
     """
     if not brick_on(name):
         logger.debug("[BOOT:%s] %s disabled by profile", tier, name)
@@ -93,7 +120,12 @@ def _safe_create(
         logger.debug("[BOOT:%s] %s created", tier, name)
         return result
     except Exception as exc:
-        getattr(logger, log_level)("[BOOT:%s] %s unavailable: %s", tier, name, exc)
+        if severity == "critical":
+            from nexus.contracts.exceptions import BootError
+
+            logger.critical("[BOOT:%s] %s FATAL: %s", tier, name, exc)
+            raise BootError(f"{name}: {exc}", tier=tier) from exc
+        getattr(logger, severity)("[BOOT:%s] %s unavailable: %s", tier, name, exc)
         return None
 
 

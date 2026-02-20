@@ -103,6 +103,7 @@ def make_test_nexus(
     memory=None,
     distributed=None,
     services=None,
+    system_services=None,
     is_admin=False,
     record_store=None,
     use_raft=False,
@@ -122,6 +123,7 @@ def make_test_nexus(
         memory: MemoryConfig override.
         distributed: DistributedConfig override. Default: all disabled.
         services: KernelServices override.
+        system_services: SystemServices override.
         is_admin: Admin flag.
         record_store: Optional RecordStoreABC.
         use_raft: Use RaftMetadataStore (requires Python 3.13).
@@ -177,6 +179,7 @@ def make_test_nexus(
         memory=memory,
         distributed=distributed,
         kernel_services=services,
+        system_services=system_services,
     )
 
 

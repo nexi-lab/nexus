@@ -43,10 +43,11 @@ def create_nexus_services(
 
     Orchestrates 3-tier boot sequence:
 
-    1. **Kernel** — mandatory (ReBAC, permissions, workspace, sync, version).
+    1. **Kernel** — validates Storage Pillars (VFS router, Metastore).
        Failure raises ``BootError``.
-    2. **System** — degraded-mode (agent registry, namespace, observability,
-       resiliency). Failure warns + ``None``.
+    2. **System** — critical services (ReBAC, permissions, write-sync →
+       ``BootError``) + degradable services (workspace, agent registry,
+       namespace, observability → WARNING + ``None``).
     3. **Brick** — optional (search, wallet, manifest, upload, distributed).
        Failure is silent (DEBUG) + ``None``.
 
@@ -142,40 +143,41 @@ def create_nexus_services(
         profile_tuning=_profile_tuning,
     )
 
-    # --- Tier 0: KERNEL (fatal on failure) ---
-    kernel_dict = _boot_kernel_services(ctx)
+    # --- Tier 0: KERNEL (validate Storage Pillars) ---
+    _boot_kernel_services(ctx)
 
-    # --- Tier 1: SYSTEM (degraded on failure, gated by profile) ---
-    system_dict = _boot_system_services(ctx, kernel_dict, _brick_on)
+    # --- Tier 1: SYSTEM (critical + degradable, gated by profile) ---
+    system_dict = _boot_system_services(ctx, _brick_on)
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
-    brick_dict = _boot_independent_bricks(ctx, kernel_dict, _brick_on)
+    brick_dict = _boot_independent_bricks(ctx, system_dict, _brick_on)
 
     # --- Start background threads post-construction ---
-    _start_background_services(kernel_dict, system_dict)
+    _start_background_services(system_dict)
 
     # --- Register factory-created bricks with lifecycle manager (Issue #1704) ---
     _blm = system_dict.get("brick_lifecycle_manager")
     if _blm is not None:
         _register_factory_bricks(_blm, brick_dict)
 
-    # --- Assemble 3-tier containers (Issue #2034) ---
-    kernel_services = _KernelServices(
-        router=router,
-        rebac_manager=kernel_dict["rebac_manager"],
-        dir_visibility_cache=kernel_dict["dir_visibility_cache"],
-        audit_store=kernel_dict["audit_store"],
-        entity_registry=kernel_dict["entity_registry"],
-        permission_enforcer=kernel_dict["permission_enforcer"],
-        hierarchy_manager=kernel_dict["hierarchy_manager"],
-        deferred_permission_buffer=kernel_dict["deferred_permission_buffer"],
-        workspace_registry=kernel_dict["workspace_registry"],
-        mount_manager=kernel_dict["mount_manager"],
-        workspace_manager=kernel_dict["workspace_manager"],
-        write_observer=kernel_dict["write_observer"],
-    )
+    # --- Assemble 3-tier containers (Issue #2034, #2193) ---
+    kernel_services = _KernelServices(router=router)
 
     system_services = _SystemServices(
+        # Former-kernel critical (Issue #2193)
+        rebac_manager=system_dict["rebac_manager"],
+        audit_store=system_dict["audit_store"],
+        entity_registry=system_dict["entity_registry"],
+        permission_enforcer=system_dict["permission_enforcer"],
+        write_observer=system_dict["write_observer"],
+        # Former-kernel degradable (Issue #2193)
+        dir_visibility_cache=system_dict["dir_visibility_cache"],
+        hierarchy_manager=system_dict["hierarchy_manager"],
+        deferred_permission_buffer=system_dict["deferred_permission_buffer"],
+        workspace_registry=system_dict["workspace_registry"],
+        mount_manager=system_dict["mount_manager"],
+        workspace_manager=system_dict["workspace_manager"],
+        # Original system services
         agent_registry=system_dict["agent_registry"],
         async_agent_registry=system_dict["async_agent_registry"],
         namespace_manager=system_dict["namespace_manager"],
@@ -441,7 +443,7 @@ def create_nexus_fs(
     def _brick_on(name: str) -> bool:
         return name in _resolved_bricks
 
-    _wired = _boot_wired_services(nx, kernel_services, brick_services, _brick_on)
+    _wired = _boot_wired_services(nx, kernel_services, system_services, brick_services, _brick_on)
     nx._bind_wired_services(_wired)
 
     # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)

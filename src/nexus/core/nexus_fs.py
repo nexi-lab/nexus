@@ -184,19 +184,20 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # =====================================================================
-        # Tier 0: KERNEL services (Issue #2034: from KernelServices)
+        # Tier 1: SYSTEM services — critical + degradable (Issue #2193)
+        # Moved from KernelServices to SystemServices per Liedtke's test.
         # =====================================================================
-        self._rebac_manager = ksvc.rebac_manager
-        self._dir_visibility_cache = ksvc.dir_visibility_cache
-        self._audit_store = ksvc.audit_store
-        self._entity_registry = ksvc.entity_registry
-        self._permission_enforcer = ksvc.permission_enforcer
-        self._hierarchy_manager = ksvc.hierarchy_manager
-        self._deferred_permission_buffer = ksvc.deferred_permission_buffer
-        self._workspace_registry = ksvc.workspace_registry
-        self.mount_manager = ksvc.mount_manager
-        self._workspace_manager = ksvc.workspace_manager
-        self._write_observer = ksvc.write_observer
+        self._rebac_manager = sys_svc.rebac_manager
+        self._dir_visibility_cache = sys_svc.dir_visibility_cache
+        self._audit_store = sys_svc.audit_store
+        self._entity_registry = sys_svc.entity_registry
+        self._permission_enforcer = sys_svc.permission_enforcer
+        self._hierarchy_manager = sys_svc.hierarchy_manager
+        self._deferred_permission_buffer = sys_svc.deferred_permission_buffer
+        self._workspace_registry = sys_svc.workspace_registry
+        self.mount_manager = sys_svc.mount_manager
+        self._workspace_manager = sys_svc.workspace_manager
+        self._write_observer = sys_svc.write_observer
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
 
@@ -270,7 +271,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.vfs_hooks import VFSHookPipeline
 
         _injected_pipeline = (
-            getattr(self._kernel_services, "hook_pipeline", None) if self._kernel_services else None
+            getattr(self._system_services, "hook_pipeline", None) if self._system_services else None
         )
         self._hook_pipeline: VFSHookPipeline = (
             _injected_pipeline if _injected_pipeline is not None else VFSHookPipeline()
@@ -353,11 +354,12 @@ class NexusFS(  # type: ignore[misc]
 
         # AutoParseWriteHook (post-write: background parsing)
         parser_reg = getattr(self, "parser_registry", None)
-        if parser_reg is not None and getattr(self, "auto_parse", False):
+        parse_fn = getattr(self, "_virtual_view_parse_fn", None)
+        if parser_reg is not None and parse_fn is not None and getattr(self, "auto_parse", False):
             pipeline.register_write_hook(
                 AutoParseWriteHook(
                     get_parser=parser_reg.get_parser,
-                    parse_fn=self.parse,  # type: ignore[attr-defined]
+                    parse_fn=parse_fn,
                 )
             )
 

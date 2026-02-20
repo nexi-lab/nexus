@@ -45,9 +45,8 @@ from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from nexus.contracts.types import OperationContext
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +140,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
-        # Session factory for caching support
-        session_factory: "type[Session] | None" = None,
+        # RecordStore for caching support
+        record_store: "RecordStoreABC | None" = None,
         # DI: ProfileTuning.connector (Issue #2071)
         connector_max_workers: int = 20,
     ):
@@ -157,8 +156,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             access_key_id: AWS access key (alternative to credentials_path)
             secret_access_key: AWS secret key (alternative to credentials_path)
             session_token: AWS session token (for temporary credentials)
-            session_factory: Optional session factory (e.g., metadata_store.session_factory)
-                           for caching support.
+            record_store: Optional RecordStoreABC instance for caching support.
         """
         try:
             # Configure retry behavior and connection pool for concurrent operations.
@@ -246,7 +244,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             )
 
             # Store session info for caching support (CacheConnectorMixin)
-            self.session_factory = session_factory
+            self.session_factory = record_store.session_factory if record_store else None
             # Issue #2071: DI for connector max workers
             self._connector_max_workers = connector_max_workers
 

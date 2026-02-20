@@ -24,13 +24,14 @@ from typing import TYPE_CHECKING
 from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
 from nexus.core.response import HandlerResponse
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
     from nexus.services.gateway import NexusFSGateway
+    from nexus.storage.record_store import RecordStoreABC
 
 
 class ShareLinkService:
@@ -51,15 +52,18 @@ class ShareLinkService:
     def __init__(
         self,
         gateway: NexusFSGateway,
+        record_store: RecordStoreABC | None = None,
         enforce_permissions: bool = True,
     ):
         """Initialize share link service.
 
         Args:
             gateway: NexusFSGateway for filesystem and DB access
+            record_store: Optional RecordStoreABC for direct DB access (preferred over gateway)
             enforce_permissions: Whether to enforce permission checks
         """
         self._gw = gateway
+        self._record_store = record_store
         self._enforce_permissions = enforce_permissions
         logger.info("[ShareLinkService] Initialized")
 
@@ -211,7 +215,11 @@ class ShareLinkService:
                 password_hash = self._hash_password(password)
 
             # Create share link record
-            session_factory = self._gw.session_factory
+            session_factory = (
+                self._record_store.session_factory
+                if self._record_store
+                else self._gw.session_factory
+            )
             if session_factory is None:
                 return HandlerResponse.error("Database not configured for share links", code=500)
 
@@ -269,7 +277,11 @@ class ShareLinkService:
 
             from nexus.storage.models import ShareLinkModel
 
-            session_factory = self._gw.session_factory
+            session_factory = (
+                self._record_store.session_factory
+                if self._record_store
+                else self._gw.session_factory
+            )
             if session_factory is None:
                 return HandlerResponse.error("Database not configured", code=500)
 
@@ -350,7 +362,11 @@ class ShareLinkService:
 
             from nexus.storage.models import ShareLinkModel
 
-            session_factory = self._gw.session_factory
+            session_factory = (
+                self._record_store.session_factory
+                if self._record_store
+                else self._gw.session_factory
+            )
             if session_factory is None:
                 return HandlerResponse.error("Database not configured", code=500)
 
@@ -424,7 +440,11 @@ class ShareLinkService:
 
             from nexus.storage.models import ShareLinkModel
 
-            session_factory = self._gw.session_factory
+            session_factory = (
+                self._record_store.session_factory
+                if self._record_store
+                else self._gw.session_factory
+            )
             if session_factory is None:
                 return HandlerResponse.error("Database not configured", code=500)
 
@@ -505,7 +525,11 @@ class ShareLinkService:
 
             from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
 
-            session_factory = self._gw.session_factory
+            session_factory = (
+                self._record_store.session_factory
+                if self._record_store
+                else self._gw.session_factory
+            )
             if session_factory is None:
                 return HandlerResponse.error("Database not configured", code=500)
 
@@ -632,7 +656,11 @@ class ShareLinkService:
 
             from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
 
-            session_factory = self._gw.session_factory
+            session_factory = (
+                self._record_store.session_factory
+                if self._record_store
+                else self._gw.session_factory
+            )
             if session_factory is None:
                 return HandlerResponse.error("Database not configured", code=500)
 

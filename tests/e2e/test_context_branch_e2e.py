@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -182,10 +183,15 @@ def fake_wm(session_factory, cas):
 
 
 @pytest.fixture
-def service(fake_wm, session_factory):
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def service(fake_wm, record_store):
     return ContextBranchService(
         workspace_manager=fake_wm,
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=None,
         default_zone_id="z1",
     )
@@ -290,7 +296,7 @@ class TestE2EPermissionEnforcement:
         rebac.rebac_check.return_value = False
         return ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=rebac,
             default_zone_id="z1",
             default_agent_id="agent-1",
@@ -559,7 +565,7 @@ class TestE2ECrossSessionContinuity:
         # Service instance 1: create exploration
         svc1 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )
@@ -570,7 +576,7 @@ class TestE2ECrossSessionContinuity:
         # Service instance 2: continue the work
         svc2 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )
@@ -585,7 +591,7 @@ class TestE2ECrossSessionContinuity:
         # Service instance 3: finish the exploration
         svc3 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )

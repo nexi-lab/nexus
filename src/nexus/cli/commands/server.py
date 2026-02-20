@@ -24,8 +24,8 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.sync_bridge import run_sync
 from nexus.lib.env import get_database_url
+from nexus.lib.sync_bridge import run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
         """Background thread worker that performs the actual sync."""
         import time
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         time.sleep(2)  # Wait for server to be fully ready
         console.print("[cyan]🔄 Starting background sync for connector mounts...[/cyan]")
@@ -862,11 +862,11 @@ def serve(
                                     m["mount_point"] == mount_point for m in existing_mounts
                                 )
 
-                                # Create backend instance with session factory for caching
+                                # Create backend instance with record store for caching
                                 backend = create_backend_from_config(
                                     backend_type,
                                     backend_cfg,
-                                    session_factory=nx.SessionLocal,
+                                    record_store=nx._record_store,
                                 )
 
                                 # Add mount to router
@@ -991,7 +991,7 @@ def serve(
 
             # Create composite provider that routes tokens to appropriate handler
             auth_provider = DiscriminatingAuthProvider(
-                api_key_provider=DatabaseAPIKeyAuth(session_factory=session_factory),
+                api_key_provider=DatabaseAPIKeyAuth(record_store=_record_store),
                 jwt_provider=DatabaseLocalAuth(
                     session_factory=session_factory,
                     jwt_secret=jwt_secret,

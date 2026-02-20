@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
 
     from nexus.contracts.types import OperationContext
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,7 @@ class GmailConnectorBackend(
         token_manager_db: str,
         user_email: str | None = None,
         provider: str = "gmail",
-        session_factory: Any = None,
+        record_store: "RecordStoreABC | None" = None,
         max_message_per_label: int = 200,
         metadata_store: Any = None,
     ):
@@ -211,7 +212,7 @@ class GmailConnectorBackend(
             user_email: Optional user email for OAuth lookup. If None, uses authenticated
                        user from OperationContext (recommended for multi-user scenarios)
             provider: OAuth provider name from config (default: "gmail")
-            session_factory: SQLAlchemy session factory for content caching (optional).
+            record_store: Optional RecordStoreABC instance for content caching.
                            If provided, enables persistent caching for fast grep/search.
             max_message_per_label: Maximum number of messages to fetch per label (default: 200).
                                   Set to None for unlimited. Useful for testing with small datasets.
@@ -227,7 +228,7 @@ class GmailConnectorBackend(
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
         # Store session factory for caching (CacheConnectorMixin)
-        self.session_factory = session_factory
+        self.session_factory = record_store.session_factory if record_store else None
 
         # Store max messages per label (for testing with small datasets)
         self.max_message_per_label = max_message_per_label
@@ -389,7 +390,7 @@ class GmailConnectorBackend(
             )
 
         # Get valid access token from TokenManager (auto-refreshes if expired)
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             # Default to 'default' zone if not specified to match mount configurations

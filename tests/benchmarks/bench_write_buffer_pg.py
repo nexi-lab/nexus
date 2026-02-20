@@ -89,9 +89,13 @@ class FakeMetadata:
 
 def bench_sync(engine, session_factory, n: int) -> dict:
     """Benchmark sync writes (one DB round-trip per write)."""
+    from unittest.mock import MagicMock
+
     from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
-    syncer = RecordStoreWriteObserver(session_factory)
+    mock_record_store = MagicMock()
+    mock_record_store.session_factory = session_factory
+    syncer = RecordStoreWriteObserver(mock_record_store)
 
     latencies = []
     for i in range(n):
@@ -129,10 +133,14 @@ def bench_buffered(
     engine, session_factory, n: int, flush_interval_ms: int = 50, max_buffer_size: int = 50
 ) -> dict:
     """Benchmark buffered writes (hot path = enqueue only, flush in background)."""
+    from unittest.mock import MagicMock
+
     from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
 
+    mock_record_store = MagicMock()
+    mock_record_store.session_factory = session_factory
     syncer = BufferedRecordStoreWriteObserver(
-        session_factory,
+        mock_record_store,
         flush_interval_ms=flush_interval_ms,
         max_buffer_size=max_buffer_size,
     )

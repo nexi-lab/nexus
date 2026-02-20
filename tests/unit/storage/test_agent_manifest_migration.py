@@ -10,35 +10,34 @@ Covers:
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 from nexus.services.agents.agent_registry import AgentRegistry, _safe_json_loads
-from nexus.storage.models import Base
 from nexus.storage.models.agents import AgentRecordModel
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
 @pytest.fixture
-def engine():
-    """In-memory SQLite for migration tests."""
-    eng = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(eng)
-    return eng
+def record_store():
+    """Shared in-memory RecordStore for all components."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session_factory(engine):
-    return sessionmaker(bind=engine, expire_on_commit=False)
+def engine(record_store):
+    return record_store.engine
 
 
 @pytest.fixture
-def registry(session_factory):
-    return AgentRegistry(session_factory=session_factory)
+def session_factory(record_store):
+    return record_store.session_factory
+
+
+@pytest.fixture
+def registry(record_store):
+    return AgentRegistry(record_store=record_store)
 
 
 # ---------------------------------------------------------------------------

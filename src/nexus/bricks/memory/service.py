@@ -122,9 +122,13 @@ class Memory:
         if entity_registry is not None:
             self.entity_registry = entity_registry
         else:
+            from types import SimpleNamespace
+
             from nexus.rebac.entity_registry import EntityRegistry
 
-            self.entity_registry = EntityRegistry(session)
+            self.entity_registry = EntityRegistry(
+                SimpleNamespace(session_factory=lambda: session)  # type: ignore[arg-type]
+            )
 
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
 

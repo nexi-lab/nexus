@@ -595,7 +595,7 @@ def build_hierarchy(
     Returns:
         HierarchyResult with hierarchy data
     """
-    from nexus.core.sync_bridge import run_sync
+    from nexus.lib.sync_bridge import run_sync
 
     manager = HierarchicalMemoryManager(consolidation_engine, session, zone_id)
     return run_sync(

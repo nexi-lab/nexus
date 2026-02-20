@@ -123,8 +123,9 @@ def service(
     cas_store: FakeCASStore,
     metadata_store: FakeMetadataStore,
 ) -> TransactionalSnapshotService:
+    mock_record_store = MagicMock(session_factory=session_factory)
     svc = TransactionalSnapshotService(
-        session_factory=session_factory,
+        record_store=mock_record_store,
         cas_store=cas_store,
         metadata_store=metadata_store,
         metadata_factory=_fake_metadata_factory,

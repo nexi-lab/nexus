@@ -902,7 +902,9 @@ async def db_auth_client(
         session.commit()
 
     # Real DatabaseAPIKeyAuth provider
-    db_auth = DatabaseAPIKeyAuth(SessionFactory)
+    from types import SimpleNamespace
+
+    db_auth = DatabaseAPIKeyAuth(SimpleNamespace(session_factory=SessionFactory))
 
     # AsyncNexusFS with real ReBAC permissions
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))

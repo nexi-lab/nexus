@@ -45,9 +45,9 @@ def _get_delegation_service(request: Request) -> Any:
     if cached is not None:
         return cached
 
-    session_factory = getattr(state, "session_factory", None)
-    if session_factory is None:
-        raise HTTPException(status_code=503, detail="Session factory not available")
+    record_store = getattr(state, "record_store", None)
+    if record_store is None:
+        raise HTTPException(status_code=503, detail="RecordStore not available")
 
     rebac_manager = getattr(state, "rebac_manager", None)
     if rebac_manager is None:
@@ -56,7 +56,7 @@ def _get_delegation_service(request: Request) -> Any:
     from nexus.bricks.delegation.service import DelegationService
 
     service = DelegationService(
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=rebac_manager,
         namespace_manager=getattr(state, "namespace_manager", None),
         entity_registry=getattr(state, "entity_registry", None),

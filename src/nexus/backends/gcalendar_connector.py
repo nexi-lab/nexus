@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
 
     from nexus.contracts.types import OperationContext
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,7 @@ send_notifications: true
         token_manager_db: str,
         user_email: str | None = None,
         provider: str = "gcalendar",
-        session_factory: Any = None,
+        record_store: RecordStoreABC | None = None,
         max_events_per_calendar: int = 250,
         metadata_store: Any = None,
     ):
@@ -249,7 +250,7 @@ send_notifications: true
             user_email: Optional user email for OAuth lookup. If None, uses authenticated
                        user from OperationContext (recommended for multi-user scenarios)
             provider: OAuth provider name from config (default: "gcalendar")
-            session_factory: SQLAlchemy session factory for content caching (optional).
+            record_store: Optional RecordStoreABC instance for content caching.
                            If provided, enables persistent caching for fast grep/search.
             max_events_per_calendar: Maximum number of events to fetch per calendar (default: 250).
             metadata_store: MetastoreABC instance for writing to file_paths table (optional).
@@ -260,7 +261,7 @@ send_notifications: true
         """
         super().__init__()
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
-        self.session_factory = session_factory
+        self.session_factory = record_store.session_factory if record_store else None
         self.max_events_per_calendar = max_events_per_calendar
         self.metadata_store = metadata_store
 
@@ -344,7 +345,7 @@ send_notifications: true
             )
 
         # Get valid access token from TokenManager
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             zone_id = (

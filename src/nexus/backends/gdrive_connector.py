@@ -275,7 +275,7 @@ class GoogleDriveConnectorBackend(Backend):
 
         try:
             # Check if we have a valid token
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             zone_id = (
                 context.zone_id
@@ -396,7 +396,7 @@ class GoogleDriveConnectorBackend(Backend):
             )
 
         # Get valid access token from TokenManager (auto-refreshes if expired)
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             # Default to 'root' zone if not specified to match mount configurations

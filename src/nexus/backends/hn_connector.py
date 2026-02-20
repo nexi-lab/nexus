@@ -51,9 +51,8 @@ from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from nexus.contracts.types import OperationContext
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +143,8 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         cache_ttl: int = 300,
         stories_per_feed: int = 10,
         include_comments: bool = True,
-        # Database session for L2 caching (optional)
-        session_factory: "type[Session] | None" = None,
+        # RecordStore for L2 caching (optional)
+        record_store: "RecordStoreABC | None" = None,
     ):
         """
         Initialize HackerNews connector.
@@ -154,12 +153,12 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             cache_ttl: Default cache TTL in seconds (default: 300)
             stories_per_feed: Number of stories per feed, 1-30 (default: 10)
             include_comments: Include nested comments in story files (default: True)
-            session_factory: Optional session factory for L2 caching
+            record_store: Optional RecordStoreABC instance for L2 caching
         """
         self.cache_ttl = cache_ttl
         self.stories_per_feed = min(max(stories_per_feed, 1), 30)
         self.include_comments = include_comments
-        self.session_factory = session_factory
+        self.session_factory = record_store.session_factory if record_store else None
 
         # HTTP client for HN API
         self._client: httpx.AsyncClient | None = None
@@ -456,7 +455,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             finally:
                 await self._close_client()
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         content = run_sync(_fetch())
 
@@ -769,7 +768,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
             await self._close_client()
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         run_sync(_sync_feeds())
         return result

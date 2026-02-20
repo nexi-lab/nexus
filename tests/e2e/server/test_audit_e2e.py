@@ -172,11 +172,16 @@ def audit_server(tmp_path_factory):
     # Seed audit records directly in the database
     seeded = False
     try:
+        from unittest.mock import MagicMock
+
         from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+        from nexus.storage.record_store import RecordStoreABC
 
         eng3 = ce(f"sqlite:///{db_path}")
         factory3 = sessionmaker(bind=eng3)
-        audit_logger = ExchangeAuditLogger(session_factory=factory3)
+        mock_record_store = MagicMock(spec=RecordStoreABC)
+        mock_record_store.session_factory = factory3
+        audit_logger = ExchangeAuditLogger(record_store=mock_record_store)
 
         for i in range(5):
             audit_logger.record(

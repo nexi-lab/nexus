@@ -200,15 +200,15 @@ async def _startup_writeback(app: FastAPI) -> None:
 
         # ConflictLogStore is always available for the REST API
         _is_pg = gw.is_postgresql
-        conflict_log_store = ConflictLogStore(gw.session_factory, is_postgresql=_is_pg)
+        conflict_log_store = ConflictLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
         app.state.conflict_log_store = conflict_log_store
 
         wb_event_bus = None
         if hasattr(app.state.nexus_fs, "_event_bus"):
             wb_event_bus = app.state.nexus_fs._event_bus
         if wb_event_bus:
-            backlog_store = SyncBacklogStore(gw.session_factory, is_postgresql=_is_pg)
-            change_log_store = ChangeLogStore(gw.session_factory, is_postgresql=_is_pg)
+            backlog_store = SyncBacklogStore(record_store=gw.record_store, is_postgresql=_is_pg)
+            change_log_store = ChangeLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
 
             # Map env var to ConflictStrategy (backward compat)
             _policy_map = {

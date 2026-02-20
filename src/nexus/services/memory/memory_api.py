@@ -130,9 +130,13 @@ class Memory:
         # Initialize entity registry — lazy import for backward compat (Issue #2190)
         _concrete_entity_registry = None
         if entity_registry is None:
+            from types import SimpleNamespace
+
             from nexus.rebac.entity_registry import EntityRegistry
 
-            _concrete_entity_registry = EntityRegistry(session)
+            _concrete_entity_registry = EntityRegistry(
+                SimpleNamespace(session_factory=lambda: session)  # type: ignore[arg-type]
+            )
             entity_registry = _concrete_entity_registry
         self.entity_registry = entity_registry
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
@@ -538,10 +542,9 @@ class Memory:
         """
         import json
 
-        from nexus.core.sync_bridge import run_sync
-
         # Get database URL from session's engine
         from nexus.lib.env import get_database_url
+        from nexus.lib.sync_bridge import run_sync
         from nexus.search.graph_store import GraphStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -926,7 +929,7 @@ class Memory:
         """
         import json
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         # #1023: Validate and normalize temporal parameters
         after_dt, before_dt = validate_temporal_params(after, before, during)
@@ -1655,7 +1658,7 @@ class Memory:
 
     def reflect(self, trajectory_id: str, context: str | None = None) -> dict[str, Any]:
         """Reflect on a single trajectory (sync). Delegates to ACE Reflector."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(self.reflect_async(trajectory_id, context))
 
@@ -1814,7 +1817,7 @@ class Memory:
         task_type: str | None = None,
     ) -> dict[str, Any]:
         """Batch reflection across multiple trajectories (sync)."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(self.batch_reflect_async(agent_id, since, min_trajectories, task_type))
 
@@ -1907,7 +1910,7 @@ class Memory:
         importance_threshold: float = 0.8,
     ) -> dict[str, Any]:
         """Consolidate memories (sync). Delegates to ACE ConsolidationEngine."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(
             self.consolidate_async(
@@ -1959,7 +1962,7 @@ class Memory:
         **task_kwargs: Any,
     ) -> tuple[Any, str]:
         """Execute with automatic learning loop (sync). Delegates to ACE LearningLoop."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(
             self.execute_with_learning_async(
@@ -2133,7 +2136,7 @@ class Memory:
             >>> result = memory.index_memories()
             >>> print(f"Indexed {result['success_count']} memories")
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(
             self.index_memories_async(embedding_provider, batch_size, memory_type, scope)

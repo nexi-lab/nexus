@@ -9,6 +9,7 @@ brick structure.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -54,7 +55,9 @@ def backend(tmp_path):
 @pytest.fixture
 def entity_registry(session):
     """Create and populate entity registry."""
-    registry = EntityRegistry(session)
+    registry = EntityRegistry(
+        SimpleNamespace(session_factory=lambda: session)  # type: ignore[arg-type]
+    )
     registry.register_entity("zone", "acme")
     registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")

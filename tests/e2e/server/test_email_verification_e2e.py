@@ -148,7 +148,9 @@ def _env(tmp_path: Path, monkeypatch):
         jwt_secret=jwt_secret,
         token_expiry=3600,
     )
-    api_key_auth = DatabaseAPIKeyAuth(session_factory=session_factory)
+    from types import SimpleNamespace
+
+    api_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))
     auth_provider = DiscriminatingAuthProvider(
         api_key_provider=api_key_auth,
         jwt_provider=local_auth,

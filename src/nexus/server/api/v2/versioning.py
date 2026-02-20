@@ -282,6 +282,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Eviction routes: %s", e)
 
+    # ---- Agent spec/status router (Issue #2169) ----
+    try:
+        from nexus.server.api.v2.routers.agent_status import router as agent_status_router
+
+        registry.add(RouterEntry(router=agent_status_router, name="agent_status", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import Agent status routes: %s", e)
+
     # ---- Governance router (Issue #1359) — admin auth required ----
     try:
         from nexus.server.api.v2.routers.governance import router as governance_router

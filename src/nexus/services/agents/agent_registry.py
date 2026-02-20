@@ -41,7 +41,13 @@ from sqlalchemy.exc import IntegrityError
 
 from nexus.contracts.agent_types import (
     AgentRecord,
+    AgentResources,
+    AgentResourceUsage,
+    AgentSpec,
     AgentState,
+    AgentStatus,
+    QoSClass,
+    derive_phase,
     is_new_session,
     validate_transition,
 )
@@ -51,6 +57,7 @@ from nexus.storage.models import AgentRecordModel
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from nexus.contracts.agent_types import AgentCondition
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -854,6 +861,170 @@ class AgentRegistry:
                 max_age_seconds,
             )
         return cleaned
+
+    # ------------------------------------------------------------------
+    # Spec / Status methods (Issue #2169)
+    # ------------------------------------------------------------------
+
+    def set_spec(self, agent_id: str, spec: AgentSpec) -> AgentSpec:
+        """Store an AgentSpec for an agent, serialized as JSON.
+
+        Increments the spec_generation on each call to enable drift detection.
+        Returns the stored spec with updated generation (no re-read needed).
+
+        Performance: 2 queries total (SELECT for existence + generation, UPDATE).
+
+        Args:
+            agent_id: Agent identifier.
+            spec: Desired state specification.
+
+        Returns:
+            The stored AgentSpec with updated spec_generation.
+
+        Raises:
+            ValueError: If agent not found.
+        """
+        spec_dict = self._spec_to_dict(spec)
+
+        with self._get_session() as session:
+            row = session.execute(
+                select(AgentRecordModel.agent_id, AgentRecordModel.agent_spec).where(
+                    AgentRecordModel.agent_id == agent_id
+                )
+            ).one_or_none()
+
+            if row is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+
+            # Load existing spec to determine next generation
+            existing_spec = self._parse_spec_json(row.agent_spec, agent_id)
+            next_gen = (existing_spec.spec_generation + 1) if existing_spec else 1
+            spec_dict["spec_generation"] = next_gen
+
+            now = datetime.now(UTC)
+            spec_json = json.dumps(spec_dict)
+            stmt = (
+                update(AgentRecordModel)
+                .where(AgentRecordModel.agent_id == agent_id)
+                .values(agent_spec=spec_json, updated_at=now)
+            )
+            session.execute(stmt)
+            session.flush()
+
+        logger.debug("[AGENT-REG] Set spec for agent %s (gen %d)", agent_id, next_gen)
+        # Return the spec from known values — no re-read needed
+        stored = self._parse_spec_json(spec_json, agent_id)
+        assert stored is not None  # noqa: S101 — we just wrote valid JSON
+        return stored
+
+    def get_spec(self, agent_id: str) -> AgentSpec | None:
+        """Retrieve the stored AgentSpec for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            AgentSpec if stored, None if agent has no spec or doesn't exist.
+        """
+        with self._get_session() as session:
+            model = session.execute(
+                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            ).scalar_one_or_none()
+
+            if model is None:
+                return None
+
+            return self._parse_spec_json(model.agent_spec, agent_id)
+
+    def get_status(self, agent_id: str) -> AgentStatus | None:
+        """Compute the current AgentStatus for an agent.
+
+        Status is derived on read from the agent record, heartbeat buffer,
+        and stored spec. Single DB query + in-memory computation.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            Computed AgentStatus, or None if agent doesn't exist.
+        """
+        with self._get_session() as session:
+            model = session.execute(
+                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            ).scalar_one_or_none()
+
+            if model is None:
+                return None
+
+            state = AgentState(model.state)
+            spec = self._parse_spec_json(model.agent_spec, agent_id)
+
+            # Determine observed_generation from spec
+            observed_gen = spec.spec_generation if spec else 0
+
+            # Check heartbeat buffer for latest heartbeat
+            last_hb = self._heartbeat_buffer.get_latest(agent_id)
+            if last_hb is None:
+                last_hb = model.last_heartbeat
+
+            # Build conditions (empty for now — future extensions add conditions)
+            conditions: tuple[AgentCondition, ...] = ()
+
+            phase = derive_phase(state, conditions)
+
+            return AgentStatus(
+                phase=phase,
+                observed_generation=observed_gen,
+                conditions=conditions,
+                resource_usage=AgentResourceUsage(),
+                last_heartbeat=last_hb,
+                last_activity=model.updated_at,
+                inbox_depth=0,
+                context_usage_pct=0.0,
+            )
+
+    @staticmethod
+    def _spec_to_dict(spec: AgentSpec) -> dict[str, Any]:
+        """Serialize an AgentSpec to a JSON-safe dict."""
+        return {
+            "agent_type": spec.agent_type,
+            "capabilities": sorted(spec.capabilities),
+            "resource_requests": {
+                "token_budget": spec.resource_requests.token_budget,
+                "token_request": spec.resource_requests.token_request,
+                "storage_limit_mb": spec.resource_requests.storage_limit_mb,
+                "context_limit": spec.resource_requests.context_limit,
+            },
+            "resource_limits": {
+                "token_budget": spec.resource_limits.token_budget,
+                "token_request": spec.resource_limits.token_request,
+                "storage_limit_mb": spec.resource_limits.storage_limit_mb,
+                "context_limit": spec.resource_limits.context_limit,
+            },
+            "qos_class": str(spec.qos_class),
+            "zone_affinity": spec.zone_affinity,
+            "spec_generation": spec.spec_generation,
+        }
+
+    @staticmethod
+    def _parse_spec_json(raw: str | None, agent_id: str) -> AgentSpec | None:
+        """Deserialize an AgentSpec from a JSON text column."""
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            return AgentSpec(
+                agent_type=data.get("agent_type", ""),
+                capabilities=frozenset(data.get("capabilities", [])),
+                resource_requests=AgentResources(**data.get("resource_requests", {})),
+                resource_limits=AgentResources(**data.get("resource_limits", {})),
+                qos_class=QoSClass(data.get("qos_class", "standard")),
+                zone_affinity=data.get("zone_affinity"),
+                spec_generation=data.get("spec_generation", 1),
+            )
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+            logger.warning("[AGENT-REG] Corrupt agent_spec for agent %s", agent_id)
+            return None
 
     @staticmethod
     def _model_to_record(model: AgentRecordModel) -> AgentRecord:

@@ -334,6 +334,8 @@ class TestSystemServices:
             "resiliency_manager",
             "tiger_cache_manager",
             "zone_lifecycle",
+            "event_log",
+            "scheduler_service",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

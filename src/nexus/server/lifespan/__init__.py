@@ -193,7 +193,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if bg_tasks:
         with suppress(asyncio.CancelledError):
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
-        logger.debug(f"Cancelled {len(bg_tasks)} background tasks")
+        logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
     await shutdown_a2a_grpc(app)
     await shutdown_ipc(app)
@@ -214,4 +214,4 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.warning("Error shutting down CacheBrick: %s", e, exc_info=True)
 
-    await shutdown_observability()
+    await shutdown_observability(app)

@@ -115,13 +115,18 @@ class WriteBufferComponent:
         # WriteBuffer is started by the factory — mark as started
         self._started = True
 
-    async def shutdown(self, timeout_ms: int = 5000) -> None:  # noqa: ARG002
+    async def shutdown(self, timeout_ms: int = 5000) -> None:
         if not self._started:
             return
         if self._wo is not None and hasattr(self._wo, "stop"):
             try:
-                await asyncio.to_thread(self._wo.stop)
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._wo.stop),
+                    timeout=timeout_ms / 1000.0,
+                )
                 logger.info("WriteBuffer stopped")
+            except TimeoutError:
+                logger.warning("WriteBuffer stop timed out after %dms", timeout_ms)
             except Exception as e:
                 logger.warning("Error stopping WriteBuffer: %s", e, exc_info=True)
         self._started = False

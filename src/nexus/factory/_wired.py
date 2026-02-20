@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 def _boot_wired_services(
     nx: Any,
     kernel_services: Any,
+    system_services: Any,
     brick_services: Any,
     brick_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
@@ -29,19 +30,18 @@ def _boot_wired_services(
 
     Args:
         nx: The NexusFS instance (already constructed).
-        kernel_services: KernelServices container (Tier 0).
+        kernel_services: KernelServices container (Tier 0 — router only).
+        system_services: SystemServices container (Tier 1 — rebac, permissions, etc.).
         brick_services: BrickServices container (Tier 2).
         brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
 
     Returns:
         Dict of service name -> instance (some may be None).
     """
-    t0 = time.perf_counter()
+    from nexus.factory._helpers import _make_gate
 
-    def _on(name: str) -> bool:
-        if brick_on is None:
-            return True
-        return brick_on(name)
+    t0 = time.perf_counter()
+    _on = _make_gate(brick_on)
 
     # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
     gateway: Any = None
@@ -59,7 +59,7 @@ def _boot_wired_services(
         from nexus.services.rebac_service import ReBACService
 
         rebac_service = ReBACService(
-            rebac_manager=kernel_services.rebac_manager,
+            rebac_manager=system_services.rebac_manager,
             enforce_permissions=getattr(nx, "_enforce_permissions", True),
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
@@ -166,7 +166,7 @@ def _boot_wired_services(
             from nexus.services.mount_persist_service import MountPersistService
 
             mount_persist_service = MountPersistService(
-                mount_manager=kernel_services.mount_manager,
+                mount_manager=system_services.mount_manager,
                 mount_service=mount_core_service,
                 sync_service=sync_service,
             )
@@ -182,7 +182,7 @@ def _boot_wired_services(
 
         mount_service = MountService(
             router=kernel_services.router,
-            mount_manager=kernel_services.mount_manager,
+            mount_manager=system_services.mount_manager,
             nexus_fs=nx,
             sync_service=sync_service,
             sync_job_service=sync_job_service,
@@ -232,7 +232,7 @@ def _boot_wired_services(
                 metadata_store=nx.metadata,
                 permission_enforcer=getattr(nx, "_permission_enforcer", None),
                 router=kernel_services.router,
-                rebac_manager=kernel_services.rebac_manager,
+                rebac_manager=system_services.rebac_manager,
                 enforce_permissions=getattr(nx, "_enforce_permissions", True),
                 default_context=getattr(nx, "_default_context", None),
                 record_store=getattr(nx, "_record_store", None),

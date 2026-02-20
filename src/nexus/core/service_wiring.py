@@ -121,8 +121,7 @@ def wire_services(fs: Any) -> None:
     from nexus.services.metadata_export import MetadataExportService
 
     fs._metadata_export_service = MetadataExportService(
-        metastore=fs.metadata,
-        default_context=fs._default_context,
+        metadata=fs.metadata,
     )
 
     # ACERPCService: Replaces NexusFS ACE trajectory/playbook facades

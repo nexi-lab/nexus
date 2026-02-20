@@ -8,6 +8,9 @@ Run with pytest-benchmark:
     PYTHONPATH=src python -m pytest tests/benchmarks/bench_factory_boot.py -v -s -o "addopts="
 
 Works without pytest-benchmark (falls back to time.perf_counter loops).
+
+Issue #2193: Kernel tier is now validation-only (empty dict). Former-kernel
+services moved to system tier.
 """
 
 from __future__ import annotations
@@ -93,7 +96,6 @@ def _make_boot_context() -> Any:
         router=_make_mock_router(),
         engine=record_store.engine,
         read_engine=record_store.read_engine,
-        session_factory=record_store.session_factory,
         perm=perm,
         cache_ttl_seconds=cache_cfg.ttl_seconds,
         dist=dist,
@@ -265,7 +267,7 @@ class TestPerTierBreakdown:
     """Measure each boot tier independently for regression tracking."""
 
     def test_kernel_tier(self, boot_context: Any, bench: Any) -> None:
-        """Tier 0 (KERNEL) construction time."""
+        """Tier 0 (KERNEL) validation time — returns empty dict."""
         from nexus.factory import _boot_kernel_services
 
         ctx = boot_context
@@ -275,44 +277,41 @@ class TestPerTierBreakdown:
 
         result = bench(boot_kernel)
 
-        # Kernel must return all 11 expected keys (Issue #2034)
+        # Issue #2193: Kernel returns empty dict (validation only)
         assert isinstance(result, dict)
-        expected_keys = {
-            "rebac_manager",
-            "dir_visibility_cache",
-            "audit_store",
-            "entity_registry",
-            "permission_enforcer",
-            "hierarchy_manager",
-            "deferred_permission_buffer",
-            "workspace_registry",
-            "mount_manager",
-            "workspace_manager",
-            "write_observer",
-        }
-        assert set(result.keys()) == expected_keys, (
-            f"Kernel tier key mismatch. "
-            f"Missing: {expected_keys - set(result.keys())}. "
-            f"Extra: {set(result.keys()) - expected_keys}."
-        )
+        assert len(result) == 0
 
         if isinstance(bench, _FallbackBenchmark):
             print(f"\n  [KERNEL] mean={bench.mean_ms:.1f}ms")
 
     def test_system_tier(self, boot_context: Any, bench: Any) -> None:
-        """Tier 1 (SYSTEM) construction time."""
-        from nexus.factory import _boot_kernel_services, _boot_system_services
+        """Tier 1 (SYSTEM) construction time — includes former-kernel services."""
+        from nexus.factory import _boot_system_services
 
         ctx = boot_context
-        kernel = _boot_kernel_services(ctx)
 
         def boot_system() -> dict[str, Any]:
-            return _boot_system_services(ctx, kernel)
+            return _boot_system_services(ctx)
 
         result = bench(boot_system)
 
         assert isinstance(result, dict)
+        # Issue #2193: System now includes former-kernel services
         expected_keys = {
+            # Former-kernel critical
+            "rebac_manager",
+            "audit_store",
+            "entity_registry",
+            "permission_enforcer",
+            "write_observer",
+            # Former-kernel degradable
+            "dir_visibility_cache",
+            "hierarchy_manager",
+            "deferred_permission_buffer",
+            "workspace_registry",
+            "mount_manager",
+            "workspace_manager",
+            # Original system services
             "agent_registry",
             "async_agent_registry",
             "eviction_manager",
@@ -338,13 +337,13 @@ class TestPerTierBreakdown:
 
     def test_brick_tier(self, boot_context: Any, bench: Any) -> None:
         """Tier 2 (BRICK) construction time."""
-        from nexus.factory import _boot_brick_services, _boot_kernel_services
+        from nexus.factory import _boot_brick_services, _boot_system_services
 
         ctx = boot_context
-        kernel = _boot_kernel_services(ctx)
+        system = _boot_system_services(ctx)
 
         def boot_brick() -> dict[str, Any]:
-            return _boot_brick_services(ctx, kernel)
+            return _boot_brick_services(ctx, system)
 
         result = bench(boot_brick)
 
@@ -371,6 +370,8 @@ class TestPerTierBreakdown:
             "reputation_service",
             "version_service",
             "rebac_circuit_breaker",
+            "memory_router",
+            "memory_permission",
         }
         assert set(result.keys()) == expected_keys, (
             f"Brick tier key mismatch. "
@@ -392,23 +393,23 @@ class TestPerTierBreakdown:
         ctx = boot_context
 
         # Warmup
-        kernel = _boot_kernel_services(ctx)
-        _boot_system_services(ctx, kernel)
-        _boot_brick_services(ctx, kernel)
+        _boot_kernel_services(ctx)
+        system = _boot_system_services(ctx)
+        _boot_brick_services(ctx, system)
 
         # Measure each tier
         tier_times: dict[str, float] = {}
 
         t0 = time.perf_counter()
-        kernel = _boot_kernel_services(ctx)
+        _boot_kernel_services(ctx)
         tier_times["kernel"] = (time.perf_counter() - t0) * 1_000
 
         t0 = time.perf_counter()
-        _boot_system_services(ctx, kernel)
+        system = _boot_system_services(ctx)
         tier_times["system"] = (time.perf_counter() - t0) * 1_000
 
         t0 = time.perf_counter()
-        _boot_brick_services(ctx, kernel)
+        _boot_brick_services(ctx, system)
         tier_times["brick"] = (time.perf_counter() - t0) * 1_000
 
         total_ms = sum(tier_times.values())

@@ -2,12 +2,14 @@
 
 import io
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
 from nexus.contracts.exceptions import ParserError
 from nexus.parsers.base import Parser
 from nexus.parsers.types import ParseResult, TextChunk
+from nexus.parsers.utils import create_chunks, extract_structure
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +75,12 @@ class MarkItDownParser(Parser):
         self._enable_transcription = enable_transcription
         self._markitdown: Any = None
         self._available: bool | None = None  # Lazy: None means "not checked yet"
+        self._init_lock = threading.Lock()
 
     def _ensure_initialized(self) -> bool:
         """Lazily initialize the MarkItDown converter on first use.
+
+        Thread-safe via ``_init_lock`` (Issue #6A).
 
         Returns:
             True if MarkItDown is available, False otherwise.
@@ -83,15 +88,20 @@ class MarkItDownParser(Parser):
         if self._available is not None:
             return self._available
 
-        try:
-            from markitdown import MarkItDown
+        with self._init_lock:
+            # Double-check after acquiring lock
+            if self._available is not None:
+                return self._available
 
-            self._markitdown = MarkItDown()
-            self._available = True
-            logger.info("MarkItDown parser initialized successfully")
-        except ImportError:
-            self._available = False
-            logger.debug("MarkItDown not installed. Install with: pip install markitdown")
+            try:
+                from markitdown import MarkItDown
+
+                self._markitdown = MarkItDown()
+                self._available = True
+                logger.info("MarkItDown parser initialized successfully")
+            except ImportError:
+                self._available = False
+                logger.debug("MarkItDown not installed. Install with: pip install markitdown")
 
         return self._available
 
@@ -210,77 +220,12 @@ class MarkItDownParser(Parser):
             ) from e
 
     def _create_chunks(self, text: str) -> list[TextChunk]:
-        """Create semantic chunks from markdown text.
-
-        Splits on headers and paragraphs to create meaningful chunks.
-
-        Args:
-            text: Markdown text content
-
-        Returns:
-            List of TextChunk objects
-        """
-        chunks: list[TextChunk] = []
-        lines = text.split("\n")
-
-        current_chunk: list[str] = []
-        current_start = 0
-
-        for line in lines:
-            # Start new chunk on headers
-            if line.startswith("#") and current_chunk:
-                chunk_text = "\n".join(current_chunk).strip()
-                if chunk_text:
-                    chunks.append(
-                        TextChunk(
-                            text=chunk_text,
-                            start_index=current_start,
-                            end_index=current_start + len(chunk_text),
-                        )
-                    )
-                current_chunk = [line]
-                current_start += len(chunk_text) + 1
-            else:
-                current_chunk.append(line)
-
-        # Add final chunk
-        if current_chunk:
-            chunk_text = "\n".join(current_chunk).strip()
-            if chunk_text:
-                chunks.append(
-                    TextChunk(
-                        text=chunk_text,
-                        start_index=current_start,
-                        end_index=current_start + len(chunk_text),
-                    )
-                )
-
-        return chunks if chunks else [TextChunk(text=text, start_index=0, end_index=len(text))]
+        """Delegate to shared ``create_chunks`` utility."""
+        return create_chunks(text)
 
     def _extract_structure(self, text: str) -> dict[str, Any]:
-        """Extract document structure from markdown text.
-
-        Args:
-            text: Markdown text content
-
-        Returns:
-            Dictionary containing structure information
-        """
-        lines = text.split("\n")
-        headings = []
-
-        for line in lines:
-            if line.startswith("#"):
-                # Extract heading level and text
-                level = len(line) - len(line.lstrip("#"))
-                heading_text = line.lstrip("#").strip()
-                headings.append({"level": level, "text": heading_text})
-
-        return {
-            "headings": headings,
-            "has_headings": len(headings) > 0,
-            "line_count": len(lines),
-        }
+        """Delegate to shared ``extract_structure`` utility."""
+        return extract_structure(text)
 
     @property
     def supported_formats(self) -> list[str]:

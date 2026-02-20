@@ -117,6 +117,66 @@ class ResiliencyConfig:
     )
     targets: dict[str, TargetBinding] = field(default_factory=dict)
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> ResiliencyConfig:
+        """Convert raw YAML dict → frozen ``ResiliencyConfig`` dataclasses.
+
+        Returns default config when *raw* is None or empty.  Falls back to
+        default config on parse errors (logs the error).
+        """
+        if not raw:
+            return cls()
+
+        try:
+            timeouts: dict[str, TimeoutPolicy] = {"default": TimeoutPolicy()}
+            for name, val in raw.get("timeouts", {}).items():
+                if isinstance(val, dict):
+                    timeouts[name] = TimeoutPolicy(
+                        seconds=parse_duration(val.get("seconds", 5.0)),
+                    )
+                else:
+                    timeouts[name] = TimeoutPolicy(seconds=parse_duration(val))
+
+            retries: dict[str, RetryPolicy] = {"default": RetryPolicy()}
+            for name, val in raw.get("retries", {}).items():
+                if isinstance(val, dict):
+                    retries[name] = RetryPolicy(
+                        max_retries=int(val.get("max_retries", 3)),
+                        max_interval=float(val.get("max_interval", 10.0)),
+                        multiplier=float(val.get("multiplier", 2.0)),
+                        min_wait=float(val.get("min_wait", 1.0)),
+                    )
+
+            circuit_breakers: dict[str, CircuitBreakerPolicy] = {
+                "default": CircuitBreakerPolicy()
+            }
+            for name, val in raw.get("circuit_breakers", {}).items():
+                if isinstance(val, dict):
+                    circuit_breakers[name] = CircuitBreakerPolicy(
+                        failure_threshold=int(val.get("failure_threshold", 5)),
+                        success_threshold=int(val.get("success_threshold", 3)),
+                        timeout=parse_duration(val.get("timeout", 30.0)),
+                    )
+
+            targets: dict[str, TargetBinding] = {}
+            for name, val in raw.get("targets", {}).items():
+                if isinstance(val, dict):
+                    targets[name] = TargetBinding(
+                        timeout=str(val.get("timeout", "default")),
+                        retry=str(val.get("retry", "default")),
+                        circuit_breaker=str(val.get("circuit_breaker", "default")),
+                    )
+
+            return cls(
+                timeouts=timeouts,
+                retries=retries,
+                circuit_breakers=circuit_breakers,
+                targets=targets,
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            logger.error("Invalid resiliency config, using defaults: %s", exc)
+            return cls()
+
 
 # ---------------------------------------------------------------------------
 # 1C: CircuitBreakerOpenError

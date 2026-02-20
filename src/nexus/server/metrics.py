@@ -166,8 +166,22 @@ async def metrics_endpoint(request: Request) -> Response:  # noqa: ARG001
 
 
 def setup_prometheus() -> None:
-    """Populate the nexus info metric with the current version."""
+    """Populate the nexus info metric with the current version.
+
+    Also re-registers module-level metrics that may have been
+    unregistered by a previous ``shutdown_prometheus()`` call
+    (needed for test isolation with repeated lifespan cycles).
+    """
+    import contextlib
+
+    from prometheus_client import REGISTRY
+
     from nexus.server._version import get_nexus_version
+
+    # Re-register metrics (they may have been unregistered during shutdown)
+    for collector in (REQUEST_DURATION, REQUEST_COUNT, REQUESTS_IN_PROGRESS, NEXUS_INFO):
+        with contextlib.suppress(Exception):
+            REGISTRY.register(collector)
 
     version = get_nexus_version()
     NEXUS_INFO.info({"version": version})

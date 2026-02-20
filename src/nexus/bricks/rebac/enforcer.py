@@ -326,7 +326,7 @@ class PermissionEnforcer:
             )
             return results
 
-        except (OperationalError, TimeoutError, OSError) as e:
+        except (OperationalError, TimeoutError, OSError, RuntimeError) as e:
             logger.warning(
                 "[BATCH-OPT] has_accessible_descendants_batch error for "
                 "zone=%s subject=%s prefix_count=%d: %s, returning all False (fail-closed)",
@@ -539,7 +539,7 @@ class PermissionEnforcer:
                 object_id = mapper.get_object_id(
                     route.backend, route.backend_path, virtual_path=path, object_type=object_type
                 )
-            except (KeyError, ValueError, AttributeError, LookupError) as e:
+            except (KeyError, ValueError, AttributeError, LookupError, RuntimeError) as e:
                 # If routing fails, fall back to default "file" type with virtual path
                 logger.warning(
                     "[_check_rebac] Failed to route path=%s zone=%s for object type: %s, "

@@ -551,6 +551,25 @@ class PathNotMountedError(NexusError):
         super().__init__(msg, path)
 
 
+class ZoneTerminatingError(NexusError):
+    """Raised when a write is attempted on a zone in Terminating phase.
+
+    During zone deprovisioning, writes are gated while reads remain
+    allowed. Maps to HTTP 409 Conflict.
+
+    Issue #2061: Zone finalizer protocol for ordered cleanup.
+    """
+
+    is_expected = True  # Normal during zone deprovisioning
+    status_code = 409
+    error_type = "Conflict"
+
+    def __init__(self, zone_id: str):
+        self.zone_id = zone_id
+        msg = f"Zone '{zone_id}' is being deprovisioned — writes are blocked"
+        super().__init__(msg)
+
+
 class AccessDeniedError(NexusError):
     """Raised when access to a path is denied by namespace or zone rules.
 

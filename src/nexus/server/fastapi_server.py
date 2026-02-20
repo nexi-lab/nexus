@@ -372,6 +372,11 @@ def create_app(
     app.state.rlm_service = None  # Issue #1306: RLM inference brick
     app.state.manifest_resolver = None  # Issue #2130: context manifest brick
 
+    # Issue #2168: startup tracker for k8s health probes
+    from nexus.server.health import StartupTracker
+
+    app.state.startup_tracker = StartupTracker()
+
     # Initialize subscription manager if we have a metadata store
     try:
         if hasattr(nexus_fs, "SessionLocal"):
@@ -574,6 +579,11 @@ def _register_routes(app: FastAPI) -> None:
     from nexus.server.api.core.streaming import router as streaming_router
 
     app.include_router(health_router)
+
+    # Issue #2168: k8s-style health probes (/healthz/live, /healthz/ready, /healthz/startup)
+    from nexus.server.health.probes import router as probes_router
+
+    app.include_router(probes_router)
     app.include_router(features_router)
     app.include_router(debug_router)
     app.include_router(streaming_router)

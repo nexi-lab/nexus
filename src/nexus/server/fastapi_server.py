@@ -1393,6 +1393,7 @@ def create_app(
         "oauth_service",
         "mount_service",
         "version_service",
+        "share_link_service",
     ):
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:

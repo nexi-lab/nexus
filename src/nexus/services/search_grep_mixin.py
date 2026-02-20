@@ -24,7 +24,7 @@ from nexus.contracts.search_types import (
     SearchStrategy,
 )
 from nexus.core import glob_fast, grep_fast, trigram_fast
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 

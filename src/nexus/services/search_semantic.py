@@ -17,7 +17,7 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 

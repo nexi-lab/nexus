@@ -15,8 +15,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core.context_utils import get_database_url, get_user_identity, get_zone_id
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.context_utils import get_database_url, get_user_identity, get_zone_id
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 

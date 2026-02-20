@@ -102,7 +102,10 @@ class WrapperMetrics:
     def _get_otel_counters(self) -> dict[str, Any] | None:
         """Lazy-init OTel counters. Returns None if OTel is unavailable.
 
-        Uses double-checked locking for thread safety.
+        Uses double-checked locking for thread safety. The OTel
+        initialization is performed entirely inside the lock to prevent
+        another thread from seeing ``_otel_initialized = True`` before
+        ``_otel_counters`` is populated.
         """
         if self._otel_initialized:
             return self._otel_counters
@@ -110,21 +113,23 @@ class WrapperMetrics:
         with self._lock:
             if self._otel_initialized:
                 return self._otel_counters
-            self._otel_initialized = True
 
-        try:
-            from nexus.server.telemetry import is_telemetry_enabled
+            try:
+                from nexus.server.telemetry import is_telemetry_enabled
 
-            if not is_telemetry_enabled():
-                return None
+                if not is_telemetry_enabled():
+                    return None
 
-            from opentelemetry import metrics
+                from opentelemetry import metrics
 
-            meter = metrics.get_meter(self._meter_name)
-            self._otel_counters = {
-                name: meter.create_counter(f"{self._meter_name}.{name}")
-                for name in self._counter_names
-            }
+                meter = metrics.get_meter(self._meter_name)
+                self._otel_counters = {
+                    name: meter.create_counter(f"{self._meter_name}.{name}")
+                    for name in self._counter_names
+                }
+            except Exception:
+                pass
+            finally:
+                self._otel_initialized = True
+
             return self._otel_counters
-        except Exception:
-            return None

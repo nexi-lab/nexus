@@ -240,6 +240,12 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
+    # Event Log WAL — append-only audit trail (Issue #1397, #2195)
+    event_log: Any = None
+
+    # Scheduler service — fair-share task scheduling (Issue #1212, #2195)
+    scheduler_service: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure

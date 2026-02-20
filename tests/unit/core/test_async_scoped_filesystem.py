@@ -327,33 +327,6 @@ class TestMountOperations:
         assert result[0]["mount_point"] == "/external/gcs"
 
 
-class TestMemoryOperations:
-    """Test memory operation path scoping (async)."""
-
-    @pytest.mark.asyncio
-    async def test_register_memory(
-        self, scoped_fs: AsyncScopedFilesystem, mock_async_fs: MagicMock
-    ) -> None:
-        """Test register_memory with path scoping."""
-        mock_async_fs.register_memory = AsyncMock(
-            return_value={"path": "/zones/team_12/users/user_1/workspace/memory"}
-        )
-        result = await scoped_fs.register_memory("/workspace/memory", name="test-memory")
-        mock_async_fs.register_memory.assert_called_once()
-        assert result["path"] == "/workspace/memory"
-
-    @pytest.mark.asyncio
-    async def test_list_registered_memories(
-        self, scoped_fs: AsyncScopedFilesystem, mock_async_fs: MagicMock
-    ) -> None:
-        """Test list_registered_memories unscopes paths."""
-        mock_async_fs.list_registered_memories = AsyncMock(
-            return_value=[{"path": "/zones/team_12/users/user_1/workspace/memory"}]
-        )
-        result = await scoped_fs.list_registered_memories()
-        assert result[0]["path"] == "/workspace/memory"
-
-
 class TestAgentOperations:
     """Test that agent operations are passed through without path scoping."""
 

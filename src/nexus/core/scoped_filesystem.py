@@ -16,7 +16,6 @@ Example:
 from __future__ import annotations
 
 import builtins
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -287,121 +286,6 @@ class ScopedFilesystem:
     def get_available_namespaces(self) -> builtins.list[str]:
         """Get list of available namespace directories."""
         return self._fs.get_available_namespaces()
-
-    # ============================================================
-    # Workspace Versioning
-    # ============================================================
-
-    def workspace_snapshot(
-        self,
-        workspace_path: str | None = None,
-        description: str | None = None,
-        tags: builtins.list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Create a snapshot of a registered workspace."""
-        scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_snapshot(scoped_path, description, tags)
-        return self._unscope_dict(result, ["workspace_path", "path"])
-
-    def workspace_restore(
-        self,
-        snapshot_number: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Restore workspace to a previous snapshot."""
-        scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_restore(snapshot_number, scoped_path)
-        return self._unscope_dict(result, ["workspace_path", "path"])
-
-    def workspace_log(
-        self,
-        workspace_path: str | None = None,
-        limit: int = 100,
-    ) -> builtins.list[dict[str, Any]]:
-        """List snapshot history for workspace."""
-        scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_log(scoped_path, limit)
-        return [self._unscope_dict(r, ["workspace_path", "path"]) for r in result]
-
-    def workspace_diff(
-        self,
-        snapshot_1: int,
-        snapshot_2: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Compare two workspace snapshots."""
-        scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        return self._fs.workspace_diff(snapshot_1, snapshot_2, scoped_path)
-
-    # ============================================================
-    # Workspace & Memory Registry
-    # ============================================================
-
-    def register_workspace(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: timedelta | None = None,
-    ) -> dict[str, Any]:
-        """Register a workspace path."""
-        result = self._fs.register_workspace(
-            self._scope_path(path), name, description, created_by, tags, metadata, session_id, ttl
-        )
-        return self._unscope_dict(result, ["path"])
-
-    def unregister_workspace(self, path: str) -> bool:
-        """Unregister a workspace path."""
-        return self._fs.unregister_workspace(self._scope_path(path))
-
-    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
-        """List all registered workspaces."""
-        result = self._fs.list_workspaces(context=context)
-        return [self._unscope_dict(r, ["path"]) for r in result]
-
-    def get_workspace_info(self, path: str) -> dict | None:
-        """Get workspace information."""
-        result = self._fs.get_workspace_info(self._scope_path(path))
-        if result:
-            return self._unscope_dict(result, ["path"])
-        return None
-
-    def register_memory(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: timedelta | None = None,
-    ) -> dict[str, Any]:
-        """Register a memory path."""
-        result = self._fs.register_memory(
-            self._scope_path(path), name, description, created_by, tags, metadata, session_id, ttl
-        )
-        return self._unscope_dict(result, ["path"])
-
-    def unregister_memory(self, path: str) -> bool:
-        """Unregister a memory path."""
-        return self._fs.unregister_memory(self._scope_path(path))
-
-    def list_memories(self) -> builtins.list[dict]:
-        """List all registered memories."""
-        result = self._fs.list_memories()
-        return [self._unscope_dict(r, ["path"]) for r in result]
-
-    def get_memory_info(self, path: str) -> dict | None:
-        """Get memory information."""
-        result = self._fs.get_memory_info(self._scope_path(path))
-        if result:
-            return self._unscope_dict(result, ["path"])
-        return None
 
     # ============================================================
     # Sandbox Operations

@@ -148,7 +148,6 @@ class KernelServices:
     # Workspace subsystem
     workspace_registry: Any = None
     mount_manager: Any = None
-    workspace_manager: Any = None
 
     # Write sync
     write_observer: WriteObserverProtocol | None = None

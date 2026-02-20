@@ -13,6 +13,7 @@ from sqlalchemy import desc, select
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.workspace_manifest import WorkspaceManifest
+from nexus.core.rpc_decorator import rpc_expose
 from nexus.services.workspace_permissions import check_workspace_permission
 from nexus.storage.models import WorkspaceSnapshotModel
 
@@ -20,9 +21,23 @@ if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.metastore import MetastoreABC
     from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.services.workspace.workspace_registry import WorkspaceRegistry
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+
+def _ctx_ids(context: Any) -> tuple[str | None, str | None, str | None]:
+    """Extract (user_id, agent_id, zone_id) from dict or OperationContext."""
+    if context is None:
+        return None, None, None
+    if isinstance(context, dict):
+        return context.get("user_id"), context.get("agent_id"), context.get("zone_id")
+    return (
+        getattr(context, "user_id", None),
+        getattr(context, "agent_id", None),
+        getattr(context, "zone_id", None),
+    )
 
 
 class WorkspaceManager:
@@ -47,26 +62,18 @@ class WorkspaceManager:
         rebac_manager: ReBACBrickProtocol | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
-        record_store: RecordStoreABC | None = None,
+        session_factory: Any | None = None,
+        workspace_registry: WorkspaceRegistry | None = None,
     ):
-        """Initialize workspace manager.
-
-        Args:
-            metadata: Metadata store for querying file information
-            backend: Backend for storing manifest in CAS
-            rebac_manager: ReBAC manager for permission checks (optional)
-            zone_id: Default zone ID for operations (optional)
-            agent_id: Default agent ID for operations (optional)
-            record_store: RecordStoreABC instance providing session_factory
-        """
         self.metadata = metadata
         self.backend = backend
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
         self.agent_id = agent_id
-        if record_store is None:
-            raise ValueError("record_store is required — use factory.py for DI wiring")
-        self.metadata_session_factory = record_store.session_factory
+        if session_factory is None:
+            raise ValueError("session_factory is required — use factory.py for DI wiring")
+        self.metadata_session_factory = session_factory
+        self._workspace_registry = workspace_registry
 
     def _check_workspace_permission(
         self,
@@ -404,6 +411,68 @@ class WorkspaceManager:
                 for s in snapshots
             ]
 
+    def diff_by_number(
+        self,
+        workspace_path: str,
+        snapshot_1: int,
+        snapshot_2: int,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        zone_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare two snapshots by their sequential number.
+
+        Resolves snapshot numbers to IDs and delegates to diff_snapshots().
+
+        Args:
+            workspace_path: Path to registered workspace
+            snapshot_1: First snapshot number
+            snapshot_2: Second snapshot number
+            user_id: User ID for permission check
+            agent_id: Agent ID for permission check
+            zone_id: Zone ID for isolation
+
+        Returns:
+            Diff dict with added, removed, modified files
+
+        Raises:
+            NexusFileNotFoundError: If either snapshot number not found
+        """
+        snapshots = self.list_snapshots(
+            workspace_path=workspace_path,
+            limit=1000,
+            user_id=user_id,
+            agent_id=agent_id,
+            zone_id=zone_id,
+        )
+
+        snap_1_id = None
+        snap_2_id = None
+        for snap in snapshots:
+            if snap["snapshot_number"] == snapshot_1:
+                snap_1_id = snap["snapshot_id"]
+            if snap["snapshot_number"] == snapshot_2:
+                snap_2_id = snap["snapshot_id"]
+
+        if not snap_1_id:
+            raise NexusFileNotFoundError(
+                path=f"snapshot:{snapshot_1}",
+                message=f"Snapshot #{snapshot_1} not found",
+            )
+        if not snap_2_id:
+            raise NexusFileNotFoundError(
+                path=f"snapshot:{snapshot_2}",
+                message=f"Snapshot #{snapshot_2} not found",
+            )
+
+        return self.diff_snapshots(
+            snap_1_id,
+            snap_2_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            zone_id=zone_id,
+        )
+
     def diff_snapshots(
         self,
         snapshot_id_1: str,
@@ -611,3 +680,90 @@ class WorkspaceManager:
         stats = overlay_resolver.overlay_stats(overlay_config)
         result: dict[str, Any] = stats.to_dict()
         return result
+
+    # =========================================================================
+    # RPC entry points (Issue #638: moved from NexusFS kernel)
+    # =========================================================================
+
+    def _require_registered(self, workspace_path: str | None) -> str:
+        if not workspace_path:
+            raise ValueError("workspace_path must be provided")
+        if self._workspace_registry and not self._workspace_registry.get_workspace(workspace_path):
+            raise ValueError(
+                f"Workspace not registered: {workspace_path}. Use register_workspace() first."
+            )
+        return workspace_path
+
+    @rpc_expose(name="workspace_snapshot", description="Create workspace snapshot")
+    def rpc_workspace_snapshot(
+        self,
+        workspace_path: str | None = None,
+        description: str | None = None,
+        tags: list[str] | None = None,
+        created_by: str | None = None,
+        context: Any | None = None,
+    ) -> dict[str, Any]:
+        workspace_path = self._require_registered(workspace_path)
+        uid, aid, zid = _ctx_ids(context)
+        return self.create_snapshot(
+            workspace_path=workspace_path,
+            description=description,
+            tags=tags,
+            created_by=created_by,
+            user_id=uid,
+            agent_id=aid,
+            zone_id=zid,
+        )
+
+    @rpc_expose(name="workspace_restore", description="Restore workspace snapshot")
+    def rpc_workspace_restore(
+        self,
+        snapshot_number: int = 0,
+        workspace_path: str | None = None,
+        context: Any | None = None,
+    ) -> dict[str, Any]:
+        workspace_path = self._require_registered(workspace_path)
+        uid, aid, zid = _ctx_ids(context)
+        return self.restore_snapshot(
+            workspace_path=workspace_path,
+            snapshot_number=snapshot_number,
+            user_id=uid,
+            agent_id=aid,
+            zone_id=zid,
+        )
+
+    @rpc_expose(name="workspace_log", description="List workspace snapshots")
+    def rpc_workspace_log(
+        self,
+        workspace_path: str | None = None,
+        limit: int = 100,
+        context: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        workspace_path = self._require_registered(workspace_path)
+        uid, aid, zid = _ctx_ids(context)
+        return self.list_snapshots(
+            workspace_path=workspace_path,
+            limit=limit,
+            user_id=uid,
+            agent_id=aid,
+            zone_id=zid,
+        )
+
+    @rpc_expose(name="workspace_diff", description="Compare workspace snapshots")
+    def rpc_workspace_diff(
+        self,
+        snapshot_1: int = 0,
+        snapshot_2: int = 0,
+        workspace_path: str | None = None,
+        context: Any | None = None,
+    ) -> dict[str, Any]:
+        workspace_path = self._require_registered(workspace_path)
+        uid, aid, zid = _ctx_ids(context)
+        return self.diff_by_number(
+            workspace_path=workspace_path,
+            snapshot_1=snapshot_1,
+            snapshot_2=snapshot_2,
+            user_id=uid,
+            agent_id=aid,
+            zone_id=zid,
+        )

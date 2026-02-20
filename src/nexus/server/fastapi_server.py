@@ -1411,6 +1411,17 @@ def create_app(
             app.state.memory_service = _memory_svc  # for cleanup in lifespan
     except Exception as _exc:
         logger.debug("MemoryService unavailable: %s", _exc)
+    # Issue #638: Workspace services live outside kernel — created by factory
+    try:
+        from nexus.factory import create_workspace_services
+
+        _ws_mgr, _ws_reg = create_workspace_services(nexus_fs)
+        if _ws_mgr is not None:
+            _brick_sources.append(_ws_mgr)
+        if _ws_reg is not None:
+            _brick_sources.append(_ws_reg)
+    except Exception as _exc:
+        logger.debug("Workspace services unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)

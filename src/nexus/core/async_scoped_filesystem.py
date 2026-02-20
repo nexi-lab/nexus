@@ -401,43 +401,6 @@ class AsyncScopedFilesystem:
         )
 
     # ============================================================
-    # Memory Registration (Async)
-    # ============================================================
-
-    async def register_memory(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: Any | None = None,
-    ) -> dict[str, Any]:
-        """Register a directory as a memory (async)."""
-        result = await self._fs.register_memory(
-            self._scope_path(path), name, description, created_by, tags, metadata, session_id, ttl
-        )
-        return self._unscope_dict(result, ["path"])
-
-    async def unregister_memory(self, path: str) -> bool:
-        """Unregister a memory (async)."""
-        return await self._fs.unregister_memory(self._scope_path(path))
-
-    async def list_registered_memories(self) -> builtins.list[dict[str, Any]]:
-        """List all registered memory paths (async)."""
-        result = await self._fs.list_registered_memories()
-        return [self._unscope_dict(r, ["path"]) for r in result]
-
-    async def get_memory_info(self, path: str) -> dict[str, Any] | None:
-        """Get information about a registered memory (async)."""
-        result = await self._fs.get_memory_info(self._scope_path(path))
-        if result:
-            return self._unscope_dict(result, ["path"])
-        return None
-
-    # ============================================================
     # Agent Management (Async)
     # ============================================================
 

@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.rpc_decorator import rpc_expose
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -457,6 +459,92 @@ class WorkspaceRegistry:
         self._load_from_db()
         return list(self._workspaces.values())
 
+    def list_workspaces_for_user(
+        self,
+        user_id: str,
+        zone_id: str,
+    ) -> list[WorkspaceConfig]:
+        """List workspaces visible to a specific user.
+
+        Filters by:
+        1. Workspaces created by the user (created_by matches user_id)
+        2. OR workspaces in the user's zone-scoped path
+
+        Args:
+            user_id: Authenticated user ID
+            zone_id: User's zone ID
+
+        Returns:
+            Filtered list of WorkspaceConfig objects
+        """
+        configs = self.list_workspaces()
+        user_prefix = f"/zone/{zone_id}/user/{user_id}/workspace/"
+        return [c for c in configs if c.created_by == user_id or c.path.startswith(user_prefix)]
+
+    def load_config(
+        self,
+        workspaces: list[dict] | None = None,
+        memories: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        """Load workspaces and memories from configuration dicts.
+
+        Iterates config entries, skipping already-registered paths.
+
+        Args:
+            workspaces: List of workspace config dicts with keys:
+                - path (required): Workspace path
+                - name (optional): Friendly name
+                - description (optional): Description
+                - created_by (optional): Creator
+                - metadata (optional): Additional metadata dict
+            memories: List of memory config dicts (same format)
+
+        Returns:
+            Dict with registration counts (registered/skipped for each type)
+        """
+        results: dict[str, int] = {
+            "workspaces_registered": 0,
+            "workspaces_skipped": 0,
+            "memories_registered": 0,
+            "memories_skipped": 0,
+        }
+
+        if workspaces:
+            for ws_config in workspaces:
+                path = ws_config.get("path")
+                if not path:
+                    continue
+                if self.get_workspace(path):
+                    results["workspaces_skipped"] += 1
+                    continue
+                self.register_workspace(
+                    path=path,
+                    name=ws_config.get("name"),
+                    description=ws_config.get("description", ""),
+                    created_by=ws_config.get("created_by"),
+                    metadata=ws_config.get("metadata"),
+                )
+                results["workspaces_registered"] += 1
+
+        if memories:
+            for mem_config in memories:
+                path = mem_config.get("path")
+                if not path:
+                    continue
+                if self.get_memory(path):
+                    results["memories_skipped"] += 1
+                    continue
+                self.register_memory(
+                    path=path,
+                    name=mem_config.get("name"),
+                    description=mem_config.get("description", ""),
+                    created_by=mem_config.get("created_by"),
+                    metadata=mem_config.get("metadata"),
+                )
+                results["memories_registered"] += 1
+
+        return results
+
     # === Memory Management ===
 
     def register_memory(
@@ -729,3 +817,127 @@ class WorkspaceRegistry:
             if memory:
                 session.delete(memory)
                 session.commit()
+
+    # =========================================================================
+    # RPC entry points (Issue #638: moved from NexusFS kernel)
+    # =========================================================================
+
+    @rpc_expose(name="register_workspace")
+    def rpc_register_workspace(
+        self,
+        path: str = "",
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        ttl: Any | None = None,
+        context: Any | None = None,
+    ) -> dict[str, Any]:
+        _ = tags
+        if context is None and hasattr(self, "_operation_context"):
+            context = self._operation_context
+        config = self.register_workspace(
+            path=path,
+            name=name,
+            description=description or "",
+            created_by=created_by,
+            metadata=metadata,
+            context=context,
+            session_id=session_id,
+            ttl=ttl,
+        )
+        return config.to_dict()
+
+    @rpc_expose(name="unregister_workspace")
+    def rpc_unregister_workspace(self, path: str = "") -> bool:
+        return self.unregister_workspace(path)
+
+    @rpc_expose(name="update_workspace")
+    def rpc_update_workspace(
+        self,
+        path: str = "",
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
+        config = self.update_workspace(path, name, description, metadata)
+        return config.to_dict()
+
+    @rpc_expose(name="list_workspaces")
+    def rpc_list_workspaces(self, context: Any | None = None) -> list[dict]:
+        user_id = None
+        zone_id = None
+        if context is not None:
+            user_id = (
+                getattr(context, "user_id", None)
+                if not isinstance(context, dict)
+                else context.get("user_id")
+            )
+            zone_id = (
+                getattr(context, "zone_id", None)
+                if not isinstance(context, dict)
+                else context.get("zone_id")
+            )
+        if not user_id or not zone_id:
+            raise ValueError(
+                "list_workspaces requires authenticated context with user_id and zone_id"
+            )
+        configs = self.list_workspaces_for_user(user_id, zone_id)
+        return [c.to_dict() for c in configs]
+
+    @rpc_expose(name="get_workspace_info")
+    def rpc_get_workspace_info(self, path: str = "") -> dict | None:
+        config = self.get_workspace(path)
+        return config.to_dict() if config else None
+
+    @rpc_expose(name="load_workspace_memory_config")
+    def rpc_load_workspace_memory_config(
+        self,
+        workspaces: list[dict] | None = None,
+        memories: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        return self.load_config(workspaces=workspaces, memories=memories)
+
+    @rpc_expose(name="register_memory")
+    def rpc_register_memory(
+        self,
+        path: str = "",
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        ttl: Any | None = None,
+        context: Any | None = None,
+    ) -> dict[str, Any]:
+        _ = tags
+        if context is None and hasattr(self, "_operation_context"):
+            context = self._operation_context
+        config = self.register_memory(
+            path=path,
+            name=name,
+            description=description or "",
+            created_by=created_by,
+            metadata=metadata,
+            context=context,
+            session_id=session_id,
+            ttl=ttl,
+        )
+        return config.to_dict()
+
+    @rpc_expose(name="unregister_memory")
+    def rpc_unregister_memory(self, path: str = "") -> bool:
+        return self.unregister_memory(path)
+
+    @rpc_expose(name="list_registered_memories")
+    def rpc_list_registered_memories(self) -> list[dict]:
+        configs = self.list_memories()
+        return [c.to_dict() for c in configs]
+
+    @rpc_expose(name="get_memory_info")
+    def rpc_get_memory_info(self, path: str = "") -> dict | None:
+        config = self.get_memory(path)
+        return config.to_dict() if config else None

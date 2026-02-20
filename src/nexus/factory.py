@@ -631,7 +631,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             "deferred_permission_buffer": deferred_permission_buffer,
             "workspace_registry": workspace_registry,
             "mount_manager": mount_manager,
-            "workspace_manager": workspace_manager,
+            "workspace_manager": workspace_manager,  # used by ContextBranchService only
             "write_observer": write_observer,
         }
 
@@ -1796,7 +1796,6 @@ def create_nexus_services(
         deferred_permission_buffer=kernel_dict["deferred_permission_buffer"],
         workspace_registry=kernel_dict["workspace_registry"],
         mount_manager=kernel_dict["mount_manager"],
-        workspace_manager=kernel_dict["workspace_manager"],
         write_observer=kernel_dict["write_observer"],
     )
 
@@ -2259,3 +2258,40 @@ def create_memory_service(nx: Any) -> Any:
     except Exception as exc:
         logger.debug("[FACTORY] MemoryService unavailable: %s", exc)
         return None
+
+
+def create_workspace_services(nx: Any) -> tuple[Any, Any]:
+    """Create WorkspaceManager + WorkspaceRegistry for server-layer RPC (Issue #638).
+
+    This is a **server-layer** factory function — the kernel (NexusFS) has
+    zero knowledge of WorkspaceManager.  The server calls this once during
+    ``create_app()`` and registers the results as additional RPC sources.
+
+    Args:
+        nx: A NexusFS instance (used to read metadata, backend, session factory).
+
+    Returns:
+        (workspace_manager, workspace_registry) tuple.  Either may be None
+        if dependencies are unavailable.
+    """
+    workspace_registry = getattr(nx, "_workspace_registry", None)
+
+    workspace_manager = None
+    try:
+        from nexus.services.workspace_manager import WorkspaceManager
+
+        default_ctx = getattr(nx, "_default_context", None)
+        workspace_manager = WorkspaceManager(
+            metadata=nx.metadata,
+            backend=nx.backend,
+            rebac_manager=getattr(nx, "_rebac_manager", None),
+            zone_id=getattr(default_ctx, "zone_id", None) if default_ctx else None,
+            agent_id=getattr(default_ctx, "agent_id", None) if default_ctx else None,
+            session_factory=nx.SessionLocal,
+            workspace_registry=workspace_registry,
+        )
+        logger.info("[FACTORY] WorkspaceManager created for server-layer RPC")
+    except Exception as exc:
+        logger.debug("[FACTORY] WorkspaceManager unavailable: %s", exc)
+
+    return workspace_manager, workspace_registry

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.services.permissions.permission_filter_chain import (
+from nexus.rebac.filter_chain import (
     BulkReBACStrategy,
     FilterContext,
     FilterResult,

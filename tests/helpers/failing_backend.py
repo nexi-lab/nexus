@@ -27,7 +27,7 @@ from nexus.contracts.exceptions import BackendError
 from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 
 class FailingBackend(Backend):

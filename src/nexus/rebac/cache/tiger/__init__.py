@@ -1,17 +1,22 @@
 """Tiger Cache - Pre-materialized Permissions as Roaring Bitmaps.
 
-Consolidated: canonical implementation lives in
-``nexus.services.permissions.cache.tiger`` (ORM-based, Issue #2071).
-This module re-exports for backward compatibility.
+Implements pre-computed permission caches for O(1) list operations,
+based on SpiceDB's Tiger Cache proposal.
 
-Related: Issue #682, #2071
+Submodules:
+- resource_map: Maps resource UUIDs to int64 IDs for bitmap storage
+- bitmap_cache: Main cache with check/update/invalidation logic
+- updater: Background worker for incremental updates via changelog
+- expander: Directory grant expansion worker (Leopard-style)
+
+Related: Issue #682, #1891
 """
 
-from nexus.services.permissions.cache.tiger.bitmap_cache import CacheKey, TigerCache
-from nexus.services.permissions.cache.tiger.expander import DirectoryGrantExpander
-from nexus.services.permissions.cache.tiger.facade import TigerFacade
-from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap
-from nexus.services.permissions.cache.tiger.updater import TigerCacheUpdater
+from nexus.rebac.cache.tiger.bitmap_cache import CacheKey, TigerCache
+from nexus.rebac.cache.tiger.expander import DirectoryGrantExpander
+from nexus.rebac.cache.tiger.facade import TigerFacade
+from nexus.rebac.cache.tiger.resource_map import TigerResourceMap
+from nexus.rebac.cache.tiger.updater import TigerCacheUpdater
 
 __all__ = [
     "CacheKey",

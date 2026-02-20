@@ -1,1 +1,1 @@
-"""Shared utilities for the permissions subsystem."""
+"""Backward-compat shim — canonical: nexus.rebac.utils."""

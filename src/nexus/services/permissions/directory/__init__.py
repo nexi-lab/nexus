@@ -1,11 +1,17 @@
-"""Directory permission operations — Leopard-style pre-materialization.
+"""Backward-compat shim — canonical: nexus.rebac.directory.
 
-Extracts directory-related operations from EnhancedReBACManager:
-- DirectoryExpander: path detection, grant expansion, descendant queries
-
-Related: Issue #1459 Phase 13, Leopard pattern
+Deprecated: import from nexus.rebac.directory instead.
 """
 
-from nexus.services.permissions.directory.expander import DirectoryExpander
+import warnings
+
+warnings.warn(
+    "nexus.services.permissions.directory is deprecated. "
+    "Import from nexus.rebac.directory instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from nexus.rebac.directory import DirectoryExpander  # noqa: F401, E402
 
 __all__ = ["DirectoryExpander"]

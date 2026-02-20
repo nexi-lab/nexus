@@ -1669,7 +1669,7 @@ class ReBACService(ReBACShareMixin):
             return
 
         # Use permission enforcer to check permission for file resources
-        if hasattr(self, "_permission_enforcer"):
+        if getattr(self, "_permission_enforcer", None) is not None:
             has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
 
             # If user is not owner, check if they are zone admin

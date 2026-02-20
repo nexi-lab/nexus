@@ -6,13 +6,19 @@ Provides centralized helpers for:
 - Extracting zone_id from context with defaults
 - Extracting user identity (type, id) from context
 - Resolving database URLs with environment variable priority
+- Parsing OperationContext from dicts (Issue #2033)
+- Building created_by strings for version tracking (Issue #2033)
+- Extracting subject tuples from context (Issue #2033)
 """
+
+from __future__ import annotations
 
 import logging
 import os
 from typing import Any
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -154,3 +160,117 @@ def resolve_skill_base_path(context: Any) -> str:
             return f"/skills/zones/{zone_id}/"
 
     return "/skills/system/"
+
+
+# -------------------------------------------------------------------------
+# Extracted from NexusFS (Issue #2033)
+# -------------------------------------------------------------------------
+
+
+def parse_context(context: OperationContext | dict | None = None) -> OperationContext:
+    """Parse context dict or OperationContext into OperationContext.
+
+    Args:
+        context: Optional context dict or OperationContext.
+
+    Returns:
+        OperationContext instance.
+    """
+    if isinstance(context, OperationContext):
+        return context
+
+    if context is None:
+        context = {}
+
+    return OperationContext(
+        user_id=context.get("user_id", "system"),
+        groups=context.get("groups", []),
+        zone_id=context.get("zone_id"),
+        agent_id=context.get("agent_id"),
+        is_admin=context.get("is_admin", False),
+        is_system=context.get("is_system", False),
+    )
+
+
+def get_created_by(
+    context: OperationContext | dict | None,
+    default_context: OperationContext,
+) -> str | None:
+    """Get the created_by value for version history tracking.
+
+    Args:
+        context: Operation context with per-request values.
+        default_context: Fallback context when *context* is None.
+
+    Returns:
+        Combined string, e.g. ``'user:alice,agent:bot'``, or None.
+    """
+    user: str | None = None
+    agent: str | None = None
+
+    if context is None:
+        user = getattr(default_context, "user_id", None)
+        agent = default_context.agent_id
+    elif hasattr(context, "agent_id"):
+        user = getattr(context, "user_id", None)
+        agent = context.agent_id
+    elif isinstance(context, dict):
+        user = context.get("user_id")
+        agent = context.get("agent_id")
+    else:
+        user = getattr(default_context, "user_id", None)
+        agent = default_context.agent_id
+
+    parts: list[str] = []
+    if user:
+        parts.append(f"user:{user}")
+    if agent:
+        parts.append(f"agent:{agent}")
+
+    return ",".join(parts) if parts else None
+
+
+def get_subject_from_context(context: Any) -> tuple[str, str] | None:
+    """Extract subject from operation context.
+
+    Args:
+        context: Operation context (OperationContext or dict).
+
+    Returns:
+        Subject tuple ``(type, id)`` or None.
+    """
+    if not context:
+        return None
+
+    # Handle dict format (used by RPC server and tests)
+    if isinstance(context, dict):
+        subject = context.get("subject")
+        if subject and isinstance(subject, tuple) and len(subject) == 2:
+            return (str(subject[0]), str(subject[1]))
+
+        subject_type = context.get("subject_type", "user")
+        subject_id = context.get("subject_id") or context.get("user_id")
+        if subject_id:
+            return (subject_type, subject_id)
+
+        return None
+
+    # Handle OperationContext format
+    if hasattr(context, "get_subject") and callable(context.get_subject):
+        result = context.get_subject()
+        if result is not None:
+            return (str(result[0]), str(result[1]))
+        return None
+
+    # Fallback: construct from attributes
+    if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
+        subject_type = getattr(context, "subject_type", "user")
+        subject_id = getattr(context, "subject_id", None) or getattr(context, "user_id", None)
+        if subject_id:
+            return (subject_type, subject_id)
+
+    # Last resort: use user field
+    if hasattr(context, "user_id") and context.user_id:
+        return ("user", context.user_id)
+
+    return None

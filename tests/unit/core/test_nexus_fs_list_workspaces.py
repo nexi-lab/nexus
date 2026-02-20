@@ -29,12 +29,28 @@ def _make_context(user_id: str | None = None, zone_id: str | None = None) -> Sim
 
 @pytest.fixture
 def nexus_fs():
-    """Create a NexusFS instance with a mocked workspace registry."""
+    """Create a NexusFS instance with a mocked workspace RPC service.
+
+    list_workspaces was extracted from NexusFS to WorkspaceRPCService (Issue #2033).
+    NexusFS.__getattr__ forwards to _workspace_rpc_service.list_workspaces().
+    """
+    from nexus.services.workspace_rpc_service import WorkspaceRPCService
+
+    mock_registry = MagicMock()
+    mock_registry.list_workspaces.return_value = []
+
+    # Create a real WorkspaceRPCService with mock registry
+    svc = WorkspaceRPCService.__new__(WorkspaceRPCService)
+    svc._wr = mock_registry
+
+    # Create NexusFS and inject the service for __getattr__ forwarding
     from nexus.core.nexus_fs import NexusFS
 
     with patch.object(NexusFS, "__init__", lambda self: None):
         fs = NexusFS.__new__(NexusFS)
-        fs._workspace_registry = MagicMock()
+        fs._workspace_rpc_service = svc
+        # Also expose mock registry for test setup
+        fs._workspace_registry = mock_registry
         return fs
 
 

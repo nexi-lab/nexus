@@ -289,29 +289,6 @@ class ScopedFilesystem:
         return self._fs.get_available_namespaces()
 
     # ============================================================
-    # Version Tracking Operations
-    # ============================================================
-
-    def get_version(self, path: str, version: int) -> bytes:
-        """Get a specific version of a file."""
-        return self._fs.get_version(self._scope_path(path), version)
-
-    def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
-        """List all versions of a file."""
-        result = self._fs.list_versions(self._scope_path(path))
-        return [self._unscope_dict(r, ["path"]) for r in result]
-
-    def rollback(self, path: str, version: int, context: Any = None) -> None:
-        """Rollback file to a previous version."""
-        self._fs.rollback(self._scope_path(path), version, context)
-
-    def diff_versions(
-        self, path: str, v1: int, v2: int, mode: str = "metadata"
-    ) -> dict[str, Any] | str:
-        """Compare two versions of a file."""
-        return self._fs.diff_versions(self._scope_path(path), v1, v2, mode)
-
-    # ============================================================
     # Workspace Versioning
     # ============================================================
 

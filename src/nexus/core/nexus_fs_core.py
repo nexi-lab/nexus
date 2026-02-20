@@ -52,7 +52,7 @@ class NexusFSCoreMixin:
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core.metastore import MetastoreABC
-        from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
+        from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
 
         metadata: MetastoreABC
         backend: Backend

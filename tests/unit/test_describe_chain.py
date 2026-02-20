@@ -25,7 +25,7 @@ from nexus.cache.backend_wrapper import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
-from nexus.core.protocols.describable import Describable
+from nexus.contracts.describable import Describable
 
 _TEST_KEY = AESGCMSIV.generate_key(bit_length=256)
 

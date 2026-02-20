@@ -1,4 +1,4 @@
-"""WirableFS kernel protocol (Issue #2133).
+"""WirableFS factory wiring contract (Issue #2133).
 
 Defines the contract for what ``_boot_wired_services()`` needs from NexusFS.
 This replaces the ``Any`` type on the ``nx`` parameter, giving the wiring
@@ -7,6 +7,7 @@ layer typed attribute access instead of ``getattr()`` calls.
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - Issue #2133: Break circular runtime imports between services/ and core/
+    - Issue #2359: Moved from core/protocols/ to contracts/ (cross-tier)
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.metastore import MetastoreABC
-    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
     from nexus.contracts.types import OperationContext
+    from nexus.core.metastore import MetastoreABC
+    from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 

@@ -1275,7 +1275,7 @@ def create_app(
     app.state.auth_provider = auth_provider
 
     # Issue #1399: BrickContainer for DI (auth brick + future bricks)
-    from nexus.core.brick_container import BrickContainer
+    from nexus.lib.brick_container import BrickContainer
 
     app.state.brick_container = BrickContainer()
     if auth_provider is not None:

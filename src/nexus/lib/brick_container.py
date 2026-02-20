@@ -4,7 +4,7 @@ Maps Protocol types to their concrete implementations, enabling
 bricks to depend on protocols rather than concrete classes.
 
 Usage:
-    from nexus.core.brick_container import BrickContainer
+    from nexus.lib.brick_container import BrickContainer
 
     container = BrickContainer()
     container.register(AuthBrickProtocol, auth_brick)
@@ -14,7 +14,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class BrickContainer:
     """
 
     def __init__(self) -> None:
-        self._registry: dict[type, object] = {}
+        self._registry: dict[type, Any] = {}
 
     def register(self, protocol_type: type[T], implementation: T) -> None:
         """Register a brick implementation for a protocol type.
@@ -67,7 +67,7 @@ class BrickContainer:
         impl = self._registry.get(protocol_type)
         if impl is None:
             raise LookupError(f"No implementation registered for {protocol_type.__name__}")
-        return impl  # type: ignore[return-value]
+        return cast(T, impl)
 
     def resolve_optional(self, protocol_type: type[T]) -> T | None:
         """Resolve a registered brick, returning None if not found.
@@ -78,7 +78,7 @@ class BrickContainer:
         Returns:
             The registered implementation or None.
         """
-        return self._registry.get(protocol_type)  # type: ignore[return-value]
+        return cast("T | None", self._registry.get(protocol_type))
 
     def registered_protocols(self) -> list[type]:
         """Return all registered protocol types (for introspection)."""

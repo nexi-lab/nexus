@@ -149,7 +149,6 @@ class TestMessageSender:
         from pydantic import ValidationError
 
         await _provision_agent(vfs, "agent:bob")
-        sender = MessageSender(vfs, zone_id=ZONE)
 
         # Validation now happens at envelope construction time (Pydantic validators)
         with pytest.raises(ValidationError, match="path separators"):

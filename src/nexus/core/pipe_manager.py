@@ -70,14 +70,14 @@ class PipeManager:
         self._buffers: dict[str, RingBuffer] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
-    def create(
+    def mkpipe(
         self,
         path: str,
         *,
         capacity: int = 65_536,
         owner_id: str | None = None,
     ) -> RingBuffer:
-        """Create a new named pipe at the given VFS path.
+        """Create a new named pipe at the given VFS path (Linux: ``mkfifo``).
 
         Creates a DT_PIPE inode in MetastoreABC and a RingBuffer in memory.
 

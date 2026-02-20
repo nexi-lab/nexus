@@ -436,44 +436,18 @@ def _boot_system_services(
 
             zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
 
-            # Register zone finalizers
+            # Register session-based finalizers (available at boot).
+            # Cache + Mount finalizers are registered later in service_wiring
+            # when their dependencies (file_cache, mount_service) exist.
             try:
                 from nexus.services.zone_finalizers import (
-                    CacheZoneFinalizer,
-                    MountZoneFinalizer,
                     ReBACZoneFinalizer,
                     SearchZoneFinalizer,
                 )
 
-                # Cache finalizer (optional — needs file_cache)
-                file_cache = kernel.get("file_cache")
-                l2_cache = kernel.get("l2_cache")
-                if file_cache is not None:
-                    zone_lifecycle.register_finalizer(
-                        CacheZoneFinalizer(file_cache, l2_cache)
-                    )
-
-                # Search finalizer
-                zone_lifecycle.register_finalizer(
-                    SearchZoneFinalizer(session_factory)
-                )
-
-                # Mount finalizer (optional — needs mount_service)
-                try:
-                    from nexus.services.mount_core_service import MountCoreService  # noqa: F401
-
-                    mount_service = kernel.get("mount_service")
-                    if mount_service is not None:
-                        zone_lifecycle.register_finalizer(
-                            MountZoneFinalizer(mount_service)
-                        )
-                except Exception:
-                    pass
-
+                zone_lifecycle.register_finalizer(SearchZoneFinalizer(session_factory))
                 # ReBAC finalizer (MUST be last — Decision #13A)
-                zone_lifecycle.register_finalizer(
-                    ReBACZoneFinalizer(session_factory)
-                )
+                zone_lifecycle.register_finalizer(ReBACZoneFinalizer(session_factory))
             except Exception as exc:
                 logger.warning("[BOOT:SYSTEM] Zone finalizer registration failed: %s", exc)
 

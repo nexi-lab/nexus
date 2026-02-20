@@ -266,3 +266,22 @@ def wire_services(fs: Any) -> None:
         recall_max_age_hours=fs._memory_recall_max_age_hours,
         memory_config=fs._memory_config,
     )
+
+    # Zone lifecycle: register Cache + Mount finalizers (Issue #2061)
+    # These depend on file_cache / mount_service which are only available
+    # after service wiring, so they can't be registered at boot in _system.py.
+    zl = getattr(fs, "_zone_lifecycle", None)
+    if zl is not None:
+        try:
+            from nexus.services.zone_finalizers import CacheZoneFinalizer, MountZoneFinalizer
+
+            file_cache = getattr(fs, "_file_cache", None)
+            if file_cache is not None:
+                l2_cache = getattr(fs, "_l2_cache", None)
+                zl.register_finalizer(CacheZoneFinalizer(file_cache, l2_cache))
+
+            mount_svc = getattr(fs, "_mount_core_service", None)
+            if mount_svc is not None:
+                zl.register_finalizer(MountZoneFinalizer(mount_svc))
+        except Exception:
+            pass  # finalizers are optional; Search + ReBAC registered at boot

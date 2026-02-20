@@ -136,7 +136,8 @@ class UserProvisioningService:
                 zone = ZoneModel(
                     zone_id=zone_id,
                     name=zone_name or f"{zone_id} Organization",
-                    is_active=1,
+                    phase="Active",
+                    finalizers="[]",
                     created_at=datetime.now(UTC),
                     updated_at=datetime.now(UTC),
                 )

@@ -111,3 +111,114 @@ class HotPathSubscriber(Protocol):
     def subscribe(self, subject: str) -> AsyncIterator[bytes]:
         """Subscribe to a subject. Yields raw message bytes as they arrive."""
         ...
+
+
+# ---------------------------------------------------------------------------
+# Protocols for cross-zone routing (replaces services.protocols imports)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class AgentInfoResult(Protocol):
+    """Minimal result from agent registry lookup."""
+
+    @property
+    def zone_id(self) -> str | None: ...
+
+
+@runtime_checkable
+class AgentLookupProtocol(Protocol):
+    """Minimal agent registry interface for zone resolution.
+
+    Used by ``CrossZoneStorageDriver`` to resolve agent → zone mapping.
+    Satisfied by the real ``AgentRegistryProtocol`` at wiring time.
+    """
+
+    async def get(self, agent_id: str) -> AgentInfoResult | None:
+        """Look up agent info by ID. Returns None if not found."""
+        ...
+
+
+@runtime_checkable
+class PermissionCheckProtocol(Protocol):
+    """Minimal ReBAC permission check interface.
+
+    Used by ``CrossZoneStorageDriver`` for cross-zone delivery auth.
+    Satisfied by the real ``PermissionProtocol`` at wiring time.
+    """
+
+    async def rebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+    ) -> bool:
+        """Check if subject has permission on object."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Protocols for message signing (replaces identity.* concrete imports)
+# ---------------------------------------------------------------------------
+
+
+class KeyRecord(Protocol):
+    """Minimal key record returned by KeyServiceProtocol."""
+
+    @property
+    def key_id(self) -> str: ...
+
+    @property
+    def did(self) -> str: ...
+
+    @property
+    def is_active(self) -> bool: ...
+
+    @property
+    def revoked_at(self) -> Any | None: ...
+
+    @property
+    def public_key_bytes(self) -> bytes: ...
+
+
+@runtime_checkable
+class KeyServiceProtocol(Protocol):
+    """Minimal key management interface for IPC signing.
+
+    Used by ``MessageSigner`` and ``MessageVerifier``.
+    Satisfied by the real ``KeyService`` at wiring time.
+    """
+
+    def ensure_keypair(self, agent_id: str) -> KeyRecord:
+        """Provision or retrieve a keypair for the agent."""
+        ...
+
+    def get_public_key(self, key_id: str) -> KeyRecord | None:
+        """Retrieve public key record by key ID."""
+        ...
+
+    def decrypt_private_key(self, key_id: str) -> Any:
+        """Decrypt and return the private key object."""
+        ...
+
+
+@runtime_checkable
+class CryptoProtocol(Protocol):
+    """Minimal cryptographic operations interface for IPC signing.
+
+    Used by ``MessageSigner`` and ``MessageVerifier``.
+    Satisfied by the real ``IdentityCrypto`` at wiring time.
+    """
+
+    def sign(self, data: bytes, private_key: Any) -> bytes:
+        """Sign data with the given private key."""
+        ...
+
+    def verify(self, data: bytes, signature: bytes, public_key: Any) -> bool:
+        """Verify a signature against data and public key."""
+        ...
+
+    @staticmethod
+    def public_key_from_bytes(key_bytes: bytes) -> Any:
+        """Reconstruct a public key object from raw bytes."""
+        ...

@@ -70,12 +70,12 @@ def _make_boot_context() -> Any:
     Imports are deferred so that a missing factory module causes a clear
     ImportError at call time, not at module-level collection.
     """
+    from nexus.contracts.deployment_profile import DeploymentProfile
     from nexus.core.config import (
         CacheConfig,
         DistributedConfig,
         PermissionConfig,
     )
-    from nexus.core.deployment_profile import DeploymentProfile
     from nexus.core.performance_tuning import resolve_profile_tuning
     from nexus.factory import _BootContext
 

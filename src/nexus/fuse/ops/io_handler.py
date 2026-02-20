@@ -86,7 +86,7 @@ class IOHandler:
 
                 io_profile_arg = None
                 try:
-                    from nexus.core.io_profile import IOProfile
+                    from nexus.contracts.io_profile import IOProfile
 
                     io_profile_arg = IOProfile(io_profile_str)
                 except (ImportError, ValueError):
@@ -132,7 +132,7 @@ class IOHandler:
         cache_priority = 0
         io_profile_str = file_info.get("io_profile", "balanced")
         try:
-            from nexus.core.io_profile import IOProfile
+            from nexus.contracts.io_profile import IOProfile
 
             cache_priority = IOProfile(io_profile_str).config().cache_priority
         except (ImportError, ValueError):

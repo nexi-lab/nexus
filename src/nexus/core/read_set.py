@@ -701,36 +701,6 @@ class ReadSetRegistry:
             return len(self._read_sets)
 
 
-# Module-level singleton for global access
-_global_registry: ReadSetRegistry | None = None
-_registry_lock = threading.Lock()
-
-
-def get_global_registry() -> ReadSetRegistry:
-    """Get or create the global ReadSetRegistry singleton.
-
-    Returns:
-        The global ReadSetRegistry instance
-    """
-    global _global_registry
-    if _global_registry is None:
-        with _registry_lock:
-            if _global_registry is None:
-                _global_registry = ReadSetRegistry()
-    return _global_registry
-
-
-def set_global_registry(registry: ReadSetRegistry | None) -> None:
-    """Set the global ReadSetRegistry (for testing).
-
-    Args:
-        registry: Registry to set, or None to clear
-    """
-    global _global_registry
-    with _registry_lock:
-        _global_registry = registry
-
-
 def enable_read_tracking(ctx: OperationContext, zone_id: str | None = None) -> None:
     """Enable read tracking and initialize read set on an OperationContext.
 

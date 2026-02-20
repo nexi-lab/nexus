@@ -12,6 +12,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Any, cast
 
 import click
 
@@ -23,6 +24,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+from nexus.core.sync_bridge import run_sync
 from nexus.lib.env import get_database_url
 
 logger = logging.getLogger(__name__)
@@ -49,11 +51,14 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
         """Background thread worker that performs the actual sync."""
         import time
 
+        from nexus.core.sync_bridge import run_sync
+
         time.sleep(2)  # Wait for server to be fully ready
         console.print("[cyan]🔄 Starting background sync for connector mounts...[/cyan]")
 
         try:
-            all_mounts = nx.list_mounts()
+            mount_svc = cast(Any, nx).mount_service
+            all_mounts = run_sync(mount_svc.list_mounts())
             synced_count = 0
 
             for mount in all_mounts:
@@ -64,7 +69,7 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
                 if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
                     try:
                         console.print(f"  Syncing {mount_point} ({backend_type})...")
-                        result = nx.sync_mount(mount_point, recursive=True)  # type: ignore[attr-defined]
+                        result = run_sync(mount_svc.sync_mount(mount_point, recursive=True))
                         console.print(
                             f"  [green]✓[/green] {mount_point}: {result['files_scanned']} scanned, "
                             f"{result['files_created']} created, "
@@ -851,7 +856,8 @@ def serve(
 
                                 # No database override - use config version
                                 # Check if mount already exists in router (shouldn't happen, but be safe)
-                                existing_mounts = nx.list_mounts()
+                                _mount_svc = cast(Any, nx).mount_service
+                                existing_mounts = run_sync(_mount_svc.list_mounts())
                                 mount_already_loaded = any(
                                     m["mount_point"] == mount_point for m in existing_mounts
                                 )
@@ -909,7 +915,9 @@ def serve(
                                             console.print(
                                                 f"    [dim]→ Syncing metadata from {backend_type}...[/dim]"
                                             )
-                                            sync_result = nx.sync_mount(mount_point, recursive=True)
+                                            sync_result = run_sync(
+                                                _mount_svc.sync_mount(mount_point, recursive=True)
+                                            )
                                             if sync_result["files_created"] > 0:
                                                 console.print(
                                                     f"    [dim]→ Discovered {sync_result['files_created']} files[/dim]"

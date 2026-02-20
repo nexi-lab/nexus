@@ -349,12 +349,15 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
+                from nexus.storage.content_cache import ContentCache as _ContentCache
+
                 _app.state.async_nexus_fs = AsyncNexusFS(
                     backend_root=backend_root,
                     metadata_store=_app.state.nexus_fs.metadata,
                     tenant_id=tenant_id,
                     enforce_permissions=enforce_permissions,
                     permission_enforcer=permission_enforcer,
+                    content_cache=_ContentCache(max_size_mb=256),
                 )
                 await _app.state.async_nexus_fs.initialize()
                 logger.info(
@@ -1284,7 +1287,7 @@ def create_app(
     app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
     # Deployment profile (Issue #1389, #1708): resolve enabled bricks from NEXUS_PROFILE env
-    from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":
@@ -1379,8 +1382,19 @@ def create_app(
     )
 
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
+    # Services with @rpc_expose override kernel stubs (later sources win).
     _brick_sources: list[Any] = []
-    for _attr_name in ("skill_service", "skill_package_service", "task_queue_service"):
+    for _attr_name in (
+        "skill_service",
+        "skill_package_service",
+        "task_queue_service",
+        "mcp_service",
+        "llm_service",
+        "oauth_service",
+        "mount_service",
+        "version_service",
+        "share_link_service",
+    ):
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:
             _brick_sources.append(_brick_svc)

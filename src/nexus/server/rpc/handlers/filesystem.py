@@ -10,7 +10,7 @@ layer — they MUST NOT call async code directly.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.server.path_utils import (
@@ -314,7 +314,7 @@ def handle_rename(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any
 
 def handle_copy(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle copy method."""
-    nexus_fs.copy(params.src_path, params.dst_path, context=context)
+    cast(Any, nexus_fs).copy(params.src_path, params.dst_path, context=context)
     return {"copied": True}
 
 
@@ -395,7 +395,7 @@ def handle_search(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any
     if hasattr(params, "search_type") and params.search_type:
         kwargs["search_type"] = params.search_type
 
-    results = nexus_fs.search(params.query, **kwargs)
+    results = cast(Any, nexus_fs).search(params.query, **kwargs)
     return {"results": results}
 
 

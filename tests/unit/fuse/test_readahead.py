@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.io_profile import IOProfile
+from nexus.contracts.io_profile import IOProfile
 from nexus.fuse.readahead import ReadaheadConfig, ReadaheadManager, ReadSession
 
 

@@ -32,11 +32,11 @@ from nexus.core.metadata import (
     FileMetadata,
 )
 from nexus.core.metastore import AsyncMetastoreWrapper
-from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
+    from nexus.storage.content_cache import ContentCache
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +54,9 @@ class AsyncNexusFS:
 
     Example:
         ```python
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-        metadata_store = RaftMetadataStore.embedded("./raft")
         fs = AsyncNexusFS(
             backend_root=Path("./data"),
-            metadata_store=metadata_store,
+            metadata_store=metadata_store,  # any MetastoreABC implementation
         )
         await fs.initialize()
 
@@ -73,33 +70,27 @@ class AsyncNexusFS:
         backend_root: str | Path,
         metadata_store: MetastoreABC,
         tenant_id: str | None = None,
-        enable_content_cache: bool = True,
-        content_cache_size_mb: int = 256,
         enforce_permissions: bool = False,
         permission_enforcer: AsyncPermissionEnforcer | None = None,
+        content_cache: ContentCache | None = None,
     ):
         """
         Initialize async filesystem.
 
         Args:
             backend_root: Root directory for content storage
-            metadata_store: MetastoreABC instance (e.g. RaftMetadataStore)
+            metadata_store: MetastoreABC instance for metadata storage
             tenant_id: Default tenant ID for operations
-            enable_content_cache: Enable in-memory content caching (default: True)
-            content_cache_size_mb: Content cache size in MB (default: 256)
             enforce_permissions: If True, check permissions on operations (default: False)
             permission_enforcer: AsyncPermissionEnforcer instance for permission checks
+            content_cache: Pre-built ContentCache instance for read caching (default: None)
         """
         self._backend_root = Path(backend_root)
         self._metadata_store = metadata_store
         self._tenant_id = tenant_id
         self._enforce_permissions = enforce_permissions
         self._permission_enforcer = permission_enforcer
-
-        # Create content cache if enabled
-        self._content_cache: ContentCache | None = None
-        if enable_content_cache:
-            self._content_cache = ContentCache(max_size_mb=content_cache_size_mb)
+        self._content_cache = content_cache
 
         # Components (initialized in initialize())
         self._backend: AsyncLocalBackend | None = None

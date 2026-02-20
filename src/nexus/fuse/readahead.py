@@ -45,7 +45,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.io_profile import IOProfile
+    from nexus.contracts.io_profile import IOProfile
     from nexus.storage.local_disk_cache import LocalDiskCache
 
 logger = logging.getLogger(__name__)

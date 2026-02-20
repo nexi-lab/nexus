@@ -29,7 +29,7 @@ def _compute_features_info(app: FastAPI) -> None:
     Called once at startup. The result is immutable and served by
     GET /api/v2/features with O(1) cost.
     """
-    from nexus.core.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
+    from nexus.contracts.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
     from nexus.server.api.core.features import FeaturesResponse, PerformanceTuningInfo
 
     # Read profile from app state (set during server init)

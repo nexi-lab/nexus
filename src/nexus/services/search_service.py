@@ -467,7 +467,7 @@ class SearchService(SemanticSearchMixin):
                             logger.debug("Skipping deleted cross-zone path: %s", ct_path)
 
         # Filter out internal system entries
-        from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+        from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
         all_files = [m for m in all_files if not m.path.startswith(SYSTEM_PATH_PREFIX)]
 
@@ -1266,7 +1266,7 @@ class SearchService(SemanticSearchMixin):
                 zone_id=list_zone_id,
             )
 
-            from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+            from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
             batch.items = [
                 item for item in batch.items if not item.path.startswith(SYSTEM_PATH_PREFIX)

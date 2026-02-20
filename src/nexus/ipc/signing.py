@@ -17,14 +17,12 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nexus.identity.crypto import IdentityCrypto
 from nexus.ipc.envelope import MessageEnvelope
+from nexus.ipc.protocols import CryptoProtocol, KeyServiceProtocol
 from nexus.storage.zone_settings import SigningMode
 
 if TYPE_CHECKING:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    from nexus.identity.key_service import KeyService
+    from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -47,22 +45,22 @@ class MessageSigner:
     Caches the decrypted private key to avoid repeated decryption.
 
     Args:
-        key_service: KeyService for key provisioning and lookup.
-        crypto: IdentityCrypto for signing operations.
+        key_service: Key management protocol for provisioning and lookup.
+        crypto: Cryptographic operations protocol for signing.
         agent_id: The agent whose identity is used for signing.
     """
 
     def __init__(
         self,
-        key_service: KeyService,
-        crypto: IdentityCrypto,
+        key_service: KeyServiceProtocol,
+        crypto: CryptoProtocol,
         agent_id: str,
     ) -> None:
         self._key_service = key_service
         self._crypto = crypto
         self._agent_id = agent_id
         self._cached_key_id: str | None = None
-        self._cached_private_key: Ed25519PrivateKey | None = None
+        self._cached_private_key: Any = None
         self._cached_did: str | None = None
 
     def sign(self, envelope: MessageEnvelope) -> MessageEnvelope:
@@ -108,14 +106,14 @@ class MessageSigner:
 class MessageVerifier:
     """Verifies IPC envelope signatures.
 
-    Uses KeyService for public key lookup (benefits from existing TTL cache).
+    Uses key service protocol for public key lookup.
 
     Args:
-        key_service: KeyService for public key lookup.
-        crypto: IdentityCrypto for verification operations.
+        key_service: Key management protocol for public key lookup.
+        crypto: Cryptographic operations protocol for verification.
     """
 
-    def __init__(self, key_service: KeyService, crypto: IdentityCrypto) -> None:
+    def __init__(self, key_service: KeyServiceProtocol, crypto: CryptoProtocol) -> None:
         self._key_service = key_service
         self._crypto = crypto
 
@@ -168,7 +166,7 @@ class MessageVerifier:
             )
 
         # Reconstruct public key and verify
-        public_key = IdentityCrypto.public_key_from_bytes(record.public_key_bytes)
+        public_key = self._crypto.public_key_from_bytes(record.public_key_bytes)
         signing_data = envelope.signing_bytes()
         is_valid = self._crypto.verify(signing_data, raw_signature, public_key)
 

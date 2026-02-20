@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.core.deployment_profile import (
+from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
     DeploymentProfile,
 )
@@ -185,7 +185,7 @@ class TestComputeFeaturesInfo:
         app.state.deployment_profile = "lite"
         app.state.deployment_mode = "standalone"
         # Explicitly override enabled_bricks with search added
-        from nexus.core.deployment_profile import BRICK_SEARCH, resolve_enabled_bricks
+        from nexus.contracts.deployment_profile import BRICK_SEARCH, resolve_enabled_bricks
 
         custom_bricks = resolve_enabled_bricks(
             DeploymentProfile.LITE, overrides={BRICK_SEARCH: True}

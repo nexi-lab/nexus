@@ -2352,6 +2352,71 @@ class ReBACManager:
             offset=offset,
         )
 
+    def rebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        relation_in: list[str] | None = None,
+        **_kw: Any,
+    ) -> list[dict[str, Any]]:
+        """List relationship tuples matching optional filters.
+
+        Protocol-compliant method for querying tuples by criteria.
+        Used by composition-layer code (e.g., zone_helpers) that needs
+        to find tuple IDs for targeted deletion.
+
+        Args:
+            subject: Optional (type, id) filter.
+            relation: Optional single relation filter.
+            object: Optional (type, id) filter.
+            relation_in: Optional list of relations to match.
+
+        Returns:
+            List of tuple dicts with keys: tuple_id, subject_type,
+            subject_id, relation, object_type, object_id, zone_id.
+        """
+        fix = self._fix_sql_placeholders
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        if subject is not None:
+            clauses.append("subject_type = ? AND subject_id = ?")
+            params.extend(subject)
+        if relation is not None:
+            clauses.append("relation = ?")
+            params.append(relation)
+        elif relation_in:
+            placeholders = ", ".join("?" for _ in relation_in)
+            clauses.append(f"relation IN ({placeholders})")
+            params.extend(relation_in)
+        if object is not None:
+            clauses.append("object_type = ? AND object_id = ?")
+            params.extend(object)
+
+        where = " AND ".join(clauses) if clauses else "1=1"
+        sql = fix(
+            f"SELECT tuple_id, subject_type, subject_id, relation, "
+            f"object_type, object_id, zone_id "
+            f"FROM rebac_tuples WHERE {where}"
+        )
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+            cursor.execute(sql, params)
+            return [
+                {
+                    "tuple_id": row["tuple_id"],
+                    "subject_type": row["subject_type"],
+                    "subject_id": row["subject_id"],
+                    "relation": row["relation"],
+                    "object_type": row["object_type"],
+                    "object_id": row["object_id"],
+                    "zone_id": row.get("zone_id") if hasattr(row, "get") else row["zone_id"],
+                }
+                for row in cursor.fetchall()
+            ]
+
     def _rebac_list_objects_python(
         self,
         subject_type: str,

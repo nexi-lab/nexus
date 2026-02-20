@@ -37,7 +37,8 @@ class SkillManager:
 
     Example:
         >>> from nexus import connect
-        >>> from nexus.skills import SkillRegistry, SkillManager
+        >>> from nexus.bricks.skills.registry import SkillRegistry
+        >>> from nexus.bricks.skills.manager import SkillManager
         >>>
         >>> nx = connect()
         >>> registry = SkillRegistry(nx)

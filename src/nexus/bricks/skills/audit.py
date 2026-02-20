@@ -97,7 +97,7 @@ class SkillAuditLogger:
     - Generate compliance reports
 
     Example:
-        >>> from nexus.skills import SkillAuditLogger, AuditAction
+        >>> from nexus.bricks.skills.audit import SkillAuditLogger, AuditAction
         >>>
         >>> # Initialize logger
         >>> audit = SkillAuditLogger()

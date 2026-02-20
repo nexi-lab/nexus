@@ -85,7 +85,7 @@ def create_nexus_services(
     from nexus.core.config import SystemServices as _SystemServices
     from nexus.factory._background import _start_background_services
     from nexus.factory._boot_context import _BootContext
-    from nexus.factory._bricks import _boot_independent_bricks
+    from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
     from nexus.factory._helpers import _register_factory_bricks
     from nexus.factory._kernel import _boot_kernel_services
     from nexus.factory._system import _boot_system_services
@@ -151,6 +151,9 @@ def create_nexus_services(
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
     brick_dict = _boot_independent_bricks(ctx, system_dict, _brick_on)
+
+    # --- Tier 2b: DEPENDENT BRICK (Issue #1861: artifact auto-indexing) ---
+    _boot_dependent_bricks(ctx, system_dict, brick_dict)
 
     # --- Start background threads post-construction ---
     _start_background_services(system_dict)

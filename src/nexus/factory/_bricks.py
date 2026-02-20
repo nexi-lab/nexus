@@ -9,6 +9,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from nexus.factory._boot_context import _BootContext
@@ -558,3 +559,125 @@ def _boot_independent_bricks(
     active = sum(1 for v in result.values() if v is not None)
     logger.info("[BOOT:BRICK] %d/%d services ready (%.3fs)", active, len(result), elapsed)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Dependent bricks (Issue #1861) — run after independent bricks
+# ---------------------------------------------------------------------------
+
+
+def _boot_dependent_bricks(
+    ctx: _BootContext,
+    system: dict[str, Any],
+    bricks: dict[str, Any],
+) -> None:
+    """Boot Tier 2b (DEPENDENT BRICK) — requires services from independent bricks.
+
+    Discovers ``brick_factory.py`` modules with ``TIER="dependent"`` and
+    wires their hook handlers into the hook engine.
+
+    Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
+    factory layer and injected into brick factories to respect LEGO Principle 3.
+
+    Currently handles:
+    - Artifact auto-indexing (Issue #1861): registers hook handlers for
+      ``post_artifact_create`` and ``post_artifact_update`` phases.
+    """
+    hook_engine = system.get("hook_engine")
+    if hook_engine is None:
+        logger.debug("[BOOT:BRICK:DEP] No hook engine available, skipping dependent bricks")
+        return
+
+    # Build cross-brick factories in the factory layer (not inside bricks)
+    tool_info_factory: Callable[..., Any] | None = None
+    graph_store_factory: Callable[..., Any] | None = None
+
+    try:
+        from nexus.bricks.discovery.tool_index import ToolInfo
+
+        tool_info_factory = ToolInfo
+    except ImportError:
+        logger.debug("[BOOT:BRICK:DEP] ToolInfo not available")
+
+    if ctx.record_store is not None:
+        try:
+            from nexus.bricks.search.graph_store import GraphStore
+
+            _record_store = ctx.record_store
+            _zone_id = ctx.zone_id or "root"
+
+            def _make_graph_store(session: Any) -> Any:
+                return GraphStore(
+                    record_store=_record_store,
+                    session=session,
+                    zone_id=_zone_id,
+                )
+
+            graph_store_factory = _make_graph_store
+        except ImportError:
+            logger.debug("[BOOT:BRICK:DEP] GraphStore not available")
+
+    def _create_dependent(descriptor: BrickFactoryDescriptor) -> Any:
+        return descriptor.create_fn(
+            ctx,
+            system,
+            bricks,
+            tool_info_factory=tool_info_factory,
+            graph_store_factory=graph_store_factory,
+        )
+
+    for desc in _discover_brick_factories("dependent"):
+        result = _safe_create(
+            desc.result_key,
+            partial(_create_dependent, desc),
+            lambda _n: True,  # always enabled (no profile gate)
+        )
+        if result is None:
+            continue
+
+        handlers = result.get("handlers", [])
+        if not handlers:
+            continue
+
+        # Register each handler for both artifact phases
+        try:
+            import asyncio
+
+            from nexus.services.protocols.hook_engine import (
+                POST_ARTIFACT_CREATE,
+                POST_ARTIFACT_UPDATE,
+                HookCapabilities,
+                HookSpec,
+            )
+
+            _no_veto_caps = HookCapabilities(
+                can_veto=False,
+                can_modify_context=False,
+                max_timeout_ms=10000,
+            )
+
+            for h in handlers:
+                handler_fn = h["handler"]
+                handler_name = h["handler_name"]
+
+                for phase in (POST_ARTIFACT_CREATE, POST_ARTIFACT_UPDATE):
+                    spec = HookSpec(
+                        phase=phase,
+                        handler_name=handler_name,
+                        capabilities=_no_veto_caps,
+                    )
+
+                    # Use asyncio to run the async registration synchronously
+                    # during boot (boot runs outside event loop or in sync context)
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(hook_engine.register_hook(spec, handler_fn))
+                    except RuntimeError:
+                        asyncio.run(hook_engine.register_hook(spec, handler_fn))
+
+            logger.debug(
+                "[BOOT:BRICK:DEP] Registered %d artifact indexing handlers",
+                len(handlers),
+            )
+        except Exception as exc:
+            logger.debug("[BOOT:BRICK:DEP] Failed to register artifact handlers: %s", exc)

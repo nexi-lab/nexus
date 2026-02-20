@@ -8,7 +8,7 @@ and enforced in _auto_dispatch.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -95,23 +95,10 @@ class TestDispatchAdminEnforcement:
     cover both auto-dispatch and manual dispatch paths (Issue #1457).
     """
 
-    @pytest.fixture(autouse=True)
-    def _mock_app_state(self):
-        """Patch _fastapi_app.state to provide exposed_methods."""
-        from nexus.server.fastapi_server import _fastapi_app
-
-        if _fastapi_app is None:
-            # Create a minimal mock app for testing
-            mock_app = MagicMock()
-            with patch("nexus.server.fastapi_server._fastapi_app", mock_app):
-                yield mock_app
-        else:
-            yield _fastapi_app
-
     @pytest.mark.asyncio
-    async def test_admin_caller_allowed(self, _mock_app_state):
+    async def test_admin_caller_allowed(self):
         """Admin callers can invoke admin_only methods."""
-        from nexus.server.fastapi_server import _dispatch_method
+        from nexus.server.rpc.dispatch import dispatch_method as _dispatch_method
 
         admin_context = FakeContext(is_admin=True)
         params = type("Params", (), {})()  # Empty params object
@@ -127,10 +114,10 @@ class TestDispatchAdminEnforcement:
         assert result == {"result": "admin_ok"}
 
     @pytest.mark.asyncio
-    async def test_non_admin_caller_rejected(self, _mock_app_state):
+    async def test_non_admin_caller_rejected(self):
         """Non-admin callers get NexusPermissionError for admin_only methods."""
         from nexus.contracts.exceptions import NexusPermissionError
-        from nexus.server.fastapi_server import _dispatch_method
+        from nexus.server.rpc.dispatch import dispatch_method as _dispatch_method
 
         non_admin_context = FakeContext(is_admin=False)
         params = type("Params", (), {})()
@@ -146,10 +133,10 @@ class TestDispatchAdminEnforcement:
             )
 
     @pytest.mark.asyncio
-    async def test_none_context_rejected(self, _mock_app_state):
+    async def test_none_context_rejected(self):
         """None context is rejected for admin_only methods."""
         from nexus.contracts.exceptions import NexusPermissionError
-        from nexus.server.fastapi_server import _dispatch_method
+        from nexus.server.rpc.dispatch import dispatch_method as _dispatch_method
 
         params = type("Params", (), {})()
         exposed_methods = {"admin_op": _fake_admin_method}
@@ -164,9 +151,9 @@ class TestDispatchAdminEnforcement:
             )
 
     @pytest.mark.asyncio
-    async def test_normal_method_not_affected(self, _mock_app_state):
+    async def test_normal_method_not_affected(self):
         """Non-admin_only methods work fine for non-admin callers."""
-        from nexus.server.fastapi_server import _dispatch_method
+        from nexus.server.rpc.dispatch import dispatch_method as _dispatch_method
 
         non_admin_context = FakeContext(is_admin=False)
         params = type("Params", (), {})()

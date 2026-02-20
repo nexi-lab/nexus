@@ -136,7 +136,7 @@ class MetricsResponse(BaseModel):
 
 def _get_require_auth() -> Any:
     """Lazy import to avoid circular imports."""
-    from nexus.server.fastapi_server import require_auth
+    from nexus.server.dependencies import require_auth
 
     return require_auth
 

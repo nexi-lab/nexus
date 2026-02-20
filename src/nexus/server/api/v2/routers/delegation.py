@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/v2/agents/delegate", tags=["delegation"])
 
 
 def _get_require_auth() -> Any:
-    from nexus.server.fastapi_server import require_auth
+    from nexus.server.dependencies import require_auth
 
     return require_auth
 

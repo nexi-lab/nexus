@@ -36,23 +36,27 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
     try:
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
 
-        config = DaemonConfig(
-            database_url=app.state.database_url,
-            bm25s_index_dir=os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
-            db_pool_min_size=int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
-            db_pool_max_size=int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
-            refresh_enabled=os.getenv("NEXUS_SEARCH_REFRESH", "true").lower()
-            in (
-                "true",
-                "1",
-                "yes",
-            ),
-            # Issue #1024: Entropy-aware filtering for redundant content
-            entropy_filtering=os.getenv("NEXUS_ENTROPY_FILTERING", "false").lower()
+        # Issue #2071: source max_indexing_concurrency from profile tuning
+        _search_tuning = getattr(app.state, "profile_tuning", None)
+        _max_indexing = _search_tuning.search.search_max_concurrency if _search_tuning else None
+
+        _daemon_kwargs: dict = {
+            "database_url": app.state.database_url,
+            "bm25s_index_dir": os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
+            "db_pool_min_size": int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
+            "db_pool_max_size": int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
+            "refresh_enabled": os.getenv("NEXUS_SEARCH_REFRESH", "true").lower()
             in ("true", "1", "yes"),
-            entropy_threshold=float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
-            entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
-        )
+            # Issue #1024: Entropy-aware filtering for redundant content
+            "entropy_filtering": os.getenv("NEXUS_ENTROPY_FILTERING", "false").lower()
+            in ("true", "1", "yes"),
+            "entropy_threshold": float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
+            "entropy_alpha": float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
+        }
+        if _max_indexing is not None:
+            _daemon_kwargs["max_indexing_concurrency"] = _max_indexing
+
+        config = DaemonConfig(**_daemon_kwargs)
 
         # Inject async_session_factory from RecordStoreABC when available
         _record_store = getattr(app.state.nexus_fs, "_record_store", None)

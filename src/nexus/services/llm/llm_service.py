@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.llm.provider import LLMProvider
-    from nexus.services.llm_citation import DocumentReadResult
-    from nexus.services.llm_document_reader import LLMDocumentReader
+
+    from .llm_citation import DocumentReadResult
+    from .llm_document_reader import LLMDocumentReader
 
 
 class LLMService:
@@ -446,7 +447,8 @@ class LLMService:
 
         from nexus.llm.config import LLMConfig
         from nexus.llm.provider import LiteLLMProvider
-        from nexus.services.llm_document_reader import LLMDocumentReader
+
+        from .llm_document_reader import LLMDocumentReader
 
         # Create provider if not provided (Issue #1521: cache by config hash)
         if provider is None:

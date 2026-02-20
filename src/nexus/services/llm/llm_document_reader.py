@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.contracts.llm_types import Message, MessageRole, TextContent
-from nexus.services.llm_citation import Citation, CitationExtractor, DocumentReadResult
-from nexus.services.llm_context_builder import ChunkLike, ContextBuilder
+
+from .llm_citation import Citation, CitationExtractor, DocumentReadResult
+from .llm_context_builder import ChunkLike, ContextBuilder
 
 logger = logging.getLogger(__name__)
 

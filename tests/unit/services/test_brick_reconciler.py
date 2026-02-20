@@ -376,7 +376,7 @@ class TestReconcileLoop:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Verify reconcile called every interval."""
-        import nexus.services.brick_reconciler as _mod
+        import nexus.system_services.lifecycle.brick_reconciler as _mod
 
         monkeypatch.setattr(_mod, "_JITTER_MAX", 0.0)
 
@@ -433,7 +433,7 @@ class TestReconcileLoop:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Exception in reconcile → log + continue."""
-        import nexus.services.brick_reconciler as _mod
+        import nexus.system_services.lifecycle.brick_reconciler as _mod
 
         monkeypatch.setattr(_mod, "_JITTER_MAX", 0.0)
 

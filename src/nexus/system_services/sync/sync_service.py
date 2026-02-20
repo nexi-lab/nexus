@@ -31,8 +31,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import ProgressCallback, SyncContext, SyncResult
 from nexus.lib.context_utils import get_zone_id
-from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
 from nexus.services.permission_utils import check_permission
+
+from .change_log_store import ChangeLogEntry, ChangeLogStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
@@ -505,7 +506,7 @@ class SyncService:
             try:
                 ctx.progress_callback(result.files_scanned, virtual_path)
             except Exception as cb_error:
-                from nexus.services.sync_job_manager import SyncCancelled
+                from .sync_job_manager import SyncCancelled
 
                 if isinstance(cb_error, SyncCancelled):
                     raise

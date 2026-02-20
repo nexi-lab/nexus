@@ -37,16 +37,18 @@ from nexus.contracts.exceptions import (
     StalePointerError,
 )
 from nexus.contracts.workspace_manifest import WorkspaceManifest
-from nexus.services.workspace_permissions import check_workspace_permission
 from nexus.storage.models import ContextBranchModel, WorkspaceSnapshotModel
+
+from .workspace_permissions import check_workspace_permission
 
 # Valid merge strategies (H2: validate upfront)
 _VALID_STRATEGIES = frozenset({"fail", "source-wins"})
 
 if TYPE_CHECKING:
     from nexus.services.protocols.rebac import ReBACBrickProtocol
-    from nexus.services.workspace_manager import WorkspaceManager
     from nexus.storage.record_store import RecordStoreABC
+
+    from .workspace_manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 

@@ -26,7 +26,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
-    from nexus.services.change_log_store import ChangeLogEntry
+
+    from .change_log_store import ChangeLogEntry
 
 
 class ConflictStrategy(StrEnum):

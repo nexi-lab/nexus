@@ -290,7 +290,7 @@ class TestBootBrickServices:
         with (
             caplog.at_level(logging.DEBUG, logger="nexus.factory"),
             patch(
-                "nexus.services.version_service.VersionService",
+                "nexus.services.versioning.version_service.VersionService",
                 side_effect=RuntimeError("version db unavailable"),
             ),
         ):

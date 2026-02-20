@@ -36,9 +36,10 @@ from nexus.lib.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.services.mount_core_service import MountCoreService
-    from nexus.services.mount_manager import MountManager
-    from nexus.services.sync_service import SyncService
+    from nexus.system_services.sync.sync_service import SyncService
+
+    from .mount_core_service import MountCoreService
+    from .mount_manager import MountManager
 
 logger = logging.getLogger(__name__)
 

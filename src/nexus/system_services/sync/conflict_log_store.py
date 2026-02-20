@@ -13,13 +13,14 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from nexus.services.conflict_resolution import (
+from nexus.storage.sync_store_base import SyncStoreBase
+
+from .conflict_resolution import (
     ConflictRecord,
     ConflictStatus,
     ConflictStrategy,
     ResolutionOutcome,
 )
-from nexus.storage.sync_store_base import SyncStoreBase
 
 logger = logging.getLogger(__name__)
 

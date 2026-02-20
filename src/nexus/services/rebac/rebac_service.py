@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from nexus.contracts.exceptions import CircuitOpenError
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.services.rebac_share_mixin import ReBACShareMixin
+from nexus.services.rebac.rebac_share_mixin import ReBACShareMixin
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.services.conflict_resolution import (
+
+from .conflict_resolution import (
     ConflictAbortError,
     ConflictContext,
     ConflictRecord,
@@ -35,14 +36,15 @@ from nexus.services.conflict_resolution import (
     detect_conflict,
     resolve_conflict,
 )
-from nexus.services.write_back_metrics import WriteBackMetrics
+from .write_back_metrics import WriteBackMetrics
 
 if TYPE_CHECKING:
-    from nexus.services.change_log_store import ChangeLogStore
-    from nexus.services.conflict_log_store import ConflictLogStore
     from nexus.services.event_bus.base import EventBusBase
     from nexus.services.gateway import NexusFSGateway
-    from nexus.services.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
+
+    from .change_log_store import ChangeLogStore
+    from .conflict_log_store import ConflictLogStore
+    from .sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
 
 logger = logging.getLogger(__name__)
 

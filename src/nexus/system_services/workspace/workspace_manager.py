@@ -13,8 +13,9 @@ from sqlalchemy import desc, select
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.workspace_manifest import WorkspaceManifest
-from nexus.services.workspace_permissions import check_workspace_permission
 from nexus.storage.models import WorkspaceSnapshotModel
+
+from .workspace_permissions import check_workspace_permission
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend

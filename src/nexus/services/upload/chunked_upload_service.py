@@ -28,8 +28,9 @@ from nexus.contracts.exceptions import (
     UploadOffsetMismatchError,
     ValidationError,
 )
-from nexus.services.upload_session import UploadSession, UploadStatus
 from nexus.storage.models.upload_session import UploadSessionModel
+
+from .upload_session import UploadSession, UploadStatus
 
 if TYPE_CHECKING:
     from nexus.backends.multipart_upload_mixin import MultipartUploadMixin

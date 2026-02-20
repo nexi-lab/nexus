@@ -41,7 +41,8 @@ from nexus.contracts.types import Permission
 from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.gateway import NexusFSGateway
-from nexus.services.search_semantic import SemanticSearchMixin
+
+from .search_semantic import SemanticSearchMixin
 
 # List directory traversal thresholds (Issue #901)
 # Issue #2071: LIST_PARALLEL_WORKERS now sourced from ProfileTuning.search.list_parallel_workers

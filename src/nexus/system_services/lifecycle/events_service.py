@@ -25,7 +25,8 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
 from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.services.dedup_work_queue import DedupWorkQueue, ShutdownError
+
+from .dedup_work_queue import DedupWorkQueue, ShutdownError
 
 logger = logging.getLogger(__name__)
 

@@ -41,7 +41,8 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFilesystem
     from nexus.core.router import PathRouter
-    from nexus.services.mount_manager import MountManager
+
+    from .mount_manager import MountManager
 
 
 class MountService:

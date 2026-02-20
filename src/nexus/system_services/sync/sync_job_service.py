@@ -27,7 +27,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway
-    from nexus.services.sync_service import SyncService
+
+    from .sync_service import SyncService
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class SyncJobService:
             SyncJobManager instance
         """
         if self._manager is None:
-            from nexus.services.sync_job_manager import SyncJobManager
+            from .sync_job_manager import SyncJobManager
 
             record_store = self._gw.record_store
             if not record_store:
@@ -94,7 +95,8 @@ class SyncJobService:
             job_id: Job ID to start
         """
         from nexus.contracts.types import SyncContext
-        from nexus.services.sync_job_manager import SyncCancelled
+
+        from .sync_job_manager import SyncCancelled
 
         manager = self._get_manager()
 

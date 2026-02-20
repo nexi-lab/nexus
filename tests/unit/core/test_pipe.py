@@ -309,7 +309,7 @@ class TestPipeManager:
 
     def test_create_pipe(self) -> None:
         mgr, ms = self._make_manager()
-        buf = mgr.create("/nexus/pipes/test", capacity=4096, owner_id="agent-1")
+        buf = mgr.mkpipe("/nexus/pipes/test", capacity=4096, owner_id="agent-1")
 
         assert isinstance(buf, RingBuffer)
         assert buf.stats["capacity"] == 4096
@@ -326,9 +326,9 @@ class TestPipeManager:
 
     def test_create_duplicate_raises(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/dup")
+        mgr.mkpipe("/nexus/pipes/dup")
         with pytest.raises(PipeError, match="pipe already exists"):
-            mgr.create("/nexus/pipes/dup")
+            mgr.mkpipe("/nexus/pipes/dup")
 
     def test_create_at_existing_path_raises(self) -> None:
         mgr, ms = self._make_manager()
@@ -343,17 +343,17 @@ class TestPipeManager:
             )
         )
         with pytest.raises(PipeError, match="path already exists"):
-            mgr.create("/existing/file")
+            mgr.mkpipe("/existing/file")
 
     def test_open_existing_buffer(self) -> None:
         mgr, _ = self._make_manager()
-        buf1 = mgr.create("/nexus/pipes/p1")
+        buf1 = mgr.mkpipe("/nexus/pipes/p1")
         buf2 = mgr.open("/nexus/pipes/p1")
         assert buf1 is buf2
 
     def test_open_recovers_after_buffer_lost(self) -> None:
         mgr, ms = self._make_manager()
-        mgr.create("/nexus/pipes/recover", capacity=2048)
+        mgr.mkpipe("/nexus/pipes/recover", capacity=2048)
 
         # Simulate buffer loss (e.g., PipeManager recreated after restart)
         mgr._buffers.clear()
@@ -369,7 +369,7 @@ class TestPipeManager:
 
     def test_close_pipe(self) -> None:
         mgr, ms = self._make_manager()
-        buf = mgr.create("/nexus/pipes/closeme")
+        buf = mgr.mkpipe("/nexus/pipes/closeme")
         mgr.close("/nexus/pipes/closeme")
 
         assert buf.closed is True
@@ -385,7 +385,7 @@ class TestPipeManager:
 
     def test_destroy_removes_inode(self) -> None:
         mgr, ms = self._make_manager()
-        buf = mgr.create("/nexus/pipes/destroyme")
+        buf = mgr.mkpipe("/nexus/pipes/destroyme")
         mgr.destroy("/nexus/pipes/destroyme")
 
         assert buf.closed is True
@@ -400,7 +400,7 @@ class TestPipeManager:
     @pytest.mark.asyncio
     async def test_pipe_write_read(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/rw")
+        mgr.mkpipe("/nexus/pipes/rw")
 
         await mgr.pipe_write("/nexus/pipes/rw", b"hello")
         result = await mgr.pipe_read("/nexus/pipes/rw")
@@ -408,13 +408,13 @@ class TestPipeManager:
 
     def test_pipe_peek(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/peek")
+        mgr.mkpipe("/nexus/pipes/peek")
         assert mgr.pipe_peek("/nexus/pipes/peek") is None
 
     def test_list_pipes(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/a", capacity=100)
-        mgr.create("/nexus/pipes/b", capacity=200)
+        mgr.mkpipe("/nexus/pipes/a", capacity=100)
+        mgr.mkpipe("/nexus/pipes/b", capacity=200)
 
         pipes = mgr.list_pipes()
         assert len(pipes) == 2
@@ -423,8 +423,8 @@ class TestPipeManager:
 
     def test_close_all(self) -> None:
         mgr, _ = self._make_manager()
-        buf_a = mgr.create("/nexus/pipes/a")
-        buf_b = mgr.create("/nexus/pipes/b")
+        buf_a = mgr.mkpipe("/nexus/pipes/a")
+        buf_b = mgr.mkpipe("/nexus/pipes/b")
 
         mgr.close_all()
         assert buf_a.closed is True
@@ -445,7 +445,7 @@ class TestPipeManager:
 
     def test_pipe_write_nowait_basic(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/sync", capacity=1024)
+        mgr.mkpipe("/nexus/pipes/sync", capacity=1024)
         written = mgr.pipe_write_nowait("/nexus/pipes/sync", b"hello")
         assert written == 5
 
@@ -458,7 +458,7 @@ class TestPipeManager:
     async def test_pipe_write_nowait_then_async_read(self) -> None:
         """Sync write + async read roundtrip (workflow queue pattern)."""
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/mixed", capacity=1024)
+        mgr.mkpipe("/nexus/pipes/mixed", capacity=1024)
         mgr.pipe_write_nowait("/nexus/pipes/mixed", b"event-1")
         mgr.pipe_write_nowait("/nexus/pipes/mixed", b"event-2")
         assert await mgr.pipe_read("/nexus/pipes/mixed") == b"event-1"
@@ -466,7 +466,7 @@ class TestPipeManager:
 
     def test_close_all_clears_locks(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/a")
+        mgr.mkpipe("/nexus/pipes/a")
         mgr._get_lock("/nexus/pipes/a")  # force lock creation
         assert len(mgr._locks) == 1
         mgr.close_all()
@@ -474,14 +474,14 @@ class TestPipeManager:
 
     def test_close_clears_lock(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/a")
+        mgr.mkpipe("/nexus/pipes/a")
         mgr._get_lock("/nexus/pipes/a")
         mgr.close("/nexus/pipes/a")
         assert "/nexus/pipes/a" not in mgr._locks
 
     def test_destroy_clears_lock(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/a")
+        mgr.mkpipe("/nexus/pipes/a")
         mgr._get_lock("/nexus/pipes/a")
         mgr.destroy("/nexus/pipes/a")
         assert "/nexus/pipes/a" not in mgr._locks
@@ -616,7 +616,7 @@ class TestPipeManagerMPMC:
     async def test_concurrent_writers(self) -> None:
         """Multiple async writers should not lose messages."""
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/mpmc", capacity=65_536)
+        mgr.mkpipe("/nexus/pipes/mpmc", capacity=65_536)
         n_writers = 5
         msgs_per_writer = 20
 
@@ -637,7 +637,7 @@ class TestPipeManagerMPMC:
     async def test_blocking_write_waits_for_space(self) -> None:
         """Blocking pipe_write should wait (release lock) then succeed."""
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/block", capacity=10)
+        mgr.mkpipe("/nexus/pipes/block", capacity=10)
         await mgr.pipe_write("/nexus/pipes/block", b"x" * 10)
 
         written = False
@@ -658,7 +658,7 @@ class TestPipeManagerMPMC:
     async def test_blocking_read_waits_for_data(self) -> None:
         """Blocking pipe_read should wait then succeed when data arrives."""
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/block-read", capacity=1024)
+        mgr.mkpipe("/nexus/pipes/block-read", capacity=1024)
 
         result = None
 
@@ -676,7 +676,7 @@ class TestPipeManagerMPMC:
     @pytest.mark.asyncio
     async def test_nonblocking_write_full_raises(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/nb", capacity=10)
+        mgr.mkpipe("/nexus/pipes/nb", capacity=10)
         await mgr.pipe_write("/nexus/pipes/nb", b"x" * 10)
         with pytest.raises(PipeFullError):
             await mgr.pipe_write("/nexus/pipes/nb", b"y", blocking=False)
@@ -684,7 +684,7 @@ class TestPipeManagerMPMC:
     @pytest.mark.asyncio
     async def test_nonblocking_read_empty_raises(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create("/nexus/pipes/nb-read", capacity=1024)
+        mgr.mkpipe("/nexus/pipes/nb-read", capacity=1024)
         with pytest.raises(PipeEmptyError):
             await mgr.pipe_read("/nexus/pipes/nb-read", blocking=False)
 

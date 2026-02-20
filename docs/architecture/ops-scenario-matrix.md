@@ -296,6 +296,10 @@ Memory operations have distinct properties from File I/O:
 | **Unlock** | Agent/User | Occasional | Low | Write | Path | Permission | Session | Zone-aware | Release advisory lock |
 
 **Step 1 Analysis:** Distinct from file watching — mutation pattern (write), mutual exclusion semantics, TTL-based lifecycle. In Linux, `flock()` / `fcntl()` locking is a separate subsystem from `inotify`/`fanotify`.
+yi x
+**Note:** This is the service-layer advisory lock API (LockProtocol → EventsService).
+Kernel-internal locking (VFSLockManager in `core/lock_fast.py`) is a separate primitive
+for VFS path concurrency — see KERNEL-ARCHITECTURE.md §3.
 
 **Decision: Keep as separate domain — Advisory Locking.**
 
@@ -700,7 +704,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | P7 | **SearchBrickProtocol** | `services/protocols/search.py` | Service | Mixed | 5 (Small) | Standalone | search daemon | Per-brick search with indexing lifecycle |
 | P8 | **PermissionProtocol** | `services/protocols/permission.py` | Service | Sync | 6 (Small) | Standalone | SELinux / Zanzibar | ReBAC check/write/delete/expand |
 | P9a | **WatchProtocol** | `services/protocols/watch.py` | Service | Async | 2 (Micro) | Standalone | `inotify` | File change long-poll (split from EventsProtocol) |
-| P9b | **LockProtocol** | `services/protocols/lock.py` | Service | Async | 3 (Micro) | Standalone | `flock` | Advisory lock lifecycle (split from EventsProtocol) |
+| P9b | **LockProtocol** | `services/protocols/lock.py` | Service | Async | 3 (Micro) | Standalone | `flock` | Advisory lock lifecycle. Kernel VFS locking is separate (`core/lock_fast.py`). |
 | P10 | **MountProtocol** | `services/protocols/mount.py` | Service | Async | 15 (Large) | Standalone | `mount(2)` | Mount lifecycle: add/remove/sync/save/load |
 | P11 | **ShareLinkProtocol** | `services/protocols/share_link.py` | Service | Async | 6 (Small) | Standalone | capability URLs | Create/revoke/access capability URLs |
 | P12 | **OAuthProtocol** | `services/protocols/oauth.py` | Service | Async | 7 (Medium) | Standalone | PAM / keyring | OAuth flow + credential management |

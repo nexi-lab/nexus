@@ -122,7 +122,7 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   brick-imports-check:
-    name: Brick Zero-Core-Imports Check
+    name: Brick Import Boundary Check (regex)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,7 +139,39 @@ jobs:
       - name: Report violations
         if: failure()
         run: |
-          echo "::error::Bricks must not import from nexus.core or nexus.services internals. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
+          echo "::error::Brick import boundary violations detected. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
+
+  import-linter:
+    name: Architecture Boundary Check (import-linter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install import-linter
+
+      - name: Cache import graph
+        uses: actions/cache@v4
+        with:
+          path: .import-linter-cache
+          key: import-linter-${{ runner.os }}-${{ hashFiles('src/**/*.py') }}
+          restore-keys: |
+            import-linter-${{ runner.os }}-
+
+      - name: Run import-linter
+        run: |
+          lint-imports --cache-dir .import-linter-cache
+
+      - name: Report violations
+        if: failure()
+        run: |
+          echo "::error::Architecture boundary violations detected. See NEXUS-LEGO-ARCHITECTURE.md."
 
   type-ignore-baseline:
     name: Track Type Ignore Baseline

@@ -182,7 +182,7 @@ class ToolNamespaceMiddleware(Middleware):
         cache_key = self._cache_key(subject)
 
         with self._lock:
-            cached = self._tool_cache.get(cache_key)
+            cached: frozenset[str] | None = self._tool_cache.get(cache_key)
         if cached is not None:
             self._cache_hits += 1
             return cached
@@ -253,7 +253,7 @@ class ToolNamespaceMiddleware(Middleware):
     def _get_revision_bucket(self) -> int:
         """Get current zone revision bucket."""
         try:
-            revision = self._rebac_manager.get_zone_revision(self._zone_id)
+            revision: int = self._rebac_manager.get_zone_revision(self._zone_id)
         except Exception as e:
             logger.debug("Failed to get zone revision for %s: %s", self._zone_id, e)
             return 0

@@ -22,12 +22,25 @@ _BRICK_MODULES = [
     "nexus.bricks.reputation.reputation_records",
     "nexus.bricks.snapshot.errors",
     "nexus.bricks.snapshot.registry",
+    # ReBAC brick (Issue #2179)
+    "nexus.bricks.rebac.rebac_tracing",
+    "nexus.bricks.rebac.domain",
+    "nexus.bricks.rebac.types",
+    "nexus.bricks.rebac.circuit_breaker",
+    "nexus.bricks.rebac.entity_registry",
+    "nexus.bricks.rebac.memory_permission_enforcer",
+    "nexus.bricks.rebac.permission_cache",
+    "nexus.bricks.rebac.hotspot_detector",
+    "nexus.bricks.rebac.namespace_manager",
+    "nexus.bricks.rebac._path_utils",
 ]
 
 # Forbidden modules that bricks must NOT pull in at import time
 _FORBIDDEN_MODULES = [
     "nexus.core.nexus_fs",
     "nexus.core.nexus_fs_core",
+    "nexus.server.telemetry",
+    "nexus.server.app",
 ]
 
 

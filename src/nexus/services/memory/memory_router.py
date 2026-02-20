@@ -40,7 +40,7 @@ class MemoryViewRouter:
 
             from nexus.rebac.entity_registry import EntityRegistry
 
-            self.entity_registry = EntityRegistry(SimpleNamespace(session_factory=lambda: session))  # type: ignore[arg-type]
+            self.entity_registry = EntityRegistry(SimpleNamespace(session_factory=lambda: session))
 
     @staticmethod
     def is_memory_path(path: str) -> bool:

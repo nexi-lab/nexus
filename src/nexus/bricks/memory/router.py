@@ -49,7 +49,7 @@ class MemoryViewRouter:
             from types import SimpleNamespace
 
             self.entity_registry = EntityRegistry(
-                SimpleNamespace(session_factory=lambda: self.session)  # type: ignore[arg-type]
+                SimpleNamespace(session_factory=lambda: self.session)
             )
 
     @staticmethod
@@ -122,7 +122,8 @@ class MemoryViewRouter:
         Returns:
             Dictionary mapping entity type keys to IDs.
         """
-        return self.entity_registry.extract_ids_from_path_parts(parts)
+        result: dict[str, str] = self.entity_registry.extract_ids_from_path_parts(parts)
+        return result
 
     def _query_by_relationships(self, ids: dict[str, str]) -> MemoryModel | None:
         """Query memory by identity relationships.

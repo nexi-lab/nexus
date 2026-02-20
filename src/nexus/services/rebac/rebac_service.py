@@ -21,7 +21,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from nexus.contracts.exceptions import CircuitOpenError
 from nexus.lib.rpc_decorator import rpc_expose
@@ -154,8 +154,10 @@ class ReBACService(ReBACShareMixin):
         fn_with_ctx = propagate_otel_context(fn)
 
         if self._circuit_breaker:
-            return await self._circuit_breaker.call(asyncio.to_thread, fn_with_ctx, *args, **kwargs)
-        return await asyncio.to_thread(fn_with_ctx, *args, **kwargs)
+            return cast(
+                T, await self._circuit_breaker.call(asyncio.to_thread, fn_with_ctx, *args, **kwargs)
+            )
+        return cast(T, await asyncio.to_thread(fn_with_ctx, *args, **kwargs))
 
     # =========================================================================
     # Public API: Core ReBAC Operations
@@ -475,7 +477,7 @@ class ReBACService(ReBACShareMixin):
             # Check permission with optional ABAC context and consistency
             # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
-            result = self._rebac_manager.rebac_check(
+            result: bool = self._rebac_manager.rebac_check(
                 subject=subject,
                 permission=permission,
                 object=object,
@@ -491,7 +493,7 @@ class ReBACService(ReBACShareMixin):
             return await self._run_in_thread(_check_sync)
         except CircuitOpenError:
             if self._rebac_manager:
-                cached = self._rebac_manager.get_cached_permission(
+                cached: bool | None = self._rebac_manager.get_cached_permission(
                     subject=subject, permission=permission, object=object, zone_id=zone_id
                 )
                 if cached is not None:
@@ -552,7 +554,10 @@ class ReBACService(ReBACShareMixin):
 
             # Expand permission (manager guaranteed by _run_in_thread)
             assert self._rebac_manager is not None
-            return self._rebac_manager.rebac_expand(permission=permission, object=object)
+            expanded: list[tuple[str, str]] = self._rebac_manager.rebac_expand(
+                permission=permission, object=object
+            )
+            return expanded
 
         return await self._run_in_thread(_expand_sync)
 
@@ -626,12 +631,13 @@ class ReBACService(ReBACShareMixin):
 
             # Get explanation from manager (manager guaranteed by _run_in_thread)
             assert self._rebac_manager is not None
-            return self._rebac_manager.rebac_explain(
+            explanation: dict[str, Any] = self._rebac_manager.rebac_explain(
                 subject=subject,
                 permission=permission,
                 object=object,
                 zone_id=effective_zone_id,
             )
+            return explanation
 
         return await self._run_in_thread(_explain_sync)
 
@@ -688,7 +694,8 @@ class ReBACService(ReBACShareMixin):
 
             # Perform batch check with Rust acceleration (manager guaranteed by _run_in_thread)
             assert self._rebac_manager is not None
-            return self._rebac_manager.rebac_check_batch_fast(checks=checks)
+            batch_results: list[bool] = self._rebac_manager.rebac_check_batch_fast(checks=checks)
+            return batch_results
 
         # Issue #702: Wrap batch check in a summary span
         import time as _time
@@ -766,7 +773,7 @@ class ReBACService(ReBACShareMixin):
             # Delete tuple - enhanced rebac_delete handles Tiger Cache invalidation
             # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
-            result = self._rebac_manager.rebac_delete(tuple_id=tuple_id)
+            result: bool = self._rebac_manager.rebac_delete(tuple_id=tuple_id)
 
             if self._enable_audit_logging and result:
                 logger.info("[ReBACService] Deleted tuple: %s", tuple_id)
@@ -835,12 +842,13 @@ class ReBACService(ReBACShareMixin):
         def _list_tuples_sync() -> list[dict[str, Any]]:
             """Synchronous implementation for thread pool execution."""
             assert self._rebac_manager is not None
-            return self._rebac_manager.list_tuples(
+            tuples: list[dict[str, Any]] = self._rebac_manager.list_tuples(
                 subject=subject,
                 relation=relation,
                 relation_in=relation_in,
                 object=object,
             )
+            return tuples
 
         return await self._run_in_thread(_list_tuples_sync)
 

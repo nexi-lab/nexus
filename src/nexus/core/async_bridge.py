@@ -294,7 +294,8 @@ class AsyncReBACBridge:
         """Get L1 cache statistics."""
         if not self._manager:
             return {}
-        return self._manager.get_l1_cache_stats()
+        stats: dict[str, Any] = self._manager.get_l1_cache_stats()
+        return stats
 
 
 # Global bridge instance (optional singleton pattern)

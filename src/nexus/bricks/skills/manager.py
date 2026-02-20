@@ -108,12 +108,13 @@ class SkillManager:
             return True
 
         try:
-            return self._rebac.rebac_check(
+            result: bool = self._rebac.rebac_check(
                 subject=(subject_type, subject_id),
                 permission=permission,
                 object=("skill", object_name),
                 zone_id=zone_id,
             )
+            return result
         except Exception as e:
             logger.warning(f"ReBAC check failed: {e}")
             return False

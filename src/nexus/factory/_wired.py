@@ -5,17 +5,21 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.core.config import BrickServices, KernelServices, WiredServices
+    from nexus.core.protocols.wirable_fs import WirableFS
 
 logger = logging.getLogger(__name__)
 
 
 def _boot_wired_services(
-    nx: Any,
-    kernel_services: Any,
-    brick_services: Any,
+    nx: WirableFS,
+    kernel_services: KernelServices,
+    brick_services: BrickServices,
     brick_on: Callable[[str], bool] | None = None,
-) -> dict[str, Any]:
+) -> WiredServices:
     """Boot Tier 2b (WIRED) — services needing NexusFS reference.
 
     Two-phase init: called AFTER NexusFS construction in ``create_nexus_fs()``.
@@ -27,6 +31,9 @@ def _boot_wired_services(
     Issue #643: Migrated from ``NexusFS._wire_services()`` to factory.py
     so the kernel never imports or creates services.
 
+    Issue #2133: Typed with WirableFS + KernelServices + BrickServices
+    and returns WiredServices instead of dict[str, Any].
+
     Args:
         nx: The NexusFS instance (already constructed).
         kernel_services: KernelServices container (Tier 0).
@@ -34,8 +41,10 @@ def _boot_wired_services(
         brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
 
     Returns:
-        Dict of service name -> instance (some may be None).
+        WiredServices frozen dataclass (some fields may be None).
     """
+    from nexus.core.config import WiredServices as _WiredServices
+
     t0 = time.perf_counter()
 
     def _on(name: str) -> bool:
@@ -60,11 +69,11 @@ def _boot_wired_services(
 
         rebac_service = ReBACService(
             rebac_manager=kernel_services.rebac_manager,
-            enforce_permissions=getattr(nx, "_enforce_permissions", True),
+            enforce_permissions=nx._enforce_permissions,
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
             file_reader=lambda path: nx.read(path),
-            permission_enforcer=getattr(nx, "_permission_enforcer", None),
+            permission_enforcer=nx._permission_enforcer,
         )
         logger.debug("[BOOT:WIRED] ReBACService created")
     except Exception as exc:
@@ -114,7 +123,7 @@ def _boot_wired_services(
                 token_manager=None,
                 filesystem=nx,
                 database_url=os.getenv("TOKEN_MANAGER_DB"),
-                oauth_config=getattr(getattr(nx, "_config", None), "oauth", None),
+                oauth_config=getattr(nx._config, "oauth", None) if nx._config else None,
                 mount_lister=lambda: [
                     (m.mount_point, type(m.backend).__name__)
                     for m in kernel_services.router.list_mounts()
@@ -220,7 +229,7 @@ def _boot_wired_services(
             )
             logger.debug("[BOOT:WIRED] SkillPackageService created")
         except Exception:
-            pass  # Optional, may not be importable
+            logger.warning("[BOOT:WIRED] SkillPackageService unavailable (optional)")
 
     # --- SearchService: Search operations ---
     search_service: Any = None
@@ -230,12 +239,12 @@ def _boot_wired_services(
 
             search_service = SearchService(
                 metadata_store=nx.metadata,
-                permission_enforcer=getattr(nx, "_permission_enforcer", None),
+                permission_enforcer=nx._permission_enforcer,
                 router=kernel_services.router,
                 rebac_manager=kernel_services.rebac_manager,
-                enforce_permissions=getattr(nx, "_enforce_permissions", True),
-                default_context=getattr(nx, "_default_context", None),
-                record_store=getattr(nx, "_record_store", None),
+                enforce_permissions=nx._enforce_permissions,
+                default_context=nx._default_context,
+                record_store=nx._record_store,
                 gateway=gateway,
             )
             logger.debug("[BOOT:WIRED] SearchService created")
@@ -252,7 +261,7 @@ def _boot_wired_services(
 
             share_link_service = ShareLinkService(
                 gateway=gateway,
-                enforce_permissions=getattr(nx, "_enforce_permissions", True),
+                enforce_permissions=nx._enforce_permissions,
             )
             logger.debug("[BOOT:WIRED] ShareLinkService created")
         except Exception as exc:
@@ -283,27 +292,27 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] EventsService disabled by profile")
 
-    result = {
-        "rebac_service": rebac_service,
-        "mount_service": mount_service,
-        "gateway": gateway,
-        "mount_core_service": mount_core_service,
-        "sync_service": sync_service,
-        "sync_job_service": sync_job_service,
-        "mount_persist_service": mount_persist_service,
-        "mcp_service": mcp_service,
-        "llm_service": llm_service,
-        "llm_subsystem": llm_subsystem,
-        "oauth_service": oauth_service,
-        "skill_service": skill_service,
-        "skill_package_service": skill_package_service,
-        "search_service": search_service,
-        "share_link_service": share_link_service,
-        "events_service": events_service,
-        "task_queue_service": brick_services.task_queue_service,
-    }
+    result = _WiredServices(
+        rebac_service=rebac_service,
+        mount_service=mount_service,
+        gateway=gateway,
+        mount_core_service=mount_core_service,
+        sync_service=sync_service,
+        sync_job_service=sync_job_service,
+        mount_persist_service=mount_persist_service,
+        mcp_service=mcp_service,
+        llm_service=llm_service,
+        llm_subsystem=llm_subsystem,
+        oauth_service=oauth_service,
+        skill_service=skill_service,
+        skill_package_service=skill_package_service,
+        search_service=search_service,
+        share_link_service=share_link_service,
+        events_service=events_service,
+        task_queue_service=brick_services.task_queue_service,
+    )
 
     elapsed = time.perf_counter() - t0
-    active = sum(1 for v in result.values() if v is not None)
-    logger.info("[BOOT:WIRED] %d/%d services ready (%.3fs)", active, len(result), elapsed)
+    active = sum(1 for f in result.__dataclass_fields__ if getattr(result, f) is not None)
+    logger.info("[BOOT:WIRED] %d/%d services ready (%.3fs)", active, len(result.__dataclass_fields__), elapsed)
     return result

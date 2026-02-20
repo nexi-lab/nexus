@@ -29,6 +29,7 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
     SystemServices,
+    WiredServices,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
@@ -369,30 +370,52 @@ class NexusFS(  # type: ignore[misc]
                 )
             )
 
-    def _bind_wired_services(self, wired: dict[str, Any]) -> None:
+    def _bind_wired_services(self, wired: WiredServices | dict[str, Any]) -> None:
         """Bind wired services from factory two-phase init.
 
         Args:
-            wired: Dict of service_name -> instance (from _boot_wired_services).
+            wired: WiredServices dataclass (from _boot_wired_services).
+                   Also accepts dict for backward compatibility with tests.
+
+        Issue #2133: Accepts WiredServices frozen dataclass.
         """
-        # version_service removed (Issue #2034) — now set from BrickServices in __init__
-        self.rebac_service = wired.get("rebac_service")
-        self.mount_service = wired.get("mount_service")
-        self._gateway = wired.get("gateway")
-        self._mount_core_service = wired.get("mount_core_service")
-        self._sync_service = wired.get("sync_service")
-        self._sync_job_service = wired.get("sync_job_service")
-        self._mount_persist_service = wired.get("mount_persist_service")
-        self.mcp_service = wired.get("mcp_service")
-        self.llm_service = wired.get("llm_service")
-        self._llm_subsystem = wired.get("llm_subsystem")
-        self.oauth_service = wired.get("oauth_service")
-        self.skill_service = wired.get("skill_service")
-        self.skill_package_service = wired.get("skill_package_service")
-        self.search_service = wired.get("search_service")
-        self.share_link_service = wired.get("share_link_service")
-        self.events_service = wired.get("events_service")
-        self.task_queue_service = wired.get("task_queue_service")
+        if isinstance(wired, dict):
+            # Backward compat for tests that pass a dict
+            self.rebac_service = wired.get("rebac_service")
+            self.mount_service = wired.get("mount_service")
+            self._gateway = wired.get("gateway")
+            self._mount_core_service = wired.get("mount_core_service")
+            self._sync_service = wired.get("sync_service")
+            self._sync_job_service = wired.get("sync_job_service")
+            self._mount_persist_service = wired.get("mount_persist_service")
+            self.mcp_service = wired.get("mcp_service")
+            self.llm_service = wired.get("llm_service")
+            self._llm_subsystem = wired.get("llm_subsystem")
+            self.oauth_service = wired.get("oauth_service")
+            self.skill_service = wired.get("skill_service")
+            self.skill_package_service = wired.get("skill_package_service")
+            self.search_service = wired.get("search_service")
+            self.share_link_service = wired.get("share_link_service")
+            self.events_service = wired.get("events_service")
+            self.task_queue_service = wired.get("task_queue_service")
+            return
+        self.rebac_service = wired.rebac_service
+        self.mount_service = wired.mount_service
+        self._gateway = wired.gateway
+        self._mount_core_service = wired.mount_core_service
+        self._sync_service = wired.sync_service
+        self._sync_job_service = wired.sync_job_service
+        self._mount_persist_service = wired.mount_persist_service
+        self.mcp_service = wired.mcp_service
+        self.llm_service = wired.llm_service
+        self._llm_subsystem = wired.llm_subsystem
+        self.oauth_service = wired.oauth_service
+        self.skill_service = wired.skill_service
+        self.skill_package_service = wired.skill_package_service
+        self.search_service = wired.search_service
+        self.share_link_service = wired.share_link_service
+        self.events_service = wired.events_service
+        self.task_queue_service = wired.task_queue_service
 
     @property
     def _service_extras(self) -> dict[str, Any]:

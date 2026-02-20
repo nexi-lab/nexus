@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class MountEntry:
     """A namespace mount entry representing a visible path for a subject.
 
@@ -72,6 +72,15 @@ class MountEntry:
     """
 
     virtual_path: str
+
+    def __eq__(self, other: object) -> bool:
+        # Use isinstance (not __class__ is) for cross-module import shim compatibility
+        if isinstance(other, MountEntry):
+            return self.virtual_path == other.virtual_path
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.virtual_path)
 
 
 @dataclass(frozen=True, slots=True)

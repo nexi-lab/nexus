@@ -812,8 +812,7 @@ ignore_imports = [
     "nexus.cache.domain -> nexus.bricks.cache.domain",
     "nexus.cache.dragonfly -> nexus.bricks.cache.dragonfly",
     "nexus.cache.inmemory -> nexus.bricks.cache.inmemory",
-    # skills -> search: transitive via nexus.backends (TODO: fix backends)
-    "nexus.backends.sync_pipeline -> nexus.bricks.search.zoekt_client",
+    # skills -> search: transitive via nexus.backends (Issue #2188 fixed zoekt_client import)
 ]
 unmatched_ignore_imports_alerting = "warn"
 

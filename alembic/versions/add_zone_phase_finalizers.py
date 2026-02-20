@@ -1,7 +1,7 @@
 """Add phase and finalizers columns to zones, drop is_active.
 
 Revision ID: add_zone_phase_finalizers
-Revises: None
+Revises: 101ea1909580
 Create Date: 2026-02-19
 
 Zone lifecycle finalizer protocol (Issue #2061).

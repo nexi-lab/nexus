@@ -581,8 +581,8 @@ class MountCoreService:
                 )
             elif self._token_manager_fn is not None:
                 try:
-                    from nexus.core.sync_bridge import run_sync
                     from nexus.lib.context_utils import get_zone_id
+                    from nexus.lib.sync_bridge import run_sync
 
                     zone_id = get_zone_id(context)
                     token_manager = self._token_manager_fn()

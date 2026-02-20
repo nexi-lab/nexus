@@ -345,7 +345,7 @@ send_notifications: true
             )
 
         # Get valid access token from TokenManager
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             zone_id = (

@@ -583,7 +583,7 @@ def _boot_dependent_bricks(
     - Artifact auto-indexing (Issue #1861): registers hook handlers for
       ``post_artifact_create`` and ``post_artifact_update`` phases.
     """
-    hook_engine = system.get("hook_engine")
+    hook_engine = system.get("scoped_hook_engine")
     if hook_engine is None:
         logger.debug("[BOOT:BRICK:DEP] No hook engine available, skipping dependent bricks")
         return
@@ -667,13 +667,9 @@ def _boot_dependent_bricks(
                         capabilities=_no_veto_caps,
                     )
 
-                    # Use asyncio to run the async registration synchronously
-                    # during boot (boot runs outside event loop or in sync context)
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(hook_engine.register_hook(spec, handler_fn))
-                    except RuntimeError:
-                        asyncio.run(hook_engine.register_hook(spec, handler_fn))
+                    # Boot runs in sync context (no event loop), so asyncio.run()
+                    # is safe for the async register_hook call.
+                    asyncio.run(hook_engine.register_hook(spec, handler_fn))
 
             logger.debug(
                 "[BOOT:BRICK:DEP] Registered %d artifact indexing handlers",

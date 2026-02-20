@@ -251,7 +251,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         Raises:
             BackendError: If authentication fails
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(self._get_api_client_async(context))
 
@@ -680,7 +680,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             )
 
         # Fetch from API
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         content = run_sync(self._read_content_async(context, endpoint_type, params))
         return HandlerResponse.ok(
@@ -771,7 +771,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             finally:
                 await client.close()
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         tweet_id = run_sync(_post_tweet())
         return HandlerResponse.ok(
@@ -850,7 +850,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
                     await client.close()
 
             try:
-                from nexus.core.sync_bridge import run_sync
+                from nexus.lib.sync_bridge import run_sync
 
                 run_sync(_delete_tweet())
             except BackendError as e:
@@ -1350,7 +1350,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             return results
 
         try:
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             return run_sync(_search_user_tweets())
         except Exception as e:
@@ -1400,7 +1400,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             return results
 
         try:
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             return run_sync(_search_global())
         except Exception as e:

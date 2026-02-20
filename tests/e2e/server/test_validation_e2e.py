@@ -75,7 +75,7 @@ def _run_async(coro):
 @pytest.fixture
 def test_app(tmp_path):
     """Create test FastAPI app without permission enforcement."""
-    from nexus.core.sync_bridge import shutdown_sync_bridge
+    from nexus.lib.sync_bridge import shutdown_sync_bridge
 
     app, api_key, nx = _create_test_app(tmp_path, enforce_permissions=False)
     yield app, api_key, nx
@@ -85,7 +85,7 @@ def test_app(tmp_path):
 @pytest.fixture
 def test_app_with_perms(tmp_path):
     """Create test FastAPI app with permission enforcement."""
-    from nexus.core.sync_bridge import shutdown_sync_bridge
+    from nexus.lib.sync_bridge import shutdown_sync_bridge
 
     app, api_key, nx = _create_test_app(tmp_path, enforce_permissions=True)
     yield app, api_key, nx

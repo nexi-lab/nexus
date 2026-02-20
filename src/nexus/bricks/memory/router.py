@@ -15,7 +15,6 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from nexus.services.protocols.memory_deps import MemoryEntityRegistryProtocol
 from nexus.storage.models import MemoryModel, VersionHistoryModel
 
 
@@ -25,7 +24,7 @@ class MemoryViewRouter:
     def __init__(
         self,
         session: Session | None = None,
-        entity_registry: MemoryEntityRegistryProtocol | None = None,
+        entity_registry: Any | None = None,
         *,
         session_factory: Any | None = None,
     ):

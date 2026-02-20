@@ -246,7 +246,9 @@ def detect_capabilities() -> DeviceCapabilities:
 # ---------------------------------------------------------------------------
 
 # Profile tier indices for comparison
+# kernel=-1: never auto-detected, always explicit user choice (Issue #2194)
 _PROFILE_INDEX: dict[str, int] = {
+    "kernel": -1,
     "embedded": 0,
     "lite": 1,
     "full": 2,

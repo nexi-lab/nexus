@@ -15,6 +15,8 @@ from nexus.server.observability.registry import ObservabilityRegistry
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.server.lifespan.services_container import LifespanServices
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,9 +128,9 @@ def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
     return registry
 
 
-async def startup_observability(app: FastAPI) -> None:
+async def startup_observability(app: FastAPI, svc: LifespanServices) -> None:
     """Initialize all observability subsystems via the registry."""
-    write_observer = app.state.write_observer
+    write_observer = svc.write_observer
     registry = create_registry(write_observer=write_observer)
     statuses = await registry.start_all()
     app.state.observability_registry = registry
@@ -142,10 +144,10 @@ async def startup_observability(app: FastAPI) -> None:
         logger.info("Observability components skipped: %s", ", ".join(failed))
 
     logger.info("Starting FastAPI Nexus server...")
-    _startup_thread_pool(app)
+    _startup_thread_pool(svc)
 
 
-async def shutdown_observability(app: FastAPI) -> None:
+async def shutdown_observability(app: FastAPI, _svc: LifespanServices) -> None:
     """Shutdown all observability components via the registry."""
     registry = app.state.observability_registry
     if registry:
@@ -153,10 +155,10 @@ async def shutdown_observability(app: FastAPI) -> None:
         app.state.observability_registry = None
 
 
-def _startup_thread_pool(app: FastAPI) -> None:
+def _startup_thread_pool(svc: LifespanServices) -> None:
     """Configure thread pool size (Issue #932)."""
     from anyio import to_thread
 
     limiter = to_thread.current_default_thread_limiter()
-    limiter.total_tokens = app.state.thread_pool_size
+    limiter.total_tokens = svc.thread_pool_size
     logger.info("Thread pool size set to %d", limiter.total_tokens)

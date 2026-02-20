@@ -7,17 +7,27 @@ entries incrementally via a queue-based approach.
 from __future__ import annotations
 
 import logging
-import sqlite3
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import text
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.exc import OperationalError
+
+from nexus.storage.models.permissions import (
+    ReBACChangelogModel as RCL,
+)
+from nexus.storage.models.permissions import (
+    TigerCacheQueueModel as TCQ,
+)
+from nexus.storage.models.permissions import (
+    TigerResourceMapModel as TRM,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
     from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -78,34 +88,25 @@ class TigerCacheUpdater:
             Queue entry ID
         """
 
-        now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
-        query = text(f"""
-            INSERT INTO tiger_cache_queue
-                (subject_type, subject_id, permission, resource_type, zone_id, priority, status, created_at)
-            VALUES
-                (:subject_type, :subject_id, :permission, :resource_type, :zone_id, :priority, 'pending', {now_sql})
-        """)
-
-        params = {
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-            "permission": permission,
-            "resource_type": resource_type,
-            "zone_id": zone_id,
-            "priority": priority,
-        }
+        stmt = insert(TCQ).values(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            permission=permission,
+            resource_type=resource_type,
+            zone_id=zone_id,
+            priority=priority,
+            status="pending",
+            created_at=datetime.now(UTC),
+        )
 
         def execute(connection: Connection) -> int:
-            result = connection.execute(query, params)
+            result = connection.execute(stmt)
             return result.lastrowid or 0
 
         if conn:
             return execute(conn)
         else:
             with self._engine.begin() as new_conn:
-                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
-                if not self._is_postgresql:
-                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 return execute(new_conn)
 
     def reset_stuck_entries(
@@ -125,23 +126,15 @@ class TigerCacheUpdater:
             Number of entries reset
         """
 
-        if self._is_postgresql:
-            query = text("""
-                UPDATE tiger_cache_queue
-                SET status = 'pending'
-                WHERE status = 'processing'
-                  AND created_at < NOW() - INTERVAL ':minutes minutes'
-            """)
-        else:
-            query = text("""
-                UPDATE tiger_cache_queue
-                SET status = 'pending'
-                WHERE status = 'processing'
-                  AND created_at < datetime('now', '-' || :minutes || ' minutes')
-            """)
+        cutoff = datetime.now(UTC) - timedelta(minutes=stuck_timeout_minutes)
+        stmt = (
+            update(TCQ)
+            .where(TCQ.status == "processing", TCQ.created_at < cutoff)
+            .values(status="pending")
+        )
 
         def execute(connection: Connection) -> int:
-            result = connection.execute(query, {"minutes": stuck_timeout_minutes})
+            result = connection.execute(stmt)
             count = result.rowcount
             if count > 0:
                 logger.info(f"[TIGER] Reset {count} stuck queue entries to pending")
@@ -151,9 +144,6 @@ class TigerCacheUpdater:
             return execute(conn)
         else:
             with self._engine.begin() as new_conn:
-                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
-                if not self._is_postgresql:
-                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 return execute(new_conn)
 
     def process_queue(self, batch_size: int = 100, conn: Connection | None = None) -> int:
@@ -167,8 +157,6 @@ class TigerCacheUpdater:
             Number of entries processed
         """
 
-        from sqlalchemy import text
-
         if self._rebac_manager is None:
             logger.warning("[TIGER] Cannot process queue - no ReBAC manager set")
             return 0
@@ -179,37 +167,32 @@ class TigerCacheUpdater:
         except Exception as e:
             logger.debug(f"[TIGER] Could not reset stuck entries: {e}")
 
-        now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
-
         # Helper to check if error is a database lock/deadlock error
         def is_lock_error(e: Exception) -> bool:
             err_str = str(e).lower()
             return (
                 "database is locked" in err_str
                 or "deadlock" in err_str
-                or isinstance(e, sqlite3.OperationalError)
                 or (isinstance(e, OperationalError) and "lock" in err_str)
             )
 
         # Get pending entries
         # Use FOR UPDATE SKIP LOCKED on PostgreSQL to avoid deadlocks
+        select_query = (
+            select(
+                TCQ.queue_id,
+                TCQ.subject_type,
+                TCQ.subject_id,
+                TCQ.permission,
+                TCQ.resource_type,
+                TCQ.zone_id,
+            )
+            .where(TCQ.status == "pending")
+            .order_by(TCQ.priority, TCQ.created_at)
+            .limit(batch_size)
+        )
         if self._is_postgresql:
-            select_query = text(f"""
-                SELECT queue_id, subject_type, subject_id, permission, resource_type, zone_id
-                FROM tiger_cache_queue
-                WHERE status = 'pending'
-                ORDER BY priority, created_at
-                LIMIT {batch_size}
-                FOR UPDATE SKIP LOCKED
-            """)
-        else:
-            select_query = text(f"""
-                SELECT queue_id, subject_type, subject_id, permission, resource_type, zone_id
-                FROM tiger_cache_queue
-                WHERE status = 'pending'
-                ORDER BY priority, created_at
-                LIMIT {batch_size}
-            """)
+            select_query = select_query.with_for_update(skip_locked=True)
 
         def do_process(connection: Connection) -> int:
             processed = 0
@@ -222,10 +205,9 @@ class TigerCacheUpdater:
                 try:
                     # Mark as processing
                     connection.execute(
-                        text(
-                            "UPDATE tiger_cache_queue SET status = 'processing' WHERE queue_id = :qid"
-                        ),
-                        {"qid": entry.queue_id},
+                        update(TCQ)
+                        .where(TCQ.queue_id == entry.queue_id)
+                        .values(status="processing"),
                     )
 
                     # Compute accessible resources
@@ -255,10 +237,9 @@ class TigerCacheUpdater:
 
                     # Mark as completed
                     connection.execute(
-                        text(
-                            f"UPDATE tiger_cache_queue SET status = 'completed', processed_at = {now_sql} WHERE queue_id = :qid"
-                        ),
-                        {"qid": entry.queue_id},
+                        update(TCQ)
+                        .where(TCQ.queue_id == entry.queue_id)
+                        .values(status="completed", processed_at=datetime.now(UTC)),
                     )
                     processed += 1
 
@@ -273,10 +254,13 @@ class TigerCacheUpdater:
                         logger.error(f"[TIGER] Failed to process queue entry {entry.queue_id}: {e}")
                         try:
                             connection.execute(
-                                text(
-                                    f"UPDATE tiger_cache_queue SET status = 'failed', error_message = :err, processed_at = {now_sql} WHERE queue_id = :qid"
+                                update(TCQ)
+                                .where(TCQ.queue_id == entry.queue_id)
+                                .values(
+                                    status="failed",
+                                    error_message=str(e)[:1000],
+                                    processed_at=datetime.now(UTC),
                                 ),
-                                {"qid": entry.queue_id, "err": str(e)[:1000]},
                             )
                         except Exception as update_err:
                             # If we can't update the status, just log and continue
@@ -293,9 +277,6 @@ class TigerCacheUpdater:
                 return result
             else:
                 with self._engine.begin() as new_conn:
-                    # Set short timeout for Tiger Cache ops - fail fast instead of blocking
-                    if not self._is_postgresql:
-                        new_conn.execute(text("PRAGMA busy_timeout=100"))
                     result = do_process(new_conn)
                 # Commit happens here when 'with' block exits
                 logger.info(f"[TIGER] Queue processing COMMITTED: {result} entries processed")
@@ -338,19 +319,14 @@ class TigerCacheUpdater:
         if self._rebac_manager is None:
             return set()
 
-        # Get all resources of this type in zone
-        # (In practice, you might want to limit this or paginate)
-        resources_query = text("""
-            SELECT resource_int_id, resource_id
-            FROM tiger_resource_map
-            WHERE resource_type = :resource_type
-              AND zone_id = :zone_id
-        """)
-
-        result = conn.execute(
-            resources_query,
-            {"resource_type": resource_type, "zone_id": zone_id},
+        # Get all resources of this type
+        # Note: tiger_resource_map has no zone_id column — resource paths are globally unique.
+        # Zone scoping is handled by the rebac_check call below.
+        stmt = select(TRM.resource_int_id, TRM.resource_id).where(
+            TRM.resource_type == resource_type,
         )
+
+        result = conn.execute(stmt)
 
         accessible: set[int] = set()
         for row in result:
@@ -368,15 +344,12 @@ class TigerCacheUpdater:
 
     def _get_current_revision(self, zone_id: str, conn: Connection) -> int:
         """Get current revision from changelog."""
-
-        query = text("""
-            SELECT COALESCE(MAX(change_id), 0) as revision
-            FROM rebac_changelog
-            WHERE zone_id = :zone_id
-        """)
-        result = conn.execute(query, {"zone_id": zone_id})
-        row = result.fetchone()
-        return int(row.revision) if row else 0
+        stmt = select(func.coalesce(func.max(RCL.change_id), 0)).where(
+            RCL.zone_id == zone_id,
+        )
+        result = conn.execute(stmt)
+        value = result.scalar()
+        return int(value) if value is not None else 0
 
     def cleanup_completed(self, older_than_hours: int = 24, conn: Connection | None = None) -> int:
         """Clean up completed queue entries.
@@ -389,28 +362,18 @@ class TigerCacheUpdater:
             Number of entries deleted
         """
 
-        if self._is_postgresql:
-            query = text("""
-                DELETE FROM tiger_cache_queue
-                WHERE status IN ('completed', 'failed')
-                  AND processed_at < NOW() - INTERVAL ':hours hours'
-            """)
-        else:
-            query = text("""
-                DELETE FROM tiger_cache_queue
-                WHERE status IN ('completed', 'failed')
-                  AND processed_at < datetime('now', '-' || :hours || ' hours')
-            """)
+        cutoff = datetime.now(UTC) - timedelta(hours=older_than_hours)
+        stmt = delete(TCQ).where(
+            TCQ.status.in_(["completed", "failed"]),
+            TCQ.processed_at < cutoff,
+        )
 
         def execute(connection: Connection) -> int:
-            result = connection.execute(query, {"hours": older_than_hours})
+            result = connection.execute(stmt)
             return result.rowcount
 
         if conn:
             return execute(conn)
         else:
             with self._engine.begin() as new_conn:
-                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
-                if not self._is_postgresql:
-                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 return execute(new_conn)

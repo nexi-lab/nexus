@@ -21,16 +21,20 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import or_, select
+
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
 from nexus.rebac.types import (
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,
 )
+from nexus.storage.models.permissions import ReBACTupleModel as RT
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from contextlib import AbstractContextManager
+
+    from sqlalchemy.engine import Engine
 
     from nexus.core.rebac import NamespaceConfig
     from nexus.rebac.consistency.zone_manager import ZoneManager
@@ -47,9 +51,7 @@ class ZoneAwareTraversal:
     memoization, and ABAC condition evaluation.
 
     Args:
-        connection_factory: Callable returning a context manager for DB connections
-        create_cursor: Callable (connection) -> dict-row cursor
-        fix_sql: Callable to fix SQL placeholders for the current dialect
+        engine: SQLAlchemy engine for database connections
         get_namespace: Callable (entity_type) -> NamespaceConfig | None
         evaluate_conditions: Callable (conditions, context) -> bool
         zone_manager: ZoneManager for cross-zone policy decisions
@@ -58,17 +60,13 @@ class ZoneAwareTraversal:
 
     def __init__(
         self,
-        connection_factory: Callable[[], AbstractContextManager[Any]],
-        create_cursor: Callable[[Any], Any],
-        fix_sql: Callable[[str], str],
+        engine: Engine,
         get_namespace: Callable[[str], NamespaceConfig | None],
         evaluate_conditions: Callable[[dict[str, Any] | None, dict[str, Any] | None], bool],
         zone_manager: ZoneManager,
         enable_graph_limits: bool = True,
     ) -> None:
-        self._connection = connection_factory
-        self._create_cursor = create_cursor
-        self._fix_sql = fix_sql
+        self._engine = engine
         self._get_namespace = get_namespace
         self._evaluate_conditions = evaluate_conditions
         self._zone_manager = zone_manager
@@ -375,39 +373,38 @@ class ZoneAwareTraversal:
                 zone_id,
             )
 
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
+        now = datetime.now(UTC)
+        expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
 
+        with self._engine.connect() as conn:
             # Check for direct concrete subject tuple (with ABAC conditions support)
-            query = """
-                    SELECT tuple_id, conditions FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND zone_id = ?
-                      AND subject_relation IS NULL
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-            params = (
-                subject.entity_type,
-                subject.entity_id,
-                relation,
-                obj.entity_type,
-                obj.entity_id,
-                zone_id,
-                datetime.now(UTC).isoformat(),
+            stmt = select(RT.tuple_id, RT.conditions).where(
+                RT.subject_type == subject.entity_type,
+                RT.subject_id == subject.entity_id,
+                RT.relation == relation,
+                RT.object_type == obj.entity_type,
+                RT.object_id == obj.entity_id,
+                RT.zone_id == zone_id,
+                RT.subject_relation.is_(None),
+                expires_filter,
             )
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("[DIRECT-CHECK] SQL Query params: %s", params)
+                logger.debug(
+                    "[DIRECT-CHECK] Query: subject=(%s,%s) rel=%s obj=(%s,%s) zone=%s",
+                    subject.entity_type,
+                    subject.entity_id,
+                    relation,
+                    obj.entity_type,
+                    obj.entity_id,
+                    zone_id,
+                )
 
-            cursor.execute(self._fix_sql(query), params)
-
-            row = cursor.fetchone()
+            row = conn.execute(stmt).first()
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("[DIRECT-CHECK] Query result row: %s", dict(row) if row else None)
+                logger.debug("[DIRECT-CHECK] Query result row: %s", row)
             if row:
                 # Tuple exists - check conditions if context provided
-                conditions_json = row["conditions"]
+                conditions_json = row.conditions
 
                 if conditions_json:
                     try:
@@ -429,27 +426,16 @@ class ZoneAwareTraversal:
 
             # Cross-zone check for shared-* relations (PR #647, #648)
             if self._zone_manager.is_cross_zone_readable(relation):
-                cursor.execute(
-                    self._fix_sql(
-                        """
-                        SELECT tuple_id FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND subject_relation IS NULL
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (
-                        subject.entity_type,
-                        subject.entity_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
+                cross_zone_stmt = select(RT.tuple_id).where(
+                    RT.subject_type == subject.entity_type,
+                    RT.subject_id == subject.entity_id,
+                    RT.relation == relation,
+                    RT.object_type == obj.entity_type,
+                    RT.object_id == obj.entity_id,
+                    RT.subject_relation.is_(None),
+                    expires_filter,
                 )
-                if cursor.fetchone():
+                if conn.execute(cross_zone_stmt).first():
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(
                             "Cross-zone share found: %s -> %s -> %s",
@@ -461,28 +447,20 @@ class ZoneAwareTraversal:
 
             # Check for wildcard/public access (*:*) - Issue #1064
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
-                cursor.execute(
-                    self._fix_sql(
-                        """
-                        SELECT tuple_id FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND subject_relation IS NULL
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        LIMIT 1
-                        """
-                    ),
-                    (
-                        WILDCARD_SUBJECT[0],
-                        WILDCARD_SUBJECT[1],
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
+                wildcard_stmt = (
+                    select(RT.tuple_id)
+                    .where(
+                        RT.subject_type == WILDCARD_SUBJECT[0],
+                        RT.subject_id == WILDCARD_SUBJECT[1],
+                        RT.relation == relation,
+                        RT.object_type == obj.entity_type,
+                        RT.object_id == obj.entity_id,
+                        RT.subject_relation.is_(None),
+                        expires_filter,
+                    )
+                    .limit(1)
                 )
-                if cursor.fetchone():
+                if conn.execute(wildcard_stmt).first():
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(
                             "[DIRECT-CHECK] Wildcard access found: *:* -> %s -> %s",
@@ -492,32 +470,20 @@ class ZoneAwareTraversal:
                     return True
 
             # Check for userset-as-subject tuple (e.g., group#member)
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    SELECT subject_type, subject_id, subject_relation
-                    FROM rebac_tuples
-                    WHERE relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND subject_relation IS NOT NULL
-                      AND zone_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    zone_id,
-                    datetime.now(UTC).isoformat(),
-                ),
+            userset_stmt = select(RT.subject_type, RT.subject_id, RT.subject_relation).where(
+                RT.relation == relation,
+                RT.object_type == obj.entity_type,
+                RT.object_id == obj.entity_id,
+                RT.subject_relation.isnot(None),
+                RT.zone_id == zone_id,
+                expires_filter,
             )
 
             # BUGFIX (Issue #1): Use recursive ReBAC evaluation instead of direct SQL
-            for row in cursor.fetchall():
-                userset_type = row["subject_type"]
-                userset_id = row["subject_id"]
-                userset_relation = row["subject_relation"]
+            for userset_row in conn.execute(userset_stmt):
+                userset_type = userset_row.subject_type
+                userset_id = userset_row.subject_id
+                userset_relation = userset_row.subject_relation
 
                 sub_stats = TraversalStats()
                 userset_entity = Entity(userset_type, userset_id)
@@ -572,32 +538,17 @@ class ZoneAwareTraversal:
                 return [Entity("file", parent_path)]
             return []
 
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
+        now = datetime.now(UTC)
+        stmt = select(RT.object_type, RT.object_id).where(
+            RT.subject_type == obj.entity_type,
+            RT.subject_id == obj.entity_id,
+            RT.relation == relation,
+            RT.zone_id == zone_id,
+            or_(RT.expires_at.is_(None), RT.expires_at >= now),
+        )
 
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    SELECT object_type, object_id
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND relation = ?
-                      AND zone_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (
-                    obj.entity_type,
-                    obj.entity_id,
-                    relation,
-                    zone_id,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            results = []
-            for row in cursor.fetchall():
-                results.append(Entity(row["object_type"], row["object_id"]))
+        with self._engine.connect() as conn:
+            results = [Entity(row.object_type, row.object_id) for row in conn.execute(stmt)]
 
             logger.debug(
                 f"find_related_objects: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
@@ -619,32 +570,17 @@ class ZoneAwareTraversal:
         """
         logger.debug(f"find_subjects: Looking for (?, '{relation}', {obj})")
 
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
+        now = datetime.now(UTC)
+        stmt = select(RT.subject_type, RT.subject_id).where(
+            RT.object_type == obj.entity_type,
+            RT.object_id == obj.entity_id,
+            RT.relation == relation,
+            RT.zone_id == zone_id,
+            or_(RT.expires_at.is_(None), RT.expires_at >= now),
+        )
 
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    SELECT subject_type, subject_id
-                    FROM rebac_tuples
-                    WHERE object_type = ? AND object_id = ?
-                      AND relation = ?
-                      AND zone_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (
-                    obj.entity_type,
-                    obj.entity_id,
-                    relation,
-                    zone_id,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            results = []
-            for row in cursor.fetchall():
-                results.append(Entity(row["subject_type"], row["subject_id"]))
+        with self._engine.connect() as conn:
+            results = [Entity(row.subject_type, row.subject_id) for row in conn.execute(stmt)]
 
             logger.debug(
                 f"find_subjects: Found {len(results)} subjects for (?, '{relation}', {obj}): {[str(r) for r in results]}"

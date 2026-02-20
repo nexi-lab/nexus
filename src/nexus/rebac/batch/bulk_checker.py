@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from nexus.core.rebac import Entity
@@ -28,12 +29,11 @@ from nexus.rebac.types import ConsistencyLevel
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from contextlib import AbstractContextManager
 
     from sqlalchemy.engine import Engine
 
     from nexus.core.rebac import NamespaceConfig
-    from nexus.rebac.cache.tiger import TigerCache
+    from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +48,7 @@ class BulkPermissionChecker:
     - After: 1-2 queries to fetch all tuples + in-memory computation
 
     Args:
-        engine: SQLAlchemy engine (for dialect detection)
-        connection_factory: Callable returning a context manager for DB connections
-        create_cursor: Callable (connection) -> dict-row cursor
-        fix_sql: Callable to fix SQL placeholders for the current dialect
+        engine: SQLAlchemy engine (for dialect detection and connections)
         get_namespace: Callable (entity_type) -> NamespaceConfig | None
         enforce_zone_isolation: Whether zone isolation is enabled
         l1_cache: L1 in-memory cache instance (or None)
@@ -65,9 +62,6 @@ class BulkPermissionChecker:
     def __init__(
         self,
         engine: Engine,
-        connection_factory: Callable[[], AbstractContextManager[Any]],
-        create_cursor: Callable[[Any], Any],
-        fix_sql: Callable[[str], str],
         get_namespace: Callable[[str], NamespaceConfig | None],
         enforce_zone_isolation: bool,
         l1_cache: Any | None,
@@ -78,9 +72,6 @@ class BulkPermissionChecker:
         tuple_version: int,
     ) -> None:
         self._engine = engine
-        self._connection = connection_factory
-        self._create_cursor = create_cursor
-        self._fix_sql = fix_sql
         self._get_namespace = get_namespace
         self._enforce_zone_isolation = enforce_zone_isolation
         self._l1_cache = l1_cache
@@ -362,9 +353,7 @@ class BulkPermissionChecker:
 
         now_iso = datetime.now(UTC).isoformat()
 
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
+        with self._engine.connect() as conn:
             # Single UNNEST/VALUES query for all entities
             all_entities = list(all_subjects | all_objects)
 
@@ -374,9 +363,7 @@ class BulkPermissionChecker:
             )
 
             fetch_start = time_module.perf_counter()
-            tuples_graph = self._fetch_all_tuples_single_query(
-                cursor, all_entities, zone_id, now_iso
-            )
+            tuples_graph = self._fetch_all_tuples_single_query(conn, all_entities, zone_id, now_iso)
             fetch_duration = (time_module.perf_counter() - fetch_start) * 1000
 
             logger.debug(
@@ -386,7 +373,7 @@ class BulkPermissionChecker:
             # Cross-zone shares
             if self._enforce_zone_isolation and all_subjects_list:
                 cross_zone_count = self._fetch_cross_zone_tuples(
-                    cursor, all_subjects_list, tuples_graph, now_iso
+                    conn, all_subjects_list, tuples_graph, now_iso
                 )
                 if cross_zone_count > 0:
                     logger.debug(
@@ -411,7 +398,7 @@ class BulkPermissionChecker:
 
     def _fetch_all_tuples_single_query(
         self,
-        cursor: Any,
+        conn: Any,
         entities: list[tuple[str, str]],
         zone_id: str,
         now_iso: str,
@@ -427,105 +414,111 @@ class BulkPermissionChecker:
 
         if is_postgresql:
             if self._enforce_zone_isolation:
-                query = """
+                stmt = text("""
                     WITH entity_list AS (
-                        SELECT unnest(%s::text[]) AS entity_type,
-                               unnest(%s::text[]) AS entity_id
+                        SELECT unnest(:entity_types::text[]) AS entity_type,
+                               unnest(:entity_ids::text[]) AS entity_id
                     )
                     SELECT DISTINCT
                         t.subject_type, t.subject_id, t.subject_relation,
                         t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                     FROM rebac_tuples t
-                    WHERE t.zone_id = %s
-                      AND (t.expires_at IS NULL OR t.expires_at >= %s)
+                    WHERE t.zone_id = :zone_id
+                      AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                       AND (
                           EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
                           OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
                       )
-                """
-                params: list[Any] = [entity_types, entity_ids, zone_id, now_iso]
+                """)
+                params: dict[str, Any] = {
+                    "entity_types": entity_types,
+                    "entity_ids": entity_ids,
+                    "zone_id": zone_id,
+                    "now_iso": now_iso,
+                }
             else:
-                query = """
+                stmt = text("""
                     WITH entity_list AS (
-                        SELECT unnest(%s::text[]) AS entity_type,
-                               unnest(%s::text[]) AS entity_id
+                        SELECT unnest(:entity_types::text[]) AS entity_type,
+                               unnest(:entity_ids::text[]) AS entity_id
                     )
                     SELECT DISTINCT
                         t.subject_type, t.subject_id, t.subject_relation,
                         t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                     FROM rebac_tuples t
-                    WHERE (t.expires_at IS NULL OR t.expires_at >= %s)
+                    WHERE (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                       AND (
                           EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
                           OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
                       )
-                """
-                params = [entity_types, entity_ids, now_iso]
+                """)
+                params = {
+                    "entity_types": entity_types,
+                    "entity_ids": entity_ids,
+                    "now_iso": now_iso,
+                }
         else:
-            # SQLite: Use VALUES clause
-            values_list = ", ".join(["(?, ?)" for _ in entities])
-            value_params: list[str | None] = []
-            for etype, eid in entities:
-                value_params.extend([etype, eid])
+            # SQLite: Use VALUES clause with named parameters
+            values_parts = [f"(:type_{i}, :id_{i})" for i in range(len(entities))]
+            values_str = ", ".join(values_parts)
+            params = {}
+            for i, (etype, eid) in enumerate(entities):
+                params[f"type_{i}"] = etype
+                params[f"id_{i}"] = eid
 
             if self._enforce_zone_isolation:
-                query = self._fix_sql(
-                    f"""
+                params["zone_id"] = zone_id
+                params["now_iso"] = now_iso
+                stmt = text(f"""
                     WITH entity_list(entity_type, entity_id) AS (
-                        VALUES {values_list}
+                        VALUES {values_str}
                     )
                     SELECT DISTINCT
                         t.subject_type, t.subject_id, t.subject_relation,
                         t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                     FROM rebac_tuples t
-                    WHERE t.zone_id = ?
-                      AND (t.expires_at IS NULL OR t.expires_at >= ?)
+                    WHERE t.zone_id = :zone_id
+                      AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                       AND (
                           EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
                           OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
                       )
-                    """
-                )
-                value_params.extend([zone_id, now_iso])
-                params = value_params
+                """)
             else:
-                query = self._fix_sql(
-                    f"""
+                params["now_iso"] = now_iso
+                stmt = text(f"""
                     WITH entity_list(entity_type, entity_id) AS (
-                        VALUES {values_list}
+                        VALUES {values_str}
                     )
                     SELECT DISTINCT
                         t.subject_type, t.subject_id, t.subject_relation,
                         t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                     FROM rebac_tuples t
-                    WHERE (t.expires_at IS NULL OR t.expires_at >= ?)
+                    WHERE (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                       AND (
                           EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
                           OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
                       )
-                    """
-                )
-                value_params.append(now_iso)
-                params = value_params
+                """)
 
-        cursor.execute(query, params)
+        result = conn.execute(stmt, params)
         return [
             {
-                "subject_type": row["subject_type"],
-                "subject_id": row["subject_id"],
-                "subject_relation": row["subject_relation"],
-                "relation": row["relation"],
-                "object_type": row["object_type"],
-                "object_id": row["object_id"],
-                "conditions": row["conditions"],
-                "expires_at": row["expires_at"],
+                "subject_type": row.subject_type,
+                "subject_id": row.subject_id,
+                "subject_relation": row.subject_relation,
+                "relation": row.relation,
+                "object_type": row.object_type,
+                "object_id": row.object_id,
+                "conditions": row.conditions,
+                "expires_at": row.expires_at,
             }
-            for row in cursor.fetchall()
+            for row in result
         ]
 
     def _fetch_cross_zone_tuples(
         self,
-        cursor: Any,
+        conn: Any,
         all_subjects_list: list[tuple[str, str]],
         tuples_graph: list[dict[str, Any]],
         now_iso: str,
@@ -538,70 +531,73 @@ class BulkPermissionChecker:
         subject_ids = [s[1] for s in all_subjects_list]
 
         if is_postgresql:
-            cross_zone_query = """
+            stmt = text("""
                 WITH subject_list AS (
-                    SELECT unnest(%s::text[]) AS subject_type,
-                           unnest(%s::text[]) AS subject_id
+                    SELECT unnest(:subject_types::text[]) AS subject_type,
+                           unnest(:subject_ids::text[]) AS subject_id
                 )
                 SELECT DISTINCT
                     t.subject_type, t.subject_id, t.subject_relation,
                     t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                 FROM rebac_tuples t
-                WHERE t.relation = ANY(%s::text[])
-                  AND (t.expires_at IS NULL OR t.expires_at >= %s)
+                WHERE t.relation = ANY(:relations::text[])
+                  AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                   AND EXISTS (
                       SELECT 1 FROM subject_list s
                       WHERE t.subject_type = s.subject_type AND t.subject_id = s.subject_id
                   )
-            """
-            cross_zone_params: list[Any] = [
-                subject_types,
-                subject_ids,
-                cross_zone_relations,
-                now_iso,
-            ]
+            """)
+            cross_zone_params: dict[str, Any] = {
+                "subject_types": subject_types,
+                "subject_ids": subject_ids,
+                "relations": cross_zone_relations,
+                "now_iso": now_iso,
+            }
         else:
-            # SQLite fallback
-            values_list = ", ".join(["(?, ?)" for _ in all_subjects_list])
-            ct_value_params: list[str | None] = []
-            for stype, sid in all_subjects_list:
-                ct_value_params.extend([stype, sid])
+            # SQLite: Use VALUES clause with named parameters
+            values_parts = [f"(:stype_{i}, :sid_{i})" for i in range(len(all_subjects_list))]
+            values_str = ", ".join(values_parts)
+            cross_zone_params = {}
+            for i, (stype, sid) in enumerate(all_subjects_list):
+                cross_zone_params[f"stype_{i}"] = stype
+                cross_zone_params[f"sid_{i}"] = sid
 
-            relation_placeholders = ", ".join(["?" for _ in cross_zone_relations])
-            cross_zone_query = self._fix_sql(
-                f"""
+            rel_parts = [f":rel_{i}" for i in range(len(cross_zone_relations))]
+            rel_str = ", ".join(rel_parts)
+            for i, rel in enumerate(cross_zone_relations):
+                cross_zone_params[f"rel_{i}"] = rel
+
+            cross_zone_params["now_iso"] = now_iso
+
+            stmt = text(f"""
                 WITH subject_list(subject_type, subject_id) AS (
-                    VALUES {values_list}
+                    VALUES {values_str}
                 )
                 SELECT DISTINCT
                     t.subject_type, t.subject_id, t.subject_relation,
                     t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                 FROM rebac_tuples t
-                WHERE t.relation IN ({relation_placeholders})
-                  AND (t.expires_at IS NULL OR t.expires_at >= ?)
+                WHERE t.relation IN ({rel_str})
+                  AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                   AND EXISTS (
                       SELECT 1 FROM subject_list s
                       WHERE t.subject_type = s.subject_type AND t.subject_id = s.subject_id
                   )
-                """
-            )
-            ct_value_params.extend(cross_zone_relations)
-            ct_value_params.append(now_iso)
-            cross_zone_params = ct_value_params
+            """)
 
-        cursor.execute(cross_zone_query, cross_zone_params)
+        result = conn.execute(stmt, cross_zone_params)
         cross_zone_count = 0
-        for row in cursor.fetchall():
+        for row in result:
             tuples_graph.append(
                 {
-                    "subject_type": row["subject_type"],
-                    "subject_id": row["subject_id"],
-                    "subject_relation": row["subject_relation"],
-                    "relation": row["relation"],
-                    "object_type": row["object_type"],
-                    "object_id": row["object_id"],
-                    "conditions": row["conditions"],
-                    "expires_at": row["expires_at"],
+                    "subject_type": row.subject_type,
+                    "subject_id": row.subject_id,
+                    "subject_relation": row.subject_relation,
+                    "relation": row.relation,
+                    "object_type": row.object_type,
+                    "object_id": row.object_id,
+                    "conditions": row.conditions,
+                    "expires_at": row.expires_at,
                 }
             )
             cross_zone_count += 1

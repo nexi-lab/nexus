@@ -16,10 +16,15 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import or_, select
+
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
+from nexus.storage.models.permissions import ReBACTupleModel as RT
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from sqlalchemy.engine import Connection
 
     from nexus.core.rebac import NamespaceConfig
     from nexus.rebac.tuples.repository import TupleRepository
@@ -525,11 +530,9 @@ class PermissionComputer:
                 zone_id,
             )
 
-        with self._repo.connection() as conn:
-            cursor = self._repo.create_cursor(conn)
-
+        with self._repo.engine.connect() as conn:
             # Check 1: Direct concrete subject (subject_relation IS NULL)
-            row = self._query_direct_tuple(cursor, subject, relation, obj, zone_id)
+            row = self._query_direct_tuple(conn, subject, relation, obj, zone_id)
             if row:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
@@ -542,79 +545,56 @@ class PermissionComputer:
 
             # Check 2: Wildcard/public access
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
-                wildcard_result = self._check_wildcard_access(cursor, relation, obj, zone_id)
+                wildcard_result = self._check_wildcard_access(conn, relation, obj, zone_id)
                 if wildcard_result is not None:
                     return wildcard_result
 
             # Check 3: Userset-as-subject grants
-            return self._check_userset_grants(cursor, subject, relation, obj, context, zone_id)
+            return self._check_userset_grants(conn, subject, relation, obj, context, zone_id)
 
     def _query_direct_tuple(
         self,
-        cursor: Any,
+        conn: Connection,
         subject: Entity,
         relation: str,
         obj: Entity,
         zone_id: str | None,
     ) -> dict[str, Any] | None:
         """Query for a direct concrete subject tuple."""
-        now_iso = datetime.now(UTC).isoformat()
-        fix = self._repo.fix_sql_placeholders
+        now = datetime.now(UTC)
+        expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
+
+        stmt = (
+            select(
+                RT.tuple_id,
+                RT.subject_type,
+                RT.subject_id,
+                RT.subject_relation,
+                RT.relation,
+                RT.object_type,
+                RT.object_id,
+                RT.conditions,
+                RT.expires_at,
+            )
+            .where(
+                RT.subject_type == subject.entity_type,
+                RT.subject_id == subject.entity_id,
+                RT.subject_relation.is_(None),
+                RT.relation == relation,
+                RT.object_type == obj.entity_type,
+                RT.object_id == obj.entity_id,
+                expires_filter,
+            )
+            .limit(1)
+        )
 
         if zone_id is None:
-            cursor.execute(
-                fix(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND subject_relation IS NULL
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                      AND zone_id IS NULL
-                    LIMIT 1
-                    """
-                ),
-                (
-                    subject.entity_type,
-                    subject.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    now_iso,
-                ),
-            )
+            stmt = stmt.where(RT.zone_id.is_(None))
         else:
-            cursor.execute(
-                fix(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND subject_relation IS NULL
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                      AND zone_id = ?
-                    LIMIT 1
-                    """
-                ),
-                (
-                    subject.entity_type,
-                    subject.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    now_iso,
-                    zone_id,
-                ),
-            )
+            stmt = stmt.where(RT.zone_id == zone_id)
 
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        row = conn.execute(stmt).first()
+        return dict(row._mapping) if row else None
 
     def _evaluate_tuple_conditions(
         self,
@@ -647,112 +627,68 @@ class PermissionComputer:
 
     def _check_wildcard_access(
         self,
-        cursor: Any,
+        conn: Connection,
         relation: str,
         obj: Entity,
         zone_id: str | None,
     ) -> dict[str, Any] | None:
         """Check wildcard/public access (*:*) including cross-zone."""
-        wildcard_entity = Entity(WILDCARD_SUBJECT[0], WILDCARD_SUBJECT[1])
-        now_iso = datetime.now(UTC).isoformat()
-        fix = self._repo.fix_sql_placeholders
+        now = datetime.now(UTC)
+        expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
+
+        tuple_cols = (
+            RT.tuple_id,
+            RT.subject_type,
+            RT.subject_id,
+            RT.subject_relation,
+            RT.relation,
+            RT.object_type,
+            RT.object_id,
+            RT.conditions,
+            RT.expires_at,
+        )
+
+        stmt = (
+            select(*tuple_cols)
+            .where(
+                RT.subject_type == WILDCARD_SUBJECT[0],
+                RT.subject_id == WILDCARD_SUBJECT[1],
+                RT.subject_relation.is_(None),
+                RT.relation == relation,
+                RT.object_type == obj.entity_type,
+                RT.object_id == obj.entity_id,
+                expires_filter,
+            )
+            .limit(1)
+        )
 
         if zone_id is None:
-            cursor.execute(
-                fix(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND subject_relation IS NULL
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                      AND zone_id IS NULL
-                    LIMIT 1
-                    """
-                ),
-                (
-                    wildcard_entity.entity_type,
-                    wildcard_entity.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    now_iso,
-                ),
-            )
+            zone_stmt = stmt.where(RT.zone_id.is_(None))
         else:
-            cursor.execute(
-                fix(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND subject_relation IS NULL
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                      AND zone_id = ?
-                    LIMIT 1
-                    """
-                ),
-                (
-                    wildcard_entity.entity_type,
-                    wildcard_entity.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    now_iso,
-                    zone_id,
-                ),
-            )
+            zone_stmt = stmt.where(RT.zone_id == zone_id)
 
-        row = cursor.fetchone()
+        row = conn.execute(zone_stmt).first()
         if row:
-            return dict(row)
+            return dict(row._mapping)
 
         # Check 2b: Cross-zone wildcard access (Issue #1064)
         if zone_id is not None:
-            cursor.execute(
-                fix(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND subject_relation IS NULL
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    LIMIT 1
-                    """
-                ),
-                (
-                    wildcard_entity.entity_type,
-                    wildcard_entity.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    now_iso,
-                ),
-            )
-            row = cursor.fetchone()
-            if row:
+            # Query without zone_id filter (any zone)
+            cross_zone_row = conn.execute(stmt).first()
+            if cross_zone_row:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
                         "    Cross-zone wildcard access: *:* -> %s -> %s",
                         relation,
                         obj,
                     )
-                return dict(row)
+                return dict(cross_zone_row._mapping)
 
         return None
 
     def _check_userset_grants(
         self,
-        cursor: Any,
+        conn: Connection,
         subject: Entity,
         relation: str,
         obj: Entity,
@@ -760,8 +696,6 @@ class PermissionComputer:
         zone_id: str | None,
     ) -> dict[str, Any] | None:
         """Check userset-as-subject grants (e.g., group:eng#member)."""
-        fix = self._repo.fix_sql_placeholders
-
         subject_sets = self._repo.find_subject_sets(relation, obj, zone_id)
         for set_type, set_id, set_relation in subject_sets:
             # Recursively check if subject has set_relation on the set entity
@@ -769,24 +703,31 @@ class PermissionComputer:
                 subject, set_relation, Entity(set_type, set_id), context, zone_id
             ):
                 # Return the userset tuple that granted access
-                cursor.execute(
-                    fix(
-                        """
-                        SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND subject_relation = ?
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                        LIMIT 1
-                        """
-                    ),
-                    (set_type, set_id, set_relation, relation, obj.entity_type, obj.entity_id),
+                stmt = (
+                    select(
+                        RT.tuple_id,
+                        RT.subject_type,
+                        RT.subject_id,
+                        RT.subject_relation,
+                        RT.relation,
+                        RT.object_type,
+                        RT.object_id,
+                        RT.conditions,
+                        RT.expires_at,
+                    )
+                    .where(
+                        RT.subject_type == set_type,
+                        RT.subject_id == set_id,
+                        RT.subject_relation == set_relation,
+                        RT.relation == relation,
+                        RT.object_type == obj.entity_type,
+                        RT.object_id == obj.entity_id,
+                    )
+                    .limit(1)
                 )
-                row = cursor.fetchone()
+                row = conn.execute(stmt).first()
                 if row:
-                    return dict(row)
+                    return dict(row._mapping)
 
         return None
 

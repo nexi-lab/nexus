@@ -11,7 +11,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import text
+from sqlalchemy import func, select, update
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -82,19 +82,18 @@ class DirectoryGrantExpander:
             List of grant dictionaries
         """
 
-        query = text("""
-            SELECT grant_id, subject_type, subject_id, permission,
-                   directory_path, zone_id, grant_revision,
-                   include_future_files, expanded_count, total_count
-            FROM tiger_directory_grants
-            WHERE expansion_status = 'pending'
-            ORDER BY created_at ASC
-            LIMIT :limit
-        """)
+        from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
+
+        stmt = (
+            select(TDG)
+            .where(TDG.expansion_status == "pending")
+            .order_by(TDG.created_at.asc())
+            .limit(limit)
+        )
 
         try:
             with self._engine.connect() as conn:
-                result = conn.execute(query, {"limit": limit})
+                result = conn.execute(stmt)
                 grants = []
                 for row in result:
                     grants.append(
@@ -127,24 +126,21 @@ class DirectoryGrantExpander:
             True if updated successfully
         """
 
-        query = text("""
-            UPDATE tiger_directory_grants
-            SET expansion_status = 'in_progress',
-                total_count = :total_count,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE grant_id = :grant_id
-              AND expansion_status = 'pending'
-        """)
+        from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
+
+        stmt = (
+            update(TDG)
+            .where(TDG.grant_id == grant_id, TDG.expansion_status == "pending")
+            .values(
+                expansion_status="in_progress",
+                total_count=total_count,
+                updated_at=func.now(),
+            )
+        )
 
         try:
             with self._engine.begin() as conn:
-                result = conn.execute(
-                    query,
-                    {
-                        "grant_id": grant_id,
-                        "total_count": total_count,
-                    },
-                )
+                result = conn.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark in_progress: {e}")
@@ -161,22 +157,20 @@ class DirectoryGrantExpander:
             True if updated successfully
         """
 
-        query = text("""
-            UPDATE tiger_directory_grants
-            SET expanded_count = :expanded_count,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE grant_id = :grant_id
-        """)
+        from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
+
+        stmt = (
+            update(TDG)
+            .where(TDG.grant_id == grant_id)
+            .values(
+                expanded_count=expanded_count,
+                updated_at=func.now(),
+            )
+        )
 
         try:
             with self._engine.begin() as conn:
-                result = conn.execute(
-                    query,
-                    {
-                        "grant_id": grant_id,
-                        "expanded_count": expanded_count,
-                    },
-                )
+                result = conn.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to update progress: {e}")
@@ -193,24 +187,22 @@ class DirectoryGrantExpander:
             True if updated successfully
         """
 
-        query = text("""
-            UPDATE tiger_directory_grants
-            SET expansion_status = 'completed',
-                expanded_count = :expanded_count,
-                completed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE grant_id = :grant_id
-        """)
+        from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
+
+        stmt = (
+            update(TDG)
+            .where(TDG.grant_id == grant_id)
+            .values(
+                expansion_status="completed",
+                expanded_count=expanded_count,
+                completed_at=func.now(),
+                updated_at=func.now(),
+            )
+        )
 
         try:
             with self._engine.begin() as conn:
-                result = conn.execute(
-                    query,
-                    {
-                        "grant_id": grant_id,
-                        "expanded_count": expanded_count,
-                    },
-                )
+                result = conn.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark completed: {e}")
@@ -227,23 +219,21 @@ class DirectoryGrantExpander:
             True if updated successfully
         """
 
-        query = text("""
-            UPDATE tiger_directory_grants
-            SET expansion_status = 'failed',
-                error_message = :error_message,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE grant_id = :grant_id
-        """)
+        from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
+
+        stmt = (
+            update(TDG)
+            .where(TDG.grant_id == grant_id)
+            .values(
+                expansion_status="failed",
+                error_message=error_message[:1000],  # Truncate long errors
+                updated_at=func.now(),
+            )
+        )
 
         try:
             with self._engine.begin() as conn:
-                result = conn.execute(
-                    query,
-                    {
-                        "grant_id": grant_id,
-                        "error_message": error_message[:1000],  # Truncate long errors
-                    },
-                )
+                result = conn.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark failed: {e}")

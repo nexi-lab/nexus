@@ -20,10 +20,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Attempt SQLAlchemy import for in-memory DB
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from nexus.backends.local_connector import LocalConnectorBackend
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.services.change_log_store import ChangeLogStore
@@ -31,7 +27,7 @@ from nexus.services.conflict_log_store import ConflictLogStore
 from nexus.services.conflict_resolution import ConflictStrategy
 from nexus.services.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
 from nexus.services.write_back_service import WriteBackService
-from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # =============================================================================
 # Helpers
@@ -82,11 +78,11 @@ def _async_iter_empty():
 
 
 @pytest.fixture
-def db_session_factory():
-    """In-memory SQLite with all tables."""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)
+def record_store():
+    """In-memory SQLite RecordStore with all tables."""
+    store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=True)
+    yield store
+    store.close()
 
 
 @pytest.fixture
@@ -149,12 +145,12 @@ def gateway_with_local(local_backend):
 
 
 @pytest.fixture
-def write_back_service(gateway_with_local, mock_event_bus, db_session_factory) -> WriteBackService:
+def write_back_service(gateway_with_local, mock_event_bus, record_store) -> WriteBackService:
     """WriteBackService wired to real local backend."""
-    gateway_with_local.session_factory = db_session_factory
-    backlog = SyncBacklogStore(db_session_factory)
-    change_log = ChangeLogStore(db_session_factory)
-    conflict_log = ConflictLogStore(db_session_factory)
+    gateway_with_local.record_store = record_store
+    backlog = SyncBacklogStore(record_store=record_store)
+    change_log = ChangeLogStore(record_store=record_store)
+    conflict_log = ConflictLogStore(record_store=record_store)
 
     return WriteBackService(
         gateway=gateway_with_local,

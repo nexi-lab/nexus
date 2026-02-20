@@ -54,6 +54,18 @@ async def get_nexus_fs(request: Request) -> Any:
     return request.app.state.nexus_fs
 
 
+async def get_record_store(request: Request) -> Any:
+    """Get RecordStoreABC instance from app state (Issue #2200).
+
+    Raises 503 if record_store is not initialized. Prefer this over
+    get_session_factory() for new endpoints.
+    """
+    record_store = getattr(request.app.state, "record_store", None)
+    if record_store is None:
+        raise HTTPException(status_code=503, detail="RecordStore not initialized")
+    return record_store
+
+
 async def get_auth_result(
     auth_result: dict[str, Any] | None = Depends(lambda: _get_require_auth()),
 ) -> dict[str, Any]:
@@ -321,10 +333,9 @@ async def get_exchange_audit_logger(
     zone_id = context.zone_id or ROOT_ZONE_ID
 
     _record_store = getattr(nexus_fs, "_record_store", None)
-    session_factory = (
-        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
-    )
-    return ExchangeAuditLogger(session_factory=session_factory), zone_id
+    if _record_store is None:
+        raise HTTPException(status_code=503, detail="RecordStore not initialized")
+    return ExchangeAuditLogger(record_store=_record_store), zone_id
 
 
 # =============================================================================
@@ -348,15 +359,14 @@ async def get_reputation_context(
     from nexus.bricks.reputation.reputation_service import ReputationService
 
     _record_store = getattr(nexus_fs, "_record_store", None)
-    session_factory = (
-        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
-    )
+    if _record_store is None:
+        raise HTTPException(status_code=503, detail="RecordStore not initialized")
 
     # Per-request instantiation (singleton DI via app.state planned in #1619)
     reputation_service = ReputationService(
-        session_factory=session_factory,
+        record_store=_record_store,
     )
-    dispute_service = DisputeService(session_factory=session_factory)
+    dispute_service = DisputeService(record_store=_record_store)
 
     context = _get_operation_context(auth_result)
     auth_ctx = {

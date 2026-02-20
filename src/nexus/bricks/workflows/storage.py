@@ -9,7 +9,6 @@ import hashlib
 import json
 import logging
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,6 +18,7 @@ from sqlalchemy import select
 from nexus.bricks.workflows.loader import WorkflowLoader
 from nexus.bricks.workflows.types import WorkflowDefinition, WorkflowExecution
 from nexus.constants import ROOT_ZONE_ID
+from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class WorkflowStore:
 
     def __init__(
         self,
-        session_factory: Callable[..., Any],
+        record_store: RecordStoreABC,
         *,
         workflow_model: type[Any],
         execution_model: type[Any],
@@ -37,12 +37,12 @@ class WorkflowStore:
         """Initialize workflow store.
 
         Args:
-            session_factory: Async session factory (returns AsyncSession context manager).
+            record_store: RecordStoreABC for database access (uses async_session_factory).
             workflow_model: SQLAlchemy model class for workflows.
             execution_model: SQLAlchemy model class for workflow executions.
             zone_id: Zone ID (defaults to "default").
         """
-        self.session_factory = session_factory
+        self.session_factory = record_store.async_session_factory
         self._workflow_model = workflow_model
         self._execution_model = execution_model
         self.zone_id = zone_id or ROOT_ZONE_ID

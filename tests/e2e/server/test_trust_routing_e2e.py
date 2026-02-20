@@ -11,9 +11,6 @@ Full integration test with real services (SQLite in-memory):
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.rebac.manager import EnhancedReBACManager
@@ -26,7 +23,7 @@ from nexus.services.delegation.models import (
 )
 from nexus.services.delegation.service import DelegationService
 from nexus.services.reputation.reputation_service import ReputationService
-from nexus.storage.models import Base
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -34,20 +31,21 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture()
-def engine():
-    """Shared SQLite in-memory engine."""
-    eng = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(eng)
-    return eng
+def record_store():
+    """Shared in-memory RecordStore for all components."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture()
-def session_factory(engine):
-    return sessionmaker(bind=engine, expire_on_commit=False)
+def engine(record_store):
+    return record_store.engine
+
+
+@pytest.fixture()
+def session_factory(record_store):
+    return record_store.session_factory
 
 
 @pytest.fixture()
@@ -62,31 +60,31 @@ def rebac_manager(engine):
 
 
 @pytest.fixture()
-def entity_registry(engine):
-    return EntityRegistry(engine)
+def entity_registry(record_store):
+    return EntityRegistry(record_store)
 
 
 @pytest.fixture()
-def agent_registry(session_factory, entity_registry):
+def agent_registry(record_store, entity_registry):
     return AgentRegistry(
-        session_factory=session_factory,
+        record_store=record_store,
         entity_registry=entity_registry,
     )
 
 
 @pytest.fixture()
-def reputation_service(session_factory):
+def reputation_service(record_store):
     return ReputationService(
-        session_factory=session_factory,
+        record_store=record_store,
     )
 
 
 @pytest.fixture()
 def delegation_service(
-    session_factory, rebac_manager, entity_registry, agent_registry, reputation_service
+    record_store, rebac_manager, entity_registry, agent_registry, reputation_service
 ):
     return DelegationService(
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
         agent_registry=agent_registry,

@@ -4,6 +4,8 @@ Lightweight registry for ID disambiguation and relationship tracking.
 Enables order-neutral virtual paths for memories.
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -19,8 +21,7 @@ from nexus.storage.models import EntityRegistryModel
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
-    from sqlalchemy.orm import sessionmaker
+    from nexus.storage.record_store import RecordStoreABC
 
 
 class EntityRegistry:
@@ -30,46 +31,24 @@ class EntityRegistry:
     This improves resource management and prevents session lifecycle issues.
     """
 
-    _session: "Session | None"
-    _session_factory: "sessionmaker[Session] | None"
+    _session: Session | None
+    _session_factory: Any
 
-    def __init__(self, session_or_factory: "Session | sessionmaker[Session] | Engine"):
+    def __init__(self, record_store: RecordStoreABC) -> None:
         """Initialize entity registry.
 
         Args:
-            session_or_factory: Can be:
-                - Session: Legacy support (will be deprecated)
-                - sessionmaker: Session factory (recommended)
-                - Engine: SQLAlchemy engine (will create sessionmaker)
+            record_store: RecordStoreABC instance providing session_factory
+                for database access.
 
         Examples:
-            # Recommended: Pass SessionFactory
-            >>> from sqlalchemy.orm import sessionmaker
-            >>> SessionLocal = sessionmaker(bind=engine)
-            >>> registry = EntityRegistry(SessionLocal)
-
-            # Or pass Engine directly
-            >>> registry = EntityRegistry(engine)
-
-            # Legacy: Pass Session (for backward compatibility)
-            >>> session = SessionLocal()
-            >>> registry = EntityRegistry(session)
+            # Pass RecordStoreABC instance
+            >>> from nexus.storage.record_store import SQLAlchemyRecordStore
+            >>> record_store = SQLAlchemyRecordStore(db_url)
+            >>> registry = EntityRegistry(record_store)
         """
-        from sqlalchemy.engine import Engine
-        from sqlalchemy.orm import Session, sessionmaker
-
-        if isinstance(session_or_factory, Session):
-            # Legacy mode: Hold the session (backward compatibility)
-            self._session = session_or_factory
-            self._session_factory = None
-        elif isinstance(session_or_factory, Engine):
-            # Engine provided: Create sessionmaker
-            self._session = None
-            self._session_factory = sessionmaker(bind=session_or_factory, expire_on_commit=False)
-        else:
-            # SessionFactory provided (recommended)
-            self._session = None
-            self._session_factory = session_or_factory
+        self._session = None
+        self._session_factory = record_store.session_factory
 
     @contextmanager
     def _get_session(self) -> Generator[Session, None, None]:

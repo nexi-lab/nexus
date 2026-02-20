@@ -8,33 +8,31 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from nexus.bricks.sandbox.repository import SandboxRepository
 from nexus.bricks.sandbox.sandbox_provider import SandboxNotFoundError
 from nexus.storage.models import SandboxMetadataModel
-from nexus.storage.models._base import Base
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
 @pytest.fixture()
-def engine():
-    """Create an in-memory SQLite engine with sandbox tables."""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    """Create an InMemoryRecordStore for sandbox tests."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture()
-def session_factory(engine):
+def session_factory(record_store):
     """Create a session factory bound to the engine."""
-    return sessionmaker(bind=engine)
+    return record_store.session_factory
 
 
 @pytest.fixture()
-def repo(session_factory):
+def repo(record_store):
     """Create a SandboxRepository instance."""
-    return SandboxRepository(session_factory=session_factory)
+    return SandboxRepository(record_store=record_store)
 
 
 @pytest.fixture()
@@ -289,14 +287,14 @@ class TestRetryBehavior:
         result = repo.get_metadata("sb-001")
         assert result["sandbox_id"] == "sb-001"
 
-    def test_retries_on_pending_rollback_error(self, session_factory, active_sandbox):
+    def test_retries_on_pending_rollback_error(self, record_store, active_sandbox):
         """PendingRollbackError on first try triggers retry that succeeds."""
         from contextlib import contextmanager
         from unittest.mock import patch
 
         from sqlalchemy.exc import PendingRollbackError
 
-        repo = SandboxRepository(session_factory=session_factory)
+        repo = SandboxRepository(record_store=record_store)
 
         call_count = {"n": 0}
         original_get_session = repo._get_session
@@ -315,14 +313,14 @@ class TestRetryBehavior:
         assert result["sandbox_id"] == "sb-001"
         assert call_count["n"] == 2  # First failed, second succeeded
 
-    def test_both_tries_fail_propagates_error(self, session_factory, active_sandbox):
+    def test_both_tries_fail_propagates_error(self, record_store, active_sandbox):
         """SQLAlchemyError on both tries propagates the second error."""
         from contextlib import contextmanager
         from unittest.mock import patch
 
         from sqlalchemy.exc import SQLAlchemyError
 
-        repo = SandboxRepository(session_factory=session_factory)
+        repo = SandboxRepository(record_store=record_store)
 
         @contextmanager
         def _always_fail():
@@ -334,14 +332,14 @@ class TestRetryBehavior:
         ):
             repo.get_metadata("sb-001")
 
-    def test_find_expired_returns_empty_on_db_failure(self, session_factory):
+    def test_find_expired_returns_empty_on_db_failure(self, record_store):
         """find_expired returns empty list on database failure (graceful degradation)."""
         from contextlib import contextmanager
         from unittest.mock import patch
 
         from sqlalchemy.exc import SQLAlchemyError
 
-        repo = SandboxRepository(session_factory=session_factory)
+        repo = SandboxRepository(record_store=record_store)
 
         @contextmanager
         def _always_fail():

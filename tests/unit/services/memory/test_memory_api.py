@@ -9,6 +9,8 @@ Tests cover: store, get, retrieve, delete, list, query, search.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -49,7 +51,9 @@ def backend(tmp_path):
 @pytest.fixture
 def entity_registry(session):
     """Create and populate entity registry."""
-    registry = EntityRegistry(session)
+    registry = EntityRegistry(
+        SimpleNamespace(session_factory=lambda: session)  # type: ignore[arg-type]
+    )
     registry.register_entity("zone", "acme")
     registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")

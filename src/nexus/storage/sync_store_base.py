@@ -10,9 +10,12 @@ for Issue #1129 (Bidirectional Sync).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -28,18 +31,18 @@ class SyncStoreBase:
 
     def __init__(
         self,
-        session_factory: Callable[..., Any] | None,
+        record_store: RecordStoreABC | None,
         *,
         is_postgresql: bool = False,
     ) -> None:
-        """Initialize with a session factory for database access.
+        """Initialize with a record store for database access.
 
         Args:
-            session_factory: SQLAlchemy session factory callable.
+            record_store: RecordStoreABC instance providing session factory.
             is_postgresql: Whether the database is PostgreSQL (config-time flag).
                 Determines dialect-specific INSERT/UPSERT behaviour.
         """
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory if record_store else None
         self._is_postgres: bool = is_postgresql
 
     def _get_session(self) -> Any:

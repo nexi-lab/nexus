@@ -20,7 +20,10 @@ import logging
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 from nexus.bricks.snapshot.errors import (
     TransactionConflictError,
@@ -86,7 +89,7 @@ class TransactionalSnapshotService:
 
     def __init__(
         self,
-        session_factory: Any,
+        record_store: RecordStoreABC,
         cas_store: Any,
         metadata_store: Any,
         metadata_factory: Callable[..., Any] | None = None,
@@ -94,13 +97,13 @@ class TransactionalSnapshotService:
         """Initialize the snapshot service.
 
         Args:
-            session_factory: SQLAlchemy session factory for DB persistence.
+            record_store: RecordStoreABC for DB persistence.
             cas_store: CASBlobStore for hold_reference/release.
             metadata_store: MetastoreABC for reading current file state.
             metadata_factory: Callable to construct FileMetadata-like objects
                 (injected by factory.py to avoid importing nexus.core.metadata).
         """
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._cas_store = cas_store
         self._metadata_store = metadata_store
         self._metadata_factory = metadata_factory

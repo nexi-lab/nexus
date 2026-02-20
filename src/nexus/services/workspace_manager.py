@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.metastore import MetastoreABC
     from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class WorkspaceManager:
         rebac_manager: ReBACBrickProtocol | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
-        session_factory: Any | None = None,
+        record_store: RecordStoreABC | None = None,
     ):
         """Initialize workspace manager.
 
@@ -56,16 +57,16 @@ class WorkspaceManager:
             rebac_manager: ReBAC manager for permission checks (optional)
             zone_id: Default zone ID for operations (optional)
             agent_id: Default agent ID for operations (optional)
-            session_factory: SQLAlchemy session factory for database operations
+            record_store: RecordStoreABC instance providing session_factory
         """
         self.metadata = metadata
         self.backend = backend
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
         self.agent_id = agent_id
-        if session_factory is None:
-            raise ValueError("session_factory is required — use factory.py for DI wiring")
-        self.metadata_session_factory = session_factory
+        if record_store is None:
+            raise ValueError("record_store is required — use factory.py for DI wiring")
+        self.metadata_session_factory = record_store.session_factory
 
     def _check_workspace_permission(
         self,

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -163,10 +164,15 @@ def fake_wm(session_factory, cas):
 
 
 @pytest.fixture
-def service(fake_wm, session_factory):
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def service(fake_wm, record_store):
     return ContextBranchService(
         workspace_manager=fake_wm,
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=None,
         default_zone_id="z1",
     )
@@ -313,7 +319,7 @@ class TestCrossSessionContinuity:
         # Session 1: Create branch and commit
         svc1 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )
@@ -325,7 +331,7 @@ class TestCrossSessionContinuity:
         # Session 2: New service instance sees the branch
         svc2 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )

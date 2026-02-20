@@ -130,9 +130,13 @@ class Memory:
         # Initialize entity registry — lazy import for backward compat (Issue #2190)
         _concrete_entity_registry = None
         if entity_registry is None:
+            from types import SimpleNamespace
+
             from nexus.rebac.entity_registry import EntityRegistry
 
-            _concrete_entity_registry = EntityRegistry(session)
+            _concrete_entity_registry = EntityRegistry(
+                SimpleNamespace(session_factory=lambda: session)  # type: ignore[arg-type]
+            )
             entity_registry = _concrete_entity_registry
         self.entity_registry = entity_registry
         self.memory_router = MemoryViewRouter(session, self.entity_registry)

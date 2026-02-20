@@ -108,7 +108,7 @@ def create_nexus_services(
     # --- Performance tuning (Issue #2071) ---
     import os
 
-    from nexus.core.performance_tuning import resolve_profile_tuning
+    from nexus.lib.performance_tuning import resolve_profile_tuning
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":

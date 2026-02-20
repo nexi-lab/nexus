@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.performance_tuning import EvictionTuning
+from nexus.lib.performance_tuning import EvictionTuning
 from nexus.services.agents.resource_monitor import PressureLevel, ResourceMonitor
 
 

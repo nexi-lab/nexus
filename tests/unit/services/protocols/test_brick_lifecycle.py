@@ -25,6 +25,7 @@ from nexus.services.protocols.brick_lifecycle import (
     BrickSpec,
     BrickState,
     BrickStatus,
+    DriftAction,
     DriftReport,
     ReconcileResult,
 )
@@ -297,17 +298,12 @@ class TestBrickSpec:
 
     def test_fields(self) -> None:
         fields = {f.name for f in dataclasses.fields(BrickSpec)}
-        assert fields == {"name", "protocol_name", "depends_on", "enabled", "generation"}
+        assert fields == {"name", "protocol_name", "depends_on", "enabled"}
 
     def test_defaults(self) -> None:
         spec = BrickSpec(name="pay", protocol_name="PaymentProtocol")
         assert spec.depends_on == ()
         assert spec.enabled is True
-        assert spec.generation == 1
-
-    def test_generation_field(self) -> None:
-        spec = BrickSpec(name="search", protocol_name="SP", generation=5)
-        assert spec.generation == 5
 
     def test_enabled_field(self) -> None:
         spec = BrickSpec(name="search", protocol_name="SP", enabled=False)
@@ -337,10 +333,10 @@ class TestDriftReport:
             brick_name="search",
             spec_state="enabled",
             actual_state=BrickState.FAILED,
-            action="reset",
+            action=DriftAction.RESET,
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
-            report.action = "skip"  # type: ignore[misc]
+            report.action = DriftAction.SKIP  # type: ignore[misc]
 
     def test_slots(self) -> None:
         assert hasattr(DriftReport, "__slots__")
@@ -354,7 +350,7 @@ class TestDriftReport:
             brick_name="search",
             spec_state="enabled",
             actual_state=BrickState.FAILED,
-            action="reset",
+            action=DriftAction.RESET,
         )
         assert report.detail == ""
 
@@ -363,7 +359,7 @@ class TestDriftReport:
             brick_name="search",
             spec_state="enabled",
             actual_state=BrickState.FAILED,
-            action="reset",
+            action=DriftAction.RESET,
             detail="Brick failed, will reset and remount",
         )
         assert "reset and remount" in report.detail
@@ -398,7 +394,7 @@ class TestReconcileResult:
             brick_name="search",
             spec_state="enabled",
             actual_state=BrickState.FAILED,
-            action="reset",
+            action=DriftAction.RESET,
         )
         result = ReconcileResult(total_bricks=3, drifted=1, actions_taken=1, errors=0, drifts=(d,))
         assert len(result.drifts) == 1

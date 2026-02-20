@@ -81,6 +81,8 @@ class DriftReportResponse(BaseModel):
     actions_taken: int
     errors: int
     drifts: list[DriftReportItem]
+    last_reconcile_at: float | None = None
+    reconcile_count: int = 0
 
 
 class ResetBrickResponse(BaseModel):
@@ -97,8 +99,12 @@ class ResetBrickResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _get_lifecycle_manager(request: Request) -> Any:
-    """Get BrickLifecycleManager from app state."""
+def _get_system_service(request: Request, attr: str, label: str) -> Any:
+    """Resolve a system service from the NexusFS instance on app state.
+
+    Raises HTTPException(503) if NexusFS, system services, or the requested
+    service is unavailable.
+    """
     nx = getattr(request.app.state, "nexus_fs", None)
     if nx is None:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
@@ -107,28 +113,21 @@ def _get_lifecycle_manager(request: Request) -> Any:
     if _sys is None:
         raise HTTPException(status_code=503, detail="System services not available")
 
-    manager = getattr(_sys, "brick_lifecycle_manager", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Brick lifecycle manager not available")
+    service = getattr(_sys, attr, None)
+    if service is None:
+        raise HTTPException(status_code=503, detail=f"{label} not available")
 
-    return manager
+    return service
+
+
+def _get_lifecycle_manager(request: Request) -> Any:
+    """Get BrickLifecycleManager from app state."""
+    return _get_system_service(request, "brick_lifecycle_manager", "Brick lifecycle manager")
 
 
 def _get_reconciler(request: Request) -> Any:
-    """Get BrickReconciler from app state (may be None)."""
-    nx = getattr(request.app.state, "nexus_fs", None)
-    if nx is None:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-    _sys = getattr(nx, "_system_services", None)
-    if _sys is None:
-        raise HTTPException(status_code=503, detail="System services not available")
-
-    reconciler = getattr(_sys, "brick_reconciler", None)
-    if reconciler is None:
-        raise HTTPException(status_code=503, detail="Brick reconciler not available")
-
-    return reconciler
+    """Get BrickReconciler from app state."""
+    return _get_system_service(request, "brick_reconciler", "Brick reconciler")
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +158,13 @@ async def brick_drift(
                 brick_name=d.brick_name,
                 spec_state=d.spec_state,
                 actual_state=d.actual_state.value,
-                action=d.action,
+                action=d.action.value,
                 detail=d.detail,
             )
             for d in result.drifts
         ],
+        last_reconcile_at=reconciler.last_reconcile_at,
+        reconcile_count=reconciler.reconcile_count,
     )
 
 

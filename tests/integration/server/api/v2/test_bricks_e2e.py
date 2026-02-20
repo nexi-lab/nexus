@@ -29,7 +29,7 @@ from nexus.server.api.v2.routers.bricks import (
 from nexus.server.dependencies import require_admin
 from nexus.services.brick_lifecycle import BrickLifecycleManager
 from nexus.services.brick_reconciler import BrickReconciler
-from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
+from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol, DriftAction
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -519,11 +519,13 @@ class TestBricksE2ESelfHealing:
         reconciler = BrickReconciler(lifecycle_manager=manager, max_retries=2)
 
         # Attempt 1 and 2 — try to heal
+        # Clear backoff between passes so retries aren't delayed by exponential backoff
         for _ in range(2):
+            reconciler._next_retry_after.clear()
             await reconciler.reconcile()
 
         # Attempt 3 — should skip (max_retries=2 exceeded)
         result = await reconciler.reconcile()
-        skip_drifts = [d for d in result.drifts if d.action == "skip"]
+        skip_drifts = [d for d in result.drifts if d.action is DriftAction.SKIP]
         assert len(skip_drifts) == 1
         assert "exceeded" in skip_drifts[0].detail.lower()

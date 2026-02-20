@@ -1700,6 +1700,8 @@ def create_nexus_services(
 
     _factory_log = _factory_logging.getLogger(__name__)
 
+    # --- Profile-based brick gating (Issue #1389) ---
+    from nexus.contracts.deployment_profile import DeploymentProfile
     from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
@@ -1707,16 +1709,13 @@ def create_nexus_services(
     from nexus.core.config import PermissionConfig as _PermissionConfig
     from nexus.core.config import SystemServices as _SystemServices
 
-    # --- Profile-based brick gating (Issue #1389) ---
-    from nexus.core.deployment_profile import DeploymentProfile
-
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
 
     def _brick_on(name: str) -> bool:
         return name in enabled_bricks
 
-    from nexus.core.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
+    from nexus.contracts.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
 
     _factory_log.info(
         "Factory: enabled_bricks=%d/%d %s",
@@ -2152,7 +2151,7 @@ def create_nexus_fs(
 
     # --- Phase 2: Wire services needing NexusFS reference (Issue #643) ---
     # Resolve enabled_bricks for brick gating (same pattern as create_nexus_services)
-    from nexus.core.deployment_profile import DeploymentProfile as _DP
+    from nexus.contracts.deployment_profile import DeploymentProfile as _DP
 
     _resolved_bricks = enabled_bricks
     if _resolved_bricks is None:

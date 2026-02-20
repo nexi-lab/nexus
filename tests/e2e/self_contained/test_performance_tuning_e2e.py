@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.core.deployment_profile import DeploymentProfile
+from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.server.api.core.features import router
 from nexus.server.lifespan import _compute_features_info
 

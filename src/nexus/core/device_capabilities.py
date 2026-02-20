@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.contracts.deployment_profile import DeploymentProfile
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ def suggest_profile(caps: DeviceCapabilities) -> DeploymentProfile:
     - 4096–32767 MB → FULL
     - >=32768 MB  → CLOUD
     """
-    from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.contracts.deployment_profile import DeploymentProfile
 
     if caps.memory_mb < 512:
         return DeploymentProfile.EMBEDDED

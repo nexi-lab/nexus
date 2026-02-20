@@ -489,7 +489,7 @@ class NexusFSGateway:
         Raises:
             RuntimeError: If database URL cannot be determined
         """
-        from nexus.core.context_utils import get_database_url
+        from nexus.lib.context_utils import get_database_url
 
         return get_database_url(self._fs)
 

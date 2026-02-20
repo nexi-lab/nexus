@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import SyncContext, SyncResult
-from nexus.core.context_utils import get_zone_id
+from nexus.lib.context_utils import get_zone_id
 from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
 from nexus.services.permission_utils import check_permission
 

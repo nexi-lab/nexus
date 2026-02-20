@@ -43,7 +43,7 @@ from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.router import NamespaceConfig, PathRouter
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.parsers.registry import ParserRegistry

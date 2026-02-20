@@ -13,7 +13,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from nexus.core.context_utils import (
+from nexus.lib.context_utils import (
     get_database_url,
     get_user_identity,
     get_zone_id,

@@ -100,7 +100,9 @@ async def search_query(
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
     adaptive_k: bool = Query(False, description="Adaptive retrieval"),
-    graph_mode: str = Query("none", description="Graph enhancement mode: none, low, high, dual, auto"),
+    graph_mode: str = Query(
+        "none", description="Graph enhancement mode: none, low, high, dual, auto"
+    ),
     _auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
     async_session_factory: Any = Depends(_get_async_read_session_factory),

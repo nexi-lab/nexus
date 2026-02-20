@@ -37,7 +37,9 @@ class VerifySignatureRequest(BaseModel):
 
     message: str = Field(..., description="Base64-encoded message")
     signature: str = Field(..., description="Base64-encoded signature")
-    key_id: str | None = Field(None, description="Optional key ID (uses newest active key if omitted)")
+    key_id: str | None = Field(
+        None, description="Optional key ID (uses newest active key if omitted)"
+    )
 
 
 # =============================================================================

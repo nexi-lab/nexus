@@ -94,7 +94,9 @@ class TestWatchAPIEndpoint:
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
-            response = client.get("/api/v2/watch", params={"path": "/inbox/**/*.txt", "timeout": 0.1})
+            response = client.get(
+                "/api/v2/watch", params={"path": "/inbox/**/*.txt", "timeout": 0.1}
+            )
 
             # Either success or 501 if no event source
             assert response.status_code in (200, 501)

@@ -188,9 +188,7 @@ async def get_lock_status(
     if not lock_info:
         return LockStatusResponse(path=path, locked=False, lock_info=None)
 
-    return LockStatusResponse(
-        path=path, locked=True, lock_info=_to_lock_info_response(lock_info)
-    )
+    return LockStatusResponse(path=path, locked=True, lock_info=_to_lock_info_response(lock_info))
 
 
 @router.delete("/{path:path}")

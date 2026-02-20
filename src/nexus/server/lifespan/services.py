@@ -536,50 +536,10 @@ async def _startup_scheduler(app: FastAPI) -> None:
         )
         app.state._scheduler_pool = pool
 
-        # Create scheduled_tasks table if it doesn't exist
-        async with pool.acquire() as conn:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS scheduled_tasks (
-                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    agent_id TEXT NOT NULL,
-                    executor_id TEXT NOT NULL,
-                    task_type TEXT NOT NULL,
-                    payload JSONB NOT NULL DEFAULT '{}',
-                    priority_tier SMALLINT NOT NULL DEFAULT 2,
-                    deadline TIMESTAMPTZ,
-                    boost_amount NUMERIC(12,6) NOT NULL DEFAULT 0,
-                    boost_tiers SMALLINT NOT NULL DEFAULT 0,
-                    effective_tier SMALLINT NOT NULL DEFAULT 2,
-                    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    started_at TIMESTAMPTZ,
-                    completed_at TIMESTAMPTZ,
-                    status TEXT NOT NULL DEFAULT 'queued',
-                    boost_reservation_id TEXT,
-                    idempotency_key TEXT UNIQUE,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
-                    error_message TEXT
-                )
-            """)
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_dequeue
-                ON scheduled_tasks (effective_tier, enqueued_at)
-                WHERE status = 'queued'
-            """)
-
-            # Astraea columns (Issue #1274) — idempotent ALTER TABLE
-            for col_sql in (
-                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS request_state TEXT NOT NULL DEFAULT 'pending'",
-                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS priority_class TEXT NOT NULL DEFAULT 'batch'",
-                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS executor_state TEXT NOT NULL DEFAULT 'UNKNOWN'",
-                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS estimated_service_time REAL NOT NULL DEFAULT 30.0",
-            ):
-                await conn.execute(col_sql)
-
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_sched_astraea_dequeue
-                ON scheduled_tasks (priority_class, enqueued_at)
-                WHERE status = 'queued'
-            """)
+        # NOTE: scheduled_tasks table is now managed by Alembic migration
+        # (alembic/versions/add_scheduled_tasks_table.py). Run `alembic upgrade head`
+        # to create/update the schema. The runtime DDL that was previously here has
+        # been removed per Issue #698.
 
         # Astraea: state emitter + fair-share (Issue #1274)
         state_emitter = AgentStateEmitter()

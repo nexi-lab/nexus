@@ -29,6 +29,7 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
     SystemServices,
+    WiredServices,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
@@ -247,8 +248,8 @@ class NexusFS(  # type: ignore[misc]
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
         # Service attributes — set to None by default.
-        # Wired by service_wiring.wire_services() during __init__.
-        # Issue #643: kernel no longer creates services.
+        # Wired by factory via _bind_wired_services() after construction.
+        # Issue #643/#2133: kernel never imports or creates services.
         self.rebac_service: Any = None
         self.mount_service: Any = None
         self._gateway: Any = None
@@ -278,9 +279,18 @@ class NexusFS(  # type: ignore[misc]
         )
         self._post_mutation_hooks: builtins.list[Any] = []
 
-        # Wire self-dependent services, then register hooks
-        self._wire_services()
+        # Register VFS hooks (services wired by factory via _bind_wired_services)
         self._register_vfs_hooks()
+
+        # PermissionChecker: core module, safe to create here (Issue #2133)
+        from nexus.core.permission_checker import PermissionChecker
+
+        self._permission_checker = PermissionChecker(
+            permission_enforcer=self._permission_enforcer,
+            metadata_store=self.metadata,
+            default_context=self._default_context,
+            enforce_permissions=self._enforce_permissions,
+        )
 
         # Read-set-aware cache (Issue #1169)
         self._read_set_cache = None
@@ -304,26 +314,22 @@ class NexusFS(  # type: ignore[misc]
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
-        # Tiger Cache
-        from nexus.services.tiger_cache_manager import TigerCacheManager
+        # Tiger Cache (Issue #2133: injected via SystemServices, fallback for tests)
+        ssvc = self._system_services
+        _injected_tcm = getattr(ssvc, "tiger_cache_manager", None) if ssvc else None
+        if _injected_tcm is not None:
+            self._tiger_cache_manager = _injected_tcm
+        else:
+            from nexus.services.tiger_cache_manager import TigerCacheManager
 
-        self._tiger_cache_manager = TigerCacheManager(
-            rebac_manager=self._rebac_manager,
-            metadata_store=self.metadata,
-            default_zone_id=self._default_context.zone_id or "root",
-            process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
-            warm_cache_fn=getattr(self, "warm_tiger_cache", None),
-        )
-        self._tiger_cache_manager.initialize()
-
-    def _wire_services(self) -> None:
-        """Wire services that require a reference to self (NexusFS).
-
-        Delegates to nexus.core.service_wiring.wire_services() (Issue #2033).
-        """
-        from nexus.core.service_wiring import wire_services
-
-        wire_services(self)
+            self._tiger_cache_manager = TigerCacheManager(
+                rebac_manager=self._rebac_manager,
+                metadata_store=self.metadata,
+                default_zone_id=self._default_context.zone_id or "root",
+                process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
+                warm_cache_fn=getattr(self, "warm_tiger_cache", None),
+            )
+            self._tiger_cache_manager.initialize()
 
     def _register_vfs_hooks(self) -> None:
         """Register VFS hook implementations on the pipeline."""
@@ -381,30 +387,68 @@ class NexusFS(  # type: ignore[misc]
                 )
             )
 
-    def _bind_wired_services(self, wired: dict[str, Any]) -> None:
+    def _bind_wired_services(self, wired: WiredServices | dict[str, Any]) -> None:
         """Bind wired services from factory two-phase init.
 
         Args:
-            wired: Dict of service_name -> instance (from _boot_wired_services).
+            wired: WiredServices dataclass (from _boot_wired_services).
+                   Also accepts dict for backward compatibility with tests.
+
+        Issue #2133: Accepts WiredServices frozen dataclass.
         """
-        # version_service removed (Issue #2034) — now set from BrickServices in __init__
-        self.rebac_service = wired.get("rebac_service")
-        self.mount_service = wired.get("mount_service")
-        self._gateway = wired.get("gateway")
-        self._mount_core_service = wired.get("mount_core_service")
-        self._sync_service = wired.get("sync_service")
-        self._sync_job_service = wired.get("sync_job_service")
-        self._mount_persist_service = wired.get("mount_persist_service")
-        self.mcp_service = wired.get("mcp_service")
-        self.llm_service = wired.get("llm_service")
-        self._llm_subsystem = wired.get("llm_subsystem")
-        self.oauth_service = wired.get("oauth_service")
-        self.skill_service = wired.get("skill_service")
-        self.skill_package_service = wired.get("skill_package_service")
-        self.search_service = wired.get("search_service")
-        self.share_link_service = wired.get("share_link_service")
-        self.events_service = wired.get("events_service")
-        self.task_queue_service = wired.get("task_queue_service")
+        if isinstance(wired, dict):
+            # Backward compat for tests that pass a dict
+            self.rebac_service = wired.get("rebac_service")
+            self.mount_service = wired.get("mount_service")
+            self._gateway = wired.get("gateway")
+            self._mount_core_service = wired.get("mount_core_service")
+            self._sync_service = wired.get("sync_service")
+            self._sync_job_service = wired.get("sync_job_service")
+            self._mount_persist_service = wired.get("mount_persist_service")
+            self.mcp_service = wired.get("mcp_service")
+            self.llm_service = wired.get("llm_service")
+            self._llm_subsystem = wired.get("llm_subsystem")
+            self.oauth_service = wired.get("oauth_service")
+            self.skill_service = wired.get("skill_service")
+            self.skill_package_service = wired.get("skill_package_service")
+            self.search_service = wired.get("search_service")
+            self.share_link_service = wired.get("share_link_service")
+            self.events_service = wired.get("events_service")
+            self.task_queue_service = wired.get("task_queue_service")
+            self._workspace_rpc_service = wired.get("workspace_rpc_service")
+            self._agent_rpc_service = wired.get("agent_rpc_service")
+            self._user_provisioning_service = wired.get("user_provisioning_service")
+            self._sandbox_rpc_service = wired.get("sandbox_rpc_service")
+            self._metadata_export_service = wired.get("metadata_export_service")
+            self._ace_rpc_service = wired.get("ace_rpc_service")
+            self._descendant_checker = wired.get("descendant_checker")
+            self._memory_provider = wired.get("memory_provider")
+            return
+        self.rebac_service = wired.rebac_service
+        self.mount_service = wired.mount_service
+        self._gateway = wired.gateway
+        self._mount_core_service = wired.mount_core_service
+        self._sync_service = wired.sync_service
+        self._sync_job_service = wired.sync_job_service
+        self._mount_persist_service = wired.mount_persist_service
+        self.mcp_service = wired.mcp_service
+        self.llm_service = wired.llm_service
+        self._llm_subsystem = wired.llm_subsystem
+        self.oauth_service = wired.oauth_service
+        self.skill_service = wired.skill_service
+        self.skill_package_service = wired.skill_package_service
+        self.search_service = wired.search_service
+        self.share_link_service = wired.share_link_service
+        self.events_service = wired.events_service
+        self.task_queue_service = wired.task_queue_service
+        self._workspace_rpc_service = wired.workspace_rpc_service
+        self._agent_rpc_service = wired.agent_rpc_service
+        self._user_provisioning_service = wired.user_provisioning_service
+        self._sandbox_rpc_service = wired.sandbox_rpc_service
+        self._metadata_export_service = wired.metadata_export_service
+        self._ace_rpc_service = wired.ace_rpc_service
+        self._descendant_checker = wired.descendant_checker
+        self._memory_provider = wired.memory_provider
 
     @property
     def _service_extras(self) -> dict[str, Any]:
@@ -2211,17 +2255,17 @@ class NexusFS(  # type: ignore[misc]
 
     @staticmethod
     def _extract_zone_id(context: dict | Any | None) -> str | None:
-        """Extract zone_id from context — delegates to AgentRPCService."""
-        from nexus.services.agents.agent_rpc_service import AgentRPCService
+        """Extract zone_id from context."""
+        from nexus.contracts.agent_utils import extract_zone_id
 
-        return AgentRPCService._extract_zone_id(context)
+        return extract_zone_id(context)
 
     @staticmethod
     def _extract_user_id(context: dict | Any | None) -> str | None:
-        """Extract user_id from context — delegates to AgentRPCService."""
-        from nexus.services.agents.agent_rpc_service import AgentRPCService
+        """Extract user_id from context."""
+        from nexus.contracts.agent_utils import extract_user_id
 
-        return AgentRPCService._extract_user_id(context)
+        return extract_user_id(context)
 
     @staticmethod
     def _create_agent_config_data(
@@ -2233,10 +2277,10 @@ class NexusFS(  # type: ignore[misc]
         metadata: dict | None = None,
         api_key: str | None = None,
     ) -> dict[str, Any]:
-        """Create agent config data — delegates to AgentRPCService."""
-        from nexus.services.agents.agent_rpc_service import AgentRPCService
+        """Create agent config data."""
+        from nexus.contracts.agent_utils import create_agent_config_data
 
-        return AgentRPCService._create_agent_config_data(
+        return create_agent_config_data(
             agent_id=agent_id,
             name=name,
             user_id=user_id,

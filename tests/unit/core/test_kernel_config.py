@@ -332,6 +332,7 @@ class TestSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
+            "tiger_cache_manager",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

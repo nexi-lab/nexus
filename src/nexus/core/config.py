@@ -29,6 +29,10 @@ from nexus.constants import DEFAULT_NATS_URL
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
+    from nexus.core.protocols.entity_registry import EntityRegistryProtocol
+    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
+    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
+    from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
@@ -193,11 +197,11 @@ class SystemServices:
     # Former-kernel CRITICAL services (BootError on failure)
     # =================================================================
 
-    # ReBAC permission subsystem — critical
-    rebac_manager: Any = None
+    # ReBAC permission subsystem — critical (Issue #2133: typed with Protocols)
+    rebac_manager: ReBACManagerProtocol | None = None
     audit_store: Any = None
-    entity_registry: Any = None
-    permission_enforcer: Any = None
+    entity_registry: EntityRegistryProtocol | None = None
+    permission_enforcer: PermissionEnforcerProtocol | None = None
 
     # Write sync — critical
     write_observer: WriteObserverProtocol | None = None
@@ -214,10 +218,13 @@ class SystemServices:
     # Workspace subsystem — degradable
     workspace_registry: Any = None
     mount_manager: Any = None
-    workspace_manager: Any = None
+    workspace_manager: WorkspaceManagerProtocol | None = None
 
     # VFS hook pipeline (Issue #2033 Phase 5) — degradable
     hook_pipeline: Any = None
+
+    # Tiger Cache manager (Issue #2133: injected via factory)
+    tiger_cache_manager: Any = None
 
     # =================================================================
     # Original system services (all degradable)
@@ -313,6 +320,50 @@ class BrickServices:
     # --- Memory Brick (Issue #2177) ---
     memory_router: Any = None  # MemoryViewRouter singleton
     memory_permission: Any = None  # MemoryPermissionProtocol adapter
+
+
+# ---------------------------------------------------------------------------
+# WiredServices — Tier 2b: services needing NexusFS reference
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WiredServices:
+    """Tier 2b (WIRED) — services requiring NexusFS reference.
+
+    Created by ``nexus.factory._wired._boot_wired_services()`` and bound
+    to NexusFS via ``_bind_wired_services()``.
+
+    Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
+    """
+
+    rebac_service: Any = None
+    mount_service: Any = None
+    gateway: Any = None
+    mount_core_service: Any = None
+    sync_service: Any = None
+    sync_job_service: Any = None
+    mount_persist_service: Any = None
+    mcp_service: Any = None
+    llm_service: Any = None
+    llm_subsystem: Any = None
+    oauth_service: Any = None
+    skill_service: Any = None
+    skill_package_service: Any = None
+    search_service: Any = None
+    share_link_service: Any = None
+    events_service: Any = None
+    task_queue_service: Any = None
+
+    # RPC services (Issue #2133: migrated from service_wiring.py)
+    workspace_rpc_service: Any = None
+    agent_rpc_service: Any = None
+    user_provisioning_service: Any = None
+    sandbox_rpc_service: Any = None
+    metadata_export_service: Any = None
+    ace_rpc_service: Any = None
+    descendant_checker: Any = None
+    memory_provider: Any = None
 
 
 # ---------------------------------------------------------------------------

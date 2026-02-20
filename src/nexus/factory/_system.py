@@ -427,6 +427,21 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
 
+    # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
+    tiger_cache_manager: Any = None
+    try:
+        from nexus.services.tiger_cache_manager import TigerCacheManager
+
+        tiger_cache_manager = TigerCacheManager(
+            rebac_manager=rebac_manager,
+            metadata_store=ctx.metadata_store,
+            default_zone_id=ctx.zone_id or "root",
+        )
+        tiger_cache_manager.initialize()
+        logger.debug("[BOOT:SYSTEM] TigerCacheManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] TigerCacheManager unavailable: %s", exc)
+
     # =====================================================================
     # Assemble result
     # =====================================================================
@@ -445,6 +460,7 @@ def _boot_system_services(
         "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
+        "tiger_cache_manager": tiger_cache_manager,
         # Original system services
         "agent_registry": agent_registry,
         "async_agent_registry": async_agent_registry,

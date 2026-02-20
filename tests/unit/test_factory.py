@@ -183,6 +183,7 @@ class TestBootSystemServices:
             "brick_lifecycle_manager",
             "brick_reconciler",
             "scoped_hook_engine",
+            "tiger_cache_manager",
         }
         assert expected_keys == set(result.keys())
 

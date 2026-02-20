@@ -491,7 +491,9 @@ class TestDeleteAgentCleanup:
 
     def test_delete_agent_removes_rebac_tuples(self, nx: NexusFS) -> None:
         """Test that delete_agent removes ReBAC tuples for the agent."""
-        # Mock rebac_list_tuples method on NexusFS to return test tuples
+        # Mock rebac functions on the AgentRPCService (Issue #2033: methods
+        # were extracted from NexusFS to AgentRPCService, so mocks must target
+        # the service's injected function references, not NexusFS attributes).
         mock_tuples = [
             {
                 "tuple_id": "test-tuple-id-1",
@@ -502,12 +504,11 @@ class TestDeleteAgentCleanup:
                 "object_id": "/workspace/alice/test",
             }
         ]
-        original_rebac_list_tuples = nx.rebac_list_tuples
-        nx.rebac_list_tuples = MagicMock(return_value=mock_tuples)
-
-        # Mock rebac_delete
-        original_rebac_delete = nx.rebac_delete
-        nx.rebac_delete = MagicMock(return_value=True)
+        svc = nx._agent_rpc_service
+        original_list_fn = svc._rebac_list_tuples_fn
+        original_delete_fn = svc._rebac_delete_fn
+        svc._rebac_list_tuples_fn = MagicMock(return_value=mock_tuples)
+        svc._rebac_delete_fn = MagicMock(return_value=True)
 
         context = {"user_id": "alice", "zone_id": "root"}
         nx.register_agent(
@@ -520,14 +521,13 @@ class TestDeleteAgentCleanup:
         result = nx.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
-        # Verify rebac_list_tuples was called (at least once for agent tuples, possibly for user tuples too)
-        assert nx.rebac_list_tuples.call_count >= 1
-        # Verify rebac_delete was called for the tuple
-        assert nx.rebac_delete.call_count >= 1
+        # Verify rebac functions were called via the service
+        assert svc._rebac_list_tuples_fn.call_count >= 1
+        assert svc._rebac_delete_fn.call_count >= 1
 
-        # Restore original methods
-        nx.rebac_list_tuples = original_rebac_list_tuples
-        nx.rebac_delete = original_rebac_delete
+        # Restore original functions
+        svc._rebac_list_tuples_fn = original_list_fn
+        svc._rebac_delete_fn = original_delete_fn
 
     def test_delete_agent_handles_missing_directory(self, nx: NexusFS) -> None:
         """Test that delete_agent handles missing directory gracefully."""

@@ -25,7 +25,7 @@ import pytest
 
 from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.logging_wrapper import LoggingBackendWrapper
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 from tests.unit.backends.wrapper_test_helpers import make_leaf
 
 # ---------------------------------------------------------------------------

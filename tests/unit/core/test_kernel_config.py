@@ -259,6 +259,7 @@ class TestKernelServices:
             "mount_manager",
             "workspace_manager",
             "write_observer",
+            "hook_pipeline",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

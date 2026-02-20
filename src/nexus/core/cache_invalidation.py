@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.metadata import FileMetadata
-    from nexus.core.mutation_hooks import MutationEvent
+    from nexus.lib.mutation_hooks import MutationEvent
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class ReadSetCacheObserver:
 
     def on_mutation(self, event: MutationEvent) -> None:
         """Handle write/delete/rename via PostMutationHook."""
-        from nexus.core.mutation_hooks import MutationOp
+        from nexus.lib.mutation_hooks import MutationOp
 
         if event.operation is MutationOp.RENAME and event.new_path is not None:
             self._cache.invalidate_for_write(event.path, event.revision, zone_id=event.zone_id)

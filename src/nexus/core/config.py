@@ -178,6 +178,9 @@ class KernelServices:
     # Write sync
     write_observer: WriteObserverProtocol | None = None
 
+    # VFS hook pipeline (Issue #2033 Phase 5)
+    hook_pipeline: Any = None
+
 
 # ---------------------------------------------------------------------------
 # SystemServices — Tier 1: degraded-mode on failure

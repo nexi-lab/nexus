@@ -544,7 +544,7 @@ class RaftMetadataStore(MetastoreABC):
         if cursor:
             cursor_path = cursor
             try:
-                from nexus.core.pagination import decode_cursor
+                from nexus.lib.pagination import decode_cursor
 
                 filters = {
                     "prefix": prefix,

@@ -13,7 +13,7 @@ from nexus.core.protocols.connector import (
     ContentStoreProtocol,
     DirectoryOpsProtocol,
 )
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 
 class _MockBackend(Backend):

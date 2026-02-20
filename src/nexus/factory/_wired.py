@@ -340,24 +340,7 @@ def _boot_wired_services(
     try:
         from nexus.services.user_provisioning import UserProvisioningService
 
-        user_provisioning_service = UserProvisioningService(
-            vfs=nx,
-            session_factory=_nx_session_factory,
-            entity_registry=system_services.entity_registry,
-            api_key_creator=brick_services.api_key_creator,
-            backend=nx.backend,
-            rebac_manager=system_services.rebac_manager,
-            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
-            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
-            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
-            register_workspace_fn=(
-                workspace_rpc_service.register_workspace if workspace_rpc_service else None
-            ),
-            register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
-            skills_import_fn=getattr(nx, "skills_import", None),
-            list_cache=getattr(nx, "_list_cache", None),
-            exists_cache=getattr(nx, "_exists_cache", None),
-        )
+        user_provisioning_service = UserProvisioningService(nx=nx)
         logger.debug("[BOOT:WIRED] UserProvisioningService created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] UserProvisioningService unavailable: %s", exc)

@@ -204,7 +204,7 @@ async def list_events(
     For sequence_number-based replay, use the v2 API:
     ``GET /api/v2/events/replay``.
     """
-    from nexus.services.event_log.replay_service import EventReplayService
+    from nexus.services.event_subsystem.log.replay import EventReplayService
 
     record_store = getattr(request.app.state, "record_store", None)
     if record_store is None:

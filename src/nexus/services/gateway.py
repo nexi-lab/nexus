@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import builtins
 import logging
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -55,32 +54,13 @@ class NexusFSGateway:
     - Session: session_factory property
     """
 
-    def __init__(
-        self,
-        fs: NexusFS,
-        *,
-        hierarchy_manager: Any = None,
-        descendant_checker: Any = None,
-        get_routing_params_fn: Callable[..., tuple[str | None, str | None, bool]] | None = None,
-        get_backend_directory_entries_fn: Callable[..., set[str]] | None = None,
-        record_read_if_tracking_fn: Callable[..., None] | None = None,
-    ):
-        """Initialize gateway with NexusFS instance and injected dependencies.
+    def __init__(self, fs: NexusFS):
+        """Initialize gateway with NexusFS instance.
 
         Args:
             fs: NexusFS instance to wrap
-            hierarchy_manager: HierarchyManager for ReBAC parent-tuple ops
-            descendant_checker: DescendantAccessChecker for permission checks
-            get_routing_params_fn: Callable to extract (zone_id, agent_id, is_admin) from context
-            get_backend_directory_entries_fn: Callable to get backend directory entries
-            record_read_if_tracking_fn: Callable to record read operations for tracking
         """
         self._fs = fs
-        self._hierarchy_manager = hierarchy_manager
-        self._descendant_checker = descendant_checker
-        self._get_routing_params_fn = get_routing_params_fn
-        self._get_backend_directory_entries_fn = get_backend_directory_entries_fn
-        self._record_read_if_tracking_fn = record_read_if_tracking_fn
 
     # =========================================================================
     # File Operations
@@ -384,7 +364,7 @@ class NexusFSGateway:
         Returns:
             EnhancedReBACManager if available, None otherwise
         """
-        return self._fs.rebac_manager
+        return self._fs._rebac_manager
 
     def invalidate_metadata_cache(self, *paths: str) -> None:
         """Invalidate metadata cache entries for given paths.
@@ -408,8 +388,8 @@ class NexusFSGateway:
         Returns:
             True if hierarchy manager exists and inheritance is enabled
         """
-        if self._hierarchy_manager is not None:
-            return getattr(self._hierarchy_manager, "enable_inheritance", False)
+        if self._fs._hierarchy_manager is not None:
+            return getattr(self._fs._hierarchy_manager, "enable_inheritance", False)
         return False
 
     def ensure_parent_tuples_batch(
@@ -426,10 +406,10 @@ class NexusFSGateway:
         Returns:
             Number of tuples created
         """
-        if self._hierarchy_manager is not None and hasattr(
-            self._hierarchy_manager, "ensure_parent_tuples_batch"
+        if self._fs._hierarchy_manager is not None and hasattr(
+            self._fs._hierarchy_manager, "ensure_parent_tuples_batch"
         ):
-            return self._hierarchy_manager.ensure_parent_tuples_batch(paths, zone_id=zone_id)
+            return self._fs._hierarchy_manager.ensure_parent_tuples_batch(paths, zone_id=zone_id)
         return 0
 
     def remove_parent_tuples(
@@ -446,10 +426,10 @@ class NexusFSGateway:
         Returns:
             Number of tuples removed
         """
-        if self._hierarchy_manager is not None and hasattr(
-            self._hierarchy_manager, "remove_parent_tuples"
+        if self._fs._hierarchy_manager is not None and hasattr(
+            self._fs._hierarchy_manager, "remove_parent_tuples"
         ):
-            return self._hierarchy_manager.remove_parent_tuples(path, zone_id=zone_id)
+            return self._fs._hierarchy_manager.remove_parent_tuples(path, zone_id=zone_id)
         return 0
 
     # =========================================================================
@@ -630,8 +610,7 @@ class NexusFSGateway:
         Returns:
             Tuple of (zone_id, agent_id, is_admin)
         """
-        assert self._get_routing_params_fn is not None, "get_routing_params_fn not injected"
-        return self._get_routing_params_fn(context)
+        return self._fs._get_routing_params(context)
 
     def has_descendant_access(
         self,
@@ -653,8 +632,7 @@ class NexusFSGateway:
             True if access exists to any descendant
         """
         assert context is not None, "context required for has_descendant_access"
-        assert self._descendant_checker is not None, "descendant_checker not injected"
-        return self._descendant_checker.has_access(path, permission, context)
+        return self._fs._descendant_checker.has_access(path, permission, context)
 
     def get_backend_directory_entries(self, path: str) -> set[str]:
         """Get directory entries directly from backend storage.
@@ -668,10 +646,7 @@ class NexusFSGateway:
         Returns:
             Set of entry names in the directory
         """
-        assert self._get_backend_directory_entries_fn is not None, (
-            "get_backend_directory_entries_fn not injected"
-        )
-        return self._get_backend_directory_entries_fn(path)
+        return self._fs._get_backend_directory_entries(path)
 
     def record_read_if_tracking(
         self,
@@ -688,13 +663,12 @@ class NexusFSGateway:
             resource_id: Identifier for the resource
             access_type: Type of access (default: "content")
         """
-        if self._record_read_if_tracking_fn is not None:
-            self._record_read_if_tracking_fn(
-                context,
-                resource_type,
-                resource_id,
-                access_type,
-            )
+        self._fs._record_read_if_tracking(
+            context,
+            resource_type,
+            resource_id,
+            access_type,
+        )
 
     @property
     def backend(self) -> Any:

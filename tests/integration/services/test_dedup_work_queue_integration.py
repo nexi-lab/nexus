@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.services.dedup_work_queue import DedupWorkQueue
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 from nexus.services.events_service import EventsService
 
 

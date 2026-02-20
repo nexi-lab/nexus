@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
 from nexus.services.delegation.errors import DelegationError, DelegationNotFoundError
 from nexus.services.delegation.models import (
     DelegationMode,
@@ -249,4 +248,4 @@ class TestCompleteDelegation:
             )
 
         call_kwargs = mock_reputation_service.submit_feedback.call_args.kwargs
-        assert call_kwargs["zone_id"] == ROOT_ZONE_ID
+        assert call_kwargs["zone_id"] == "default"

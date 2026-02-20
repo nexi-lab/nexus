@@ -229,9 +229,6 @@ async def run_benchmark(num_files: int = 100, file_size: int = 1024) -> None:
             enable_metadata_cache=True,
             cache_ttl_seconds=300,
         )
-        from nexus.services.service_wiring import wire_services
-
-        wire_services(nx)
 
         try:
             # Create test files

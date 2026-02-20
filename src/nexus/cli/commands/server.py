@@ -23,9 +23,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
-    is_standalone,
 )
-from nexus.constants import ROOT_ZONE_ID
 from nexus.lib.env import get_database_url
 from nexus.lib.sync_bridge import run_sync
 
@@ -823,15 +821,16 @@ def serve(
 
             from nexus.cli.utils import create_backend_from_config
             from nexus.config import load_config
+            from nexus.core.nexus_fs import NexusFS
 
             try:
                 cfg = load_config(PathlibPath(backend_config.config_path))
                 # Store config on NexusFS for OAuth factory and other components
-                if is_standalone(nx):
+                if isinstance(nx, NexusFS):
                     nx._config = cfg
                 if cfg.backends:
                     # Type check: backends can only be mounted on NexusFS, not RemoteNexusFS
-                    if not is_standalone(nx):
+                    if not isinstance(nx, NexusFS):
                         console.print(
                             "[yellow]⚠️  Warning: Multi-backend configuration is only supported for local NexusFS instances[/yellow]"
                         )
@@ -1254,7 +1253,7 @@ def serve(
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)
-            zone_id = ROOT_ZONE_ID
+            zone_id = "default"
 
             # User might already exist, ignore errors
             try:
@@ -1320,7 +1319,7 @@ def serve(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        zone_id=ROOT_ZONE_ID,
+                        zone_id="default",
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"

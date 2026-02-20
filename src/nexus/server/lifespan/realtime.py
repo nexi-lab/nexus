@@ -121,7 +121,7 @@ def _startup_event_log(app: FastAPI, _svc: LifespanServices) -> None:
         event_log_config = EventLogConfig(
             wal_dir=Path(wal_dir),
             segment_size_bytes=segment_size,
-            sync_mode=sync_mode,  # type: ignore[arg-type]
+            sync_mode=sync_mode,
         )
         app.state.event_log = create_event_log(event_log_config)
         if app.state.event_log:
@@ -195,15 +195,7 @@ async def _startup_writeback(app: FastAPI, svc: LifespanServices) -> None:
         from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
         from nexus.system_services.sync.write_back_service import WriteBackService
 
-        _nfs = svc.nexus_fs
-        gw = NexusFSGateway(
-            _nfs,
-            hierarchy_manager=getattr(_nfs, "_hierarchy_manager", None),
-            descendant_checker=getattr(_nfs, "_descendant_checker", None),
-            get_routing_params_fn=getattr(_nfs, "_get_routing_params", None),
-            get_backend_directory_entries_fn=getattr(_nfs, "_get_backend_directory_entries", None),
-            record_read_if_tracking_fn=getattr(_nfs, "_record_read_if_tracking", None),
-        )
+        gw = NexusFSGateway(svc.nexus_fs)
 
         # ConflictLogStore is always available for the REST API
         _is_pg = gw.is_postgresql
@@ -272,7 +264,7 @@ def _startup_exporter_registry(app: FastAPI, _svc: LifespanServices) -> None:
             return
 
         exporter_type = os.getenv("NEXUS_EVENT_STREAM_EXPORTER", "kafka")
-        config = EventStreamConfig(enabled=True, exporter=exporter_type)  # type: ignore[arg-type]
+        config = EventStreamConfig(enabled=True, exporter=exporter_type)
 
         registry = ExporterRegistry()
         exporter = create_exporter(config)

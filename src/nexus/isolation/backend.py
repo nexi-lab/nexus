@@ -166,7 +166,8 @@ class IsolatedBackend(Backend):
             # with custom exception classes from third-party backends.
             cause = exc.cause
             if cause is not None and isinstance(
-                cause, (FileNotFoundError, NotADirectoryError, PermissionError, NotImplementedError)
+                cause,
+                FileNotFoundError | NotADirectoryError | PermissionError | NotImplementedError,
             ):
                 raise type(cause)(str(cause)) from exc
             raise

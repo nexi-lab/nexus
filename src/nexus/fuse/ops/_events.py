@@ -15,7 +15,7 @@ from nexus.constants import ROOT_ZONE_ID
 
 # Import event system (Issue #1115)
 try:
-    from nexus.core.event_bus import FileEvent, FileEventType
+    from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:

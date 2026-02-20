@@ -18,8 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
-from nexus.services.event_log.delivery_worker import EventDeliveryWorker
-from nexus.services.event_log.exporter_registry import ExporterRegistry
+from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 from nexus.storage.models import DeadLetterModel, OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

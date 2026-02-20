@@ -377,6 +377,43 @@ class AsyncScopedFilesystem(ScopedPathMixin):
         return None
 
     # ============================================================
+    # Agent Management (Async)
+    # ============================================================
+
+    async def register_agent(
+        self,
+        agent_id: str,
+        name: str,
+        description: str | None = None,
+        generate_api_key: bool = False,
+    ) -> dict[str, Any]:
+        """Register an AI agent (async)."""
+        return await self._fs.register_agent(agent_id, name, description, generate_api_key)
+
+    async def update_agent(
+        self,
+        agent_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Update an existing agent's configuration (async)."""
+        result: dict[str, Any] = await self._fs.update_agent(agent_id, name, description, metadata)
+        return result
+
+    async def list_agents(self) -> builtins.list[dict[str, Any]]:
+        """List all registered agents (async)."""
+        return await self._fs.list_agents()
+
+    async def get_agent(self, agent_id: str) -> dict[str, Any] | None:
+        """Get agent information (async)."""
+        return await self._fs.get_agent(agent_id)
+
+    async def delete_agent(self, agent_id: str) -> bool:
+        """Delete an agent (async)."""
+        return await self._fs.delete_agent(agent_id)
+
+    # ============================================================
     # Metadata Operations (Async)
     # ============================================================
 

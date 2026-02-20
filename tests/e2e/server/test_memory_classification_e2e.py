@@ -159,9 +159,6 @@ def app_with_auth(tmp_path, db_session_factory, api_keys):
         record_store=record_store,
         permissions=PermissionConfig(enforce=False),
     )
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
 
     from types import SimpleNamespace
 

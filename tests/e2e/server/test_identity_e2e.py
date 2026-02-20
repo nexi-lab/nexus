@@ -169,9 +169,6 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
     )
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
 
     # Wire database auth
     from types import SimpleNamespace

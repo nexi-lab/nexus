@@ -25,7 +25,7 @@ from nexus.backends.backend import Backend
 from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC, _validate_hash
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 
 class MockBackend(Backend):

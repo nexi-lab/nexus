@@ -34,7 +34,7 @@ from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

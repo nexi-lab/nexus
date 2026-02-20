@@ -119,7 +119,7 @@ class NexusFSGateway:
         """
         result = self._fs.read(path, context=context)
         # Normalize to bytes or str
-        if isinstance(result, (bytes, str)):
+        if isinstance(result, bytes | str):
             return result
         # Handle dict results (parsed content) by returning empty bytes
         return b""
@@ -238,8 +238,13 @@ class NexusFSGateway:
         return 0
 
     # =========================================================================
-    # Permission Operations (ReBAC)
+    # Permission Operations (ReBAC) — delegates to ReBACService (Issue #2033)
     # =========================================================================
+
+    @property
+    def _rebac_service(self) -> Any:
+        """Get the ReBACService instance from NexusFS."""
+        return self._fs.rebac_service
 
     def rebac_create(
         self,
@@ -256,20 +261,18 @@ class NexusFSGateway:
             relation: Relation name (e.g., "direct_owner", "direct_viewer")
             object: (object_type, object_id) tuple
             zone_id: Zone ID for multi-tenancy
-            context: Operation context (passed through to NexusFS)
+            context: Operation context
 
         Returns:
             Dict with tuple_id/revision/consistency_token if created, None otherwise
         """
-        kwargs: dict[str, Any] = {
-            "subject": subject,
-            "relation": relation,
-            "object": object,
-            "zone_id": zone_id,
-        }
-        if context is not None:
-            kwargs["context"] = context
-        return self._fs.rebac_create(**kwargs)
+        return self._rebac_service.rebac_create_sync(
+            subject=subject,
+            relation=relation,
+            object=object,
+            zone_id=zone_id,
+            context=context,
+        )
 
     def rebac_check(
         self,
@@ -289,7 +292,7 @@ class NexusFSGateway:
         Returns:
             True if permission granted, False otherwise
         """
-        return self._fs.rebac_check(
+        return self._rebac_service.rebac_check_sync(
             subject=subject,
             permission=permission,
             object=object,
@@ -299,7 +302,7 @@ class NexusFSGateway:
     def rebac_delete_object_tuples(
         self,
         object: tuple[str, str],
-        zone_id: str | None = None,
+        zone_id: str | None = None,  # noqa: ARG002
     ) -> int:
         """Delete all permission tuples for an object.
 
@@ -310,11 +313,13 @@ class NexusFSGateway:
         Returns:
             Number of tuples deleted
         """
-        result: int = self._fs.rebac_delete_object_tuples(
-            object=object,
-            zone_id=zone_id,
-        )
-        return result
+        tuples = self._rebac_service.rebac_list_tuples_sync(object=object)
+        deleted = 0
+        for t in tuples:
+            tid = t.get("tuple_id")
+            if tid and self._rebac_service.rebac_delete_sync(tid):
+                deleted += 1
+        return deleted
 
     def rebac_list_tuples(
         self,
@@ -334,7 +339,7 @@ class NexusFSGateway:
         Returns:
             List of tuple dictionaries
         """
-        return self._fs.rebac_list_tuples(
+        return self._rebac_service.rebac_list_tuples_sync(
             subject=subject,
             relation=relation,
             object=object,
@@ -350,10 +355,7 @@ class NexusFSGateway:
         Returns:
             True if deleted, False otherwise
         """
-        if self._fs._rebac_manager is not None:
-            self._fs._rebac_manager.rebac_delete(tuple_id)
-            return True
-        return False
+        return self._rebac_service.rebac_delete_sync(tuple_id)
 
     @property
     def rebac_manager(self) -> Any:
@@ -629,8 +631,8 @@ class NexusFSGateway:
         Returns:
             True if access exists to any descendant
         """
-        assert context is not None, "context required for _has_descendant_access"
-        return self._fs._has_descendant_access(path, permission, context)
+        assert context is not None, "context required for has_descendant_access"
+        return self._fs._descendant_checker.has_access(path, permission, context)
 
     def get_backend_directory_entries(self, path: str) -> set[str]:
         """Get directory entries directly from backend storage.

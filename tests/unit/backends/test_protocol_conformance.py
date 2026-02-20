@@ -26,7 +26,7 @@ from nexus.core.protocols.connector import (
     PassthroughProtocol,
     StreamingProtocol,
 )
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 # ---------------------------------------------------------------------------
 # Helpers

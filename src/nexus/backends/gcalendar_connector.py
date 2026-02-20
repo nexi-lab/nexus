@@ -58,7 +58,7 @@ from nexus.connectors.calendar.schemas import (
     UpdateEventSchema,
 )
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.lib.response import HandlerResponse, timed_response
 
 # Suppress annoying googleapiclient discovery cache warnings
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)

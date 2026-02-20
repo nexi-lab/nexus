@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

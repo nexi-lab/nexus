@@ -52,7 +52,7 @@ from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
 from nexus.core import glob_fast
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

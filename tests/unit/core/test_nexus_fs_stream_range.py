@@ -32,8 +32,11 @@ class _StubFS:
             raise InvalidPathError(path)
         return path
 
-    def _check_permission(self, path, perm, context):
-        pass  # permissions disabled in stub
+    class _NoOpChecker:
+        def check(self, path, perm, context=None, file_metadata=None):
+            pass  # permissions disabled in stub
+
+    _permission_checker = _NoOpChecker()
 
     def _get_routing_params(self, context):
         return "default", None, False

@@ -25,7 +25,7 @@ from nexus.backends.backend import Backend
 if TYPE_CHECKING:
     from nexus.backends.backend import HandlerStatusResponse
     from nexus.contracts.types import OperationContext
-    from nexus.core.response import HandlerResponse
+    from nexus.lib.response import HandlerResponse
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ class DelegatingBackend(Backend):
 
         If ``_transform_on_write`` raises, returns an error response.
         """
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         try:
             transformed = self._transform_on_write(content)
@@ -156,7 +156,7 @@ class DelegatingBackend(Backend):
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
         """Read from inner, then transform via ``_transform_on_read``."""
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         response = self._inner.read_content(content_hash, context=context)
         if not response.success or response.data is None:

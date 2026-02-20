@@ -19,8 +19,10 @@ import builtins
 from collections.abc import AsyncIterator
 from typing import Any
 
+from nexus.core._scoped_base import GLOBAL_NAMESPACES, ScopedPathMixin
 
-class AsyncScopedFilesystem:
+
+class AsyncScopedFilesystem(ScopedPathMixin):
     """Async filesystem wrapper that scopes all paths to a base directory.
 
     This enables multi-zone isolation by transparently rebasing paths.
@@ -35,6 +37,9 @@ class AsyncScopedFilesystem:
         _root: The root path prefix to prepend to all paths
     """
 
+    # Re-export for backward compat
+    GLOBAL_NAMESPACES = GLOBAL_NAMESPACES
+
     def __init__(self, fs: Any, root: str) -> None:
         """Initialize AsyncScopedFilesystem.
 
@@ -43,74 +48,8 @@ class AsyncScopedFilesystem:
             root: Root path prefix (e.g., "/zones/team_12/users/user_1")
                   All paths will be rebased relative to this root.
         """
+        super().__init__(root)
         self._fs = fs
-        # Normalize root: remove trailing slash, ensure leading slash
-        self._root = "/" + root.strip("/") if root.strip("/") else ""
-
-    # Global namespaces that should not be scoped - these are shared resources
-    # with their own ownership/permission structures
-    GLOBAL_NAMESPACES = (
-        "/skills/",  # Shared skills namespace
-        "/system/",  # System-wide resources
-        "/mnt/",  # Mount points (shared connectors)
-        "/memory/",  # Memory router paths (/memory/by-user/, etc.)
-        "/objs/",  # Object references (/objs/memory/, etc.)
-    )
-
-    def _scope_path(self, path: str) -> str:
-        """Rebase a path to the scoped root.
-
-        Args:
-            path: Virtual path (e.g., "/workspace/file.txt")
-
-        Returns:
-            Scoped path (e.g., "/zones/team_12/users/user_1/workspace/file.txt")
-        """
-        if not path.startswith("/"):
-            path = "/" + path
-
-        # Global namespaces - don't scope, pass through as-is
-        for ns in self.GLOBAL_NAMESPACES:
-            if path.startswith(ns):
-                return path
-
-        return f"{self._root}{path}"
-
-    def _unscope_path(self, path: str) -> str:
-        """Remove the root prefix from a path.
-
-        Args:
-            path: Scoped path (e.g., "/zones/team_12/users/user_1/workspace/file.txt")
-
-        Returns:
-            Virtual path (e.g., "/workspace/file.txt")
-        """
-        # Global namespaces - don't unscope, return as-is
-        for ns in self.GLOBAL_NAMESPACES:
-            if path.startswith(ns):
-                return path
-
-        if self._root and path.startswith(self._root):
-            result = path[len(self._root) :]
-            return result if result else "/"
-        return path
-
-    def _unscope_paths(self, paths: builtins.list[str]) -> builtins.list[str]:
-        """Remove the root prefix from a list of paths."""
-        return [self._unscope_path(p) for p in paths]
-
-    def _unscope_dict(self, d: dict[str, Any], path_keys: builtins.list[str]) -> dict[str, Any]:
-        """Remove the root prefix from path values in a dict."""
-        result = d.copy()
-        for key in path_keys:
-            if key in result and isinstance(result[key], str):
-                result[key] = self._unscope_path(result[key])
-        return result
-
-    @property
-    def root(self) -> str:
-        """The root path prefix for this scoped filesystem."""
-        return self._root
 
     @property
     def wrapped_fs(self) -> Any:

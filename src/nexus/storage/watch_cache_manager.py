@@ -9,6 +9,8 @@ the local redb but the Python LRU cache is unaware.
 Design choices:
     - Polling (not push): avoids GIL contention; Rust ring buffer is polled
       every 10 ms which is well within the 300 s TTL window.
+    - ``drain_changes()`` is offloaded to a thread via ``asyncio.to_thread``
+      to avoid blocking the event loop (Raft FFI calls may acquire a mutex).
     - Fire-and-forget error policy: same as ``PostMutationHook`` — a poll
       failure is logged but never crashes the task.
     - asyncio.Task lifecycle: same pattern as WriteBuffer / Scheduler.
@@ -24,6 +26,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.core.metadata_change import MetadataChange
     from nexus.core.metastore import MetastoreABC
     from nexus.storage.read_set_cache import ReadSetAwareCache
 
@@ -96,6 +99,14 @@ class WatchCacheManager:
             self._task = None
         logger.info("WatchCacheManager stopped")
 
+    def request_stop(self) -> None:
+        """Signal the poll loop to exit (synchronous, safe from NexusFS.close).
+
+        The loop will stop after its current sleep cycle.  The asyncio.Task
+        may still be alive briefly but will not call ``drain_changes()`` again.
+        """
+        self._running = False
+
     # ------------------------------------------------------------------
     # Poll loop
     # ------------------------------------------------------------------
@@ -104,7 +115,14 @@ class WatchCacheManager:
         """Main poll loop — runs until cancelled."""
         while self._running:
             try:
-                self._poll_once()
+                # Offload drain_changes to a thread to avoid blocking the
+                # event loop if the underlying store (e.g. Raft FFI) holds
+                # a mutex or does disk I/O.
+                changes = await asyncio.to_thread(
+                    self._metastore.drain_changes,
+                    since_revision=self._last_revision,
+                )
+                self._process_changes(changes)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -113,10 +131,13 @@ class WatchCacheManager:
             await asyncio.sleep(self._poll_interval_s)
 
     def _poll_once(self) -> None:
-        """Execute a single poll cycle (synchronous, called from async loop)."""
-        self._stats["watch_polls"] += 1
-
+        """Execute a single poll cycle (synchronous, for tests)."""
         changes = self._metastore.drain_changes(since_revision=self._last_revision)
+        self._process_changes(changes)
+
+    def _process_changes(self, changes: list[MetadataChange]) -> None:
+        """Process a batch of changes — shared by async and sync paths."""
+        self._stats["watch_polls"] += 1
 
         if not changes:
             self._stats["watch_empty_polls"] += 1
@@ -132,7 +153,8 @@ class WatchCacheManager:
                 self._buffer_overflow_threshold,
             )
             self._gateway.clear()
-            self._last_revision = max(c.revision for c in changes)
+            # Changes are revision-ordered, so last element is max.
+            self._last_revision = changes[-1].revision
             return
 
         # Normal path: invalidate each changed path through the SSOT gateway.
@@ -144,7 +166,8 @@ class WatchCacheManager:
             )
             self._stats["watch_invalidations"] += 1
 
-        self._last_revision = max(c.revision for c in changes)
+        # Changes are revision-ordered, so last element is max.
+        self._last_revision = changes[-1].revision
 
     # ------------------------------------------------------------------
     # Stats

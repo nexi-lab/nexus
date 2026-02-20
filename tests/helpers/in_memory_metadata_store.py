@@ -57,9 +57,18 @@ class InMemoryMetastore(MetastoreABC):
         return None
 
     def drain_changes(self, since_revision: int = 0) -> list[MetadataChange]:
-        """Return and clear buffered changes since the given revision."""
+        """Return and clear buffered changes since the given revision.
+
+        Drains all changes with revision > since_revision. Already-drained
+        changes (revision <= since_revision) are discarded to prevent
+        unbounded memory growth.
+        """
         result = [c for c in self._changes if c.revision > since_revision]
-        self._changes = [c for c in self._changes if c.revision <= since_revision]
+        # Discard everything up to the max returned revision.
+        # Revisions are monotonically increasing, so callers only move forward.
+        if result:
+            max_returned = result[-1].revision
+            self._changes = [c for c in self._changes if c.revision > max_returned]
         return result
 
     def exists(self, path: str) -> bool:

@@ -392,6 +392,37 @@ class TestWatchCacheManagerLifecycle:
 
         await wm.stop()
 
+    @pytest.mark.asyncio
+    async def test_request_stop_prevents_further_polls(self):
+        """request_stop() signals the loop to exit (sync-safe for NexusFS.close)."""
+        store = InMemoryMetastore()
+        _, rsc = _make_cache()
+
+        wm = WatchCacheManager(store, rsc, poll_interval_ms=5)
+        await wm.start()
+        assert wm._running is True
+
+        # Synchronous stop signal (like NexusFS.close() would call)
+        wm.request_stop()
+        assert wm._running is False
+
+        # Give the loop time to exit
+        await asyncio.sleep(0.02)
+
+        # Verify it actually stopped
+        polls_before = wm.get_stats()["watch_polls"]
+        await asyncio.sleep(0.02)
+        polls_after = wm.get_stats()["watch_polls"]
+        assert polls_after == polls_before  # no new polls
+
+        # Clean up task
+        if wm._task and not wm._task.done():
+            wm._task.cancel()
+            try:
+                await wm._task
+            except asyncio.CancelledError:
+                pass
+
 
 # ---------------------------------------------------------------------------
 # MetadataChange dataclass tests

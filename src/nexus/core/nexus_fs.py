@@ -2114,6 +2114,10 @@ class NexusFS(  # type: ignore[misc]
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Stop WatchCacheManager to prevent polling a closed metastore (Issue #2065)
+        if hasattr(self, "_watch_cache_manager") and self._watch_cache_manager is not None:
+            self._watch_cache_manager.request_stop()
+
         # Stop DeferredPermissionBuffer first to flush pending permissions
         if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
             self._deferred_permission_buffer.stop()

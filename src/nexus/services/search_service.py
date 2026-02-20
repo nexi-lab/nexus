@@ -39,7 +39,7 @@ from nexus.contracts.search_types import (
 )
 from nexus.contracts.types import Permission
 from nexus.core import glob_fast, grep_fast, trigram_fast
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.search_semantic import SemanticSearchMixin
 

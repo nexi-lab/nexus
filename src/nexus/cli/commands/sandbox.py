@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import Any, cast
 
 import click
 
@@ -77,7 +78,7 @@ def create_sandbox(
     try:
         nx: NexusFilesystem = get_default_filesystem()
 
-        result = nx.sandbox_create(
+        result = cast(Any, nx).sandbox_create(
             name=name,
             ttl_minutes=ttl,
             provider=provider,
@@ -177,7 +178,7 @@ def get_or_create_sandbox(
     try:
         nx: NexusFilesystem = get_default_filesystem()
 
-        result = nx.sandbox_get_or_create(
+        result = cast(Any, nx).sandbox_get_or_create(
             name=name,
             ttl_minutes=ttl,
             provider=provider,
@@ -286,7 +287,7 @@ def run_code(
 
         nx: NexusFilesystem = get_default_filesystem()
 
-        result = nx.sandbox_run(
+        result = cast(Any, nx).sandbox_run(
             sandbox_id=sandbox_id,
             language=language,
             code=code_to_run,
@@ -349,7 +350,7 @@ def pause_sandbox(
     """
     try:
         nx: NexusFilesystem = get_default_filesystem()
-        result = nx.sandbox_pause(sandbox_id=sandbox_id)
+        result = cast(Any, nx).sandbox_pause(sandbox_id=sandbox_id)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -391,7 +392,7 @@ def resume_sandbox(
     """
     try:
         nx: NexusFilesystem = get_default_filesystem()
-        result = nx.sandbox_resume(sandbox_id=sandbox_id)
+        result = cast(Any, nx).sandbox_resume(sandbox_id=sandbox_id)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -435,7 +436,7 @@ def stop_sandbox(
     """
     try:
         nx: NexusFilesystem = get_default_filesystem()
-        result = nx.sandbox_stop(sandbox_id=sandbox_id)
+        result = cast(Any, nx).sandbox_stop(sandbox_id=sandbox_id)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -527,7 +528,7 @@ def list_sandboxes(
         nx: NexusFilesystem = get_default_filesystem()
 
         # Call with filter parameters (not context)
-        result = nx.sandbox_list(
+        result = cast(Any, nx).sandbox_list(
             user_id=user_id,
             agent_id=agent_id,
             zone_id=zone_id,
@@ -603,7 +604,7 @@ def sandbox_status(
     """
     try:
         nx: NexusFilesystem = get_default_filesystem()
-        result = nx.sandbox_status(sandbox_id=sandbox_id)
+        result = cast(Any, nx).sandbox_status(sandbox_id=sandbox_id)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -713,7 +714,7 @@ def connect_sandbox(
     try:
         nx: NexusFilesystem = get_default_filesystem()
 
-        result = nx.sandbox_connect(
+        result = cast(Any, nx).sandbox_connect(
             sandbox_id=sandbox_id,
             provider=provider,
             sandbox_api_key=sandbox_api_key,
@@ -802,7 +803,7 @@ def disconnect_sandbox(
     try:
         nx: NexusFilesystem = get_default_filesystem()
 
-        result = nx.sandbox_disconnect(
+        result = cast(Any, nx).sandbox_disconnect(
             sandbox_id=sandbox_id,
             provider=provider,
             sandbox_api_key=sandbox_api_key,

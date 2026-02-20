@@ -32,7 +32,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.context_utils import get_user_identity, get_zone_id
+from nexus.lib.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

@@ -156,7 +156,7 @@ class OAuthCredentialService:
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Exchange OAuth authorization code for tokens and store credentials."""
-        from nexus.core.context_utils import get_zone_id
+        from nexus.lib.context_utils import get_zone_id
 
         logger.info(
             f"Exchanging OAuth code for provider={provider}, "
@@ -240,7 +240,7 @@ class OAuthCredentialService:
         context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all OAuth credentials for the current user."""
-        from nexus.core.context_utils import get_zone_id
+        from nexus.lib.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
         zone_id = get_zone_id(context)
@@ -282,7 +282,7 @@ class OAuthCredentialService:
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Revoke an OAuth credential."""
-        from nexus.core.context_utils import get_zone_id
+        from nexus.lib.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
         zone_id = get_zone_id(context)
@@ -315,7 +315,7 @@ class OAuthCredentialService:
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Test if an OAuth credential is valid and can be refreshed."""
-        from nexus.core.context_utils import get_zone_id
+        from nexus.lib.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
         zone_id = get_zone_id(context)

@@ -242,7 +242,7 @@ class TestOAuthExchangeCode:
             token_manager=mock_token_manager,
         )
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="test-zone"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="test-zone"):
             result = await service.oauth_exchange_code(
                 provider="google-drive",
                 code="4/0Abc",
@@ -270,7 +270,7 @@ class TestOAuthExchangeCode:
             pkce_store=pkce_store,
         )
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="test-zone"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="test-zone"):
             result = await service.oauth_exchange_code(
                 provider="x",
                 code="auth_code",
@@ -293,7 +293,7 @@ class TestOAuthExchangeCode:
         service = OAuthService(oauth_factory=mock_factory, token_manager=tm)
 
         with (
-            patch("nexus.core.context_utils.get_zone_id", return_value="test-zone"),
+            patch("nexus.lib.context_utils.get_zone_id", return_value="test-zone"),
             patch.object(
                 service, "_get_user_email_from_provider", new_callable=AsyncMock, return_value=None
             ),
@@ -349,7 +349,7 @@ class TestOAuthListCredentials:
         service = OAuthService(token_manager=mock_token_manager)
         ctx = MagicMock(user_id="admin-user", is_admin=True)
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="zone1"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
             result = await service.oauth_list_credentials(context=ctx)
 
         # Excludes revoked by default
@@ -360,7 +360,7 @@ class TestOAuthListCredentials:
         service = OAuthService(token_manager=mock_token_manager)
         ctx = MagicMock(user_id="admin-user", is_admin=True)
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="zone1"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
             result = await service.oauth_list_credentials(provider="x", context=ctx)
 
         assert len(result) == 1
@@ -371,7 +371,7 @@ class TestOAuthListCredentials:
         service = OAuthService(token_manager=mock_token_manager)
         ctx = MagicMock(user_id="admin-user", is_admin=True)
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="zone1"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
             result = await service.oauth_list_credentials(include_revoked=True, context=ctx)
 
         assert len(result) == 3
@@ -381,7 +381,7 @@ class TestOAuthListCredentials:
         service = OAuthService(token_manager=mock_token_manager)
         ctx = MagicMock(user_id="user-alice", is_admin=False)
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="zone1"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
             result = await service.oauth_list_credentials(context=ctx)
 
         # Alice should only see her own non-revoked credentials
@@ -407,7 +407,7 @@ class TestOAuthRevokeCredential:
         service = OAuthService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=True)
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="zone1"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
             result = await service.oauth_revoke_credential(
                 provider="google-drive",
                 user_email="alice@example.com",
@@ -426,7 +426,7 @@ class TestOAuthRevokeCredential:
         ctx = MagicMock(user_id="user-alice", is_admin=True)
 
         with (
-            patch("nexus.core.context_utils.get_zone_id", return_value="zone1"),
+            patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"),
             pytest.raises(ValueError, match="Credential not found"),
         ):
             await service.oauth_revoke_credential(
@@ -461,7 +461,7 @@ class TestOAuthTestCredential:
         service = OAuthService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=True)
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="zone1"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
             result = await service.oauth_test_credential(
                 provider="google-drive",
                 user_email="alice@example.com",
@@ -479,7 +479,7 @@ class TestOAuthTestCredential:
         service = OAuthService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=True)
 
-        with patch("nexus.core.context_utils.get_zone_id", return_value="zone1"):
+        with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
             result = await service.oauth_test_credential(
                 provider="google-drive",
                 user_email="alice@example.com",

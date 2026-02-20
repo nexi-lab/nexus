@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.auth.oauth.credential_service import OAuthCredentialService, PKCEStateStore
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)

@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-from enum import Enum
 
+from nexus.lib.circuit_breaker import CircuitState
 
-class CircuitState(Enum):
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
+# Re-export for consumers that import CircuitState from this module
+__all__ = ["AsyncCircuitBreaker", "CircuitState"]
 
 
 class AsyncCircuitBreaker:

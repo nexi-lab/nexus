@@ -30,7 +30,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
-# Skip: RedisLockManager was removed from nexus.core.distributed_lock
+# Skip: RedisLockManager was removed from nexus.lib.distributed_lock
 pytestmark = pytest.mark.skip(
     reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
@@ -76,8 +76,8 @@ async def redis_client():
 async def nx_with_lock(temp_dir, redis_client, isolated_db):
     """Create a NexusFS instance with distributed lock manager configured."""
     from nexus.backends.passthrough import PassthroughBackend
-    from nexus.core.distributed_lock import RedisLockManager
     from nexus.core.nexus_fs import NexusFS
+    from nexus.lib.distributed_lock import RedisLockManager
 
     backend = PassthroughBackend(base_path=temp_dir)
     # Disable permission enforcement for tests
@@ -107,8 +107,8 @@ async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
     (like Postgres in production). The lock manager is also shared via Redis.
     """
     from nexus.backends.passthrough import PassthroughBackend
-    from nexus.core.distributed_lock import RedisLockManager
     from nexus.core.nexus_fs import NexusFS
+    from nexus.lib.distributed_lock import RedisLockManager
 
     # Both instances use the same backend (shared storage)
     backend = PassthroughBackend(base_path=temp_dir)
@@ -154,8 +154,8 @@ def nx_sync_with_lock(temp_dir, isolated_db):
     """
     from nexus.backends.passthrough import PassthroughBackend
     from nexus.cache.dragonfly import DragonflyClient
-    from nexus.core.distributed_lock import RedisLockManager
     from nexus.core.nexus_fs import NexusFS
+    from nexus.lib.distributed_lock import RedisLockManager
 
     redis_url = os.environ.get(
         "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -398,8 +398,8 @@ class TestWriteWithLock:
 
         from nexus.backends.passthrough import PassthroughBackend
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -807,8 +807,8 @@ class TestMultiThreadingContention:
 
         from nexus.backends.passthrough import PassthroughBackend
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -891,7 +891,7 @@ class TestMultiThreadingContention:
         import time
 
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -977,7 +977,7 @@ class TestMultiThreadingContention:
         import time
 
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -1067,7 +1067,7 @@ class TestMultiThreadingContention:
         import threading
 
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -1194,8 +1194,8 @@ class TestLockIsolation:
         from nexus.backends.passthrough import PassthroughBackend
         from nexus.cache.dragonfly import DragonflyClient
         from nexus.contracts.types import OperationContext
-        from nexus.core.distributed_lock import RedisLockManager
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",

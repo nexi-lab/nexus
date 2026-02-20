@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.distributed_lock import LockManagerBase
     from nexus.core.protocols.connector import ConnectorProtocol
+    from nexus.lib.distributed_lock import LockManagerBase
     from nexus.services.event_bus.base import EventBusBase
     from nexus.services.watch.file_watcher import FileWatcher
 

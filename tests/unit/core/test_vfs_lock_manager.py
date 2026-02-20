@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from nexus.core.lock_fast import (
+from nexus.lib.lock_fast import (
     PythonVFSLockManager,
     VFSLockManagerProtocol,
     create_vfs_lock_manager,
@@ -24,7 +24,7 @@ from nexus.core.lock_fast import (
 _IMPLEMENTATIONS: list[type] = [PythonVFSLockManager]
 
 try:
-    from nexus.core.lock_fast import RustVFSLockManager
+    from nexus.lib.lock_fast import RustVFSLockManager
 
     _IMPLEMENTATIONS.append(RustVFSLockManager)
 except (ImportError, Exception):

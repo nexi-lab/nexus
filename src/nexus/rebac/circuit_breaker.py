@@ -23,12 +23,12 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, TypeVar
 
 from sqlalchemy.exc import InterfaceError, OperationalError
 
 from nexus.contracts.exceptions import CircuitOpenError
+from nexus.lib.circuit_breaker import CircuitState
 
 T = TypeVar("T")
 
@@ -41,13 +41,13 @@ INFRASTRUCTURE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     OSError,  # builtin — low-level I/O failure
 )
 
-
-class CircuitState(Enum):
-    """Circuit breaker states."""
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
+# Re-export for consumers that import CircuitState from this module
+__all__ = [
+    "AsyncCircuitBreaker",
+    "CircuitBreakerConfig",
+    "CircuitState",
+    "INFRASTRUCTURE_EXCEPTIONS",
+]
 
 
 @dataclass(frozen=True)

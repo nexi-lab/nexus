@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.protocols import PersistentView
+from nexus.core.persistent_view_store import PersistentView
 
 if TYPE_CHECKING:
     from nexus.bricks.cache.protocols import RecordStoreProtocol

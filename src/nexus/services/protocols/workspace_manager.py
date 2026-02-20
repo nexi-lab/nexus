@@ -1,11 +1,12 @@
-"""Workspace manager kernel protocol (Issue #2133).
+"""Workspace manager service protocol (Issue #2133).
 
-Defines the contract for workspace snapshot operations.
+Service contract for workspace snapshot management.
 Existing implementation: ``nexus.services.workspace_manager.WorkspaceManager`` (sync).
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - Issue #2133: Break circular runtime imports between services/ and core/
+    - Issue #2359: Moved from core/protocols/ to services/protocols/ (service tier)
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class WorkspaceManagerProtocol(Protocol):
-    """Kernel contract for workspace snapshot management.
+    """Service contract for workspace snapshot management.
 
     Do NOT use ``isinstance()`` checks in hot paths — use structural
     typing via Protocol matching instead.

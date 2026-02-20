@@ -15,7 +15,7 @@ import pytest
 
 from nexus.backends.backend import Backend
 from nexus.backends.delegating import DelegatingBackend
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 # ---------------------------------------------------------------------------
 # Fixtures

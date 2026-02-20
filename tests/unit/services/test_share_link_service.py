@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 from nexus.services.share_link_service import ShareLinkService
 
 # =============================================================================

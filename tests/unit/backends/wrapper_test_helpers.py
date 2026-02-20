@@ -11,7 +11,7 @@ import hashlib
 from unittest.mock import MagicMock, PropertyMock
 
 from nexus.backends.backend import Backend
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 
 def make_leaf(name: str = "local") -> MagicMock:

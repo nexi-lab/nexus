@@ -15,8 +15,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core.context_utils import get_database_url, get_user_identity, get_zone_id
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.context_utils import get_database_url, get_user_identity, get_zone_id
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
@@ -179,12 +179,12 @@ class MountService:
             # Create backend via centralized factory
             from nexus.backends.factory import BackendFactory
 
-            # Get session factory for caching support if available
-            session_factory = None
-            if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                session_factory = self.nexus_fs.SessionLocal
+            # Get record store for caching support if available
+            record_store = None
+            if self.nexus_fs and hasattr(self.nexus_fs, "_record_store"):
+                record_store = self.nexus_fs._record_store
 
-            backend = BackendFactory.create(backend_type, config, session_factory=session_factory)
+            backend = BackendFactory.create(backend_type, config, record_store=record_store)
 
             # Add mount to router
             self.router.add_mount(

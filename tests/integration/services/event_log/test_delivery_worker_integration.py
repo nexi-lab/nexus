@@ -70,7 +70,7 @@ class TestFullPollDispatchMarkCycle:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
-        worker = EventDeliveryWorker(record_store.session_factory, event_bus=mock_bus)
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
         count = worker._poll_and_dispatch()
 
         assert count == 1
@@ -94,7 +94,7 @@ class TestFullPollDispatchMarkCycle:
         registry.register(mock_exporter)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             exporter_registry=registry,
         )
         count = worker._poll_and_dispatch()
@@ -114,12 +114,8 @@ class TestFullPollDispatchMarkCycle:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
-        worker1 = EventDeliveryWorker(
-            record_store.session_factory, event_bus=mock_bus, batch_size=5
-        )
-        worker2 = EventDeliveryWorker(
-            record_store.session_factory, event_bus=mock_bus, batch_size=5
-        )
+        worker1 = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=5)
+        worker2 = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=5)
 
         # Worker 1 takes first 5
         count1 = worker1._poll_and_dispatch()
@@ -139,7 +135,7 @@ class TestDLQIntegration:
         mock_bus.publish = AsyncMock(side_effect=ConnectionError("down"))
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             max_retries=1,
         )
@@ -168,7 +164,7 @@ class TestWorkerLifecycleIntegration:
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             poll_interval_ms=50,
         )

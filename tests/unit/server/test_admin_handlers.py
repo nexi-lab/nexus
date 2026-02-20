@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -69,6 +70,7 @@ def auth_provider(session_factory):
     """Mock auth provider with real session_factory."""
     provider = MagicMock()
     provider.session_factory = session_factory
+    provider._record_store = SimpleNamespace(session_factory=session_factory)
     return provider
 
 

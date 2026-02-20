@@ -206,8 +206,8 @@ async def list_events(
     """
     from nexus.services.event_log.replay_service import EventReplayService
 
-    session_factory = getattr(request.app.state, "session_factory", None)
-    if session_factory is None or not callable(session_factory):
+    record_store = getattr(request.app.state, "record_store", None)
+    if record_store is None:
         raise HTTPException(status_code=503, detail="Database not configured")
 
     # Default zone from auth
@@ -216,7 +216,7 @@ async def list_events(
         effective_zone = _auth_result.get("zone_id")
 
     try:
-        service = EventReplayService(session_factory)
+        service = EventReplayService(record_store)
         result = service.list_v1(
             zone_id=effective_zone,
             agent_id=agent_id,

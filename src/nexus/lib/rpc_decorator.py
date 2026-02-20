@@ -1,9 +1,7 @@
 """RPC exposure decorator for marking methods to be exposed via RPC.
 
-This module is separate to avoid circular imports between core and server modules.
-
-The decorator is also re-exported from ``nexus.services.protocols.rpc``
-so that bricks can import it without depending on nexus.core (Issue #2035).
+Tier-neutral utility (``nexus.lib``) — zero kernel dependency.
+Also re-exported from ``nexus.services.protocols.rpc`` for convenience.
 """
 
 from __future__ import annotations
@@ -39,11 +37,12 @@ def rpc_expose(
     """
 
     def decorator(fn: F) -> F:
-        fn._rpc_exposed = True  # type: ignore[attr-defined]
-        fn._rpc_name = name or fn.__name__  # type: ignore[attr-defined]
-        fn._rpc_description = description or fn.__doc__  # type: ignore[attr-defined]
-        fn._rpc_version = version  # type: ignore[attr-defined]
-        fn._rpc_admin_only = admin_only  # type: ignore[attr-defined]
+        _fn: Any = fn
+        _fn._rpc_exposed = True
+        _fn._rpc_name = name or fn.__name__
+        _fn._rpc_description = description or fn.__doc__
+        _fn._rpc_version = version
+        _fn._rpc_admin_only = admin_only
         return fn
 
     return decorator

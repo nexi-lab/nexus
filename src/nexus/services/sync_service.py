@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import ProgressCallback, SyncContext, SyncResult
-from nexus.core.context_utils import get_zone_id
+from nexus.lib.context_utils import get_zone_id
 from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
 from nexus.services.permission_utils import check_permission
 
@@ -75,7 +75,7 @@ class SyncService:
         self._gw = gateway
         # Issue #1127: Initialize change log store for delta sync
         self._change_log = ChangeLogStore(
-            gateway.session_factory, is_postgresql=gateway.is_postgresql
+            record_store=gateway.record_store, is_postgresql=gateway.is_postgresql
         )
         # Issue #1127: Per-mount sync locks to prevent concurrent races
         self._mount_locks: dict[str, threading.Lock] = {}

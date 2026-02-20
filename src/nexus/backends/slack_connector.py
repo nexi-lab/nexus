@@ -56,6 +56,7 @@ from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         token_manager_db: str,
         user_email: str | None = None,
         provider: str = "slack",
-        session_factory: Any = None,
+        record_store: "RecordStoreABC | None" = None,
         max_messages_per_channel: int = 100,
         metadata_store: Any = None,
     ):
@@ -119,7 +120,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             user_email: Optional user email for OAuth lookup. If None, uses authenticated
                        user from OperationContext (recommended for multi-user scenarios)
             provider: OAuth provider name from config (default: "slack")
-            session_factory: SQLAlchemy session factory for content caching (optional).
+            record_store: Optional RecordStoreABC instance for content caching.
                            If provided, enables persistent caching for fast grep/search.
             max_messages_per_channel: Maximum number of messages to fetch per channel (default: 100).
                                      Set to None for unlimited.
@@ -133,7 +134,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
         # Store session factory for caching (CacheConnectorMixin)
-        self.session_factory = session_factory
+        self.session_factory = record_store.session_factory if record_store else None
 
         # Store max messages per channel
         self.max_messages_per_channel = max_messages_per_channel

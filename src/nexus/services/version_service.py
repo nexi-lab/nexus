@@ -18,18 +18,17 @@ import difflib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
     from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.storage.record_store import RecordStoreABC
 
 
 class VersionService:
@@ -95,7 +94,7 @@ class VersionService:
         router: PathRouter | None = None,
         rebac_manager: ReBACBrickProtocol | None = None,
         enforce_permissions: bool = True,
-        session_factory: Callable[..., Any] | None = None,  # Task #45: For VersionManager queries
+        record_store: RecordStoreABC | None = None,
     ):
         """Initialize version service.
 
@@ -106,7 +105,7 @@ class VersionService:
             router: Path router for backend resolution
             rebac_manager: ReBAC manager for permission checks
             enforce_permissions: Whether to enforce permission checks
-            session_factory: SQLAlchemy session factory for version history queries
+            record_store: RecordStoreABC instance providing session_factory for version history queries
         """
         self.metadata = metadata_store
         self.cas = cas_store
@@ -114,7 +113,7 @@ class VersionService:
         self.router = router
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory if record_store else None
 
         logger.info("[VersionService] Initialized")
 

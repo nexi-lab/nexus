@@ -27,13 +27,13 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     # --- Agent Registry (Issue #1502) ---
     agent_registry: Any = None
     async_agent_registry: Any = None
-    if ctx.session_factory is not None:
+    if ctx.record_store is not None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
             from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
             agent_registry = AgentRegistry(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
                 entity_registry=kernel["entity_registry"],
                 flush_interval=60,
             )
@@ -77,7 +77,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
             from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
             delivery_worker = EventDeliveryWorker(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
                 poll_interval_ms=200,
                 batch_size=50,
             )
@@ -119,7 +119,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
 
         context_branch_service = ContextBranchService(
             workspace_manager=kernel["workspace_manager"],
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
             rebac_manager=kernel["rebac_manager"],
             default_zone_id=ctx.zone_id,
             default_agent_id=ctx.agent_id,

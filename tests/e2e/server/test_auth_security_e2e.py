@@ -19,6 +19,7 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -155,7 +156,7 @@ def _make_app_with_db_auth(
 
     from nexus.server.fastapi_server import create_app
 
-    auth_provider = DatabaseAPIKeyAuth(session_factory)
+    auth_provider = DatabaseAPIKeyAuth(SimpleNamespace(session_factory=session_factory))
     db_url = f"sqlite:///{tmp_path / 'records_open.db'}"
     return create_app(
         nexus_fs=nexus_fs,

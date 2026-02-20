@@ -62,7 +62,7 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
         from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
         metadata_store = InMemoryMetastore()
-        write_observer = RecordStoreWriteObserver(record_store.session_factory)
+        write_observer = RecordStoreWriteObserver(record_store)
 
         nx = NexusFS(
             backend=LocalBackend(str(temp_dir / "data")),

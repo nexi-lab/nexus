@@ -20,9 +20,10 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from nexus.constants import ROOT_ZONE_ID
@@ -45,6 +46,7 @@ _VALID_STRATEGIES = frozenset({"fail", "source-wins"})
 if TYPE_CHECKING:
     from nexus.services.protocols.rebac import ReBACBrickProtocol
     from nexus.services.workspace_manager import WorkspaceManager
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -146,13 +148,13 @@ class ContextBranchService:
     def __init__(
         self,
         workspace_manager: WorkspaceManager,
-        session_factory: Any,
+        record_store: RecordStoreABC,
         rebac_manager: ReBACBrickProtocol | None = None,
         default_zone_id: str | None = None,
         default_agent_id: str | None = None,
     ):
         self._wm = workspace_manager
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._rebac_manager = rebac_manager
         self._default_zone_id = default_zone_id or ROOT_ZONE_ID
         self._default_agent_id = default_agent_id
@@ -967,17 +969,20 @@ class ContextBranchService:
 
             expected_version = branch.pointer_version
 
-            result = session.execute(
-                update(ContextBranchModel)
-                .where(
-                    ContextBranchModel.id == branch.id,
-                    ContextBranchModel.pointer_version == expected_version,
-                )
-                .values(
-                    head_snapshot_id=new_snapshot_id,
-                    pointer_version=expected_version + 1,
-                    updated_at=datetime.now(UTC),
-                )
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    update(ContextBranchModel)
+                    .where(
+                        ContextBranchModel.id == branch.id,
+                        ContextBranchModel.pointer_version == expected_version,
+                    )
+                    .values(
+                        head_snapshot_id=new_snapshot_id,
+                        pointer_version=expected_version + 1,
+                        updated_at=datetime.now(UTC),
+                    )
+                ),
             )
 
             if result.rowcount == 0:

@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nexus.bricks.sandbox.protocols import SandboxRepositoryProtocol
     from nexus.bricks.sandbox.sandbox_router import SandboxRouter
+    from nexus.storage.record_store import RecordStoreABC
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
 from nexus.bricks.sandbox.provider_registry import ProviderRegistry
 from nexus.bricks.sandbox.sandbox_provider import (
@@ -67,7 +67,7 @@ class SandboxManager:
 
     def __init__(
         self,
-        session_factory: Callable[[], Session],
+        record_store: RecordStoreABC,
         e2b_api_key: str | None = None,
         e2b_team_id: str | None = None,
         e2b_template_id: str | None = None,
@@ -80,7 +80,7 @@ class SandboxManager:
         """Initialize sandbox manager.
 
         Args:
-            session_factory: Factory that creates fresh DB sessions.
+            record_store: RecordStoreABC providing database access.
             e2b_api_key: E2B API key.
             e2b_team_id: E2B team ID.
             e2b_template_id: Default E2B template ID.
@@ -95,7 +95,7 @@ class SandboxManager:
         else:
             from nexus.storage.repositories.sandbox import SQLAlchemySandboxRepository
 
-            self._repository = SQLAlchemySandboxRepository(session_factory)
+            self._repository = SQLAlchemySandboxRepository(record_store)
         self._registry = registry or self._build_default_registry(
             e2b_api_key, e2b_team_id, e2b_template_id, config
         )

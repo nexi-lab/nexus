@@ -62,7 +62,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         # --- Entity Registry ---
         from nexus.rebac.entity_registry import EntityRegistry
 
-        entity_registry = EntityRegistry(ctx.session_factory)
+        entity_registry = EntityRegistry(ctx.record_store)
 
         # --- Permission Enforcer ---
         from nexus.rebac.enforcer import PermissionEnforcer
@@ -103,7 +103,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         workspace_registry = WorkspaceRegistry(
             metadata=ctx.metadata_store,
             rebac_manager=rebac_manager,
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
         )
 
         # --- Mount Manager ---
@@ -120,7 +120,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             rebac_manager=rebac_manager,
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
         )
 
         # --- RecordStore Syncer (constructed, NOT started) ---
@@ -142,14 +142,14 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
 
             _st = ctx.profile_tuning.storage
             write_observer = BufferedRecordStoreWriteObserver(
-                ctx.session_factory,
+                ctx.record_store,
                 flush_interval_ms=_st.write_buffer_flush_ms,
                 max_buffer_size=_st.write_buffer_max_size,
             )
         else:
             from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
-            write_observer = RecordStoreWriteObserver(ctx.session_factory)
+            write_observer = RecordStoreWriteObserver(ctx.record_store)
 
         result = {
             "rebac_manager": rebac_manager,

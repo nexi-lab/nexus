@@ -83,7 +83,9 @@ def store() -> ConflictLogStore:
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    return ConflictLogStore(sessionmaker(bind=engine))
+    from types import SimpleNamespace
+
+    return ConflictLogStore(SimpleNamespace(session_factory=sessionmaker(bind=engine)))
 
 
 @pytest.fixture

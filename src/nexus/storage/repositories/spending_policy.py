@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -24,7 +23,7 @@ from nexus.bricks.pay.constants import credits_to_micro, micro_to_credits
 from nexus.bricks.pay.spending_policy import SpendingApproval, SpendingPolicy
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +141,8 @@ class SQLAlchemySpendingPolicyRepository:
     (micro-credits) at this boundary.
     """
 
-    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: RecordStoreABC) -> None:
+        self._session_factory = record_store.async_session_factory
 
     # -- Policy CRUD --
 

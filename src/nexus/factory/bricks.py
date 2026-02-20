@@ -103,15 +103,15 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
 
         # WorkspaceSnapshotExecutor (Issue #1428)
         try:
-            from nexus.services.context_manifest.executors.snapshot_lookup_db import (
+            from nexus.bricks.context_manifest.executors.snapshot_lookup_db import (
                 CASManifestReader,
                 DatabaseSnapshotLookup,
             )
-            from nexus.services.context_manifest.executors.workspace_snapshot import (
+            from nexus.bricks.context_manifest.executors.workspace_snapshot import (
                 WorkspaceSnapshotExecutor,
             )
 
-            snapshot_lookup = DatabaseSnapshotLookup(session_factory=ctx.session_factory)
+            snapshot_lookup = DatabaseSnapshotLookup(record_store=ctx.record_store)
             cas_reader = CASManifestReader(backend=ctx.backend)
             executors["workspace_snapshot"] = WorkspaceSnapshotExecutor(
                 snapshot_lookup=snapshot_lookup,
@@ -178,7 +178,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
                 _upload_config_kwargs[_config_key] = int(_val)
 
         chunked_upload_service = ChunkedUploadService(
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
             backend=ctx.backend,
             metadata_store=ctx.metadata_store,
             config=ChunkedUploadConfig(**_upload_config_kwargs),
@@ -225,7 +225,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         from nexus.services.snapshot.service import TransactionalSnapshotService
 
         snapshot_service = TransactionalSnapshotService(
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
             cas_store=ctx.backend,
             metadata_store=ctx.metadata_store,
         )
@@ -245,12 +245,12 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
 
     # --- ReputationService (Issue #2131: extracted to bricks) ---
     reputation_service: Any = None
-    if ctx.session_factory is not None:
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.reputation.reputation_service import ReputationService
 
             reputation_service = ReputationService(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
             )
             logger.debug("[BOOT:BRICK] ReputationService created")
         except Exception as _rep_exc:
@@ -258,12 +258,12 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
 
     # --- DelegationService (Issue #2131: extracted to bricks) ---
     delegation_service: Any = None
-    if ctx.session_factory is not None:
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.delegation.service import DelegationService
 
             delegation_service = DelegationService(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
                 rebac_manager=kernel["rebac_manager"],
                 entity_registry=kernel.get("entity_registry"),
                 reputation_service=reputation_service,
@@ -276,14 +276,14 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     ipc_storage_driver: Any = None
     ipc_vfs_driver: Any = None
     ipc_provisioner: Any = None
-    if ctx.session_factory is not None:
+    if ctx.record_store is not None:
         try:
             from nexus.ipc.driver import IPCVFSDriver
             from nexus.ipc.provisioning import AgentProvisioner
             from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
             ipc_storage_driver = RecordStoreStorageDriver(
-                session_factory=ctx.session_factory,
+                record_store=ctx.record_store,
             )
             _ipc_zone = ctx.zone_id or "root"
             ipc_vfs_driver = IPCVFSDriver(
@@ -300,11 +300,11 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
 
     # --- Sandbox Brick: AgentEventLog (Issue #1307) ---
     agent_event_log: Any = None
-    if ctx.session_factory is not None:
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.sandbox.events import AgentEventLog
 
-            agent_event_log = AgentEventLog(session_factory=ctx.session_factory)
+            agent_event_log = AgentEventLog(record_store=ctx.record_store)
             logger.debug("[BOOT:BRICK] AgentEventLog created")
         except Exception as _ael_exc:
             logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
@@ -340,7 +340,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
             cas_store=ctx.backend,
             router=ctx.router,
             enforce_permissions=False,
-            session_factory=ctx.session_factory,
+            record_store=ctx.record_store,
         )
     except Exception as _vs_exc:
         logger.debug("[BOOT:BRICK] VersionService unavailable: %s", _vs_exc)

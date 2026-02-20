@@ -31,24 +31,11 @@ def tmp_backend(tmp_path: Path) -> LocalBackend:
 
 
 @pytest.fixture
-def upload_service(tmp_path: Path, tmp_backend: LocalBackend) -> ChunkedUploadService:
+def upload_service(tmp_backend: LocalBackend) -> ChunkedUploadService:
     """Create a service with an in-memory SQLite session store."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
+    from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
-    from nexus.storage.models import Base
-
-    # StaticPool + check_same_thread=False: share one connection across threads.
-    # Without this, asyncio.to_thread in _persist_session gets a separate
-    # in-memory DB that has no tables.
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+    record_store = InMemoryRecordStore()
 
     config = ChunkedUploadConfig(
         max_concurrent_uploads=5,
@@ -58,7 +45,7 @@ def upload_service(tmp_path: Path, tmp_backend: LocalBackend) -> ChunkedUploadSe
         max_upload_size=100 * 1024 * 1024,
     )
     return ChunkedUploadService(
-        session_factory=SessionLocal,
+        record_store=record_store,
         backend=tmp_backend,
         config=config,
     )

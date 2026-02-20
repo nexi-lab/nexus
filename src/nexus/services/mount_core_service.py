@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.context_utils import get_user_identity, get_zone_id
+from nexus.lib.context_utils import get_user_identity, get_zone_id
 from nexus.services.permission_utils import check_permission
 
 if TYPE_CHECKING:
@@ -372,7 +372,7 @@ class MountCoreService:
         """
         from nexus.backends.factory import BackendFactory
 
-        return BackendFactory.create(backend_type, config, session_factory=self._gw.session_factory)
+        return BackendFactory.create(backend_type, config, record_store=self._gw.record_store)
 
     def _setup_mount_point(
         self,
@@ -581,8 +581,8 @@ class MountCoreService:
                 )
             elif self._token_manager_fn is not None:
                 try:
-                    from nexus.core.context_utils import get_zone_id
                     from nexus.core.sync_bridge import run_sync
+                    from nexus.lib.context_utils import get_zone_id
 
                     zone_id = get_zone_id(context)
                     token_manager = self._token_manager_fn()

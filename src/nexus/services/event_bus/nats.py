@@ -46,6 +46,8 @@ from nexus.services.event_bus.protocol import AckableEvent
 if TYPE_CHECKING:
     from nats.aio.msg import Msg
 
+    from nexus.storage.record_store import RecordStoreABC
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,7 +82,7 @@ class NatsEventBus(EventBusBase):
     def __init__(
         self,
         nats_url: str = DEFAULT_NATS_URL,
-        session_factory: Any | None = None,
+        record_store: RecordStoreABC | None = None,
         node_id: str | None = None,
         max_reconnect_attempts: int = -1,
         reconnect_time_wait: float = 2.0,
@@ -89,12 +91,12 @@ class NatsEventBus(EventBusBase):
 
         Args:
             nats_url: NATS server URL (e.g., "nats://localhost:4222")
-            session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
+            record_store: RecordStoreABC for PG SSOT (optional)
             node_id: Unique node identifier (auto-generated if None)
             max_reconnect_attempts: Max reconnect attempts (-1 = infinite)
             reconnect_time_wait: Seconds between reconnect attempts
         """
-        super().__init__(session_factory=session_factory, node_id=node_id)
+        super().__init__(record_store=record_store, node_id=node_id)
         self._nats_url = nats_url
         self._max_reconnect_attempts = max_reconnect_attempts
         self._reconnect_time_wait = reconnect_time_wait

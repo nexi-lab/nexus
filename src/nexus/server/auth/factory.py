@@ -27,7 +27,7 @@ def create_auth_provider(
     Args:
         auth_type: Authentication type ('static', 'database', 'local', 'oidc', 'multi-oidc', or None)
         auth_config: Authentication configuration (depends on auth_type)
-        **kwargs: Additional arguments passed to auth provider (e.g., session_factory)
+        **kwargs: Additional arguments passed to auth provider (e.g., record_store)
 
     Returns:
         AuthProvider instance or None if no authentication
@@ -54,11 +54,11 @@ def create_auth_provider(
         return StaticAPIKeyAuth.from_config(auth_config)
 
     elif auth_type == "database":
-        session_factory = kwargs.get("session_factory")
-        if not session_factory:
-            raise ValueError("session_factory is required for database authentication")
+        record_store = kwargs.get("record_store")
+        if not record_store:
+            raise ValueError("record_store is required for database authentication")
         logger.info("Creating DatabaseAPIKeyAuth provider")
-        return DatabaseAPIKeyAuth(session_factory)
+        return DatabaseAPIKeyAuth(record_store)
 
     elif auth_type == "local":
         if not auth_config:

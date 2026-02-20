@@ -1,16 +1,14 @@
-"""
-Utility functions for extracting and resolving context information.
+"""Utility functions for extracting and resolving context information.
 
-This module provides centralized helpers for:
+Tier-neutral utility (``nexus.lib``) — zero kernel dependency.
+
+Provides centralized helpers for:
 - Extracting zone_id from context with defaults
 - Extracting user identity (type, id) from context
 - Resolving database URLs with environment variable priority
 - Parsing OperationContext from dicts (Issue #2033)
 - Building created_by strings for version tracking (Issue #2033)
 - Extracting subject tuples from context (Issue #2033)
-
-These utilities eliminate code duplication across nexus_fs_mounts, nexus_fs_oauth,
-and workspace_registry modules.
 """
 
 from __future__ import annotations

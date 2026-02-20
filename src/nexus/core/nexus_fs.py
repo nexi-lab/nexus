@@ -37,15 +37,12 @@ from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.router import NamespaceConfig, PathRouter
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.parsers.registry import ParserRegistry
     from nexus.parsers.types import ParseResult
 
-# Phase 2: Service imports moved to _wire_services() as lazy imports (Issue #1519)
-# NexusFSReBACMixin import removed (Issue #1387)
-from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -129,21 +126,20 @@ class NexusFS(  # type: ignore[misc]
         # Content cache
         if content_cache is not None:
             backend.content_cache = content_cache
-        elif cache.enable_content_cache and backend.has_root_path is True:
-            backend.content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
 
         # Four pillars: backend, metadata, record store, cache store
         self.backend = backend
         self.metadata: MetastoreABC = metadata_store
         self._record_store = record_store
+        self._sql_engine: Any = None
+        self._db_session_factory: Any = None
+        self.SessionLocal: Any = None
         if record_store is not None:
             self._sql_engine = record_store.engine
             self._db_session_factory = record_store.session_factory
             self.SessionLocal = self._db_session_factory
-        else:
-            self._sql_engine = None
-            self._db_session_factory = None
-            self.SessionLocal = None
+
+        # Initialize cache store (Task #22: Fourth Pillar)
         self.cache_store: CacheStoreABC = (
             cache_store if cache_store is not None else NullCacheStore()
         )
@@ -736,7 +732,7 @@ class NexusFS(  # type: ignore[misc]
 
     def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking."""
-        from nexus.core.context_utils import get_created_by
+        from nexus.lib.context_utils import get_created_by
 
         return get_created_by(context, self._default_context)
 
@@ -779,7 +775,7 @@ class NexusFS(  # type: ignore[misc]
 
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
         """Parse context dict or OperationContext into OperationContext."""
-        from nexus.core.context_utils import parse_context
+        from nexus.lib.context_utils import parse_context
 
         return parse_context(context)
 
@@ -1875,7 +1871,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Grant direct_owner permission to the creating user
         if context:
-            from nexus.core.context_utils import get_user_identity, get_zone_id
+            from nexus.lib.context_utils import get_user_identity, get_zone_id
 
             subject_type, subject_id = get_user_identity(context)
             zone_id = get_zone_id(context)
@@ -2085,7 +2081,7 @@ class NexusFS(  # type: ignore[misc]
 
     def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
         """Extract subject from operation context."""
-        from nexus.core.context_utils import get_subject_from_context
+        from nexus.lib.context_utils import get_subject_from_context
 
         return get_subject_from_context(context)
 

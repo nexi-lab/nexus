@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +26,8 @@ class DatabaseSnapshotLookup:
     Queries the workspace_snapshots table for snapshot metadata.
     """
 
-    def __init__(self, session_factory: Any) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: RecordStoreABC) -> None:
+        self._session_factory = record_store.session_factory
 
     def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
         """Get snapshot by ID."""

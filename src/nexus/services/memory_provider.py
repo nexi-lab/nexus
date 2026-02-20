@@ -114,7 +114,7 @@ class MemoryProvider:
             context: Optional dict or ``OperationContext`` with
                 ``zone_id``, ``user_id``, ``agent_id`` overrides.
         """
-        from nexus.core.context_utils import parse_context
+        from nexus.lib.context_utils import parse_context
         from nexus.services.memory.memory_api import Memory
 
         self.ensure_entity_registry()

@@ -39,8 +39,8 @@ from nexus.services.scheduler.queue import TaskQueue
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.credits import CreditsService
-    from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
     from nexus.services.protocols.scheduler import AgentRequest
+    from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 logger = logging.getLogger(__name__)
 

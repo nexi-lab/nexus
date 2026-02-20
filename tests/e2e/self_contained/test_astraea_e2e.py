@@ -16,6 +16,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.server.api.v2.routers.scheduler import (
+    _get_require_auth,
+    get_scheduler_service,
+    router,
+)
 from nexus.services.scheduler.constants import (
     TASK_STATUS_QUEUED,
     TASK_STATUS_RUNNING,
@@ -25,11 +30,6 @@ from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 from nexus.services.scheduler.models import ScheduledTask
 from nexus.services.scheduler.policies.fair_share import FairShareCounter
 from nexus.services.scheduler.service import SchedulerService
-from nexus.server.api.v2.routers.scheduler import (
-    _get_require_auth,
-    get_scheduler_service,
-    router,
-)
 
 # =============================================================================
 # Fixtures

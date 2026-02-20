@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.services.protocols.scheduler import AgentRequest
 from nexus.services.scheduler.constants import (
     TASK_STATUS_RUNNING,
     PriorityClass,
@@ -20,7 +21,6 @@ from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 from nexus.services.scheduler.models import ScheduledTask
 from nexus.services.scheduler.policies.fair_share import FairShareCounter
 from nexus.services.scheduler.service import SchedulerService
-from nexus.services.protocols.scheduler import AgentRequest
 
 # =============================================================================
 # Fixtures

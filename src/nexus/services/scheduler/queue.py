@@ -17,6 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     DEFAULT_EST_SERVICE_TIME_SECS,
@@ -25,7 +26,6 @@ from nexus.services.scheduler.constants import (
     PriorityTier,
 )
 from nexus.services.scheduler.models import ScheduledTask
-from nexus.constants import ROOT_ZONE_ID
 
 # =============================================================================
 # SQL Statements

@@ -31,24 +31,21 @@ _trigram_index_stats: Callable[..., dict[str, Any]] | None = None
 _invalidate_trigram_cache: Callable[..., None] | None = None
 
 try:
-    from nexus_fast import (  # type: ignore[no-redef]
-        build_trigram_index as _build_trigram_index,
+    from nexus_fast import build_trigram_index as _imported_build_trigram_index
+    from nexus_fast import (
+        build_trigram_index_from_entries as _imported_build_trigram_index_from_entries,
     )
-    from nexus_fast import (  # type: ignore[no-redef]
-        build_trigram_index_from_entries as _build_trigram_index_from_entries,
-    )
-    from nexus_fast import (  # type: ignore[no-redef]
-        invalidate_trigram_cache as _invalidate_trigram_cache,
-    )
-    from nexus_fast import (  # type: ignore[no-redef]
-        trigram_grep as _trigram_grep,
-    )
-    from nexus_fast import (  # type: ignore[no-redef]
-        trigram_index_stats as _trigram_index_stats,
-    )
-    from nexus_fast import (  # type: ignore[no-redef]
-        trigram_search_candidates as _trigram_search_candidates,
-    )
+    from nexus_fast import invalidate_trigram_cache as _imported_invalidate_trigram_cache
+    from nexus_fast import trigram_grep as _imported_trigram_grep
+    from nexus_fast import trigram_index_stats as _imported_trigram_index_stats
+    from nexus_fast import trigram_search_candidates as _imported_trigram_search_candidates
+
+    _build_trigram_index = _imported_build_trigram_index
+    _build_trigram_index_from_entries = _imported_build_trigram_index_from_entries
+    _invalidate_trigram_cache = _imported_invalidate_trigram_cache
+    _trigram_grep = _imported_trigram_grep
+    _trigram_index_stats = _imported_trigram_index_stats
+    _trigram_search_candidates = _imported_trigram_search_candidates
 
     TRIGRAM_AVAILABLE = True
 except ImportError:

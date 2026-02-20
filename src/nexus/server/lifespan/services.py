@@ -32,6 +32,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     _startup_agent_registry(app)
     _startup_key_service(app)
     _startup_reputation_delegation_from_bricks(app)
+    _startup_governance(app)
     _startup_sandbox_auth(app)
     _startup_transactional_snapshot(app)
     _startup_rlm_service(app)
@@ -259,6 +260,35 @@ def _startup_reputation_delegation_from_bricks(app: FastAPI) -> None:
         if getattr(deleg, "_agent_registry", None) is None:
             deleg._agent_registry = getattr(app.state, "agent_registry", None)
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
+
+
+def _startup_governance(app: FastAPI) -> None:
+    """Expose governance brick services from factory BrickServices (Issue #2129).
+
+    Governance services are created in ``factory._boot_brick_services()`` and
+    stored in ``BrickServices``. This function wires them onto ``app.state``
+    for backward-compatible access by the governance router.
+    """
+    nx = app.state.nexus_fs
+    if nx is None:
+        return
+
+    brk = getattr(nx, "_brick_services", None)
+    app.state.governance_anomaly_service = (
+        getattr(brk, "governance_anomaly_service", None) if brk else None
+    )
+    app.state.governance_collusion_service = (
+        getattr(brk, "governance_collusion_service", None) if brk else None
+    )
+    app.state.governance_graph_service = (
+        getattr(brk, "governance_graph_service", None) if brk else None
+    )
+    app.state.governance_response_service = (
+        getattr(brk, "governance_response_service", None) if brk else None
+    )
+
+    if app.state.governance_response_service is not None:
+        logger.info("[GOV] Governance services wired from brick_dict")
 
 
 def _startup_sandbox_auth(app: FastAPI) -> None:

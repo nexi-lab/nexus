@@ -58,23 +58,25 @@ class TestCacheTTLExpiry:
 
 class TestCacheSizeLimit:
     @patch("nexus.bricks.governance.governance_graph_service.time")
-    async def test_cache_full_does_not_add_new_entry(self, mock_time: MagicMock) -> None:
-        """When cache is at max size, new entries should not be added."""
+    async def test_cache_full_evicts_oldest_entry(self, mock_time: MagicMock) -> None:
+        """When cache is at max size, the oldest entry is evicted (LRU)."""
         svc = _make_service()
         svc._CACHE_MAX_SIZE = 2
 
         mock_time.monotonic.return_value = 100.0
 
-        # Fill cache
+        # Fill cache: (a,b) expires earlier than (c,d)
         r = ConstraintCheckResult(allowed=True)
-        svc._cache[("z1", "a", "b")] = (r, 200.0)
+        svc._cache[("z1", "a", "b")] = (r, 150.0)  # oldest (earliest expiry)
         svc._cache[("z1", "c", "d")] = (r, 200.0)
 
-        # New lookup should succeed but not be cached
+        # New lookup should evict oldest and add new entry
         svc._lookup_constraint = AsyncMock(return_value=r)
 
         await svc.check_constraint("x", "y", "z1")
-        assert ("z1", "x", "y") not in svc._cache
+        assert ("z1", "x", "y") in svc._cache  # new entry cached
+        assert ("z1", "a", "b") not in svc._cache  # oldest evicted
+        assert ("z1", "c", "d") in svc._cache  # newer kept
 
 
 class TestReverseInvalidation:

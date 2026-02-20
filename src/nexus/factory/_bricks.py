@@ -460,6 +460,33 @@ def _boot_independent_bricks(
     except Exception as _mem_exc:
         logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
 
+    # --- Governance Brick (Issue #2129) ---
+    governance_anomaly_service: Any = None
+    governance_collusion_service: Any = None
+    governance_graph_service: Any = None
+    governance_response_service: Any = None
+    if ctx.record_store is not None:
+        try:
+            _gov_session_factory = ctx.record_store.async_session_factory
+
+            from nexus.bricks.governance.anomaly_service import AnomalyService
+            from nexus.bricks.governance.collusion_service import CollusionService
+            from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
+            from nexus.bricks.governance.response_service import ResponseService
+
+            governance_anomaly_service = AnomalyService(_gov_session_factory)
+            governance_collusion_service = CollusionService(_gov_session_factory)
+            governance_graph_service = GovernanceGraphService(_gov_session_factory)
+            governance_response_service = ResponseService(
+                session_factory=_gov_session_factory,
+                anomaly_service=governance_anomaly_service,
+                collusion_service=governance_collusion_service,
+                graph_service=governance_graph_service,
+            )
+            logger.debug("[BOOT:BRICK] Governance services created")
+        except Exception as _gov_exc:
+            logger.debug("[BOOT:BRICK] Governance services unavailable: %s", _gov_exc)
+
     # --- ReBAC Circuit Breaker (Issue #2034: moved from kernel to brick tier) ---
     rebac_circuit_breaker: Any = None
     try:
@@ -507,6 +534,11 @@ def _boot_independent_bricks(
         "rebac_circuit_breaker": rebac_circuit_breaker,
         "memory_router": memory_router,
         "memory_permission": memory_permission,
+        # Governance Brick (Issue #2129)
+        "governance_anomaly_service": governance_anomaly_service,
+        "governance_collusion_service": governance_collusion_service,
+        "governance_graph_service": governance_graph_service,
+        "governance_response_service": governance_response_service,
     }
 
     elapsed = time.perf_counter() - t0

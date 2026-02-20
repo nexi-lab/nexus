@@ -64,7 +64,7 @@ class GovernanceGraphProtocol(Protocol):
         """Add a governance constraint between two agents."""
         ...
 
-    async def remove_constraint(self, edge_id: str) -> bool:
+    async def remove_constraint(self, edge_id: str, *, zone_id: str) -> bool:
         """Remove a constraint by edge ID."""
         ...
 

@@ -7,8 +7,9 @@ across ``anomaly_service.py``, ``governance_graph_service.py``, and
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
+from nexus.bricks.governance.approval.types import ApprovalStatus
 from nexus.bricks.governance.json_utils import parse_json_metadata
 from nexus.bricks.governance.models import (
     AnomalyAlert,
@@ -18,8 +19,15 @@ from nexus.bricks.governance.models import (
     SuspensionRecord,
 )
 
+if TYPE_CHECKING:
+    from nexus.bricks.governance.db_models import (
+        AnomalyAlertModel,
+        GovernanceEdgeModel,
+        SuspensionModel,
+    )
 
-def alert_model_to_domain(model: Any) -> AnomalyAlert:
+
+def alert_model_to_domain(model: AnomalyAlertModel) -> AnomalyAlert:
     """Convert ``AnomalyAlertModel`` to domain ``AnomalyAlert``."""
     details = parse_json_metadata(getattr(model, "details", None))
 
@@ -38,7 +46,7 @@ def alert_model_to_domain(model: Any) -> AnomalyAlert:
     )
 
 
-def edge_model_to_domain(model: Any) -> GovernanceEdge:
+def edge_model_to_domain(model: GovernanceEdgeModel) -> GovernanceEdge:
     """Convert ``GovernanceEdgeModel`` to domain ``GovernanceEdge``."""
     metadata = parse_json_metadata(getattr(model, "metadata_json", None))
 
@@ -54,7 +62,7 @@ def edge_model_to_domain(model: Any) -> GovernanceEdge:
     )
 
 
-def suspension_model_to_domain(model: Any) -> SuspensionRecord:
+def suspension_model_to_domain(model: SuspensionModel) -> SuspensionRecord:
     """Convert ``SuspensionModel`` to domain ``SuspensionRecord``."""
     return SuspensionRecord(
         suspension_id=model.id,
@@ -64,7 +72,7 @@ def suspension_model_to_domain(model: Any) -> SuspensionRecord:
         severity=AnomalySeverity(model.severity),
         suspended_at=model.suspended_at,
         expires_at=model.expires_at,
-        appeal_status=model.appeal_status,
+        appeal_status=ApprovalStatus(model.appeal_status),
         appeal_reason=model.appeal_reason,
         appealed_at=model.appealed_at,
         decided_by=model.decided_by,

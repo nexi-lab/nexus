@@ -324,6 +324,12 @@ class BrickServices:
     provider_registry: Any = None  # ProviderRegistry (parsing providers)
     vfs_lock_manager: Any = None  # VFS lock manager (fine-grained file locks)
 
+    # --- Governance Brick (Issue #2129) ---
+    governance_anomaly_service: Any = None
+    governance_collusion_service: Any = None
+    governance_graph_service: Any = None
+    governance_response_service: Any = None
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

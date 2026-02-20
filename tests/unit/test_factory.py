@@ -278,6 +278,10 @@ class TestBootBrickServices:
             "rebac_circuit_breaker",
             "memory_router",
             "memory_permission",
+            "governance_anomaly_service",
+            "governance_collusion_service",
+            "governance_graph_service",
+            "governance_response_service",
         }
         assert expected_keys == set(result.keys())
 

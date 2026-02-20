@@ -11,11 +11,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.governance.anomaly_service import (
+from nexus.bricks.governance.anomaly_service import (
     AnomalyService,
     StatisticalAnomalyDetector,
 )
-from nexus.services.governance.models import (
+from nexus.bricks.governance.models import (
     AgentBaseline,
     AnomalyDetectionConfig,
     AnomalySeverity,
@@ -139,7 +139,7 @@ class TestAnomalyServiceAnalyzeTransaction:
 
     @pytest.mark.asyncio
     async def test_persists_alerts_when_present(self) -> None:
-        from nexus.services.governance.models import AnomalyAlert
+        from nexus.bricks.governance.models import AnomalyAlert
 
         alert = AnomalyAlert(
             alert_id="alert-1",

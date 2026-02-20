@@ -222,6 +222,11 @@ def create_nexus_services(
         # Memory Brick (Issue #2177)
         memory_router=brick_dict["memory_router"],
         memory_permission=brick_dict["memory_permission"],
+        # Governance Brick (Issue #2129)
+        governance_anomaly_service=brick_dict["governance_anomaly_service"],
+        governance_collusion_service=brick_dict["governance_collusion_service"],
+        governance_graph_service=brick_dict["governance_graph_service"],
+        governance_response_service=brick_dict["governance_response_service"],
     )
 
     return kernel_services, system_services, brick_services

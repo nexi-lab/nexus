@@ -41,14 +41,14 @@ def upgrade() -> None:
         sa.Column("domain", sa.String(255), nullable=True),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("settings", sa.Text(), nullable=True),
-        sa.Column("phase", sa.String(12), nullable=False, server_default="Active"),
-        sa.Column("finalizers", sa.Text(), nullable=False, server_default="[]"),
+        sa.Column("is_active", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("deleted_at", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("zone_id"),
         sa.UniqueConstraint("domain"),
     )
+    op.create_index("idx_zones_active", "zones", ["is_active"])
 
     op.create_table(
         "api_keys",

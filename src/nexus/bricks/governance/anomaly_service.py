@@ -172,6 +172,8 @@ class AnomalyService:
         self,
         alert_id: str,
         resolved_by: str,
+        *,
+        zone_id: str,
     ) -> AnomalyAlert | None:
         """Mark an alert as resolved."""
         from sqlalchemy import select
@@ -180,7 +182,10 @@ class AnomalyService:
 
         now = datetime.now(UTC)
         async with self._session_factory() as session, session.begin():
-            stmt = select(AnomalyAlertModel).where(AnomalyAlertModel.id == alert_id)
+            stmt = select(AnomalyAlertModel).where(
+                AnomalyAlertModel.id == alert_id,
+                AnomalyAlertModel.zone_id == zone_id,
+            )
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:

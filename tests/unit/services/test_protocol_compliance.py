@@ -343,7 +343,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("auth", "nexus/services/protocols/auth.py"),
     ("delegation", "nexus/services/protocols/delegation.py"),
     ("event_log", "nexus/services/event_log/protocol.py"),
-    ("governance", "nexus/services/governance/protocols.py"),
+    ("governance", "nexus/bricks/governance/protocols.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
     ("llm_provider", "nexus/services/protocols/llm_provider.py"),

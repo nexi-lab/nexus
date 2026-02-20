@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.services.governance.models import (
+from nexus.bricks.governance.models import (
     AnomalySeverity,
     FraudScore,
     SuspensionRecord,
 )
-from nexus.services.governance.response_service import ResponseService
+from nexus.bricks.governance.response_service import ResponseService
 
 
 class _FakeAsyncSession:
@@ -187,7 +187,7 @@ class TestAppealWorkflow:
         assert approved.status.value == "approved"
 
     def test_cannot_double_approve_via_workflow(self) -> None:
-        from nexus.services.governance.approval.state_machine import InvalidTransitionError
+        from nexus.bricks.governance.approval.state_machine import InvalidTransitionError
 
         svc = ResponseService(session_factory=_mock_session_factory())
         svc._appeal_workflow.submit("agent-1", record_id="s-123")
@@ -212,4 +212,4 @@ class TestSuspensionRecordImmutability:
             reason="test",
         )
         with pytest.raises(AttributeError):
-            record.reason = "modified"  # type: ignore[misc]
+            record.reason = "modified"

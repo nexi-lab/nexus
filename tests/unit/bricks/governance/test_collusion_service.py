@@ -16,8 +16,8 @@ import pytest
 
 nx = pytest.importorskip("networkx", reason="networkx required for collusion tests")
 
-from nexus.services.governance.collusion_service import CollusionService  # noqa: E402
-from nexus.services.governance.models import (  # noqa: E402
+from nexus.bricks.governance.collusion_service import CollusionService  # noqa: E402
+from nexus.bricks.governance.models import (  # noqa: E402
     EdgeType,
     GovernanceEdge,
     RingType,

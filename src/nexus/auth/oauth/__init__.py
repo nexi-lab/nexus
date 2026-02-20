@@ -30,4 +30,5 @@ __all__ = [
     #   nexus.auth.oauth.crypto.OAuthCrypto
     #   nexus.auth.oauth.factory.OAuthProviderFactory
     #   nexus.auth.oauth.pending.PendingOAuthManager
+    #   nexus.auth.oauth.token_manager.TokenManager
 ]

@@ -5,6 +5,9 @@ runtime dependencies on kernel, services, or bricks — only stdlib imports.
 
 Originally in ``nexus.services.agents.agent_record``; moved here so bricks
 can import them without violating the zero-core-imports rule.
+
+Issue #2169: Added AgentSpec/AgentStatus for declarative agent management
+with drift detection (Kubernetes-inspired spec/status separation).
 """
 
 from __future__ import annotations
@@ -175,3 +178,192 @@ class AgentRecord:
         """
         caps = self.metadata.get("capabilities", [])
         return list(caps) if isinstance(caps, list | tuple) else []
+
+
+# ---------------------------------------------------------------------------
+# AgentSpec/AgentStatus types (Issue #2169)
+# ---------------------------------------------------------------------------
+
+
+class QoSClass(StrEnum):
+    """Quality-of-service tier for agent resource management.
+
+    Determines eviction priority: spot < standard < premium.
+    """
+
+    PREMIUM = "premium"
+    STANDARD = "standard"
+    SPOT = "spot"
+
+
+class AgentPhase(StrEnum):
+    """External-facing agent lifecycle phase.
+
+    Maps from internal ``AgentState`` plus conditions to a richer
+    phase model suitable for API consumers and dashboards.
+    """
+
+    WARMING = "warming"
+    READY = "ready"
+    ACTIVE = "active"
+    THINKING = "thinking"
+    IDLE = "idle"
+    SUSPENDED = "suspended"
+    EVICTED = "evicted"
+
+
+# Mapping from internal state to external phase (default, before condition overrides).
+AGENT_STATE_TO_PHASE: dict[AgentState, AgentPhase] = {
+    AgentState.UNKNOWN: AgentPhase.WARMING,
+    AgentState.CONNECTED: AgentPhase.ACTIVE,
+    AgentState.IDLE: AgentPhase.IDLE,
+    AgentState.SUSPENDED: AgentPhase.SUSPENDED,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class AgentResources:
+    """Resource requests or limits for an agent (spec side).
+
+    None values mean "unlimited" (no constraint).
+    """
+
+    token_budget: int | None = None
+    token_request: int | None = None
+    storage_limit_mb: int | None = None
+    context_limit: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentResourceUsage:
+    """Observed resource consumption (status side)."""
+
+    tokens_used: int = 0
+    storage_used_mb: float = 0.0
+    context_usage_pct: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCondition:
+    """A single condition describing an aspect of agent health.
+
+    Follows Kubernetes-style condition semantics with open string
+    type/status to allow extension without enum changes.
+
+    Attributes:
+        type: Condition kind (e.g. "Ready", "ModelConnected", "Scheduled").
+        status: Tri-state string: "True", "False", or "Unknown".
+        reason: Machine-readable camelCase reason (e.g. "HeartbeatTimeout").
+        message: Human-readable description.
+        last_transition: When this condition last changed status.
+        observed_generation: The spec_generation this condition was evaluated against.
+    """
+
+    type: str
+    status: str
+    reason: str
+    message: str
+    last_transition: datetime
+    observed_generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class AgentSpec:
+    """Desired state declaration for an agent (Issue #2169).
+
+    Immutable value object stored as JSON in the ``agent_spec`` column.
+    Changes bump ``spec_generation`` for drift detection.
+
+    Attributes:
+        agent_type: Logical agent type (e.g. "analyst", "coder").
+        capabilities: Set of capability strings.
+        resource_requests: Minimum resources the agent needs.
+        resource_limits: Maximum resources the agent may consume.
+        qos_class: Quality-of-service tier (eviction priority).
+        zone_affinity: Preferred zone for scheduling.
+        spec_generation: Monotonic counter incremented on spec changes.
+    """
+
+    agent_type: str
+    capabilities: frozenset[str]
+    resource_requests: AgentResources
+    resource_limits: AgentResources
+    qos_class: QoSClass = QoSClass.STANDARD
+    zone_affinity: str | None = None
+    spec_generation: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class AgentStatus:
+    """Observed state of an agent, computed on read (Issue #2169).
+
+    Not persisted directly — derived from ``AgentRecord`` fields,
+    heartbeat buffer, and the stored ``AgentSpec``.
+
+    Attributes:
+        phase: External lifecycle phase (derived from state + conditions).
+        observed_generation: Last spec_generation the system acted on.
+        conditions: Tuple of health/readiness conditions.
+        resource_usage: Current resource consumption.
+        last_heartbeat: Most recent heartbeat timestamp.
+        last_activity: Most recent activity timestamp.
+        inbox_depth: Number of pending messages (future use).
+        context_usage_pct: Context window usage percentage.
+    """
+
+    phase: AgentPhase
+    observed_generation: int
+    conditions: tuple[AgentCondition, ...]
+    resource_usage: AgentResourceUsage
+    last_heartbeat: datetime | None
+    last_activity: datetime | None
+    inbox_depth: int = 0
+    context_usage_pct: float = 0.0
+
+
+def derive_phase(
+    state: AgentState,
+    conditions: tuple[AgentCondition, ...] = (),
+) -> AgentPhase:
+    """Map internal state + conditions to an external phase.
+
+    The base mapping comes from ``AGENT_STATE_TO_PHASE``. Conditions
+    can override the phase (e.g. a "Ready" condition on a CONNECTED
+    agent promotes it from ACTIVE to READY).
+
+    Args:
+        state: Current internal agent state.
+        conditions: Tuple of active conditions.
+
+    Returns:
+        The derived AgentPhase.
+    """
+    base_phase = AGENT_STATE_TO_PHASE.get(state, AgentPhase.WARMING)
+
+    # Condition overrides
+    for cond in conditions:
+        if cond.type == "Ready" and cond.status == "True" and base_phase == AgentPhase.ACTIVE:
+            return AgentPhase.READY
+        if cond.type == "Evicted" and cond.status == "True":
+            return AgentPhase.EVICTED
+        if cond.type == "Thinking" and cond.status == "True" and base_phase == AgentPhase.ACTIVE:
+            return AgentPhase.THINKING
+
+    return base_phase
+
+
+def detect_drift(spec: AgentSpec, status: AgentStatus) -> bool:
+    """Check if the observed state has drifted from the desired spec.
+
+    Drift is detected when the spec's generation counter differs from
+    the status's observed generation, indicating the system has not
+    yet reconciled to the latest spec.
+
+    Args:
+        spec: Desired agent state.
+        status: Observed agent state.
+
+    Returns:
+        True if drift is detected (spec has changed since last reconciliation).
+    """
+    return spec.spec_generation != status.observed_generation

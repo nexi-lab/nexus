@@ -183,8 +183,8 @@ class GoogleDriveConnectorBackend(Backend):
         # Import TokenManager here to avoid circular imports
         # Support both file paths and database URLs
         # Resolve database URL (checks TOKEN_MANAGER_DB env var)
+        from nexus.auth.oauth.token_manager import TokenManager
         from nexus.backends.connector_utils import resolve_database_url
-        from nexus.server.auth.token_manager import TokenManager
 
         resolved_db = resolve_database_url(token_manager_db)
 
@@ -226,7 +226,7 @@ class GoogleDriveConnectorBackend(Backend):
                     name=self.provider,
                 )
                 # Register with TokenManager using the provider name from config
-                self.token_manager.register_provider(self.provider, provider_instance)  # type: ignore[arg-type]
+                self.token_manager.register_provider(self.provider, provider_instance)
                 logger.info(
                     f"✓ Registered OAuth provider '{self.provider}' for Google Drive backend"
                 )

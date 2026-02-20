@@ -14,7 +14,10 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.contracts.agent_types import AgentSpec, AgentStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,3 +77,9 @@ class AgentRegistryProtocol(Protocol):
     async def list_by_zone(self, zone_id: str) -> list[AgentInfo]: ...
 
     async def unregister(self, agent_id: str) -> bool: ...
+
+    async def set_spec(self, agent_id: str, spec: AgentSpec) -> AgentSpec: ...
+
+    async def get_spec(self, agent_id: str) -> AgentSpec | None: ...
+
+    async def get_status(self, agent_id: str) -> AgentStatus | None: ...

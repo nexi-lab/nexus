@@ -25,7 +25,7 @@ from nexus.services.protocols.agent_registry import AgentInfo
 
 if TYPE_CHECKING:
     from nexus.bricks.scheduler.events import AgentStateEmitter
-    from nexus.contracts.agent_types import AgentRecord
+    from nexus.contracts.agent_types import AgentRecord, AgentSpec, AgentStatus
     from nexus.services.agents.agent_registry import AgentRegistry
 
 
@@ -146,3 +146,41 @@ class AsyncAgentRegistry:
 
     async def unregister(self, agent_id: str) -> bool:
         return await asyncio.to_thread(self._inner.unregister, agent_id)
+
+    # ------------------------------------------------------------------
+    # Spec / Status methods (Issue #2169)
+    # ------------------------------------------------------------------
+
+    async def set_spec(self, agent_id: str, spec: AgentSpec) -> AgentSpec:
+        """Store an AgentSpec for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+            spec: Desired state specification.
+
+        Returns:
+            The stored AgentSpec with updated spec_generation.
+        """
+        return await asyncio.to_thread(self._inner.set_spec, agent_id, spec)
+
+    async def get_spec(self, agent_id: str) -> AgentSpec | None:
+        """Retrieve the stored AgentSpec for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            AgentSpec if stored, None otherwise.
+        """
+        return await asyncio.to_thread(self._inner.get_spec, agent_id)
+
+    async def get_status(self, agent_id: str) -> AgentStatus | None:
+        """Compute the current AgentStatus for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            Computed AgentStatus, or None if agent doesn't exist.
+        """
+        return await asyncio.to_thread(self._inner.get_status, agent_id)

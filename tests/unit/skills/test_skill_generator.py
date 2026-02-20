@@ -8,14 +8,14 @@ import pytest
 import yaml
 
 from nexus.backends.service_map import SERVICE_REGISTRY, ServiceInfo, _sync_from_connector_registry
-from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
-from nexus.skills.skill_generator import (
+from nexus.bricks.skills.skill_generator import (
     ConnectorTemplate,
     SkillGenerator,
     SkillMetadata,
     generate_skill_md,
     get_skill_generator,
 )
+from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 
 
 @pytest.fixture

@@ -583,15 +583,14 @@ disable_error_code = ["override", "attr-defined"]
 module = [
     "nexus.bricks.workflows.loader",
     "nexus.bricks.skills.manager",
-    "nexus.skills.skill_generator",
+    "nexus.bricks.skills.skill_generator",
     "nexus.mcp.provider_registry",
     "nexus.mcp.middleware",
     "nexus.mcp.oauth_mappings",
     "nexus.mcp.profiles",
-    "nexus.skills.parser",
+    "nexus.bricks.skills.parser",
     "nexus.server.auth.oauth_factory",
     "nexus.bricks.workflows.storage",
-    "nexus.bricks.skills.parser",
     "nexus.bricks.workflows.engine",
 ]
 # yaml/requests/cachetools stubs handled at project level

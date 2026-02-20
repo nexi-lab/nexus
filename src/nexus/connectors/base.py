@@ -23,9 +23,9 @@ from pydantic import ValidationError as PydanticValidationError
 from nexus.contracts.exceptions import ValidationError as CoreValidationError
 
 if TYPE_CHECKING:
+    from nexus.bricks.skills.protocols import SkillRegistryProtocol
     from nexus.connectors.error_formatter import SkillErrorFormatter
     from nexus.connectors.schema_generator import SkillDocGenerator
-    from nexus.skills.protocols import SkillRegistryProtocol
 
 logger = logging.getLogger(__name__)
 

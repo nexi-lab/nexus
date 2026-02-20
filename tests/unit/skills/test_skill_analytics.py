@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from nexus.skills.analytics import (
+from nexus.bricks.skills.analytics import (
     SkillAnalytics,
     SkillAnalyticsTracker,
     SkillUsageRecord,
@@ -163,7 +163,7 @@ async def test_get_dashboard_metrics_zone_filter() -> None:
 @pytest.mark.asyncio
 async def test_usage_record_validation() -> None:
     """Test usage record validation."""
-    from nexus.skills.exceptions import SkillValidationError
+    from nexus.bricks.skills.exceptions import SkillValidationError
 
     # Valid record
     record = SkillUsageRecord(

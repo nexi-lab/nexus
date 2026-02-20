@@ -5,17 +5,15 @@ Tests the code paths being modified:
 - SkillRegistry.get_tier_paths() with various contexts
 - SkillManager zone resolution in create/publish flows
 
-Uses nexus.skills (backward-compat shim with lazy loading) to avoid
-circular import through nexus.bricks.skills.__init__.py eager imports.
-Will be updated when the shim is deleted (Issue #2368 Phase 2A).
+Uses nexus.bricks.skills submodules directly (canonical location).
 """
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from nexus.skills.registry import SkillRegistry
-from nexus.skills.testing import FakeOperationContext, InMemorySkillFilesystem
+from nexus.bricks.skills.registry import SkillRegistry
+from nexus.bricks.skills.testing import FakeOperationContext, InMemorySkillFilesystem
 
 # ── SkillRegistry zone resolution tests ──────────────────────────
 

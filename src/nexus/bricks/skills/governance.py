@@ -108,7 +108,7 @@ class SkillGovernance:
     - Only approved skills can be published to /shared/
 
     Example:
-        >>> from nexus.skills import SkillGovernance
+        >>> from nexus.bricks.skills.governance import SkillGovernance
         >>>
         >>> # Initialize governance
         >>> gov = SkillGovernance()

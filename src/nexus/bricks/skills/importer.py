@@ -37,7 +37,8 @@ class SkillImporter:
 
     Example:
         >>> from nexus import connect
-        >>> from nexus.skills import SkillRegistry, SkillImporter
+        >>> from nexus.bricks.skills.registry import SkillRegistry
+        >>> from nexus.bricks.skills.importer import SkillImporter
         >>>
         >>> nx = connect()
         >>> registry = SkillRegistry(nx)

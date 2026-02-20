@@ -122,7 +122,7 @@ class SkillAnalyticsTracker:
     - Generate dashboard metrics for org-wide analytics
 
     Example:
-        >>> from nexus.skills import SkillAnalyticsTracker
+        >>> from nexus.bricks.skills.analytics import SkillAnalyticsTracker
         >>>
         >>> # Initialize tracker
         >>> tracker = SkillAnalyticsTracker()

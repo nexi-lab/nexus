@@ -20,15 +20,15 @@ async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
     bg_tasks: list[asyncio.Task] = []
 
     # Get the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars)
-    _brk = getattr(app.state.nexus_fs, "_brick_services", None) if app.state.nexus_fs else None
-    _factory_upload_svc = getattr(_brk, "chunked_upload_service", None)
+    brk = app.state.brick_services
+    _factory_upload_svc = getattr(brk, "chunked_upload_service", None) if brk else None
 
     if _factory_upload_svc is not None:
         app.state.chunked_upload_service = _factory_upload_svc
         cleanup_task = asyncio.create_task(app.state.chunked_upload_service.start_cleanup_loop())
         bg_tasks.append(cleanup_task)
         logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
-    elif app.state.nexus_fs and getattr(app.state.nexus_fs, "_record_store", None):
+    elif app.state.nexus_fs and app.state.record_store is not None:
         # Fallback: create from env vars when factory didn't provide the service
         try:
             from nexus.services.chunked_upload_service import (
@@ -37,7 +37,7 @@ async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
             )
 
             _backend = getattr(app.state.nexus_fs, "backend", None)
-            _upload_rs = app.state.nexus_fs._record_store
+            _upload_rs = app.state.record_store
             if _backend and _upload_rs:
                 import os as _os
 
@@ -66,7 +66,7 @@ async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
                 bg_tasks.append(cleanup_task)
                 logger.info("[TUS] ChunkedUploadService initialized with background cleanup")
         except Exception as e:
-            logger.warning(f"[TUS] Failed to initialize ChunkedUploadService: {e}")
+            logger.warning("[TUS] Failed to initialize ChunkedUploadService: %s", e)
             app.state.chunked_upload_service = None
     else:
         app.state.chunked_upload_service = None

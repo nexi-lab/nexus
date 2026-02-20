@@ -10,6 +10,7 @@ Optional components log and continue on failure.
 
 import logging
 import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -98,11 +99,13 @@ class ObservabilityRegistry:
         statuses: list[ComponentStatus] = []
 
         for name, component, required in self._components:
+            t0 = time.perf_counter()
             try:
                 await component.start()
+                elapsed_ms = (time.perf_counter() - t0) * 1000
                 self._started.append(name)
                 statuses.append(ComponentStatus(name=name, started=True, healthy=True))
-                logger.info("Started observability component: %s", name)
+                logger.info("Started observability component: %s (%.1fms)", name, elapsed_ms)
             except Exception as exc:
                 error_msg = str(exc)
                 statuses.append(

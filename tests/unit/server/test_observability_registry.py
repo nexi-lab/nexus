@@ -243,3 +243,142 @@ class TestObservabilityRegistry:
             assert comp._started
 
         assert comp._shutdown_called
+
+
+# ---------------------------------------------------------------------------
+# FunctionPairComponent tests (Issue #2072)
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionPairComponent:
+    """Tests for the generic FunctionPairComponent adapter."""
+
+    def test_satisfies_lifecycle_protocol(self) -> None:
+        from nexus.server.observability.components import FunctionPairComponent
+
+        comp = FunctionPairComponent("test", start_fn=lambda: None)
+        assert isinstance(comp, LifecycleComponent)
+
+    @pytest.mark.asyncio
+    async def test_start_calls_start_fn(self) -> None:
+        from nexus.server.observability.components import FunctionPairComponent
+
+        called = []
+        comp = FunctionPairComponent("test", start_fn=lambda: called.append("start"))
+        await comp.start()
+        assert called == ["start"]
+        assert comp.is_healthy()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_calls_stop_fn(self) -> None:
+        from nexus.server.observability.components import FunctionPairComponent
+
+        called = []
+        comp = FunctionPairComponent(
+            "test", start_fn=lambda: None, stop_fn=lambda: called.append("stop")
+        )
+        await comp.start()
+        await comp.shutdown()
+        assert called == ["stop"]
+        assert not comp.is_healthy()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_noop_before_start(self) -> None:
+        from nexus.server.observability.components import FunctionPairComponent
+
+        called = []
+        comp = FunctionPairComponent(
+            "test", start_fn=lambda: None, stop_fn=lambda: called.append("stop")
+        )
+        await comp.shutdown()
+        assert called == []
+
+    @pytest.mark.asyncio
+    async def test_shutdown_graceful_when_stop_fn_none(self) -> None:
+        from nexus.server.observability.components import FunctionPairComponent
+
+        comp = FunctionPairComponent("test", start_fn=lambda: None, stop_fn=None)
+        await comp.start()
+        await comp.shutdown()  # Should not raise
+        assert not comp.is_healthy()
+
+    @pytest.mark.asyncio
+    async def test_start_kwargs_forwarded(self) -> None:
+        from nexus.server.observability.components import FunctionPairComponent
+
+        captured = {}
+
+        def _start(env: str = "prod") -> None:
+            captured["env"] = env
+
+        comp = FunctionPairComponent("test", start_fn=_start, start_kwargs={"env": "dev"})
+        await comp.start()
+        assert captured["env"] == "dev"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_error_does_not_raise(self) -> None:
+        from nexus.server.observability.components import FunctionPairComponent
+
+        def _bad_stop() -> None:
+            raise RuntimeError("stop failed")
+
+        comp = FunctionPairComponent("test", start_fn=lambda: None, stop_fn=_bad_stop)
+        await comp.start()
+        await comp.shutdown()  # Should not raise
+        assert not comp.is_healthy()
+
+
+# ---------------------------------------------------------------------------
+# WriteBufferComponent tests (Issue #2072)
+# ---------------------------------------------------------------------------
+
+
+class TestWriteBufferComponent:
+    """Tests for WriteBufferComponent."""
+
+    def test_satisfies_lifecycle_protocol(self) -> None:
+        from nexus.server.observability.components import WriteBufferComponent
+
+        comp = WriteBufferComponent(write_observer=None)
+        assert isinstance(comp, LifecycleComponent)
+
+    @pytest.mark.asyncio
+    async def test_start_marks_started(self) -> None:
+        from nexus.server.observability.components import WriteBufferComponent
+
+        comp = WriteBufferComponent(write_observer=None)
+        await comp.start()
+        assert comp.is_healthy()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_calls_stop(self) -> None:
+        from unittest.mock import MagicMock
+
+        from nexus.server.observability.components import WriteBufferComponent
+
+        wo = MagicMock()
+        comp = WriteBufferComponent(write_observer=wo)
+        await comp.start()
+        await comp.shutdown()
+        wo.stop.assert_called_once()
+        assert not comp.is_healthy()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_noop_when_write_observer_none(self) -> None:
+        from nexus.server.observability.components import WriteBufferComponent
+
+        comp = WriteBufferComponent(write_observer=None)
+        await comp.start()
+        await comp.shutdown()  # Should not raise
+        assert not comp.is_healthy()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_noop_before_start(self) -> None:
+        from unittest.mock import MagicMock
+
+        from nexus.server.observability.components import WriteBufferComponent
+
+        wo = MagicMock()
+        comp = WriteBufferComponent(write_observer=wo)
+        await comp.shutdown()
+        wo.stop.assert_not_called()

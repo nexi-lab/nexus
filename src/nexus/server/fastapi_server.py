@@ -194,10 +194,17 @@ def create_app(
     # Set module-level reference for kernel code access
     _fastapi_app = app
 
-    # Store application state on app.state (replaces AppState class)
-    app.state.nexus_fs = nexus_fs
-    app.state.api_key = api_key
-    app.state.auth_provider = auth_provider
+    # Initialize all app.state fields with typed defaults (Issue #2135)
+    from nexus.server.app_state import init_app_state
+
+    init_app_state(
+        app,
+        nexus_fs=nexus_fs,
+        api_key=api_key,
+        auth_provider=auth_provider,
+        database_url=database_url,
+        data_dir=data_dir,
+    )
 
     # Issue #1399: BrickContainer for DI (auth brick + future bricks)
     from nexus.lib.brick_container import BrickContainer
@@ -208,8 +215,6 @@ def create_app(
 
         if isinstance(auth_provider, AuthBrickProtocol):
             app.state.brick_container.register(AuthBrickProtocol, auth_provider)
-    app.state.database_url = database_url
-    app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
     # Deployment profile (Issue #1389, #1708): resolve enabled bricks from NEXUS_PROFILE env
     from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
@@ -357,34 +362,7 @@ def create_app(
         logger.debug("AgentService unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
-    # Initialize defaults for optional services (set during lifespan)
-    app.state.async_nexus_fs = None
-    app.state.async_rebac_manager = None
-    app.state.subscription_manager = None
-    app.state.search_daemon = None
-    app.state.search_daemon_enabled = False
-    app.state.directory_grant_expander = None
-    app.state.cache_brick = None
-    app.state.websocket_manager = None
-    app.state.reactive_subscription_manager = None
-    app.state.agent_registry = None
-    app.state.async_agent_registry = None
-    app.state.agent_event_log = None
-    app.state.sandbox_auth_service = None
-    app.state.write_back_service = None
-    app.state.task_runner = None
-    app.state.event_log = None
-    app.state.key_service = None
-    app.state.rebac_circuit_breaker = None
-    app.state.chunked_upload_service = None
-    app.state.delegation_service = None
-    app.state.reputation_service = None
-    app.state.rlm_service = None  # Issue #1306: RLM inference brick
-    app.state.manifest_resolver = None  # Issue #2130: context manifest brick
-    app.state.governance_anomaly_service = None  # Issue #2129: governance brick
-    app.state.governance_collusion_service = None
-    app.state.governance_graph_service = None
-    app.state.governance_response_service = None
+    # Defaults for optional services are set by init_app_state() above (Issue #2135)
 
     # Issue #2168: startup tracker for k8s health probes
     from nexus.server.health import StartupTracker
@@ -547,8 +525,7 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        _sys = getattr(nexus_fs, "_system_services", None)
-        obs_sub = getattr(_sys, "observability_subsystem", None)
+        obs_sub = app.state.observability_subsystem
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except ImportError:
@@ -562,9 +539,8 @@ def create_app(
 
         from nexus.server.wb_metrics_collector import WriteBufferCollector
 
-        _wo = getattr(nexus_fs, "_write_observer", None)
-        if _wo is not None and hasattr(_wo, "metrics"):
-            REGISTRY.register(WriteBufferCollector(_wo))
+        if app.state.write_observer is not None and hasattr(app.state.write_observer, "metrics"):
+            REGISTRY.register(WriteBufferCollector(app.state.write_observer))
     except ImportError:
         pass
     except Exception:

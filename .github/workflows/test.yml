@@ -3,8 +3,18 @@ name: Test
 on:
   push:
     branches: [main, develop, SETUP]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
   merge_group:
 
 concurrency:
@@ -38,7 +48,7 @@ jobs:
 
       - name: Check RPC Parity (ENFORCEMENT)
         run: |
-          echo "🔍 Checking RPC parity..."
+          echo "Checking RPC parity..."
           echo "This ensures all public methods are either:"
           echo "  1. Exposed via @rpc_expose decorator, OR"
           echo "  2. Explicitly excluded in INTERNAL_ONLY_METHODS"
@@ -51,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]  # windows-latest disabled - takes too much time
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.13"]
 
     steps:
@@ -74,28 +84,33 @@ jobs:
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
-        if: matrix.os != 'windows-latest'
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-test-${{ matrix.os }}"
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+            rust/nexus_tasks
 
       - name: Build Rust extension (nexus_fast)
         run: |
           cd rust/nexus_pyo3
           pip install maturin
           maturin develop --release
-        if: matrix.os != 'windows-latest'
         shell: bash
 
       - name: Build Rust extension (nexus_raft)
         run: |
           cd rust/nexus_raft
           maturin develop --release --features python
-        if: matrix.os != 'windows-latest'
         shell: bash
 
       - name: Build Rust extension (nexus_tasks)
         run: |
           cd rust/nexus_tasks
           maturin develop --release
-        if: matrix.os != 'windows-latest'
         shell: bash
 
       - name: Install dependencies
@@ -106,13 +121,12 @@ jobs:
         run: |
           uv run python -c "import nexus_fast; print('nexus_fast OK')"
           uv run python -c "from _nexus_raft import Metastore; print('nexus_raft OK')"
-        if: matrix.os != 'windows-latest'
         shell: bash
 
       - name: Run unit tests
         run: |
           start=$(date +%s)
-          uv run pytest tests/unit -v --durations=10
+          uv run pytest tests/unit -v --durations=10 -n auto --dist loadgroup
           status=$?
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt
           exit $status
@@ -159,6 +173,15 @@ jobs:
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-test-ubuntu-latest"
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+            rust/nexus_tasks
 
       - name: Build Rust extensions
         run: |
@@ -215,6 +238,15 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-test-ubuntu-latest"
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+            rust/nexus_tasks
+
       - name: Build Rust extensions
         run: |
           pip install maturin
@@ -268,6 +300,15 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-test-ubuntu-latest"
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+            rust/nexus_tasks
+
       - name: Build Rust extensions
         run: |
           pip install maturin
@@ -306,6 +347,15 @@ jobs:
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-test-ubuntu-latest"
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+            rust/nexus_tasks
 
       - name: Build Rust extensions
         run: |
@@ -352,6 +402,15 @@ jobs:
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-test-ubuntu-latest"
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+            rust/nexus_tasks
 
       - name: Build Rust extensions
         run: |

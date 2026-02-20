@@ -153,7 +153,7 @@ class TestStalePointerDetection:
 
 
 class TestRetryWithBackoff:
-    @patch("nexus.services.context_branch.time.sleep")
+    @patch("nexus.system_services.workspace.context_branch.time.sleep")
     def test_retry_succeeds_on_second_attempt(self, mock_sleep, service, session_factory):
         _setup_branch(session_factory, pointer_version=0)
 
@@ -174,7 +174,7 @@ class TestRetryWithBackoff:
         # First backoff: 10ms
         mock_sleep.assert_called_once_with(_BASE_BACKOFF_MS / 1000.0)
 
-    @patch("nexus.services.context_branch.time.sleep")
+    @patch("nexus.system_services.workspace.context_branch.time.sleep")
     def test_retry_exhaustion_raises(self, mock_sleep, service, session_factory):
         _setup_branch(session_factory, pointer_version=0)
 
@@ -191,7 +191,7 @@ class TestRetryWithBackoff:
         # Should have retried MAX_RETRIES - 1 times (last attempt doesn't sleep)
         assert mock_sleep.call_count == _MAX_RETRIES - 1
 
-    @patch("nexus.services.context_branch.time.sleep")
+    @patch("nexus.system_services.workspace.context_branch.time.sleep")
     def test_exponential_backoff_timing(self, mock_sleep, service, session_factory):
         _setup_branch(session_factory, pointer_version=0)
 

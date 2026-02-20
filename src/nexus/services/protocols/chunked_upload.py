@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.services.upload_session import UploadSession
+    from nexus.services.upload.upload_session import UploadSession
 
 
 @runtime_checkable

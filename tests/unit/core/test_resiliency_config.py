@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.core.resiliency import (
+from nexus.lib.resiliency import (
     CircuitBreakerPolicy,
     ResiliencyConfig,
     TargetBinding,

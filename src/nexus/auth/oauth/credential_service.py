@@ -243,6 +243,8 @@ class OAuthCredentialService:
         from nexus.lib.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
+        if token_manager is None:
+            return []
         zone_id = get_zone_id(context)
 
         current_user_id = None
@@ -412,14 +414,19 @@ class OAuthCredentialService:
         return self._oauth_factory
 
     def _get_token_manager(self) -> Any:
-        """Get or create TokenManager instance."""
+        """Get or create TokenManager instance.
+
+        Returns None when no database URL is configured, allowing callers
+        to gracefully degrade (e.g. return empty credential lists).
+        """
         if self._token_manager is None:
             from nexus.auth.oauth.token_manager import TokenManager
 
             db_path = self._database_url
 
             if not db_path:
-                raise RuntimeError("Database path not configured for TokenManager")
+                logger.debug("TokenManager database not configured; OAuth credentials unavailable")
+                return None
 
             logger.debug(f"TokenManager database URL resolved to: {db_path}")
 

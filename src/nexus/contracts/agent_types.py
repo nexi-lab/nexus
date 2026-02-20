@@ -13,10 +13,12 @@ with drift detection (Kubernetes-inspired spec/status separation).
 from __future__ import annotations
 
 import types
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
 from typing import Any
+
+from nexus.contracts.qos import AgentQoS
 
 
 class EvictionReason(StrEnum):
@@ -129,11 +131,13 @@ class AgentRecord:
         generation: Session generation counter (increments on new session only)
         last_heartbeat: Timestamp of last heartbeat (None if never heartbeated)
         metadata: Arbitrary agent metadata (platform, endpoint_url, etc.)
+        created_at: When the agent was first registered
+        updated_at: When the agent record was last modified
         context_manifest: Serialized context sources for deterministic pre-execution
             (Issue #1341). Stored as tuple of dicts to keep kernel free of Pydantic.
             Deserialized into ContextSource models at resolution time.
-        created_at: When the agent was first registered
-        updated_at: When the agent record was last modified
+        qos: Agent QoS assignment with scheduling/eviction class and optional
+            overrides (Issue #2171). Defaults to standard/standard.
     """
 
     agent_id: str
@@ -147,6 +151,7 @@ class AgentRecord:
     created_at: datetime
     updated_at: datetime
     context_manifest: tuple[dict[str, Any], ...] = ()
+    qos: AgentQoS = field(default_factory=AgentQoS)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a plain dict matching the legacy agents.register_agent() return format.
@@ -166,6 +171,7 @@ class AgentRecord:
             "created_at": self.created_at.isoformat(),
             "state": self.state.value,
             "generation": self.generation,
+            "qos": self.qos.to_dict(),
         }
 
     @property

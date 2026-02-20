@@ -265,24 +265,24 @@ def _boot_system_services(
     if not _on("agent_registry"):
         logger.debug("[BOOT:SYSTEM] AgentRegistry disabled by profile")
 
-    # --- Eviction Manager (Issue #2170) ---
+    # --- Eviction Manager (Issues #2170, #2171) ---
     eviction_manager: Any = None
     if agent_registry is not None:
         try:
             from nexus.services.agents.eviction_manager import EvictionManager
-            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.services.agents.eviction_policy import QoSEvictionPolicy
             from nexus.services.agents.resource_monitor import ResourceMonitor
 
             eviction_tuning = ctx.profile_tuning.eviction
             resource_monitor = ResourceMonitor(tuning=eviction_tuning)
-            eviction_policy = LRUEvictionPolicy()
+            eviction_policy = QoSEvictionPolicy()
             eviction_manager = EvictionManager(
                 registry=agent_registry,
                 monitor=resource_monitor,
                 policy=eviction_policy,
                 tuning=eviction_tuning,
             )
-            logger.debug("[BOOT:SYSTEM] EvictionManager created")
+            logger.debug("[BOOT:SYSTEM] EvictionManager created (QoS-aware)")
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
 

@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from enum import Enum
 from typing import TYPE_CHECKING
+
+from nexus.contracts.qos import PressureLevel
 
 if TYPE_CHECKING:
     from nexus.core.performance_tuning import EvictionTuning
 
 logger = logging.getLogger(__name__)
+
+# Re-export for backward compatibility (moved to contracts.qos in Issue #2171)
+__all__ = ["PressureLevel", "ResourceMonitor"]
 
 try:
     import psutil
@@ -25,14 +29,6 @@ try:
 except ImportError:  # pragma: no cover
     psutil = None  # type: ignore[assignment,unused-ignore]
     _HAS_PSUTIL = False
-
-
-class PressureLevel(Enum):
-    """System resource pressure classification."""
-
-    NORMAL = "normal"
-    WARNING = "warning"
-    CRITICAL = "critical"
 
 
 class ResourceMonitor:

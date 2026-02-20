@@ -6,6 +6,7 @@ Creates OAuth provider instances from YAML configuration.
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ from pydantic import ValidationError
 from nexus.auth.oauth.base_provider import BaseOAuthProvider
 from nexus.auth_config import OAuthConfig, OAuthProviderConfig
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+
+logger = logging.getLogger(__name__)
 
 
 class OAuthProviderFactory:
@@ -81,11 +84,12 @@ class OAuthProviderFactory:
                 oauth_yaml = dev_path
 
         if not oauth_yaml or not oauth_yaml.exists():
-            paths_tried = "\n  - ".join(tried_paths)
-            raise FileNotFoundError(
-                f"OAuth configuration file not found. Tried:\n  - {paths_tried}\n"
-                f"Please create the file or provide an OAuthConfig instance to OAuthProviderFactory."
+            logger.info(
+                "OAuth configuration file not found (tried: %s). "
+                "OAuth providers will be empty until configured.",
+                ", ".join(tried_paths),
             )
+            return OAuthConfig()
 
         try:
             with open(oauth_yaml) as f:

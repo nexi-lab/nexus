@@ -21,9 +21,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.contracts.agent_types import AgentRecord, AgentState, EvictionReason
+from nexus.contracts.qos import AgentQoS, QoSClass
 from nexus.core.performance_tuning import EvictionTuning
 from nexus.services.agents.eviction_manager import EvictionManager
-from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+from nexus.services.agents.eviction_policy import LRUEvictionPolicy, QoSEvictionPolicy
 from nexus.services.agents.resource_monitor import PressureLevel
 
 
@@ -386,3 +387,161 @@ class TestManualEviction:
 
         with pytest.raises(ValueError, match="not CONNECTED"):
             await manager.evict_agent("agent-1")
+
+
+# ---------------------------------------------------------------------------
+# QoS-specific tests (Issue #2171)
+# ---------------------------------------------------------------------------
+
+
+def _make_qos_agent(
+    agent_id: str,
+    last_heartbeat: datetime | None = None,
+    generation: int = 1,
+    eviction_class: QoSClass = QoSClass.STANDARD,
+) -> AgentRecord:
+    """Create an AgentRecord with QoS for testing."""
+    now = datetime.now(UTC)
+    return AgentRecord(
+        agent_id=agent_id,
+        owner_id="test-owner",
+        zone_id=None,
+        name=None,
+        state=AgentState.CONNECTED,
+        generation=generation,
+        last_heartbeat=last_heartbeat or (now - timedelta(hours=1)),
+        metadata=types.MappingProxyType({}),
+        created_at=now,
+        updated_at=now,
+        qos=AgentQoS(eviction_class=eviction_class),
+    )
+
+
+class TestTriggerImmediateCycle:
+    """Tests for EvictionManager.trigger_immediate_cycle()."""
+
+    def test_sets_urgent_event(self, mock_registry, mock_monitor, tuning):
+        policy = QoSEvictionPolicy()
+        mgr = EvictionManager(
+            registry=mock_registry,
+            monitor=mock_monitor,
+            policy=policy,
+            tuning=tuning,
+        )
+
+        assert not mgr.urgent_event.is_set()
+        mgr.trigger_immediate_cycle(QoSClass.PREMIUM)
+        assert mgr.urgent_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_preemption_evicts_spot_for_premium(self, mock_registry, mock_monitor, tuning):
+        """When premium triggers preemption, only spot agents are evicted."""
+        mock_monitor.check_pressure.return_value = PressureLevel.NORMAL
+        mock_registry.count_connected_agents.return_value = 100  # at cap
+
+        spot_agent = _make_qos_agent("spot-1", eviction_class=QoSClass.SPOT)
+        premium_agent = _make_qos_agent("premium-1", eviction_class=QoSClass.PREMIUM)
+        mock_registry.list_eviction_candidates.return_value = [spot_agent, premium_agent]
+
+        policy = QoSEvictionPolicy()
+        mgr = EvictionManager(
+            registry=mock_registry,
+            monitor=mock_monitor,
+            policy=policy,
+            tuning=tuning,
+        )
+
+        # Trigger preemption
+        mgr.trigger_immediate_cycle(QoSClass.PREMIUM)
+        result = await mgr.run_cycle()
+
+        assert result.evicted == 1
+        # The transition should only be called for spot, not premium
+        call_args = mock_registry.transition.call_args_list
+        transitioned_ids = [c[0][0] for c in call_args]
+        assert "spot-1" in transitioned_ids
+        assert "premium-1" not in transitioned_ids
+
+    @pytest.mark.asyncio
+    async def test_preemption_skips_cooldown(self, mock_registry, mock_monitor, tuning):
+        """Preemption trigger bypasses cooldown."""
+        mock_monitor.check_pressure.return_value = PressureLevel.CRITICAL
+        agents = [_make_qos_agent("agent-1", eviction_class=QoSClass.SPOT)]
+        mock_registry.list_eviction_candidates.return_value = agents
+
+        policy = QoSEvictionPolicy()
+        mgr = EvictionManager(
+            registry=mock_registry,
+            monitor=mock_monitor,
+            policy=policy,
+            tuning=tuning,
+        )
+
+        # First cycle puts us in cooldown
+        result1 = await mgr.run_cycle()
+        assert result1.evicted == 1
+
+        # Now trigger preemption — should bypass cooldown
+        mock_registry.list_eviction_candidates.return_value = [
+            _make_qos_agent("agent-2", eviction_class=QoSClass.SPOT)
+        ]
+        mgr.trigger_immediate_cycle(QoSClass.PREMIUM)
+        result2 = await mgr.run_cycle()
+        assert result2.evicted == 1  # Not blocked by cooldown
+
+    @pytest.mark.asyncio
+    async def test_urgent_event_cleared_after_cycle(self, mock_registry, mock_monitor, tuning):
+        """Urgent event is cleared after run_cycle consumes it."""
+        mock_monitor.check_pressure.return_value = PressureLevel.NORMAL
+        mock_registry.count_connected_agents.return_value = 100
+
+        mock_registry.list_eviction_candidates.return_value = [
+            _make_qos_agent("spot-1", eviction_class=QoSClass.SPOT)
+        ]
+
+        policy = QoSEvictionPolicy()
+        mgr = EvictionManager(
+            registry=mock_registry,
+            monitor=mock_monitor,
+            policy=policy,
+            tuning=tuning,
+        )
+
+        mgr.trigger_immediate_cycle(QoSClass.PREMIUM)
+        assert mgr.urgent_event.is_set()
+
+        await mgr.run_cycle()
+
+        assert not mgr.urgent_event.is_set()
+
+
+class TestQoSEvictionManagerIntegration:
+    """Tests for QoS-aware eviction flow through EvictionManager."""
+
+    @pytest.mark.asyncio
+    async def test_context_passed_to_policy(self, mock_registry, mock_monitor, tuning):
+        """EvictionContext is built and passed to policy.select_candidates."""
+        mock_monitor.check_pressure.return_value = PressureLevel.CRITICAL
+
+        agents = [_make_qos_agent("spot-1", eviction_class=QoSClass.SPOT)]
+        mock_registry.list_eviction_candidates.return_value = agents
+
+        # Use a tracking mock policy
+        tracking_policy = MagicMock()
+        tracking_policy.select_candidates.return_value = agents
+
+        mgr = EvictionManager(
+            registry=mock_registry,
+            monitor=mock_monitor,
+            policy=tracking_policy,
+            tuning=tuning,
+        )
+
+        await mgr.run_cycle()
+
+        # Verify context was passed
+        call_args = tracking_policy.select_candidates.call_args
+        assert call_args.kwargs.get("context") is not None
+        ctx = call_args.kwargs["context"]
+        assert ctx.pressure is PressureLevel.CRITICAL
+        assert ctx.trigger is EvictionReason.PRESSURE_CRITICAL

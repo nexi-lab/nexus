@@ -349,12 +349,15 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
+                from nexus.storage.content_cache import ContentCache as _ContentCache
+
                 _app.state.async_nexus_fs = AsyncNexusFS(
                     backend_root=backend_root,
                     metadata_store=_app.state.nexus_fs.metadata,
                     tenant_id=tenant_id,
                     enforce_permissions=enforce_permissions,
                     permission_enforcer=permission_enforcer,
+                    content_cache=_ContentCache(max_size_mb=256),
                 )
                 await _app.state.async_nexus_fs.initialize()
                 logger.info(

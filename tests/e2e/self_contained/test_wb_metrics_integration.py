@@ -48,6 +48,7 @@ _EXPECTED_WB_METRICS = [
 def app_and_key(tmp_path):
     """Build a real FastAPI app with NexusFS + WriteBuffer enabled."""
     from nexus.server.fastapi_server import create_app
+    from nexus.server.metrics import setup_prometheus, shutdown_prometheus
 
     os.environ.setdefault("NEXUS_JWT_SECRET", "test-secret-wb-metrics")
 
@@ -72,7 +73,13 @@ def app_and_key(tmp_path):
     api_key = "test-wb-metrics-key"
     app = create_app(nexus_fs=nx, api_key=api_key, database_url=db_url)
 
-    return app, api_key, nx
+    # Ensure Prometheus metrics are registered (may have been unregistered
+    # by a previous test's shutdown_prometheus call — Issue #2072).
+    setup_prometheus()
+
+    yield app, api_key, nx
+
+    shutdown_prometheus()
 
 
 @pytest.fixture()

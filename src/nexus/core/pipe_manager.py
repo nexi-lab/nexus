@@ -29,8 +29,8 @@ from nexus.core.pipe import (
     PipeError,
     PipeFullError,
     PipeNotFoundError,
-    RingBuffer,
 )
+from nexus.core.pipe_fast import AsyncRingBuffer, create_ring_buffer
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
@@ -65,9 +65,9 @@ class PipeManagerProtocol(Protocol):
 
     def mkpipe(
         self, path: str, *, capacity: int = 65_536, owner_id: str | None = None
-    ) -> RingBuffer: ...
+    ) -> AsyncRingBuffer: ...
 
-    def open(self, path: str, *, capacity: int = 65_536) -> RingBuffer: ...
+    def open(self, path: str, *, capacity: int = 65_536) -> AsyncRingBuffer: ...
 
     def close(self, path: str) -> None: ...
 
@@ -93,7 +93,7 @@ class PipeManager:
 
     Analogous to Linux fs/pipe.c: creates named pipes visible in the VFS
     namespace. Each pipe has a FileMetadata inode in MetastoreABC
-    (entry_type=DT_PIPE) and a RingBuffer in process memory.
+    (entry_type=DT_PIPE) and a Rust-accelerated RingBuffer in process memory.
 
     The inode provides:
       - VFS path (/nexus/pipes/{name}) for agent access via FUSE/MCP
@@ -107,7 +107,7 @@ class PipeManager:
     def __init__(self, metastore: MetastoreABC, zone_id: str = ROOT_ZONE_ID) -> None:
         self._metastore = metastore
         self._zone_id = zone_id
-        self._buffers: dict[str, RingBuffer] = {}
+        self._buffers: dict[str, AsyncRingBuffer] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     def mkpipe(
@@ -116,7 +116,7 @@ class PipeManager:
         *,
         capacity: int = 65_536,
         owner_id: str | None = None,
-    ) -> RingBuffer:
+    ) -> AsyncRingBuffer:
         """Create a new named pipe at the given VFS path (Linux: ``mkfifo``).
 
         Creates a DT_PIPE inode in MetastoreABC and a RingBuffer in memory.
@@ -154,14 +154,14 @@ class PipeManager:
         )
         self._metastore.put(metadata)
 
-        # Create in-memory ring buffer
-        buf = RingBuffer(capacity=capacity)
+        # Create Rust-accelerated ring buffer
+        buf = create_ring_buffer(capacity=capacity)
         self._buffers[path] = buf
 
         logger.debug("pipe created: %s (capacity=%d)", path, capacity)
         return buf
 
-    def open(self, path: str, *, capacity: int = 65_536) -> RingBuffer:
+    def open(self, path: str, *, capacity: int = 65_536) -> AsyncRingBuffer:
         """Open an existing pipe, or recover its buffer after restart.
 
         If the buffer is already in memory, returns it. If a DT_PIPE inode
@@ -190,7 +190,7 @@ class PipeManager:
             raise PipeNotFoundError(f"no pipe at: {path}")
 
         # Recreate buffer (restart recovery)
-        buf = RingBuffer(capacity=capacity)
+        buf = create_ring_buffer(capacity=capacity)
         self._buffers[path] = buf
 
         logger.debug("pipe opened (recovered): %s", path)
@@ -232,7 +232,7 @@ class PipeManager:
         self._metastore.delete(path)
         logger.debug("pipe destroyed: %s", path)
 
-    def _get_buffer(self, path: str) -> RingBuffer:
+    def _get_buffer(self, path: str) -> AsyncRingBuffer:
         """Get buffer or raise PipeNotFoundError."""
         buf = self._buffers.get(path)
         if buf is None:

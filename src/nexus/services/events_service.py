@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
 from nexus.core.protocols.connector import PassthroughProtocol
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.dedup_work_queue import DedupWorkQueue, ShutdownError
 
 logger = logging.getLogger(__name__)

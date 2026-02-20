@@ -20,7 +20,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
@@ -364,7 +364,7 @@ class OAuthService:
             - If user_email not provided, service attempts to fetch it from provider
             - Credentials are stored per-zone for isolation
         """
-        from nexus.core.context_utils import get_zone_id
+        from nexus.lib.context_utils import get_zone_id
 
         logger.info(
             f"Exchanging OAuth code for provider={provider}, user_email={'provided' if user_email else 'will fetch'}"
@@ -502,7 +502,7 @@ class OAuthService:
             - Admins see all credentials in their zone
             - Credentials from other zones are never visible
         """
-        from nexus.core.context_utils import get_zone_id
+        from nexus.lib.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
         zone_id = get_zone_id(context)
@@ -589,7 +589,7 @@ class OAuthService:
             - Admins can revoke any credential in their zone
             - Revoked credentials cannot be unrevoked (create new credential instead)
         """
-        from nexus.core.context_utils import get_zone_id
+        from nexus.lib.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
         zone_id = get_zone_id(context)
@@ -670,7 +670,7 @@ class OAuthService:
             - Returns detailed error if credential cannot be refreshed
             - Does not revoke invalid credentials (use oauth_revoke_credential)
         """
-        from nexus.core.context_utils import get_zone_id
+        from nexus.lib.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
         zone_id = get_zone_id(context)

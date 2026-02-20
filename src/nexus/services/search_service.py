@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
+from nexus.bricks.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.search_types import (
@@ -39,7 +40,6 @@ from nexus.contracts.search_types import (
 )
 from nexus.contracts.types import Permission
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.search_semantic import SemanticSearchMixin
 

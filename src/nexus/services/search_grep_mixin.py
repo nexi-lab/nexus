@@ -19,12 +19,12 @@ import os
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from nexus.bricks.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.contracts.search_types import (
     GREP_PARALLEL_WORKERS,
     SearchStrategy,
 )
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.search.primitives import glob_fast, grep_fast, trigram_fast
 
 logger = logging.getLogger(__name__)
 

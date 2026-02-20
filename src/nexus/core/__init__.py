@@ -116,19 +116,19 @@ def __getattr__(name: str) -> Any:
         return value
 
     # Backward compatibility for search primitives (Issue #2123)
-    # Deprecated: moved from nexus.core.* to nexus.search.primitives.*
+    # Deprecated: moved from nexus.core.* to nexus.bricks.search.primitives.*
     if name in ("grep_fast", "glob_fast", "trigram_fast"):
         import warnings
 
         warnings.warn(
             f"Importing {name} from nexus.core is deprecated. "
-            f"Use: from nexus.search.primitives import {name}",
+            f"Use: from nexus.bricks.search.primitives import {name}",
             DeprecationWarning,
             stacklevel=2,
         )
         import importlib
 
-        module = importlib.import_module("nexus.search.primitives")
+        module = importlib.import_module("nexus.bricks.search.primitives")
         value = getattr(module, name)
         _lazy_imports_cache[name] = value
         return value

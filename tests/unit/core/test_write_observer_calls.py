@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus import LocalBackend, NexusFS
-from nexus.core.config import KernelServices, ParseConfig, PermissionConfig
+from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
 from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 
@@ -45,7 +45,7 @@ def nx(temp_dir: Path, observer: MagicMock) -> Generator[NexusFS, None, None]:
         metadata_store=InMemoryMetastore(),
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
-        kernel_services=KernelServices(write_observer=observer),
+        system_services=SystemServices(write_observer=observer),
     )
     yield nx
     nx.close()
@@ -242,7 +242,7 @@ class TestPostMutationHookCoverage:
             metadata_store=InMemoryMetastore(),
             permissions=PermissionConfig(enforce=False),
             parsing=ParseConfig(auto_parse=False),
-            kernel_services=KernelServices(write_observer=observer),
+            system_services=SystemServices(write_observer=observer),
         )
         nx.register_mutation_hook(hook)
         yield nx

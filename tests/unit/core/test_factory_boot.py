@@ -1,12 +1,14 @@
 """Unit tests for the factory boot sequence in nexus.factory.
 
 Covers:
-- _boot_kernel_services returns the expected 13 keys
-- BootError raised with tier="kernel" on kernel boot failure
-- _boot_system_services returns None for failed services (degraded mode)
+- _boot_kernel_services validates Storage Pillars (returns empty dict)
+- _boot_system_services returns critical services + degrades on non-critical failure
+- BootError raised with tier="system-critical" on critical service failure
 - KernelServices is frozen (attribute assignment raises FrozenInstanceError)
 - create_nexus_services returns a KernelServices instance
 - _BootContext is frozen (attribute assignment raises error)
+
+Issue #2193: Former kernel services moved to system tier.
 """
 
 from __future__ import annotations
@@ -38,19 +40,39 @@ from nexus.factory import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-EXPECTED_KERNEL_KEYS = frozenset(
+# Issue #2193: Kernel returns empty dict (validation only)
+EXPECTED_KERNEL_KEYS: frozenset[str] = frozenset()
+
+# Issue #2193: System tier now has former-kernel + original system keys
+EXPECTED_SYSTEM_KEYS = frozenset(
     {
+        # Former-kernel critical
         "rebac_manager",
-        "dir_visibility_cache",
         "audit_store",
         "entity_registry",
         "permission_enforcer",
+        "write_observer",
+        # Former-kernel degradable
+        "dir_visibility_cache",
         "hierarchy_manager",
         "deferred_permission_buffer",
         "workspace_registry",
         "mount_manager",
         "workspace_manager",
-        "write_observer",
+        # Original system services
+        "agent_registry",
+        "async_agent_registry",
+        "eviction_manager",
+        "namespace_manager",
+        "async_namespace_manager",
+        "async_vfs_router",
+        "delivery_worker",
+        "observability_subsystem",
+        "resiliency_manager",
+        "context_branch_service",
+        "brick_lifecycle_manager",
+        "brick_reconciler",
+        "scoped_hook_engine",
     }
 )
 
@@ -109,66 +131,85 @@ def _make_boot_context(**overrides: object) -> _BootContext:
 
 
 class TestBootKernelServices:
-    """Tests for _boot_kernel_services()."""
+    """Tests for _boot_kernel_services() — Issue #2193: validation-only."""
 
-    def test_boot_kernel_services_returns_all_keys(self) -> None:
-        """_boot_kernel_services(ctx) returns dict with exactly 11 expected keys.
-
-        Issue #2034: version_service and rebac_circuit_breaker moved to brick tier.
-        """
+    def test_boot_kernel_services_returns_empty_dict(self) -> None:
+        """_boot_kernel_services(ctx) returns empty dict (validation only)."""
         ctx = _make_boot_context()
         result = _boot_kernel_services(ctx)
 
         assert isinstance(result, dict)
         assert set(result.keys()) == EXPECTED_KERNEL_KEYS
-        assert len(result) == 11
+        assert len(result) == 0
 
-    def test_boot_error_raised_on_kernel_failure(self) -> None:
-        """When kernel boot fails (e.g. bad engine), BootError is raised with tier='kernel'."""
+    def test_boot_error_raised_on_none_router(self) -> None:
+        """When router is None, BootError is raised with tier='kernel'."""
+        ctx = _make_boot_context(router=None)
+
+        with pytest.raises(BootError) as exc_info:
+            _boot_kernel_services(ctx)
+
+        assert exc_info.value.tier == "kernel"
+
+    def test_boot_error_raised_on_none_metadata_store(self) -> None:
+        """When metadata_store is None, BootError is raised with tier='kernel'."""
+        ctx = _make_boot_context(metadata_store=None)
+
+        with pytest.raises(BootError) as exc_info:
+            _boot_kernel_services(ctx)
+
+        assert exc_info.value.tier == "kernel"
+
+
+class TestBootSystemServices:
+    """Tests for _boot_system_services() — Issue #2193: critical + degradable."""
+
+    def test_system_tier_returns_all_keys(self) -> None:
+        """System tier returns dict with all expected keys."""
         ctx = _make_boot_context()
-        # Sabotage the engine so that EnhancedReBACManager.__init__ blows up
-        ctx.engine.dispose = MagicMock(side_effect=RuntimeError("boom"))
+        result = _boot_system_services(ctx)
+
+        assert isinstance(result, dict)
+        assert set(result.keys()) == EXPECTED_SYSTEM_KEYS
+
+    def test_critical_services_are_not_none(self) -> None:
+        """All 5 critical services must be non-None on success.
+
+        deferred_permission_buffer is degradable and may be None.
+        """
+        ctx = _make_boot_context()
+        result = _boot_system_services(ctx)
+
+        for key in (
+            "rebac_manager",
+            "audit_store",
+            "entity_registry",
+            "permission_enforcer",
+            "write_observer",
+        ):
+            assert result[key] is not None, f"Critical service {key} should not be None"
+
+    def test_critical_failure_raises_boot_error(self) -> None:
+        """When a critical service (rebac_manager) fails, BootError is raised."""
+        ctx = _make_boot_context()
 
         with patch(
             "nexus.rebac.manager.EnhancedReBACManager.__init__",
             side_effect=RuntimeError("bad engine"),
         ):
             with pytest.raises(BootError) as exc_info:
-                _boot_kernel_services(ctx)
+                _boot_system_services(ctx)
 
-            assert exc_info.value.tier == "kernel"
+            assert "system-critical" in exc_info.value.tier
             assert "bad engine" in str(exc_info.value)
 
-    def test_kernel_services_values_are_not_none(self) -> None:
-        """All 11 kernel service values except deferred_permission_buffer are non-None.
+    def test_degradable_failure_returns_none(self) -> None:
+        """Degradable service failure returns None (not an exception).
 
-        deferred_permission_buffer is None because enable_deferred=False in the
-        test context.
+        Patches agent_registry, namespace_manager, and async_vfs_router.
         """
         ctx = _make_boot_context()
-        result = _boot_kernel_services(ctx)
 
-        for key, value in result.items():
-            if key == "deferred_permission_buffer":
-                # enable_deferred=False in our test context
-                assert value is None, f"{key} should be None when enable_deferred=False"
-            else:
-                assert value is not None, f"{key} should not be None"
-
-
-class TestBootSystemServices:
-    """Tests for _boot_system_services()."""
-
-    def test_system_tier_returns_none_on_failure(self) -> None:
-        """_boot_system_services() returns None for failed services (degraded mode).
-
-        It should NOT raise an exception — each service failure is swallowed
-        and replaced with None.
-        """
-        ctx = _make_boot_context()
-        kernel = _boot_kernel_services(ctx)
-
-        # Patch all system-tier constructors to fail
         patches = [
             patch(
                 "nexus.services.agents.agent_registry.AgentRegistry.__init__",
@@ -187,41 +228,23 @@ class TestBootSystemServices:
         for p in patches:
             p.start()
         try:
-            result = _boot_system_services(ctx, kernel)
+            result = _boot_system_services(ctx)
         finally:
             for p in patches:
                 p.stop()
 
-        # Should return a dict (not raise)
         assert isinstance(result, dict)
-
-        # The patched services should be None
         assert result["agent_registry"] is None
         assert result["namespace_manager"] is None
         assert result["async_vfs_router"] is None
+        # Critical services should still work
+        assert result["rebac_manager"] is not None
 
-    def test_system_tier_returns_dict(self) -> None:
-        """_boot_system_services() returns a dict regardless of individual failures."""
-        ctx = _make_boot_context()
-        kernel = _boot_kernel_services(ctx)
-
-        result = _boot_system_services(ctx, kernel)
-        assert isinstance(result, dict)
-        # System tier should contain these keys at minimum
-        expected_system_keys = {
-            "agent_registry",
-            "async_agent_registry",
-            "namespace_manager",
-            "async_namespace_manager",
-            "async_vfs_router",
-            "delivery_worker",
-            "observability_subsystem",
-            "resiliency_manager",
-            "context_branch_service",
-            "brick_lifecycle_manager",
-            "scoped_hook_engine",
-        }
-        assert expected_system_keys.issubset(set(result.keys()))
+    def test_deferred_buffer_none_when_disabled(self) -> None:
+        """deferred_permission_buffer is None when enable_deferred=False."""
+        ctx = _make_boot_context()  # enable_deferred=False by default
+        result = _boot_system_services(ctx)
+        assert result["deferred_permission_buffer"] is None
 
 
 class TestBootBrickServices:
@@ -230,16 +253,16 @@ class TestBootBrickServices:
     def test_brick_tier_returns_dict(self) -> None:
         """_boot_brick_services() returns a dict."""
         ctx = _make_boot_context()
-        kernel = _boot_kernel_services(ctx)
-        result = _boot_brick_services(ctx, kernel)
+        system = _boot_system_services(ctx)
+        result = _boot_brick_services(ctx, system)
 
         assert isinstance(result, dict)
 
     def test_brick_tier_contains_expected_keys(self) -> None:
         """_boot_brick_services() returns expected brick service keys."""
         ctx = _make_boot_context()
-        kernel = _boot_kernel_services(ctx)
-        result = _boot_brick_services(ctx, kernel)
+        system = _boot_system_services(ctx)
+        result = _boot_brick_services(ctx, system)
 
         # These keys should always be present (even if values are None)
         expected_keys = {
@@ -278,6 +301,12 @@ class TestKernelServicesFrozen:
         assert ks2 is not ks
         assert ks2.router is sentinel
         assert ks.router is None
+
+    def test_kernel_services_has_only_router(self) -> None:
+        """Issue #2193: KernelServices has only the router field."""
+        ks = KernelServices()
+        field_names = {f.name for f in dataclasses.fields(ks)}
+        assert field_names == {"router"}
 
 
 class TestBootContextFrozen:
@@ -338,8 +367,8 @@ class TestCreateNexusServices:
         assert isinstance(system, SystemServices)
         assert isinstance(brick, BrickServices)
 
-    def test_create_nexus_services_populates_kernel_fields(self) -> None:
-        """create_nexus_services() populates core kernel fields on the returned object."""
+    def test_create_nexus_services_populates_system_fields(self) -> None:
+        """Issue #2193: create_nexus_services() populates system fields."""
         record_store = MagicMock()
         record_store.engine = MagicMock()
         record_store.read_engine = MagicMock()
@@ -376,11 +405,11 @@ class TestCreateNexusServices:
             enable_write_buffer=False,
         )
 
-        # Kernel-tier fields must be populated
-        assert kernel.rebac_manager is not None
-        assert kernel.permission_enforcer is not None
-        assert kernel.workspace_registry is not None
-        assert kernel.write_observer is not None
+        # Issue #2193: Former-kernel fields now on SystemServices
+        assert system.rebac_manager is not None
+        assert system.permission_enforcer is not None
+        assert system.workspace_registry is not None
+        assert system.write_observer is not None
         assert kernel.router is router
 
         # Issue #2034: version_service moved to brick tier

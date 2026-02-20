@@ -136,50 +136,29 @@ class IPCConfig:
 
 
 # ---------------------------------------------------------------------------
-# KernelServices — Tier 0: boot-fatal kernel mechanisms
+# KernelServices — Tier 0: Storage Pillar validation
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class KernelServices:
-    """Tier 0 (KERNEL) — mandatory services that are fatal on failure.
+    """Tier 0 (KERNEL) — Storage Pillar handles only.
 
-    Contains only kernel-level mechanisms: VFS routing, permissions,
-    workspace management, and write sync.
+    Per NEXUS-LEGO-ARCHITECTURE §2 and Liedtke's microkernel test, only
+    VFS routing and Metastore belong in the kernel.  Both are injected as
+    constructor arguments; this container simply carries the router handle.
 
-    Created by ``nexus.factory._boot_kernel_services()`` and injected
-    into the NexusFS kernel constructor.
+    All former kernel services (ReBAC, permissions, workspace, write-sync)
+    have been moved to ``SystemServices`` (Issue #2193) where they are
+    classified as *critical* (BootError on failure) or *degradable*
+    (WARNING + None on failure).
 
     Frozen — all wiring must happen at construction time in factory.py.
     Use ``dataclasses.replace()`` to create modified copies if needed.
-
-    Issue #2034: Slimmed to 12 kernel-only fields.
-    version_service, overlay_resolver, cache_observer moved out
-    (version → BrickServices; overlay/cache_observer → removed, see below).
     """
 
-    # VFS routing
+    # VFS routing — the only kernel-level mechanism
     router: Any = None
-
-    # ReBAC permission subsystem
-    rebac_manager: Any = None
-    dir_visibility_cache: Any = None
-    audit_store: Any = None
-    entity_registry: Any = None
-    permission_enforcer: Any = None
-    hierarchy_manager: Any = None
-    deferred_permission_buffer: Any = None
-
-    # Workspace subsystem
-    workspace_registry: Any = None
-    mount_manager: Any = None
-    workspace_manager: Any = None
-
-    # Write sync
-    write_observer: WriteObserverProtocol | None = None
-
-    # VFS hook pipeline (Issue #2033 Phase 5)
-    hook_pipeline: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -189,16 +168,60 @@ class KernelServices:
 
 @dataclass(frozen=True)
 class SystemServices:
-    """Tier 1 (SYSTEM) — critical, always-started, degraded-mode on failure.
+    """Tier 1 (SYSTEM) — critical + degradable services.
 
-    Contains services that the kernel needs for agent identity, namespace
-    visibility, event delivery, observability, and lifecycle management.
-    System fails gracefully if these are unavailable (logs WARNING, sets None).
+    Contains two severity classes (Issue #2193):
+
+    **Critical** (BootError on failure):
+        rebac_manager, audit_store, entity_registry, permission_enforcer,
+        write_observer — the "Trusted Computing Base outside the kernel"
+        per microkernel terminology (seL4/MINIX 3 pattern).
+
+    **Degradable** (WARNING + None on failure):
+        dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
+        workspace_registry, mount_manager, workspace_manager, and all
+        remaining system services (agent registry, namespace, observability,
+        resiliency, lifecycle management).
 
     Created by ``nexus.factory._boot_system_services()``.
 
     Issue #2034: Extracted from the monolithic KernelServices.
+    Issue #2193: Absorbed former Tier 0 services per Liedtke's test.
     """
+
+    # =================================================================
+    # Former-kernel CRITICAL services (BootError on failure)
+    # =================================================================
+
+    # ReBAC permission subsystem — critical
+    rebac_manager: Any = None
+    audit_store: Any = None
+    entity_registry: Any = None
+    permission_enforcer: Any = None
+
+    # Write sync — critical
+    write_observer: WriteObserverProtocol | None = None
+
+    # =================================================================
+    # Former-kernel DEGRADABLE services (WARNING + None on failure)
+    # =================================================================
+
+    # ReBAC caching / hierarchy — degradable
+    dir_visibility_cache: Any = None
+    hierarchy_manager: Any = None
+    deferred_permission_buffer: Any = None
+
+    # Workspace subsystem — degradable
+    workspace_registry: Any = None
+    mount_manager: Any = None
+    workspace_manager: Any = None
+
+    # VFS hook pipeline (Issue #2033 Phase 5) — degradable
+    hook_pipeline: Any = None
+
+    # =================================================================
+    # Original system services (all degradable)
+    # =================================================================
 
     # Agent identity (Issue #1502)
     agent_registry: Any = None

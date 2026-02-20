@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from nexus.factory._boot_context import _BootContext
-from nexus.factory._helpers import _resolve_tasks_db_path, _safe_create
+from nexus.factory._helpers import _make_gate, _resolve_tasks_db_path, _safe_create
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
     - ``BRICK_NAME``: Maps to deployment profile gate name (None = always on)
     - ``TIER``: ``"independent"`` or ``"dependent"``
     - ``RESULT_KEY``: Key in the result dict
-    - ``create(ctx, kernel) -> Any``: Factory function
+    - ``create(ctx, system) -> Any``: Factory function
     """
     import importlib
     import pkgutil
@@ -79,7 +79,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
 
 def _boot_independent_bricks(
     ctx: _BootContext,
-    kernel: dict[str, Any],
+    system: dict[str, Any],
     brick_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     """Boot Tier 2 (BRICK) — optional, silent on failure.
@@ -90,7 +90,8 @@ def _boot_independent_bricks(
 
     Args:
         ctx: Boot context with shared dependencies.
-        kernel: Kernel services dict from Tier 0.
+        system: System services dict from Tier 1 (provides rebac_manager,
+            entity_registry, etc.).
         brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
             When None, all bricks are enabled (backward-compatible default).
 
@@ -98,11 +99,7 @@ def _boot_independent_bricks(
         Dict with brick service entries (some may be None).
     """
     t0 = time.perf_counter()
-
-    def _on(name: str) -> bool:
-        if brick_on is None:
-            return True
-        return brick_on(name)
+    _on = _make_gate(brick_on)
 
     # === Auto-discovered bricks ===
     auto_results: dict[str, Any] = {}
@@ -111,14 +108,14 @@ def _boot_independent_bricks(
             # No profile gate — always create
             auto_results[desc.result_key] = _safe_create(
                 desc.result_key,
-                lambda d=desc: d.create_fn(ctx, kernel),  # type: ignore[misc]
+                lambda d=desc: d.create_fn(ctx, system),  # type: ignore[misc]
                 lambda _name: True,  # always enabled
             )
         else:
             assert desc.name is not None
             auto_results[desc.result_key] = _safe_create(
                 desc.name,
-                lambda d=desc: d.create_fn(ctx, kernel),  # type: ignore[misc]
+                lambda d=desc: d.create_fn(ctx, system),  # type: ignore[misc]
                 _on,
             )
 
@@ -224,7 +221,7 @@ def _boot_independent_bricks(
             from nexus.mcp.middleware import ToolNamespaceMiddleware
 
             tool_namespace_middleware = ToolNamespaceMiddleware(
-                rebac_manager=kernel["rebac_manager"],
+                rebac_manager=system["rebac_manager"],
                 zone_id=ctx.zone_id,
                 cache_ttl=ctx.cache_ttl_seconds or 300,
             )
@@ -348,8 +345,8 @@ def _boot_independent_bricks(
 
             delegation_service = DelegationService(
                 record_store=ctx.record_store,
-                rebac_manager=kernel["rebac_manager"],
-                entity_registry=kernel.get("entity_registry"),
+                rebac_manager=system["rebac_manager"],
+                entity_registry=system.get("entity_registry"),
                 reputation_service=reputation_service,
             )
             logger.debug("[BOOT:BRICK] DelegationService created")
@@ -445,16 +442,16 @@ def _boot_independent_bricks(
 
         memory_router = _MemoryViewRouter(
             session_factory=ctx.record_store.session_factory,
-            entity_registry=kernel["entity_registry"],
+            entity_registry=system["entity_registry"],
         )
 
         from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 
         memory_permission = MemoryPermissionEnforcer(
             metadata_store=ctx.metadata_store,
-            rebac_manager=kernel["rebac_manager"],
+            rebac_manager=system["rebac_manager"],
             memory_router=memory_router,
-            entity_registry=kernel["entity_registry"],
+            entity_registry=system["entity_registry"],
         )
         logger.debug("[BOOT:BRICK] Memory brick created (router + permission)")
     except Exception as _mem_exc:

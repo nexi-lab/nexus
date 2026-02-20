@@ -327,6 +327,49 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Brick service references (Issue #2035) — object instances, not methods
         "skill_service",  # SkillService instance — RPC methods auto-discovered from brick
         "skill_package_service",  # SkillPackageService instance — RPC methods auto-discovered from brick
+        # ABC compliance stubs (Issue #2033 LEGO decomposition)
+        # These delegate to extracted services which already have @rpc_expose.
+        # NexusFS defines them only to satisfy NexusFilesystem ABC requirements.
+        # Workspace snapshots — delegates to _workspace_rpc_service
+        "workspace_snapshot",  # ABC stub → _workspace_rpc_service.workspace_snapshot()
+        "workspace_restore",  # ABC stub → _workspace_rpc_service.workspace_restore()
+        "workspace_log",  # ABC stub → _workspace_rpc_service.workspace_log()
+        "workspace_diff",  # ABC stub → _workspace_rpc_service.workspace_diff()
+        # Workspace registry — delegates to _workspace_rpc_service
+        "register_workspace",  # ABC stub → _workspace_rpc_service.register_workspace()
+        "unregister_workspace",  # ABC stub → _workspace_rpc_service.unregister_workspace()
+        "list_workspaces",  # ABC stub → _workspace_rpc_service.list_workspaces()
+        "get_workspace_info",  # ABC stub → _workspace_rpc_service.get_workspace_info()
+        # Memory registry — delegates to _workspace_rpc_service
+        "register_memory",  # ABC stub → _workspace_rpc_service.register_memory()
+        "unregister_memory",  # ABC stub → _workspace_rpc_service.unregister_memory()
+        "get_memory_info",  # ABC stub → _workspace_rpc_service.get_memory_info()
+        # Sandbox — delegates to _sandbox_rpc_service
+        "sandbox_create",  # ABC stub → _sandbox_rpc_service.sandbox_create()
+        "sandbox_get_or_create",  # ABC stub → _sandbox_rpc_service.sandbox_get_or_create()
+        "sandbox_run",  # ABC stub → _sandbox_rpc_service.sandbox_run()
+        "sandbox_pause",  # ABC stub → _sandbox_rpc_service.sandbox_pause()
+        "sandbox_resume",  # ABC stub → _sandbox_rpc_service.sandbox_resume()
+        "sandbox_stop",  # ABC stub → _sandbox_rpc_service.sandbox_stop()
+        "sandbox_list",  # ABC stub → _sandbox_rpc_service.sandbox_list()
+        "sandbox_status",  # ABC stub → _sandbox_rpc_service.sandbox_status()
+        "sandbox_connect",  # ABC stub → _sandbox_rpc_service.sandbox_connect()
+        "sandbox_disconnect",  # ABC stub → _sandbox_rpc_service.sandbox_disconnect()
+        # Mount — delegates to _mount_core_service
+        "add_mount",  # ABC stub → _mount_core_service.add_mount()
+        "remove_mount",  # ABC stub → _mount_core_service.remove_mount()
+        "list_mounts",  # ABC stub → _mount_core_service.list_mounts()
+        "get_mount",  # ABC stub → _mount_core_service.get_mount()
+        # Search/list — delegates to search_service
+        "list",  # ABC stub → overrides NexusFSCoreMixin.list()
+        "glob",  # ABC stub → search_service.glob()
+        "grep",  # ABC stub → search_service.grep()
+        # ReBAC sync delegation stubs (Issue #2033) — delegates to rebac_service
+        "rebac_create",  # ABC stub → rebac_service.rebac_create_sync()
+        "rebac_check",  # ABC stub → rebac_service.rebac_check_sync()
+        "rebac_check_batch",  # ABC stub → rebac_service.rebac_check_batch_sync()
+        "rebac_delete",  # ABC stub → rebac_service.rebac_delete_sync()
+        "rebac_list_tuples",  # ABC stub → rebac_service.rebac_list_tuples_sync()
     }
 
     # Get all public methods

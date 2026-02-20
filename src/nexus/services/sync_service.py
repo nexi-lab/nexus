@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.contracts.types import SyncContext, SyncResult
+from nexus.contracts.types import ProgressCallback, SyncContext, SyncResult
 from nexus.lib.context_utils import get_zone_id
 from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
 from nexus.services.permission_utils import check_permission
@@ -1119,6 +1119,56 @@ class SyncService:
         return not (
             ctx.exclude_patterns and glob_fast.glob_match(file_path, list(ctx.exclude_patterns))
         )
+
+    def sync_mount_flat(
+        self,
+        mount_point: str | None = None,
+        path: str | None = None,
+        recursive: bool = True,
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        context: OperationContext | None = None,
+        progress_callback: ProgressCallback | None = None,
+        full_sync: bool = False,
+    ) -> dict[str, Any]:
+        """Convenience wrapper around sync_mount with flat parameters.
+
+        Accepts the same flat parameters as NexusFS.sync_mount and internally
+        creates a SyncContext, avoiding parameter transformation at the call site.
+
+        Args:
+            mount_point: Mount point path to sync (None syncs all)
+            path: Optional sub-path within mount
+            recursive: Whether to sync recursively
+            dry_run: If True, scan without making changes
+            sync_content: Whether to sync content cache
+            include_patterns: Glob patterns for files to include
+            exclude_patterns: Glob patterns for files to exclude
+            generate_embeddings: Whether to generate embeddings
+            context: Operation context for permissions
+            progress_callback: Callback for progress updates
+            full_sync: Force full scan bypassing delta checks
+
+        Returns:
+            Dictionary with sync result statistics
+        """
+        ctx = SyncContext(
+            mount_point=mount_point,
+            path=path,
+            recursive=recursive,
+            dry_run=dry_run,
+            sync_content=sync_content,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            generate_embeddings=generate_embeddings,
+            context=context,
+            progress_callback=progress_callback,
+            full_sync=full_sync,
+        )
+        return self.sync_mount(ctx).to_dict()
 
     def _check_permission(
         self,

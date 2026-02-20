@@ -1,4 +1,4 @@
-"""Context building for LLM document reading.
+"""Backward compatibility — moved to nexus.services.llm_context_builder (Issue #1521).
 
 Moved from nexus.llm.context_builder (Issue #1521).
 Service-layer concern: context building orchestrates search results
@@ -7,8 +7,6 @@ for LLM prompts, not a brick primitive.
 Includes adaptive retrieval depth based on query complexity (Issue #1021),
 inspired by SimpleMem (arXiv:2601.02553).
 """
-
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

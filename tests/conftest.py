@@ -176,7 +176,7 @@ def make_test_nexus(
         cache=cache,
         memory=memory,
         distributed=distributed,
-        services=services,
+        kernel_services=services,
     )
 
 

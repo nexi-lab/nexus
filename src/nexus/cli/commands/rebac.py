@@ -156,7 +156,7 @@ def rebac_create(
         # Create tuple
         # SECURITY: Pass operation_context for execute permission enforcement
         # Only owners (execute permission) can create permissions on files
-        tuple_id = nx.rebac_create(  # type: ignore[attr-defined]
+        tuple_id = nx.rebac_service.rebac_create_sync(  # type: ignore[attr-defined]
             subject=subject_tuple,
             relation=relation,
             object=(object_type, object_id),
@@ -263,7 +263,7 @@ def rebac_list_cmd(
             obj = (object_type, object_id)
 
         # List tuples
-        tuples = nx.rebac_list_tuples(  # type: ignore[attr-defined]
+        tuples = nx.rebac_service.rebac_list_tuples_sync(  # type: ignore[attr-defined]
             subject=subject,
             object=obj,
             relation=relation,
@@ -342,7 +342,7 @@ def rebac_delete_cmd(
         nx = get_filesystem(backend_config)
 
         # Delete tuple
-        deleted = nx.rebac_delete(tuple_id)  # type: ignore[attr-defined]
+        deleted = nx.rebac_service.rebac_delete_sync(tuple_id)  # type: ignore[attr-defined]
 
         nx.close()
 
@@ -388,7 +388,7 @@ def rebac_check_cmd(
         nx = get_filesystem(backend_config)
 
         # Check permission
-        granted = nx.rebac_check(  # type: ignore[attr-defined]
+        granted = nx.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
             subject=(subject_type, subject_id),
             permission=permission,
             object=(object_type, object_id),
@@ -441,7 +441,7 @@ def rebac_expand_cmd(
         nx = get_filesystem(backend_config)
 
         # Expand permission
-        subjects = nx.rebac_expand(  # type: ignore[attr-defined]
+        subjects = nx.rebac_service.rebac_expand_sync(  # type: ignore[attr-defined]
             permission=permission,
             object=(object_type, object_id),
         )
@@ -511,7 +511,7 @@ def rebac_explain_cmd(
         nx = get_filesystem(backend_config)
 
         # Get explanation
-        explanation = nx.rebac_explain(  # type: ignore[attr-defined]
+        explanation = nx.rebac_service.rebac_explain_sync(  # type: ignore[attr-defined]
             subject=(subject_type, subject_id),
             permission=permission,
             object=(object_type, object_id),
@@ -664,7 +664,7 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
         found_parents = ttu.get("found_parents", [])
         if found_parents:
             for parent in found_parents:
-                if isinstance(parent, (list, tuple)) and len(parent) >= 2:
+                if isinstance(parent, list | tuple) and len(parent) >= 2:
                     parent_type, parent_id = parent[0], parent[1]
                     console.print(
                         f"{indent}   • {tupleset}([cyan]{obj}[/cyan]) = [cyan]{parent_type}:{parent_id}[/cyan]  [green]✓[/green]"
@@ -912,7 +912,7 @@ def namespace_create(
                 config["permissions"][perm_name] = rels.split(",")
 
         # Create namespace
-        nx.namespace_create(object_type=object_type, config=config)  # type: ignore[attr-defined]
+        nx.rebac_service.namespace_create_sync(object_type=object_type, config=config)  # type: ignore[attr-defined]
 
         console.print(f"[green]✓[/green] Created namespace for '{object_type}'")
 
@@ -945,7 +945,7 @@ def namespace_list(
     try:
         nx = get_filesystem(backend_config)
 
-        namespaces = nx.namespace_list()  # type: ignore[attr-defined]
+        namespaces = nx.rebac_service.namespace_list_sync()  # type: ignore[attr-defined]
 
         if output_format == "json":
             import json
@@ -1015,7 +1015,7 @@ def namespace_get(
 
         nx = get_filesystem(backend_config)
 
-        ns = nx.get_namespace(object_type)  # type: ignore[attr-defined]
+        ns = nx.rebac_service.get_namespace_sync(object_type)  # type: ignore[attr-defined]
 
         if ns is None:
             console.print(f"[red]✗[/red] Namespace '{object_type}' not found")
@@ -1059,7 +1059,7 @@ def namespace_delete(
 
         nx = get_filesystem(backend_config)
 
-        deleted = nx.namespace_delete(object_type)  # type: ignore[attr-defined]
+        deleted = nx.rebac_service.namespace_delete_sync(object_type)  # type: ignore[attr-defined]
 
         if deleted:
             console.print(f"[green]✓[/green] Deleted namespace '{object_type}'")

@@ -12,8 +12,6 @@ from nexus.core.read_set import (
     ReadSetEntry,
     ReadSetRegistry,
     ResourceType,
-    get_global_registry,
-    set_global_registry,
 )
 
 
@@ -396,36 +394,6 @@ class TestReadSetRegistry:
         assert stats["directories_indexed"] == 1
         assert stats["registers"] == 1
         assert stats["lookups"] == 2
-
-
-class TestGlobalRegistry:
-    """Tests for global registry singleton."""
-
-    def teardown_method(self):
-        """Clear global registry after each test."""
-        set_global_registry(None)
-
-    def test_get_global_registry_creates_singleton(self):
-        """Test that get_global_registry creates a singleton."""
-        registry1 = get_global_registry()
-        registry2 = get_global_registry()
-        assert registry1 is registry2
-
-    def test_set_global_registry(self):
-        """Test setting the global registry."""
-        custom_registry = ReadSetRegistry()
-        set_global_registry(custom_registry)
-
-        assert get_global_registry() is custom_registry
-
-    def test_set_global_registry_to_none(self):
-        """Test clearing the global registry."""
-        get_global_registry()  # Create the singleton
-        set_global_registry(None)
-
-        # Should create a new one
-        new_registry = get_global_registry()
-        assert new_registry is not None
 
 
 class TestRWLockConcurrency:

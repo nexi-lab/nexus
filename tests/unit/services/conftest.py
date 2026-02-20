@@ -37,6 +37,28 @@ def make_stateless_brick(name: str = "pay") -> MagicMock:
     return brick
 
 
+def make_zone_aware_brick(name: str = "test") -> MagicMock:
+    """Create a mock brick that satisfies both BrickLifecycleProtocol and ZoneAwareBrickProtocol."""
+    brick = make_lifecycle_brick(name)
+    brick.drain = AsyncMock(return_value=None)
+    brick.finalize = AsyncMock(return_value=None)
+    return brick
+
+
+def make_drain_only_brick(name: str = "drain_only") -> MagicMock:
+    """Create a mock brick that only has drain() (no finalize)."""
+    brick = make_lifecycle_brick(name)
+    brick.drain = AsyncMock(return_value=None)
+    return brick
+
+
+def make_finalize_only_brick(name: str = "finalize_only") -> MagicMock:
+    """Create a mock brick that only has finalize() (no drain)."""
+    brick = make_lifecycle_brick(name)
+    brick.finalize = AsyncMock(return_value=None)
+    return brick
+
+
 def make_failing_brick(error: Exception | None = None) -> MagicMock:
     """Create a mock brick whose start() raises."""
     brick = make_lifecycle_brick("failing")

@@ -168,7 +168,7 @@ def make_test_nexus(
 
             metadata_store = InMemoryMetastore()
 
-    return NexusFS(
+    nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -181,6 +181,10 @@ def make_test_nexus(
         kernel_services=services,
         system_services=system_services,
     )
+    from nexus.services.service_wiring import wire_services
+
+    wire_services(nx)
+    return nx
 
 
 @pytest.fixture(autouse=True)

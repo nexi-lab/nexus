@@ -425,6 +425,11 @@ class TestBrickServices:
             "parser_registry",
             "provider_registry",
             "vfs_lock_manager",
+            # Governance Brick (Issue #2129)
+            "governance_anomaly_service",
+            "governance_collusion_service",
+            "governance_graph_service",
+            "governance_response_service",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

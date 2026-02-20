@@ -46,6 +46,12 @@ class CollusionService:
         - Detect transaction rings (cycles)
         - Detect Sybil clusters via EigenTrust
         - Compute composite fraud scores
+
+    Memory budget:
+        Graph size is capped by ``max_nodes`` (default 10,000) and
+        ``max_edges`` (default 50,000).  At worst case this is roughly
+        ~50 MB for the NetworkX DiGraph plus the trust matrix.
+        Increase caps only if the host has headroom.
     """
 
     def __init__(
@@ -216,6 +222,82 @@ class CollusionService:
 
         trust_scores = dict(zip(node_ids, trust_vector.tolist(), strict=True))
         return detect_sybil_cluster(trust_scores)
+
+    async def list_fraud_scores(self, zone_id: str) -> list[FraudScore]:
+        """List stored fraud scores for a zone (read path).
+
+        Returns pre-computed scores from the database without
+        triggering recomputation.
+        """
+        from sqlalchemy import select
+
+        from nexus.bricks.governance.db_models import FraudScoreModel
+
+        async with self._session_factory() as session:
+            stmt = select(FraudScoreModel).where(FraudScoreModel.zone_id == zone_id)
+            result = await session.execute(stmt)
+            models = result.scalars().all()
+
+        scores: list[FraudScore] = []
+        for model in models:
+            components: dict[str, float] = {}
+            raw = parse_json_metadata(getattr(model, "components", None))
+            for k, v in raw.items():
+                if isinstance(v, int | float):
+                    components[k] = float(v)
+            scores.append(
+                FraudScore(
+                    agent_id=model.agent_id,
+                    zone_id=model.zone_id,
+                    score=model.score,
+                    components=components,
+                    computed_at=model.computed_at,
+                )
+            )
+        return scores
+
+    async def compute_and_persist_fraud_scores(self, zone_id: str) -> dict[str, FraudScore]:
+        """Compute fraud scores and persist to DB (write path).
+
+        Call this from a background job or explicit POST endpoint,
+        not from GET requests.
+        """
+        import json
+
+        from nexus.bricks.governance.db_models import FraudScoreModel
+
+        scores = await self.compute_fraud_scores(zone_id)
+        now = datetime.now(UTC)
+
+        async with self._session_factory() as session, session.begin():
+            for score in scores.values():
+                from sqlalchemy import select
+
+                computed = score.computed_at or now
+
+                stmt = select(FraudScoreModel).where(
+                    FraudScoreModel.agent_id == score.agent_id,
+                    FraudScoreModel.zone_id == score.zone_id,
+                )
+                result = await session.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                if existing is not None:
+                    existing.score = score.score
+                    existing.components = json.dumps(score.components)
+                    existing.computed_at = computed
+                else:
+                    session.add(
+                        FraudScoreModel(
+                            agent_id=score.agent_id,
+                            zone_id=score.zone_id,
+                            score=score.score,
+                            components=json.dumps(score.components),
+                            computed_at=computed,
+                        )
+                    )
+
+        return scores
 
     async def compute_fraud_scores(self, zone_id: str) -> dict[str, FraudScore]:
         """Compute composite fraud scores for all agents in a zone.

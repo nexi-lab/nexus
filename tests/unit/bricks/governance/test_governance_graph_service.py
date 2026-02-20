@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.bricks.governance.converters import edge_model_to_domain
-from nexus.services.governance.governance_graph_service import GovernanceGraphService
-from nexus.services.governance.models import (
+from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
+from nexus.bricks.governance.models import (
     ConstraintCheckResult,
     ConstraintType,
     EdgeType,
@@ -200,8 +200,8 @@ class TestResponseServiceAutoThrottle:
 
     @pytest.mark.asyncio
     async def test_below_throttle_threshold_returns_none(self) -> None:
-        from nexus.services.governance.models import FraudScore
-        from nexus.services.governance.response_service import ResponseService
+        from nexus.bricks.governance.models import FraudScore
+        from nexus.bricks.governance.response_service import ResponseService
 
         svc = ResponseService(session_factory=lambda: _FakeAsyncSession())
         score = FraudScore(agent_id="a1", zone_id="z1", score=0.3)
@@ -210,8 +210,8 @@ class TestResponseServiceAutoThrottle:
 
     @pytest.mark.asyncio
     async def test_above_block_threshold_blocks(self) -> None:
-        from nexus.services.governance.models import FraudScore
-        from nexus.services.governance.response_service import ResponseService
+        from nexus.bricks.governance.models import FraudScore
+        from nexus.bricks.governance.response_service import ResponseService
 
         graph_service = AsyncMock()
         svc = ResponseService(
@@ -226,8 +226,8 @@ class TestResponseServiceAutoThrottle:
 
     @pytest.mark.asyncio
     async def test_throttle_range_returns_config(self) -> None:
-        from nexus.services.governance.models import FraudScore
-        from nexus.services.governance.response_service import ResponseService
+        from nexus.bricks.governance.models import FraudScore
+        from nexus.bricks.governance.response_service import ResponseService
 
         svc = ResponseService(session_factory=lambda: _FakeAsyncSession())
         score = FraudScore(agent_id="a1", zone_id="z1", score=0.6)

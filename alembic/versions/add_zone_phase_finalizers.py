@@ -1,7 +1,7 @@
 """Add phase and finalizers columns to zones, drop is_active.
 
 Revision ID: add_zone_phase_finalizers
-Revises: None
+Revises: 101ea1909580
 Create Date: 2026-02-19
 
 Zone lifecycle finalizer protocol (Issue #2061).
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "add_zone_phase_finalizers"
-down_revision: Union[str, Sequence[str], None] = None
+down_revision: Union[str, Sequence[str], None] = "101ea1909580"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

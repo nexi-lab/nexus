@@ -582,8 +582,10 @@ disable_error_code = ["override", "attr-defined"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.bricks.workflows.loader",
+    "nexus.bricks.skills.manager",
     "nexus.skills.skill_generator",
     "nexus.mcp.provider_registry",
+    "nexus.mcp.middleware",
     "nexus.mcp.oauth_mappings",
     "nexus.skills.parser",
     "nexus.server.auth.oauth_factory",

@@ -309,6 +309,42 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         except Exception as _ael_exc:
             logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
 
+    # --- Circuit Breaker for ReBAC DB Resilience (Issue #726, moved from kernel #2034) ---
+    rebac_circuit_breaker: Any = None
+    try:
+        from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+
+        rebac_circuit_breaker = AsyncCircuitBreaker(
+            name="rebac_db",
+            config=CircuitBreakerConfig(
+                failure_threshold=5,
+                success_threshold=3,
+                reset_timeout=30.0,
+                failure_window=60.0,
+            ),
+        )
+    except Exception as _cb_exc:
+        logger.warning(
+            "[BOOT:BRICK] ReBAC circuit breaker unavailable — "
+            "running without circuit-breaking protection: %s",
+            _cb_exc,
+        )
+
+    # --- VersionService (Issue #2034: moved from kernel to brick tier) ---
+    version_service: Any = None
+    try:
+        from nexus.services.version_service import VersionService
+
+        version_service = VersionService(
+            metadata_store=ctx.metadata_store,
+            cas_store=ctx.backend,
+            router=ctx.router,
+            enforce_permissions=False,
+            session_factory=ctx.session_factory,
+        )
+    except Exception as _vs_exc:
+        logger.debug("[BOOT:BRICK] VersionService unavailable: %s", _vs_exc)
+
     # --- Skills Brick (Issue #2035) ---
     # Wired later in NexusFS._wire_services() via gateway adapters.
     # Flagged here for availability tracking.
@@ -335,6 +371,8 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "skill_package_service": skill_package_service,
         "delegation_service": delegation_service,
         "reputation_service": reputation_service,
+        "rebac_circuit_breaker": rebac_circuit_breaker,
+        "version_service": version_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -403,6 +441,8 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "skill_service",  # wired later via NexusFS gateway adapters
         "skill_package_service",  # wired later via NexusFS gateway adapters
         "agent_event_log",  # event log, not a lifecycle brick
+        "rebac_circuit_breaker",  # infrastructure, not a lifecycle brick
+        "version_service",  # wired via BrickServices, lifecycle managed separately
     }
 )
 

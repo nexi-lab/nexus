@@ -224,9 +224,6 @@ def create_nexus_services(
         mount_manager=kernel["mount_manager"],
         workspace_manager=kernel["workspace_manager"],
         write_observer=kernel["write_observer"],
-        version_service=kernel["version_service"],
-        overlay_resolver=None,
-        cache_observer=kernel.get("cache_observer"),
     )
 
     system_svc = _SystemServices(
@@ -241,13 +238,14 @@ def create_nexus_services(
         observability_subsystem=system["observability_subsystem"],
         resiliency_manager=system["resiliency_manager"],
         eviction_manager=system.get("eviction_manager"),
+        brick_reconciler=system.get("brick_reconciler"),
     )
 
     brick_svc = _BrickServices(
         event_bus=brick["event_bus"],
         lock_manager=brick["lock_manager"],
         workflow_engine=brick["workflow_engine"],
-        rebac_circuit_breaker=kernel.get("rebac_circuit_breaker"),
+        rebac_circuit_breaker=brick.get("rebac_circuit_breaker"),
         wallet_provisioner=brick["wallet_provisioner"],
         chunked_upload_service=brick["chunked_upload_service"],
         manifest_resolver=brick["manifest_resolver"],
@@ -255,6 +253,7 @@ def create_nexus_services(
         api_key_creator=brick["api_key_creator"],
         snapshot_service=brick["snapshot_service"],
         task_queue_service=brick["task_queue_service"],
+        version_service=brick.get("version_service"),
     )
 
     return kernel_svc, system_svc, brick_svc

@@ -29,7 +29,6 @@ from nexus.constants import DEFAULT_NATS_URL
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
-    from nexus.core.cache_invalidation import CacheInvalidationObserver
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
@@ -121,7 +120,7 @@ class KernelServices:
     """Tier 0 (KERNEL) — mandatory services that are fatal on failure.
 
     Contains only kernel-level mechanisms: VFS routing, permissions,
-    workspace management, sync/versioning, and cache invalidation.
+    workspace management, and write sync.
 
     Created by ``nexus.factory._boot_kernel_services()`` and injected
     into the NexusFS kernel constructor.
@@ -129,8 +128,9 @@ class KernelServices:
     Frozen — all wiring must happen at construction time in factory.py.
     Use ``dataclasses.replace()`` to create modified copies if needed.
 
-    Issue #2034: Slimmed from ~40 fields to 15 kernel-only fields.
-    System and brick services moved to SystemServices / BrickServices.
+    Issue #2034: Slimmed to 12 kernel-only fields.
+    version_service, overlay_resolver, cache_observer moved out
+    (version → BrickServices; overlay/cache_observer → removed, see below).
     """
 
     # VFS routing
@@ -150,13 +150,8 @@ class KernelServices:
     mount_manager: Any = None
     workspace_manager: Any = None
 
-    # Sync / versioning
+    # Write sync
     write_observer: WriteObserverProtocol | None = None
-    version_service: Any = None
-    overlay_resolver: Any = None
-
-    # Cache invalidation (Issue #1169 / #1519)
-    cache_observer: CacheInvalidationObserver | None = None
 
     # VFS hook pipeline (Issue #2033 Phase 5)
     hook_pipeline: Any = None
@@ -263,6 +258,9 @@ class BrickServices:
     # --- Delegation & Reputation Bricks (Issue #2131) ---
     delegation_service: Any = None  # DELEGATION brick
     reputation_service: Any = None  # REPUTATION brick
+
+    # --- Version Brick (Issue #2034: moved from KernelServices) ---
+    version_service: Any = None  # VersionService (file history, rollback, diff)
 
 
 # ---------------------------------------------------------------------------

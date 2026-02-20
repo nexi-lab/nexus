@@ -39,19 +39,6 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             read_engine=ctx.read_engine,
         )
 
-        # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
-        from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
-
-        rebac_circuit_breaker = AsyncCircuitBreaker(
-            name="rebac_db",
-            config=CircuitBreakerConfig(
-                failure_threshold=5,
-                success_threshold=3,
-                reset_timeout=30.0,
-                failure_window=60.0,
-            ),
-        )
-
         # --- Directory Visibility Cache ---
         from nexus.rebac.cache.visibility import DirectoryVisibilityCache
 
@@ -164,20 +151,8 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
 
             write_observer = RecordStoreWriteObserver(ctx.session_factory)
 
-        # --- VersionService (Task #45) ---
-        from nexus.services.version_service import VersionService
-
-        version_service = VersionService(
-            metadata_store=ctx.metadata_store,
-            cas_store=ctx.backend,
-            router=ctx.router,
-            enforce_permissions=False,
-            session_factory=ctx.session_factory,
-        )
-
         result = {
             "rebac_manager": rebac_manager,
-            "rebac_circuit_breaker": rebac_circuit_breaker,
             "dir_visibility_cache": dir_visibility_cache,
             "audit_store": audit_store,
             "entity_registry": entity_registry,
@@ -188,7 +163,6 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             "mount_manager": mount_manager,
             "workspace_manager": workspace_manager,
             "write_observer": write_observer,
-            "version_service": version_service,
         }
 
         elapsed = time.perf_counter() - t0

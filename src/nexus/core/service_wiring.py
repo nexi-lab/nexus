@@ -23,11 +23,10 @@ def wire_services(fs: Any) -> None:
     Args:
         fs: NexusFS instance to wire services onto.
     """
-    ksvc = fs._kernel_services
     brk_svc = fs._brick_services
 
-    # VersionService: injected by factory (Task #45)
-    fs.version_service = ksvc.version_service
+    # VersionService: moved to BrickServices (Issue #2034)
+    fs.version_service = brk_svc.version_service
 
     # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
     from nexus.services.llm_service import LLMService

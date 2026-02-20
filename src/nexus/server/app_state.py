@@ -21,6 +21,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.core.protocols.entity_registry import EntityRegistryProtocol
+    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
+    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
+    from nexus.core.protocols.wirable_fs import WirableFS
+    from nexus.storage.record_store import RecordStoreABC
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,7 +39,7 @@ class NexusAppState:
     """
 
     # === Core (set by create_app) ===
-    nexus_fs: Any = None
+    nexus_fs: WirableFS | None = None
     database_url: str | None = None
     api_key: str | None = None
     auth_provider: Any = None
@@ -50,13 +56,13 @@ class NexusAppState:
     # === Flattened from NexusFS (replaces private attr access) ===
     system_services: Any = None
     brick_services: Any = None
-    rebac_manager: Any = None
-    entity_registry: Any = None
+    rebac_manager: ReBACManagerProtocol | None = None
+    entity_registry: EntityRegistryProtocol | None = None
     namespace_manager: Any = None
     event_bus: Any = None
     write_observer: Any = None
-    permission_enforcer: Any = None
-    record_store: Any = None
+    permission_enforcer: PermissionEnforcerProtocol | None = None
+    record_store: RecordStoreABC | None = None
 
     # === Flattened from SystemServices ===
     observability_subsystem: Any = None
@@ -143,7 +149,7 @@ class NexusAppState:
     # These are managed by lifespan and not part of public API
 
 
-def init_app_state(app: FastAPI, nexus_fs: Any = None, **overrides: Any) -> None:
+def init_app_state(app: FastAPI, nexus_fs: WirableFS | None = None, **overrides: Any) -> None:
     """Initialize all app.state fields from NexusAppState defaults.
 
     Replaces 60+ lines of ``app.state.x = None`` in ``create_app()``.
@@ -179,7 +185,7 @@ def init_app_state(app: FastAPI, nexus_fs: Any = None, **overrides: Any) -> None
         _flatten_nexus_fs(app, nexus_fs)
 
 
-def _flatten_nexus_fs(app: FastAPI, nexus_fs: Any) -> None:
+def _flatten_nexus_fs(app: FastAPI, nexus_fs: WirableFS) -> None:
     """Flatten NexusFS private attrs onto app.state for typed access."""
     # Direct NexusFS attrs
     app.state.system_services = getattr(nexus_fs, "_system_services", None)

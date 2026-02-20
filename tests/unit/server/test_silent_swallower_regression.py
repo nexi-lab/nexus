@@ -36,14 +36,11 @@ class TestAuthHelperLogging:
     """Verify auth helper errors are logged, not silently swallowed."""
 
     def test_get_user_zones_logs_on_db_error(self, caplog: pytest.LogCaptureFixture) -> None:
-        """get_user_zones should log warning when DB query fails."""
+        """get_user_zones should log warning when rebac_list_tuples fails."""
         from nexus.lib.zone_helpers import get_user_zones
 
-        mock_session = MagicMock()
-        mock_session.scalars.side_effect = RuntimeError("DB connection lost")
-
         mock_rebac = MagicMock()
-        mock_rebac._connection.side_effect = RuntimeError("DB connection lost")
+        mock_rebac.rebac_list_tuples.side_effect = RuntimeError("DB connection lost")
 
         with caplog.at_level(logging.WARNING, logger="nexus.lib.zone_helpers"):
             result = get_user_zones(mock_rebac, "user-123")

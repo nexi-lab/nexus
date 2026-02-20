@@ -67,6 +67,15 @@ class ReBACManagerProtocol(Protocol):
         offset: int = 0,
     ) -> list[tuple[str, str]]: ...
 
+    def rebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        relation_in: list[str] | None = None,
+        **_kw: Any,
+    ) -> list[dict[str, Any]]: ...
+
     def get_zone_revision(
         self,
         zone_id: str | None,

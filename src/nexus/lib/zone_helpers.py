@@ -2,15 +2,21 @@
 
 These functions manage zone group naming conventions and zone membership checks
 using the ReBAC (Relationship-Based Access Control) primitives. They have NO
-kernel-layer dependencies — only rebac_manager (passed as ``Any``).
+kernel-layer dependencies — only ``ReBACManagerProtocol`` (passed via DI).
+
+All functions use Protocol methods exclusively — no private attribute access.
 
 Tier-neutral utility — belongs in ``lib/`` (zero kernel deps).
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +71,7 @@ def is_zone_group(group_id: str) -> bool:
 
 
 def is_zone_owner(
-    rebac_manager: Any,
+    rebac_manager: ReBACManagerProtocol,
     user_id: str,
     zone_id: str,
 ) -> bool:
@@ -95,7 +101,7 @@ def is_zone_owner(
 
 
 def is_zone_admin(
-    rebac_manager: Any,
+    rebac_manager: ReBACManagerProtocol,
     user_id: str,
     zone_id: str,
 ) -> bool:
@@ -130,7 +136,7 @@ def is_zone_admin(
 
 
 def can_invite_to_zone(
-    rebac_manager: Any,
+    rebac_manager: ReBACManagerProtocol,
     user_id: str,
     zone_id: str,
 ) -> bool:
@@ -152,78 +158,69 @@ def can_invite_to_zone(
 
 
 def add_user_to_zone(
-    rebac_manager: Any,
+    rebac_manager: ReBACManagerProtocol,
     user_id: str,
     zone_id: str,
     role: str = "member",
     caller_user_id: str | None = None,
-) -> str:
+) -> Any:
     """Add user to zone via ReBAC group.
 
     SECURITY: Only zone admins/owners can invite users.
 
     Args:
-        rebac_manager: ReBAC manager instance
+        rebac_manager: ReBAC manager (Protocol-typed)
         user_id: User ID to add
         zone_id: Zone ID
         role: Role in zone ("owner", "admin", or "member")
         caller_user_id: Optional user ID of caller (for permission check)
 
     Returns:
-        ReBAC tuple ID
+        WriteResult from rebac_write (contains tuple_id)
 
     Raises:
         PermissionError: If caller is not zone admin/owner
         ValueError: If role is invalid
     """
-    # SECURITY: Check if caller can invite users
     if caller_user_id:
-        # Only owners can add other owners
         if role == "owner":
             if not is_zone_owner(rebac_manager, caller_user_id, zone_id):
                 raise PermissionError(
                     f"Only zone owners can add other owners. "
                     f"User '{caller_user_id}' is not owner of zone '{zone_id}'"
                 )
-        else:
-            # Admins and owners can add admins/members
-            if not can_invite_to_zone(rebac_manager, caller_user_id, zone_id):
-                raise PermissionError(
-                    f"Only zone admins/owners can invite users. "
-                    f"User '{caller_user_id}' is not admin/owner of zone '{zone_id}'"
-                )
+        elif not can_invite_to_zone(rebac_manager, caller_user_id, zone_id):
+            raise PermissionError(
+                f"Only zone admins/owners can invite users. "
+                f"User '{caller_user_id}' is not admin/owner of zone '{zone_id}'"
+            )
 
-    # Validate role
     if role not in ("owner", "admin", "member"):
         raise ValueError(f"Invalid role '{role}'. Must be 'owner', 'admin', or 'member'")
 
-    # Determine group ID based on role
-    group_id = zone_group_id(zone_id)
-    if role == "owner":
-        group_id = f"{group_id}-owners"
-    elif role == "admin":
-        group_id = f"{group_id}-admins"
-    # else: role == "member" -> use base group_id
-
-    tuple_id: str = rebac_manager.rebac_write(
+    group_id = _role_group_id(zone_id, role)
+    return rebac_manager.rebac_write(
         subject=("user", user_id),
         relation="member",
         object=("group", group_id),
         zone_id=zone_id,
     )
-    return tuple_id
 
 
 def remove_user_from_zone(
-    rebac_manager: Any,
+    rebac_manager: ReBACManagerProtocol,
     user_id: str,
     zone_id: str,
     role: str | None = None,
 ) -> None:
     """Remove user from zone via ReBAC group.
 
+    Uses ``rebac_list_tuples`` to find the tuple ID, then ``rebac_delete``
+    to remove it.  This avoids private ``_connection()`` access and uses
+    the Protocol-defined cache-aware path.
+
     Args:
-        rebac_manager: ReBAC manager instance
+        rebac_manager: ReBAC manager (Protocol-typed)
         user_id: User ID
         zone_id: Zone ID
         role: Optional role to remove ("owner", "admin", or "member"). If None, removes all.
@@ -232,88 +229,101 @@ def remove_user_from_zone(
         Removing owners should be done carefully - ensure at least one owner remains.
     """
     if role is None:
-        # Remove from all groups (owner, admin, member)
-        import contextlib
-
         for r in ["owner", "admin", "member"]:
-            # Ignore errors if tuple doesn't exist
             with contextlib.suppress(Exception):
                 remove_user_from_zone(rebac_manager, user_id, zone_id, r)
         return
 
-    group_id = zone_group_id(zone_id)
-    if role == "owner":
-        group_id = f"{group_id}-owners"
-    elif role == "admin":
-        group_id = f"{group_id}-admins"
-    # else: role == "member" -> use base group_id
+    group_id = _role_group_id(zone_id, role)
 
-    rebac_manager.rebac_delete(
+    # Find matching tuples via Protocol method
+    tuples = rebac_manager.rebac_list_tuples(
         subject=("user", user_id),
         relation="member",
         object=("group", group_id),
-        zone_id=zone_id,
     )
+    for t in tuples:
+        tid = t.get("tuple_id")
+        if tid:
+            rebac_manager.rebac_delete(tid)
 
 
-def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
+def get_user_zones(rebac_manager: ReBACManagerProtocol, user_id: str) -> list[str]:
     """Get list of zone IDs that user belongs to.
 
-    Uses direct DB query on rebac_tuples to find all zones where the user
-    has any relation (owner, admin, member). Matches on the zone_id context
-    column, which is set by add_user_to_zone() for all roles.
+    Uses ``rebac_list_tuples`` to find all tuples where the user is the
+    subject, then extracts distinct zone IDs.  This replaces the previous
+    raw SQL approach and uses the Protocol-defined cache-aware path.
 
     Args:
-        rebac_manager: ReBAC manager instance (must have _connection())
+        rebac_manager: ReBAC manager (Protocol-typed)
         user_id: User ID
 
     Returns:
-        List of zone IDs
+        List of zone IDs (deduplicated, stable order)
     """
     zone_ids: list[str] = []
     try:
-        with rebac_manager._connection() as conn:
-            cursor = conn.cursor() if hasattr(conn, "cursor") else conn
-            cursor.execute(
-                "SELECT DISTINCT zone_id FROM rebac_tuples "
-                "WHERE subject_type = 'user' AND subject_id = ? "
-                "AND zone_id IS NOT NULL",
-                (user_id,),
-            )
-            for row in cursor.fetchall():
-                zid = row[0] if isinstance(row, (tuple, list)) else row["zone_id"]
-                if zid and zid not in zone_ids:
-                    zone_ids.append(zid)
+        tuples = rebac_manager.rebac_list_tuples(
+            subject=("user", user_id),
+            relation="member",
+        )
+        seen: set[str] = set()
+        for t in tuples:
+            zid = t.get("zone_id")
+            if zid and zid not in seen:
+                seen.add(zid)
+                zone_ids.append(zid)
     except Exception as e:
         logger.warning("Failed to fetch zone IDs for user %s: %s", user_id, e)
     return zone_ids
 
 
-def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool:
-    """Check if user belongs to zone.
+def user_belongs_to_zone(rebac_manager: ReBACManagerProtocol, user_id: str, zone_id: str) -> bool:
+    """Check if user belongs to zone (any role).
 
-    Checks rebac_tuples for any tuple where the user is the subject and the
-    zone_id context column matches. This covers all roles (owner, admin,
-    member) since add_user_to_zone() always sets zone_id on the tuple.
+    Uses ``rebac_check`` for each possible group (member, admin, owner)
+    to determine zone membership via the Protocol-defined cache-aware path.
 
     Args:
-        rebac_manager: ReBAC manager instance
+        rebac_manager: ReBAC manager (Protocol-typed)
         user_id: User ID
         zone_id: Zone ID
 
     Returns:
-        True if user belongs to zone
+        True if user belongs to zone in any role
     """
-    try:
-        with rebac_manager._connection() as conn:
-            cursor = conn.cursor() if hasattr(conn, "cursor") else conn
-            cursor.execute(
-                "SELECT 1 FROM rebac_tuples "
-                "WHERE subject_type = 'user' AND subject_id = ? "
-                "AND zone_id = ? "
-                "LIMIT 1",
-                (user_id, zone_id),
-            )
-            return cursor.fetchone() is not None
-    except Exception:
-        return False
+    subject = ("user", user_id)
+    for role in ("member", "admin", "owner"):
+        group_id = _role_group_id(zone_id, role)
+        if rebac_manager.rebac_check(
+            subject=subject,
+            permission="member",
+            object=("group", group_id),
+            zone_id=zone_id,
+        ):
+            return True
+    return False
+
+
+# ==============================================================================
+# Internal Helpers
+# ==============================================================================
+
+
+def _role_group_id(zone_id: str, role: str) -> str:
+    """Map (zone_id, role) to the ReBAC group ID.
+
+    Args:
+        zone_id: Zone identifier
+        role: "owner", "admin", or "member"
+
+    Returns:
+        Group ID (e.g., "zone-acme-owners" or "zone-acme" for member)
+    """
+    group_id = zone_group_id(zone_id)
+    if role == "owner":
+        return f"{group_id}-owners"
+    if role == "admin":
+        return f"{group_id}-admins"
+    return group_id

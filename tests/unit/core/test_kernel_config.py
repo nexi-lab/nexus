@@ -408,6 +408,8 @@ class TestBrickServices:
             "delegation_service",
             "reputation_service",
             "version_service",
+            "memory_router",
+            "memory_permission",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

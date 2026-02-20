@@ -13,20 +13,13 @@ import builtins
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.bricks.memory._temporal import parse_datetime, validate_temporal_params
+from nexus.bricks.memory.router import MemoryViewRouter
 from nexus.contracts.types import OperationContext, Permission
-from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.memory.temporal import parse_datetime, validate_temporal_params
-
-if TYPE_CHECKING:
-    from nexus.services.protocols.memory import (
-        EntityResolverProtocol,
-        MemoryPermissionCheckerProtocol,
-    )
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +95,9 @@ class Memory:
         zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
-        entity_registry: EntityResolverProtocol | None = None,
+        entity_registry: Any = None,
         llm_provider: Any = None,
-        permission_enforcer: MemoryPermissionCheckerProtocol | None = None,
+        permission_enforcer: Any = None,
     ):
         """Initialize Memory API.
 
@@ -114,11 +107,9 @@ class Memory:
             zone_id: Current zone ID.
             user_id: Current user ID.
             agent_id: Current agent ID.
-            entity_registry: Entity resolver (Protocol). Falls back to
-                concrete EntityRegistry if not provided.
+            entity_registry: Entity registry instance (MemoryEntityRegistryProtocol).
             llm_provider: Optional LLM provider for reflection/learning.
-            permission_enforcer: Permission checker (Protocol). Falls back to
-                concrete MemoryPermissionEnforcer if not provided.
+            permission_enforcer: Optional permission enforcer (MemoryPermissionProtocol).
         """
         self.session = session
         self.backend = backend
@@ -127,33 +118,35 @@ class Memory:
         self.agent_id = agent_id
         self.llm_provider = llm_provider
 
-        # Initialize entity registry — lazy import for backward compat (Issue #2190)
-        _concrete_entity_registry = None
-        if entity_registry is None:
+        # Initialize components — accept injected deps or fall back
+        if entity_registry is not None:
+            self.entity_registry = entity_registry
+        else:
             from nexus.rebac.entity_registry import EntityRegistry
 
-            _concrete_entity_registry = EntityRegistry(session)
-            entity_registry = _concrete_entity_registry
-        self.entity_registry = entity_registry
+            self.entity_registry = EntityRegistry(session)
+
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
 
-        # Initialize permission enforcer — lazy import for backward compat (Issue #2190)
-        if permission_enforcer is None:
+        # Permission enforcer — injected or constructed from ReBAC
+        if permission_enforcer is not None:
+            self.permission_enforcer = permission_enforcer
+        else:
             from sqlalchemy import Engine
 
             from nexus.rebac.manager import EnhancedReBACManager
-            from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+            from nexus.rebac.memory_permission_enforcer import (
+                MemoryPermissionEnforcer,
+            )
 
             bind = session.get_bind()
             assert isinstance(bind, Engine), "Expected Engine, got Connection"
-            self.rebac_manager = EnhancedReBACManager(bind)
-
-            permission_enforcer = MemoryPermissionEnforcer(
-                memory_router=self.memory_router,  # type: ignore[arg-type]
-                entity_registry=_concrete_entity_registry,
-                rebac_manager=self.rebac_manager,
+            rebac_manager = EnhancedReBACManager(bind)
+            self.permission_enforcer = MemoryPermissionEnforcer(
+                memory_router=self.memory_router,
+                entity_registry=self.entity_registry,
+                rebac_manager=rebac_manager,
             )
-        self.permission_enforcer = permission_enforcer
 
         # Create operation context
         self.context = OperationContext(
@@ -163,9 +156,9 @@ class Memory:
         )
 
         # Composed services (#1498)
-        from nexus.services.memory.ace_facade import AceFacade
-        from nexus.services.memory.state import MemoryStateManager
-        from nexus.services.memory.versioning import MemoryVersioning
+        from nexus.bricks.memory.ace_facade import AceFacade
+        from nexus.bricks.memory.state import MemoryStateManager
+        from nexus.bricks.memory.versioning import MemoryVersioning
 
         self._versioning = MemoryVersioning(
             session_factory=lambda: session,
@@ -363,7 +356,7 @@ class Memory:
         """
         import json
 
-        from nexus.services.memory.enrichment import EnrichmentFlags, EnrichmentPipeline
+        from nexus.bricks.memory.enrichment import EnrichmentFlags, EnrichmentPipeline
 
         # Build enrichment flags from store() parameters
         enrichment_flags = EnrichmentFlags(
@@ -464,7 +457,7 @@ class Memory:
         # #1190: Detect memory evolution relationships (opt-in)
         if detect_evolution and text_content:
             try:
-                from nexus.services.memory.evolution_detector import (
+                from nexus.bricks.memory.evolution_detector import (
                     MemoryEvolutionDetector,
                     apply_evolution_results,
                 )
@@ -537,15 +530,14 @@ class Memory:
             relationships_json: JSON string of extracted relationships
         """
         import json
+        import os
 
-        from nexus.core.sync_bridge import run_sync
-
-        # Get database URL from session's engine
-        from nexus.lib.env import get_database_url
+        from nexus.bricks.memory._sync import run_sync
         from nexus.search.graph_store import GraphStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        db_url = get_database_url() or ""
+        # Get database URL from session's engine
+        db_url = os.environ.get("NEXUS_DATABASE_URL", "")
         if not db_url:
             # Try to get from the session's engine bind
             try:
@@ -561,7 +553,7 @@ class Memory:
             return
 
         # Use default zone if not provided
-        effective_zone_id = zone_id or ROOT_ZONE_ID
+        effective_zone_id = zone_id or "root"
 
         async def _do_store() -> None:
             _store = SQLAlchemyRecordStore(db_url=db_url)
@@ -843,7 +835,7 @@ class Memory:
         content_map = self.backend.batch_read_content(content_hashes)
 
         # Build results with enriched content using Pydantic models (#1498)
-        from nexus.services.memory.response_models import MemoryQueryResponse
+        from nexus.bricks.memory.response_models import MemoryQueryResponse
 
         results = []
         for memory in accessible_memories:
@@ -926,7 +918,7 @@ class Memory:
         """
         import json
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         # #1023: Validate and normalize temporal parameters
         after_dt, before_dt = validate_temporal_params(after, before, during)
@@ -1047,7 +1039,7 @@ class Memory:
             scored_memories = scored_memories[:limit]
 
             # Build result list with content using Pydantic model (#1498)
-            from nexus.services.memory.response_models import MemorySearchResponse
+            from nexus.bricks.memory.response_models import MemorySearchResponse
 
             results = []
             for memory, score, semantic_score, keyword_score in scored_memories:
@@ -1256,6 +1248,19 @@ class Memory:
         """Public wrapper for version resolution (#1193). Delegates to MemoryVersioning."""
         return self._versioning.resolve_to_current(memory_id)
 
+    # ── Path resolution (#2177) ──────────────────────────────────────
+
+    @staticmethod
+    def is_memory_path(path: str) -> bool:
+        """Check if a path is a memory virtual path."""
+        from nexus.bricks.memory.router import MemoryViewRouter
+
+        return MemoryViewRouter.is_memory_path(path)
+
+    def resolve(self, virtual_path: str) -> Any:
+        """Resolve virtual path to canonical memory."""
+        return self.memory_router.resolve(virtual_path)
+
     def ensure_upsert_key(self, memory_id: str, existing: dict[str, Any]) -> str:
         """Ensure memory has a path_key for upsert operations (#1193).
 
@@ -1330,7 +1335,7 @@ class Memory:
             created_at=memory.created_at,
         )
 
-        from nexus.services.memory.response_models import MemoryDetailResponse
+        from nexus.bricks.memory.response_models import MemoryDetailResponse
 
         return MemoryDetailResponse.from_memory_model(
             memory,
@@ -1396,7 +1401,7 @@ class Memory:
         # Read content via DRY helper (#1498), try JSON parse for structured content
         content = self._read_content(memory.content_hash, parse_json=True)
 
-        from nexus.services.memory.response_models import MemoryRetrieveResponse
+        from nexus.bricks.memory.response_models import MemoryRetrieveResponse
 
         return MemoryRetrieveResponse.from_memory_model(
             memory,
@@ -1546,7 +1551,7 @@ class Memory:
         # Use provided context or fall back to instance context
         check_context = context or self.context
 
-        from nexus.services.memory.response_models import MemoryListResponse
+        from nexus.bricks.memory.response_models import MemoryListResponse
 
         results = []
         for memory in memories:
@@ -1586,7 +1591,7 @@ class Memory:
 
     def start_trajectory(self, task_description: str, task_type: str | None = None) -> str:
         """Start tracking a new execution trajectory. Delegates to ACE TrajectoryManager."""
-        return self._ace.trajectory.start_trajectory(task_description, task_type)
+        return self._ace.trajectory.start_trajectory(task_description, task_type)  # type: ignore[no-any-return]
 
     def log_trajectory_step(
         self, trajectory_id: str, step_type: str, description: str, result: Any = None
@@ -1609,7 +1614,7 @@ class Memory:
         metrics: dict[str, Any] | None = None,
     ) -> str:
         """Complete a trajectory with outcome. Delegates to ACE TrajectoryManager."""
-        return self._ace.trajectory.complete_trajectory(
+        return self._ace.trajectory.complete_trajectory(  # type: ignore[no-any-return]
             trajectory_id, status, success_score, error_message, metrics
         )
 
@@ -1623,13 +1628,13 @@ class Memory:
         metrics: dict[str, Any] | None = None,
     ) -> str:
         """Add feedback to a completed trajectory. Delegates to ACE FeedbackManager."""
-        return self._ace.feedback.add_feedback(
+        return self._ace.feedback.add_feedback(  # type: ignore[no-any-return]
             trajectory_id, feedback_type, score, source, message, metrics
         )
 
     def get_trajectory_feedback(self, trajectory_id: str) -> builtins.list[dict[str, Any]]:
         """Get all feedback for a trajectory. Delegates to ACE FeedbackManager."""
-        return self._ace.feedback.get_trajectory_feedback(trajectory_id)
+        return self._ace.feedback.get_trajectory_feedback(trajectory_id)  # type: ignore[no-any-return]
 
     def get_effective_score(
         self,
@@ -1637,7 +1642,7 @@ class Memory:
         strategy: Literal["latest", "average", "weighted"] = "latest",
     ) -> float:
         """Get effective score for trajectory. Delegates to ACE FeedbackManager."""
-        return self._ace.feedback.get_effective_score(trajectory_id, strategy)
+        return self._ace.feedback.get_effective_score(trajectory_id, strategy)  # type: ignore[no-any-return]
 
     def mark_for_relearning(self, trajectory_id: str, reason: str, priority: int = 5) -> None:
         """Flag trajectory for re-reflection. Delegates to ACE FeedbackManager."""
@@ -1647,15 +1652,15 @@ class Memory:
         self, feedback_items: builtins.list[dict[str, Any]]
     ) -> builtins.list[str]:
         """Add feedback to multiple trajectories. Delegates to ACE FeedbackManager."""
-        return self._ace.feedback.batch_add_feedback(feedback_items)
+        return self._ace.feedback.batch_add_feedback(feedback_items)  # type: ignore[no-any-return]
 
     async def reflect_async(self, trajectory_id: str, context: str | None = None) -> dict[str, Any]:
         """Reflect on a single trajectory (async). Delegates to ACE Reflector."""
-        return await self._ace.reflector.reflect_async(trajectory_id, context)
+        return await self._ace.reflector.reflect_async(trajectory_id, context)  # type: ignore[no-any-return]
 
     def reflect(self, trajectory_id: str, context: str | None = None) -> dict[str, Any]:
         """Reflect on a single trajectory (sync). Delegates to ACE Reflector."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(self.reflect_async(trajectory_id, context))
 
@@ -1688,10 +1693,13 @@ class Memory:
             ... )
             >>> print(f"Analyzed {patterns['trajectories_analyzed']} trajectories")
         """
+        import importlib
         from datetime import datetime
 
-        from nexus.services.ace.reflection import Reflector
-        from nexus.services.ace.trajectory import TrajectoryManager
+        _ace_reflection = importlib.import_module("nexus.services.ace.reflection")
+        Reflector = _ace_reflection.Reflector  # noqa: N806
+        _ace_trajectory = importlib.import_module("nexus.services.ace.trajectory")
+        TrajectoryManager = _ace_trajectory.TrajectoryManager  # noqa: N806
         from nexus.storage.models import TrajectoryModel
 
         target_agent_id = agent_id or self.agent_id
@@ -1814,7 +1822,7 @@ class Memory:
         task_type: str | None = None,
     ) -> dict[str, Any]:
         """Batch reflection across multiple trajectories (sync)."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(self.batch_reflect_async(agent_id, since, min_trajectories, task_type))
 
@@ -1825,7 +1833,7 @@ class Memory:
         )
         if not playbooks:
             return None
-        return self._ace.playbook.get_playbook(playbooks[0]["playbook_id"])
+        return self._ace.playbook.get_playbook(playbooks[0]["playbook_id"])  # type: ignore[no-any-return]
 
     def update_playbook(
         self, strategies: builtins.list[dict[str, Any]], playbook_name: str = "default"
@@ -1867,7 +1875,7 @@ class Memory:
             )
         else:
             playbook_id = playbook["playbook_id"]
-        return self._ace.curator.curate_playbook(playbook_id, reflections)
+        return self._ace.curator.curate_playbook(playbook_id, reflections)  # type: ignore[no-any-return]
 
     async def consolidate_async(
         self,
@@ -1907,7 +1915,7 @@ class Memory:
         importance_threshold: float = 0.8,
     ) -> dict[str, Any]:
         """Consolidate memories (sync). Delegates to ACE ConsolidationEngine."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(
             self.consolidate_async(
@@ -1959,7 +1967,7 @@ class Memory:
         **task_kwargs: Any,
     ) -> tuple[Any, str]:
         """Execute with automatic learning loop (sync). Delegates to ACE LearningLoop."""
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(
             self.execute_with_learning_async(
@@ -1978,7 +1986,7 @@ class Memory:
     ) -> builtins.list[dict[str, Any]]:
         """Query execution trajectories. Delegates to ACE TrajectoryManager."""
         target_agent_id = agent_id or self.agent_id
-        return self._ace.trajectory.query_trajectories(
+        return self._ace.trajectory.query_trajectories(  # type: ignore[no-any-return]
             agent_id=target_agent_id, status=status, limit=limit
         )
 
@@ -1987,13 +1995,13 @@ class Memory:
     ) -> builtins.list[dict[str, Any]]:
         """Query playbooks. Delegates to ACE PlaybookManager."""
         target_agent_id = agent_id or self.agent_id
-        return self._ace.playbook.query_playbooks(
+        return self._ace.playbook.query_playbooks(  # type: ignore[no-any-return]
             agent_id=target_agent_id, scope=scope, limit=limit
         )
 
     def process_relearning(self, limit: int = 10) -> builtins.list[dict[str, Any]]:
         """Process trajectories flagged for re-learning. Delegates to ACE LearningLoop."""
-        return self._ace.learning_loop.process_relearning_queue(limit)
+        return self._ace.learning_loop.process_relearning_queue(limit)  # type: ignore[no-any-return]
 
     async def index_memories_async(
         self,
@@ -2133,7 +2141,7 @@ class Memory:
             >>> result = memory.index_memories()
             >>> print(f"Indexed {result['success_count']} memories")
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.bricks.memory._sync import run_sync
 
         return run_sync(
             self.index_memories_async(embedding_provider, batch_size, memory_type, scope)

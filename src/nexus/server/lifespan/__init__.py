@@ -32,8 +32,9 @@ def _compute_features_info(app: FastAPI) -> None:
     from nexus.contracts.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
     from nexus.server.api.core.features import FeaturesResponse, PerformanceTuningInfo
 
-    # Read profile from app state (set during server init)
-    profile_str: str = app.state.deployment_profile
+    # Read profile from app state (set during server init).
+    # Use getattr() for resilience — e2e tests may create apps without init_app_state().
+    profile_str: str = getattr(app.state, "deployment_profile", "full")
     try:
         profile = DeploymentProfile(profile_str)
     except ValueError:
@@ -41,9 +42,11 @@ def _compute_features_info(app: FastAPI) -> None:
         profile = DeploymentProfile.FULL
 
     # Read enabled_bricks from app state (set during factory wiring)
-    enabled: frozenset[str] = app.state.enabled_bricks or profile.default_bricks()
+    enabled: frozenset[str] = (
+        getattr(app.state, "enabled_bricks", frozenset()) or profile.default_bricks()
+    )
 
-    mode: str = app.state.deployment_mode
+    mode: str = getattr(app.state, "deployment_mode", "standalone")
 
     # Get version
     version: str | None = None
@@ -57,7 +60,7 @@ def _compute_features_info(app: FastAPI) -> None:
     disabled = sorted(ALL_BRICK_NAMES - enabled)
 
     # Issue #2071: include performance tuning summary
-    _pt = app.state.profile_tuning
+    _pt = getattr(app.state, "profile_tuning", None)
     _perf_info = None
     if _pt is not None:
         _perf_info = PerformanceTuningInfo(

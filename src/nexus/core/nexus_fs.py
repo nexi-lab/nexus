@@ -1040,13 +1040,17 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
         # Issue #625: Observer + hook coverage for mkdir
+        # Issue #1631: Direct typed dispatch with error handling.
         new_revision = self._increment_zone_revision()
-        if self._write_observer:
-            self._write_observer.on_mkdir(
-                path=path,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
-            )
+        if (obs := self._write_observer) is not None:
+            try:
+                obs.on_mkdir(
+                    path=path,
+                    zone_id=ctx.zone_id,
+                    agent_id=ctx.agent_id,
+                )
+            except Exception as e:
+                self._handle_observer_error("mkdir", path, e)
         self._fire_post_mutation_hooks(
             MutationOp.MKDIR,
             path,
@@ -1198,14 +1202,18 @@ class NexusFS(  # type: ignore[misc]
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
         # Issue #625: Observer + hook coverage for rmdir
+        # Issue #1631: Direct typed dispatch with error handling.
         new_revision = self._increment_zone_revision()
-        if self._write_observer:
-            self._write_observer.on_rmdir(
-                path=path,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
-                recursive=recursive,
-            )
+        if (obs := self._write_observer) is not None:
+            try:
+                obs.on_rmdir(
+                    path=path,
+                    zone_id=ctx.zone_id,
+                    agent_id=ctx.agent_id,
+                    recursive=recursive,
+                )
+            except Exception as e:
+                self._handle_observer_error("rmdir", path, e)
         self._fire_post_mutation_hooks(
             MutationOp.RMDIR,
             path,

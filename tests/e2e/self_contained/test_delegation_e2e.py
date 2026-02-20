@@ -15,13 +15,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.server.api.v2.routers.delegation import router
-from nexus.services.delegation.models import (
+from nexus.bricks.delegation.models import (
     DelegationMode,
     DelegationRecord,
     DelegationResult,
     DelegationStatus,
 )
+from nexus.server.api.v2.routers.delegation import router
 
 # ---------------------------------------------------------------------------
 # Fixtures

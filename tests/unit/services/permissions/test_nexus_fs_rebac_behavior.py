@@ -90,7 +90,11 @@ class MockNexusFS:
         if op_context.is_admin or op_context.is_system:
             return
 
-        permission_map = {"execute": Permission.EXECUTE, "write": Permission.WRITE, "read": Permission.READ}
+        permission_map = {
+            "execute": Permission.EXECUTE,
+            "write": Permission.WRITE,
+            "read": Permission.READ,
+        }
         perm_enum = permission_map.get(required_permission, Permission.EXECUTE)
 
         if resource[0] == "file":
@@ -205,7 +209,11 @@ class MockNexusFS:
         context: Any = None,
     ) -> dict[str, Any]:
         self._check_share_permission(resource=resource, context=context)
-        relation_map = {"viewer": "shared-viewer", "editor": "shared-editor", "owner": "shared-owner"}
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
         if relation not in relation_map:
             raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
         tuple_relation = relation_map[relation]
@@ -213,6 +221,7 @@ class MockNexusFS:
         if expires_at is not None:
             if isinstance(expires_at, str):
                 from datetime import datetime as dt
+
                 expires_dt = dt.fromisoformat(expires_at.replace("Z", "+00:00"))
             else:
                 expires_dt = expires_at
@@ -224,7 +233,11 @@ class MockNexusFS:
             subject_zone_id=user_zone_id,
             expires_at=expires_dt,
         )
-        return {"tuple_id": result.tuple_id, "revision": result.revision, "consistency_token": result.consistency_token}
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
 
     def share_with_group(
         self,
@@ -237,7 +250,11 @@ class MockNexusFS:
         context: Any = None,
     ) -> dict[str, Any]:
         self._check_share_permission(resource=resource, context=context)
-        relation_map = {"viewer": "shared-viewer", "editor": "shared-editor", "owner": "shared-owner"}
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
         if relation not in relation_map:
             raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
         tuple_relation = relation_map[relation]
@@ -245,6 +262,7 @@ class MockNexusFS:
         if expires_at is not None:
             if isinstance(expires_at, str):
                 from datetime import datetime as dt
+
                 expires_dt = dt.fromisoformat(expires_at.replace("Z", "+00:00"))
             else:
                 expires_dt = expires_at
@@ -256,7 +274,11 @@ class MockNexusFS:
             subject_zone_id=group_zone_id,
             expires_at=expires_dt,
         )
-        return {"tuple_id": result.tuple_id, "revision": result.revision, "consistency_token": result.consistency_token}
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
 
     def list_outgoing_shares(
         self,
@@ -268,7 +290,11 @@ class MockNexusFS:
     ) -> dict[str, Any]:
         from nexus.rebac.cache.iterator import CursorExpiredError
 
-        relation_to_level = {"shared-viewer": "viewer", "shared-editor": "editor", "shared-owner": "owner"}
+        relation_to_level = {
+            "shared-viewer": "viewer",
+            "shared-editor": "editor",
+            "shared-owner": "owner",
+        }
 
         def _transform(tuples):
             return [
@@ -295,21 +321,35 @@ class MockNexusFS:
         if cursor:
             try:
                 items, next_cursor, total = self._require_rebac._iterator_cache.get_page(
-                    cursor_id=cursor, offset=offset, limit=limit,
+                    cursor_id=cursor,
+                    offset=offset,
+                    limit=limit,
                 )
-                return {"items": items, "next_cursor": next_cursor, "total_count": total, "has_more": next_cursor is not None}
+                return {
+                    "items": items,
+                    "next_cursor": next_cursor,
+                    "total_count": total,
+                    "has_more": next_cursor is not None,
+                }
             except CursorExpiredError:
                 pass
 
         resource_str = f"{resource[0]}:{resource[1]}" if resource else "all"
         query_hash = f"outgoing:{current_zone}:{resource_str}"
         cursor_id, all_results, total = self._require_rebac._iterator_cache.get_or_create(
-            query_hash=query_hash, zone_id=current_zone, compute_fn=_compute,
+            query_hash=query_hash,
+            zone_id=current_zone,
+            compute_fn=_compute,
         )
         items = all_results[offset : offset + limit]
         has_more = offset + limit < total
         next_cursor_val = cursor_id if has_more else None
-        return {"items": items, "next_cursor": next_cursor_val, "total_count": total, "has_more": has_more}
+        return {
+            "items": items,
+            "next_cursor": next_cursor_val,
+            "total_count": total,
+            "has_more": has_more,
+        }
 
     def list_incoming_shares(
         self,
@@ -320,7 +360,11 @@ class MockNexusFS:
     ) -> dict[str, Any]:
         from nexus.rebac.cache.iterator import CursorExpiredError
 
-        relation_to_level = {"shared-viewer": "viewer", "shared-editor": "editor", "shared-owner": "owner"}
+        relation_to_level = {
+            "shared-viewer": "viewer",
+            "shared-editor": "editor",
+            "shared-owner": "owner",
+        }
 
         def _transform(tuples):
             return [
@@ -347,20 +391,34 @@ class MockNexusFS:
         if cursor:
             try:
                 items, next_cursor, total = self._require_rebac._iterator_cache.get_page(
-                    cursor_id=cursor, offset=offset, limit=limit,
+                    cursor_id=cursor,
+                    offset=offset,
+                    limit=limit,
                 )
-                return {"items": items, "next_cursor": next_cursor, "total_count": total, "has_more": next_cursor is not None}
+                return {
+                    "items": items,
+                    "next_cursor": next_cursor,
+                    "total_count": total,
+                    "has_more": next_cursor is not None,
+                }
             except CursorExpiredError:
                 pass
 
         query_hash = f"incoming:{current_zone}:{user_id}"
         cursor_id, all_results, total = self._require_rebac._iterator_cache.get_or_create(
-            query_hash=query_hash, zone_id=current_zone, compute_fn=_compute,
+            query_hash=query_hash,
+            zone_id=current_zone,
+            compute_fn=_compute,
         )
         items = all_results[offset : offset + limit]
         has_more = offset + limit < total
         next_cursor_val = cursor_id if has_more else None
-        return {"items": items, "next_cursor": next_cursor_val, "total_count": total, "has_more": has_more}
+        return {
+            "items": items,
+            "next_cursor": next_cursor_val,
+            "total_count": total,
+            "has_more": has_more,
+        }
 
     def get_dynamic_viewer_config(
         self,

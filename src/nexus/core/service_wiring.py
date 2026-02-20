@@ -193,6 +193,10 @@ def wire_services(fs: Any) -> None:
 
     fs.skill_service = _SkillService(gateway=fs._gateway)
 
+    # SkillPackageService: from BrickServices (Issue #2035)
+    if brk_svc.skill_package_service is not None:
+        fs.skill_package_service = brk_svc.skill_package_service
+
     # SearchService: always built at wire time (Issue #2034)
     _pre_search = getattr(fs, "_pre_search_service", None)
     if _pre_search is not None:

@@ -249,8 +249,12 @@ class NexusFS(  # type: ignore[misc]
         # VFS Hook Pipeline — use injected pipeline from KernelServices if available
         from nexus.core.vfs_hooks import VFSHookPipeline
 
-        _injected_pipeline = getattr(self._kernel_services, "hook_pipeline", None) if self._kernel_services else None
-        self._hook_pipeline: VFSHookPipeline = _injected_pipeline if _injected_pipeline is not None else VFSHookPipeline()
+        _injected_pipeline = (
+            getattr(self._kernel_services, "hook_pipeline", None) if self._kernel_services else None
+        )
+        self._hook_pipeline: VFSHookPipeline = (
+            _injected_pipeline if _injected_pipeline is not None else VFSHookPipeline()
+        )
         self._post_mutation_hooks: builtins.list[Any] = []
 
         # Wire self-dependent services, then register hooks
@@ -1237,11 +1241,17 @@ class NexusFS(  # type: ignore[misc]
         "get_dynamic_viewer_config": ("rebac_service", "get_dynamic_viewer_config_sync"),
         "namespace_create": ("rebac_service", "namespace_create_sync"),
         "namespace_delete": ("rebac_service", "namespace_delete_sync"),
+        "namespace_list": ("rebac_service", "namespace_list_sync"),
         "get_namespace": ("rebac_service", "get_namespace_sync"),
+        # ReBACService direct methods (no _sync suffix)
+        "rebac_expand_with_privacy": ("rebac_service", "rebac_expand_with_privacy"),
         # SkillService (Issue #2035): NexusFS facade → skill_service RPC methods
         "skills_share": ("skill_service", "rpc_share"),
         "skills_discover": ("skill_service", "rpc_discover"),
         "skills_get_prompt_context": ("skill_service", "rpc_get_prompt_context"),
+        # SkillPackageService (Issue #2035): NexusFS facade → skill_package_service
+        "skills_import": ("skill_package_service", "import_skill"),
+        "skills_validate_zip": ("skill_package_service", "validate_zip"),
     }
 
     def __getattr__(self, name: str) -> Any:
@@ -1537,6 +1547,60 @@ class NexusFS(  # type: ignore[misc]
 
     def get_mount(self, mount_point: str, context: Any = None) -> dict[str, Any] | None:
         return self._mount_core_service.get_mount(mount_point=mount_point, context=context)
+
+    def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
+        """Grant direct_owner permission to the user who created the mount."""
+        import logging as _logging
+
+        _log = _logging.getLogger(__name__)
+        _log.info(f"Setting up mount point: {mount_point}")
+
+        # Create directory entry for the mount point
+        try:
+            self.mkdir(mount_point, parents=True, exist_ok=True)
+        except Exception as e:
+            _log.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
+
+        # Grant direct_owner permission to the creating user
+        if context:
+            from nexus.core.context_utils import get_user_identity, get_zone_id
+
+            subject_type, subject_id = get_user_identity(context)
+            zone_id = get_zone_id(context)
+
+            if subject_id and hasattr(self, "rebac_service"):
+                try:
+                    self.rebac_service.rebac_create_sync(
+                        subject=(subject_type, subject_id),
+                        relation="direct_owner",
+                        object=("file", mount_point),
+                        zone_id=zone_id,
+                    )
+                except Exception as e:
+                    _log.warning(
+                        f"Failed to grant direct_owner for {mount_point}: {type(e).__name__}: {e}"
+                    )
+
+    def _matches_patterns(
+        self,
+        file_path: str,
+        include_patterns: builtins.list[str] | None = None,
+        exclude_patterns: builtins.list[str] | None = None,
+    ) -> bool:
+        """Check if file path matches include/exclude patterns."""
+        import fnmatch as _fnmatch
+
+        # Check include patterns
+        if include_patterns:
+            if not any(_fnmatch.fnmatch(file_path, p) for p in include_patterns):
+                return False
+
+        # Check exclude patterns
+        if exclude_patterns:
+            if any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns):
+                return False
+
+        return True
 
     # --- Search (list/glob/grep already have concrete impls below) ---
 

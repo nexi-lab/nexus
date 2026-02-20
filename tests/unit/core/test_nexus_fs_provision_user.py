@@ -47,6 +47,15 @@ def nx_with_db(tmp_path):
     # Mock ReBAC so we don't need real ReBAC setup
     nx._rebac_manager = MagicMock()
 
+    # Update the already-wired UserProvisioningService with mocked dependencies
+    # (service_wiring runs during __init__, before these mocks are set)
+    ups = getattr(nx, "_user_provisioning_service", None)
+    if ups is not None:
+        ups._entity_registry = mock_registry
+        ups._api_key_creator = mock_key_creator
+        ups._rebac_manager = nx._rebac_manager
+        ups._session_factory = session_factory
+
     return nx
 
 
@@ -223,6 +232,10 @@ class TestProvisionUserPartialFailure:
 
     def test_api_key_creator_not_injected(self, nx_with_db):
         nx_with_db._api_key_creator = None
+        # Also update the service (Issue #2033: provision_user delegated to service)
+        ups = getattr(nx_with_db, "_user_provisioning_service", None)
+        if ups is not None:
+            ups._api_key_creator = None
         with pytest.raises(RuntimeError, match="API key creator not injected"):
             nx_with_db.provision_user(
                 user_id="alice",
@@ -234,15 +247,23 @@ class TestProvisionUserPartialFailure:
     def test_no_session_local_raises(self, tmp_path):
         """Missing SessionLocal should raise TypeError (None is not callable)."""
         nx = make_test_nexus(tmp_path)
-        nx._entity_registry = MagicMock()
-        nx._entity_registry.get_entity.return_value = None
+        mock_registry = MagicMock()
+        mock_registry.get_entity.return_value = None
+        nx._entity_registry = mock_registry
+        # Update service with entity_registry but leave session_factory as None
+        ups = getattr(nx, "_user_provisioning_service", None)
+        if ups is not None:
+            ups._entity_registry = mock_registry
+            ups._session_factory = None
         # Don't set SessionLocal — it defaults to None
         with pytest.raises(TypeError):
             nx.provision_user(user_id="alice", email="alice@example.com")
 
     def test_directory_creation_failure_continues(self, nx_with_db):
         """If directory creation fails, provisioning should continue."""
-        with patch.object(nx_with_db, "_create_user_directories", side_effect=OSError("disk full")):
+        # Issue #2033: _create_user_directories is now on UserProvisioningService
+        target = getattr(nx_with_db, "_user_provisioning_service", nx_with_db)
+        with patch.object(target, "_create_user_directories", side_effect=OSError("disk full")):
             result = nx_with_db.provision_user(
                 user_id="alice",
                 email="alice@example.com",

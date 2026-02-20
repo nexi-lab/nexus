@@ -122,14 +122,23 @@ class MessageProcessorRegistry:
         Called during application shutdown. Waits for all pending
         handler tasks to complete.
         """
-        tasks = []
-        for agent_id, processor in self._processors.items():
-            logger.debug("Stopping processor for agent %s", agent_id)
-            tasks.append(processor.stop())
+        async with self._lock:
+            for agent_id, processor in self._processors.items():
+                try:
+                    await processor.stop()
+                    logger.info("Stopped MessageProcessor for agent %s", agent_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to stop MessageProcessor for agent %s: %s",
+                        agent_id,
+                        exc,
+                        exc_info=True,
+                    )
+            self._processors.clear()
 
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-            logger.info("Stopped %d MessageProcessor(s)", len(tasks))
+    def count(self) -> int:
+        """Return the number of registered processors."""
+        return len(self._processors)
 
     def list_agents(self) -> list[str]:
         """List all agent IDs with registered processors.

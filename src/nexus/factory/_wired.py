@@ -283,6 +283,15 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] EventsService disabled by profile")
 
+    # --- MetadataExportService: JSONL metadata export/import ---
+    metadata_export_service: Any = None
+    try:
+        from nexus.factory._metadata_export import create_metadata_export_service
+
+        metadata_export_service = create_metadata_export_service(nx)
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] MetadataExportService unavailable: %s", exc)
+
     result = {
         "rebac_service": rebac_service,
         "mount_service": mount_service,
@@ -301,6 +310,7 @@ def _boot_wired_services(
         "share_link_service": share_link_service,
         "events_service": events_service,
         "task_queue_service": brick_services.task_queue_service,
+        "metadata_export_service": metadata_export_service,
     }
 
     elapsed = time.perf_counter() - t0

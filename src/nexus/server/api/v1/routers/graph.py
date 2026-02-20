@@ -48,7 +48,7 @@ async def _graph_session(
     Yields:
         A ``GraphStore`` instance ready for queries.
     """
-    from nexus.search.graph_store import GraphStore
+    from nexus.bricks.search.graph_store import GraphStore
 
     async with async_session_factory() as session:
         yield GraphStore(record_store, session, zone_id=zone_id)

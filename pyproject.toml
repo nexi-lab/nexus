@@ -572,7 +572,7 @@ module = "nexus.storage.cache"
 disable_error_code = ["no-any-return", "misc", "call-overload", "import-untyped"]
 
 [[tool.mypy.overrides]]
-module = "nexus.search.embeddings"
+module = "nexus.bricks.search.embeddings"
 # Provider wrapper class has complex inheritance, openai stubs mismatch
 disable_error_code = ["override", "attr-defined"]
 
@@ -617,6 +617,9 @@ module = [
     "nexus.core.agent_registry",
     "nexus.identity.key_service",
     "nexus.core.reputation_service",
+    "nexus.rebac.cache.iterator",
+    "nexus.rebac.cache.boundary",
+    "nexus.rebac.cache.result_cache",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -694,7 +697,7 @@ disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-module = "nexus.search.semantic"
+module = "nexus.bricks.search.semantic"
 # Inherits same suppressions as raft-callers group + misc for "None" not callable
 disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false

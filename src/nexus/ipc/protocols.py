@@ -84,7 +84,7 @@ class EventSubscriber(Protocol):
     inbox messages.
     """
 
-    async def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
+    def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
         """Subscribe to events on a channel. Yields events as they arrive."""
         ...
 

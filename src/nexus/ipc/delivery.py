@@ -35,7 +35,7 @@ from nexus.ipc.exceptions import (
     InboxFullError,
     InboxNotFoundError,
 )
-from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
+from nexus.ipc.protocols import EventPublisher, EventSubscriber, HotPathPublisher, HotPathSubscriber
 from nexus.ipc.storage.protocol import IPCStorageDriver
 from nexus.storage.zone_settings import SigningMode
 
@@ -378,7 +378,7 @@ class MessageProcessor:
         signing_mode: SigningMode = SigningMode.OFF,
         max_retries: int = 3,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
-        event_subscriber: EventPublisher | None = None,
+        event_subscriber: EventSubscriber | None = None,
     ) -> None:
         self._storage = storage
         self._agent_id = agent_id

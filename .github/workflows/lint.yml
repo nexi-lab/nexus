@@ -65,6 +65,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python (for PyO3 crates)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dev headers
+        run: sudo apt-get update && sudo apt-get install -y python3-dev
+
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -104,6 +112,8 @@ jobs:
           echo "::endgroup::"
 
       - name: Run Rust tests
+        env:
+          PYO3_PYTHON: python3
         run: |
           for crate in nexus_tasks nexus_core nexus_pyo3 nexus_wal; do
             echo "::group::test $crate"

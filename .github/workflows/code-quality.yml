@@ -202,6 +202,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install import-linter
+          pip install -e .
 
       - name: Cache import graph
         uses: actions/cache@v4

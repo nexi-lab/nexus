@@ -40,7 +40,7 @@ def upgrade() -> None:
             sa.Column("task_type", sa.Text(), nullable=False),
             sa.Column(
                 "payload",
-                postgresql.JSONB(astext_type=sa.Text()),
+                sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"),
                 server_default="{}",
                 nullable=False,
             ),

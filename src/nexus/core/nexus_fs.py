@@ -16,7 +16,7 @@ from nexus.backends.backend import Backend
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.core.mutation_hooks import MutationOp
+from nexus.lib.mutation_hooks import MutationOp
 
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry

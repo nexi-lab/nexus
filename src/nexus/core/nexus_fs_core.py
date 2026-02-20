@@ -26,7 +26,7 @@ from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNot
 from nexus.contracts.types import Permission
 from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
-from nexus.core.mutation_hooks import MutationOp
+from nexus.lib.mutation_hooks import MutationOp
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -256,7 +256,7 @@ class NexusFSCoreMixin:
         if not hooks:
             return
 
-        from nexus.core.mutation_hooks import MutationEvent
+        from nexus.lib.mutation_hooks import MutationEvent
 
         event = MutationEvent(
             operation=op,

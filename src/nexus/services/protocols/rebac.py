@@ -1,67 +1,84 @@
-"""ReBAC Brick protocol (Issue #1385).
+"""ReBAC Brick protocol — unified (Issue #1385, #1891).
 
-Defines the contract for the ReBAC brick that the kernel and services
-layer uses to interact with the brick without hard-coupling to internals.
+Defines the single contract for ReBAC authorization that the kernel,
+services layer, and consumers use. Merges the former ``PermissionProtocol``
+(async Zanzibar APIs) and ``ReBACBrickProtocol`` (lifecycle + bulk APIs)
+into one protocol.
 
-This is separate from PermissionProtocol (which defines the 6 core Zanzibar
-APIs). ReBACBrickProtocol defines the brick lifecycle + extended APIs.
+All methods are async (matching the ReBACService implementation).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.rebac.types import WriteResult
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
 class ReBACBrickProtocol(Protocol):
-    """Brick contract for ReBAC operations (Issue #1385).
+    """Unified brick contract for ReBAC operations.
 
-    Extends beyond the 6 core Zanzibar APIs to include lifecycle
-    management, bulk operations, and brick metadata.
+    Merges core Zanzibar APIs, bulk APIs, and brick lifecycle.
+    All methods are async per convention (Issue #1891).
     """
 
     # ── Core Zanzibar APIs ──────────────────────────────────────────
 
-    def rebac_check(
+    async def rebac_check(
         self,
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        context: dict[str, Any] | None = None,
+        context: Any = None,
         zone_id: str | None = None,
     ) -> bool: ...
 
-    def rebac_write(
+    async def rebac_check_batch(
         self,
-        subject: tuple[str, str] | tuple[str, str, str],
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+        zone_id: str | None = None,
+    ) -> list[bool]: ...
+
+    async def rebac_create(
+        self,
+        subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
         expires_at: Any | None = None,
-        conditions: dict[str, Any] | None = None,
         zone_id: str | None = None,
-    ) -> WriteResult: ...
+        context: Any = None,
+        column_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
 
-    def rebac_delete(self, tuple_id: str) -> bool: ...
+    async def rebac_delete(self, tuple_id: str) -> bool: ...
 
-    def rebac_expand(
+    async def rebac_expand(
         self,
         permission: str,
         object: tuple[str, str],
         zone_id: str | None = None,
+        limit: int = 100,
     ) -> list[tuple[str, str]]: ...
+
+    async def rebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        relation_in: list[str] | None = None,
+        zone_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
 
     # ── Bulk APIs ───────────────────────────────────────────────────
 
-    def rebac_check_bulk(
+    async def rebac_check_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]: ...
 
-    def rebac_list_objects(
+    async def rebac_list_objects(
         self,
         subject: tuple[str, str],
         permission: str,
@@ -74,11 +91,11 @@ class ReBACBrickProtocol(Protocol):
 
     # ── Brick Lifecycle ─────────────────────────────────────────────
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         """Initialize the brick (create tables, warm caches)."""
         ...
 
-    def shutdown(self) -> None:
+    async def shutdown(self) -> None:
         """Gracefully shut down the brick (flush caches, close connections)."""
         ...
 

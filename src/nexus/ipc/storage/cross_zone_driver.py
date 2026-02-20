@@ -6,7 +6,7 @@ same protocol (Recursive Wrapping — LEGO Architecture §4.3 Mechanism 2).
 When a message is written to ``/agents/{recipient}/inbox/...``, this driver:
 
 1. Resolves the recipient's zone via ``AgentRegistryProtocol``
-2. Checks cross-zone permissions via ``PermissionProtocol`` (optional)
+2. Checks cross-zone permissions via ``ReBACBrickProtocol`` (optional)
 3. Delegates the write to the inner driver with the resolved ``zone_id``
 4. Publishes a NATS notification to the target zone (optional)
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from nexus.ipc.protocols import HotPathPublisher
     from nexus.ipc.storage.protocol import IPCStorageDriver
     from nexus.services.protocols.agent_registry import AgentRegistryProtocol
-    from nexus.services.protocols.permission import PermissionProtocol
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class CrossZoneStorageDriver:
         inner: IPCStorageDriver,
         agent_registry: AgentRegistryProtocol,
         local_zone_id: str,
-        permission_checker: PermissionProtocol | None = None,
+        permission_checker: ReBACBrickProtocol | None = None,
         hot_publisher: HotPathPublisher | None = None,
         cache_ttl_seconds: int = 30,
     ) -> None:

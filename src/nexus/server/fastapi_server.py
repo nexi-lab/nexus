@@ -290,8 +290,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Issue #1385: AsyncReBACManager is a thin asyncio.to_thread() wrapper
             # around the sync ReBACManager. Use the existing sync manager from NexusFS.
-            sync_rebac = getattr(_app.state, "nexus_fs", None)
-            sync_rebac = getattr(sync_rebac, "_rebac_manager", None) if sync_rebac else None
+            sync_rebac = _app.state.rebac_manager
             if sync_rebac:
                 _app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
                 logger.info("Async ReBAC manager initialized (wrapping sync manager)")
@@ -321,14 +320,14 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Issue #1239: Create namespace manager for per-subject visibility
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
-                if enforce_permissions and hasattr(_app.state, "nexus_fs"):
-                    sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
+                if enforce_permissions and _app.state.rebac_manager is not None:
+                    sync_rebac = _app.state.rebac_manager
                     if sync_rebac:
                         from nexus.rebac.namespace_factory import (
                             create_namespace_manager,
                         )
 
-                        ns_record_store = getattr(_app.state.nexus_fs, "_record_store", None)
+                        ns_record_store = _app.state.record_store
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
@@ -373,22 +372,14 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize CacheBrick for Dragonfly/Redis or NullCacheStore fallback (Issue #1524)
     # CacheBrick owns all cache domain services with lifecycle management
     try:
-        cache_brick = getattr(
-            getattr(_app.state.nexus_fs, "_brick_services", None),
-            "cache_brick",
-            None,
-        )
+        cache_brick = getattr(_app.state.brick_services, "cache_brick", None)
         if cache_brick is not None:
             await cache_brick.start()
             _app.state.cache_brick = cache_brick
             logger.info("CacheBrick started (Issue #1524)")
 
             # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
-            tiger_cache = getattr(
-                getattr(_app.state.nexus_fs, "_rebac_manager", None),
-                "_tiger_cache",
-                None,
-            )
+            tiger_cache = getattr(_app.state.rebac_manager, "_tiger_cache", None)
             if tiger_cache and cache_brick.tiger_cache is not None:
                 tiger_cache.set_dragonfly_cache(cache_brick.tiger_cache)
                 logger.info(
@@ -422,7 +413,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #1397: Start event bus and wire event log for WAL-first persistence
     if _app.state.nexus_fs:
-        event_bus_ref = getattr(_app.state.nexus_fs, "_event_bus", None)
+        event_bus_ref = _app.state.event_bus
         if event_bus_ref is not None:
             # Connect the underlying DragonflyClient (async init required)
             redis_client = getattr(event_bus_ref, "_redis", None)
@@ -455,9 +446,7 @@ async def lifespan(_app: FastAPI) -> Any:
         from nexus.server.websocket import WebSocketManager
 
         # Get event bus from NexusFS if available
-        event_bus = None
-        if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_event_bus"):
-            event_bus = _app.state.nexus_fs._event_bus
+        event_bus = _app.state.event_bus
 
         _app.state.websocket_manager = WebSocketManager(
             event_bus=event_bus,
@@ -485,13 +474,11 @@ async def lifespan(_app: FastAPI) -> Any:
             # ConflictLogStore is always available for the REST API,
             # even if the full write-back pipeline can't start (no event bus).
             _is_pg = gw.is_postgresql
-            _rs = getattr(_app.state.nexus_fs, "_record_store", None)
+            _rs = _app.state.record_store
             conflict_log_store = ConflictLogStore(record_store=_rs, is_postgresql=_is_pg)
             _app.state.conflict_log_store = conflict_log_store
 
-            wb_event_bus = None
-            if hasattr(_app.state.nexus_fs, "_event_bus"):
-                wb_event_bus = _app.state.nexus_fs._event_bus
+            wb_event_bus = _app.state.event_bus
             if wb_event_bus:
                 backlog_store = SyncBacklogStore(record_store=_rs, is_postgresql=_is_pg)
                 change_log_store = ChangeLogStore(record_store=_rs, is_postgresql=_is_pg)
@@ -524,14 +511,13 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Connect Lock Manager coordination client (Issue #1186)
     # Required for distributed lock REST API endpoints
-    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_coordination_client"):
-        coord_client = _app.state.nexus_fs._coordination_client
-        if coord_client is not None:
-            try:
-                await coord_client.connect()
-                logger.info("Lock manager coordination client connected")
-            except Exception as e:
-                logger.warning(f"Failed to connect lock manager coordination client: {e}")
+    coord_client = _app.state.coordination_client
+    if coord_client is not None:
+        try:
+            await coord_client.connect()
+            logger.info("Lock manager coordination client connected")
+        except Exception as e:
+            logger.warning(f"Failed to connect lock manager coordination client: {e}")
 
     # Hot Search Daemon (Issue #951)
     # Pre-warm search indexes for sub-50ms query response
@@ -572,7 +558,7 @@ async def lifespan(_app: FastAPI) -> Any:
             )
 
             # Inject async_session_factory from RecordStoreABC (Issue #615)
-            _record_store = getattr(_app.state.nexus_fs, "_record_store", None)
+            _record_store = _app.state.record_store
             _async_sf = None
             if _record_store is not None:
                 with suppress(Exception):
@@ -628,7 +614,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Non-blocking: runs in background thread, server starts immediately
     if _app.state.nexus_fs:
         try:
-            tiger_cache = getattr(_app.state.nexus_fs._rebac_manager, "_tiger_cache", None)
+            tiger_cache = getattr(_app.state.rebac_manager, "_tiger_cache", None)
             if tiger_cache:
                 warm_limit = int(os.getenv("NEXUS_TIGER_CACHE_WARM_LIMIT", "500"))
 
@@ -648,7 +634,7 @@ async def lifespan(_app: FastAPI) -> Any:
                     from nexus.rebac.cache.tiger import DirectoryGrantExpander
 
                     expander = DirectoryGrantExpander(
-                        engine=_app.state.nexus_fs._rebac_manager.engine,
+                        engine=_app.state.rebac_manager.engine,
                         tiger_cache=tiger_cache,
                         metadata_store=_app.state.nexus_fs.metadata,
                     )
@@ -737,14 +723,14 @@ async def lifespan(_app: FastAPI) -> Any:
             _bg_t = getattr(getattr(_app.state, "profile_tuning", None), "background_task", None)
             _app.state.agent_registry = AgentRegistry(
                 record_store=_app.state.record_store,
-                entity_registry=getattr(_app.state.nexus_fs, "_entity_registry", None),
+                entity_registry=_app.state.entity_registry,
                 flush_interval=_bg_t.heartbeat_flush_interval if _bg_t else 60,
             )
             # Inject into NexusFS for RPC methods
             _app.state.nexus_fs._agent_registry = _app.state.agent_registry
 
             # Wire into sync PermissionEnforcer
-            perm_enforcer = getattr(_app.state.nexus_fs, "_permission_enforcer", None)
+            perm_enforcer = _app.state.permission_enforcer
             if perm_enforcer is not None:
                 perm_enforcer.agent_registry = _app.state.agent_registry
 
@@ -772,7 +758,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
             # after SQLAlchemyRecordStore.create_all already ran)
-            _nx_engine = getattr(_app.state.nexus_fs, "_sql_engine", None)
+            _nx_engine = _app.state.sql_engine
             if _nx_engine is not None:
                 AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
 
@@ -782,7 +768,7 @@ async def lifespan(_app: FastAPI) -> Any:
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             _app.state.key_service = KeyService(
-                record_store=_app.state.nexus_fs.record_store,
+                record_store=_app.state.record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
@@ -800,9 +786,8 @@ async def lifespan(_app: FastAPI) -> Any:
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        getattr(_app.state.nexus_fs, "_brick_services", None)
-        and _app.state.nexus_fs._brick_services.chunked_upload_service
-        if _app.state.nexus_fs
+        getattr(_app.state.brick_services, "chunked_upload_service", None)
+        if _app.state.brick_services
         else None
     )
     if _factory_upload_svc is not None:
@@ -856,8 +841,10 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #726: Wire circuit breaker from factory for health endpoint access
     # Issue #2130: Wire manifest_resolver to app.state for DI
     if _app.state.nexus_fs:
-        _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
-        _app.state.rebac_circuit_breaker = _brk.rebac_circuit_breaker if _brk else None
+        _brk = _app.state.brick_services
+        _app.state.rebac_circuit_breaker = (
+            getattr(_brk, "rebac_circuit_breaker", None) if _brk else None
+        )
         _app.state.manifest_resolver = getattr(_brk, "manifest_resolver", None) if _brk else None
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
@@ -901,7 +888,7 @@ async def lifespan(_app: FastAPI) -> Any:
             session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
                 # Get AgentEventLog from factory (preferred) or create fallback
-                _brk = getattr(_app.state.nexus_fs, "_brick_services", None)
+                _brk = _app.state.brick_services
                 _factory_event_log = getattr(_brk, "agent_event_log", None) if _brk else None
                 if _factory_event_log is not None:
                     _app.state.agent_event_log = _factory_event_log
@@ -910,7 +897,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
                 # Create SandboxManager for SandboxAuthService
                 # (separate from NexusFS's lazy sandbox manager — different layers)
-                sandbox_config = getattr(_app.state.nexus_fs, "_config", None)
+                sandbox_config = getattr(_app.state.nexus_fs, "config", None)
                 sandbox_mgr = SandboxManager(
                     record_store=_sandbox_rs,
                     e2b_api_key=os.getenv("E2B_API_KEY"),
@@ -925,14 +912,14 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Get NamespaceManager if available (best-effort)
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
-                sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
+                sync_rebac = _app.state.rebac_manager
                 if sync_rebac:
                     try:
                         from nexus.rebac.namespace_factory import (
                             create_namespace_manager,
                         )
 
-                        ns_record_store = getattr(_app.state.nexus_fs, "_record_store", None)
+                        ns_record_store = _app.state.record_store
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
@@ -1045,7 +1032,7 @@ async def lifespan(_app: FastAPI) -> Any:
     logger.info("Shutting down FastAPI Nexus server...")
 
     # Issue #1331: Stop event bus
-    _ebus_stop = getattr(_app.state.nexus_fs, "_event_bus", None) if _app.state.nexus_fs else None
+    _ebus_stop = _app.state.event_bus
     if _ebus_stop is not None:
         try:
             await _ebus_stop.stop()
@@ -1159,8 +1146,9 @@ async def lifespan(_app: FastAPI) -> Any:
         logger.debug("Sparse index backfill task cancelled")
 
     # Issue #913: Cancel any pending event tasks in NexusFS
-    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_event_tasks"):
-        event_tasks = _app.state.nexus_fs._event_tasks.copy()
+    _evt_tasks = getattr(_app.state.nexus_fs, "_event_tasks", None) if _app.state.nexus_fs else None
+    if _evt_tasks:
+        event_tasks = _evt_tasks.copy()
         for task in event_tasks:
             task.cancel()
         if event_tasks:
@@ -1177,14 +1165,13 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.warning(f"Error shutting down WebSocket manager: {e}")
 
     # Disconnect Lock Manager coordination client (Issue #1186)
-    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_coordination_client"):
-        coord_client = _app.state.nexus_fs._coordination_client
-        if coord_client is not None:
-            try:
-                await coord_client.disconnect()
-                logger.info("Lock manager coordination client disconnected")
-            except Exception as e:
-                logger.debug(f"Error disconnecting coordination client: {e}")
+    coord_client = _app.state.coordination_client
+    if coord_client is not None:
+        try:
+            await coord_client.disconnect()
+            logger.info("Lock manager coordination client disconnected")
+        except Exception as e:
+            logger.debug(f"Error disconnecting coordination client: {e}")
 
     if _app.state.subscription_manager:
         await _app.state.subscription_manager.close()
@@ -1369,11 +1356,22 @@ def create_app(
         app.state.read_session_factory = None
         app.state.async_read_session_factory = None
 
-    # Expose kernel services on app.state so routers never reach into
-    # NexusFS private attributes (Issue #701).
+    # Expose kernel services on app.state so routers/lifespan never reach into
+    # NexusFS private attributes (Issue #701, #632).
     app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
     app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
     app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
+    app.state.brick_services = getattr(nexus_fs, "_brick_services", None)
+    app.state.system_services = getattr(nexus_fs, "_system_services", None)
+    app.state.event_bus = getattr(nexus_fs, "_event_bus", None)
+    app.state.coordination_client = getattr(nexus_fs, "_coordination_client", None)
+    app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
+    app.state.sql_engine = getattr(nexus_fs, "_sql_engine", None)
+    app.state.cache_store = getattr(nexus_fs, "_cache_store", None)
+    app.state.snapshot_service = getattr(nexus_fs, "_snapshot_service", None)
+    app.state.llm_provider = getattr(nexus_fs, "_llm_provider", None)
+    app.state.service_extras = getattr(nexus_fs, "_service_extras", {})
+    app.state.write_observer = getattr(nexus_fs, "_write_observer", None)
 
     # Thread pool and timeout settings (Issue #932, #2071)
     _tuning_pool_size = str(app.state.profile_tuning.concurrency.thread_pool_size)

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.core.pipe import (
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 # Re-export exceptions so callers can import from either module
 __all__ = [
+    "PipeManagerProtocol",
     "PipeManager",
     "PipeError",
     "PipeFullError",
@@ -46,6 +47,45 @@ __all__ = [
     "PipeClosedError",
     "PipeNotFoundError",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Protocol (structural interface for service-layer DI)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class PipeManagerProtocol(Protocol):
+    """Structural interface for PipeManager, consumed by services via DI.
+
+    Services depend on this Protocol (not the concrete PipeManager) to
+    maintain the kernel → service dependency direction.
+    Follows VFSLockManagerProtocol pattern in ``core/lock_fast.py``.
+    """
+
+    def mkpipe(
+        self, path: str, *, capacity: int = 65_536, owner_id: str | None = None
+    ) -> RingBuffer: ...
+
+    def open(self, path: str, *, capacity: int = 65_536) -> RingBuffer: ...
+
+    def close(self, path: str) -> None: ...
+
+    def destroy(self, path: str) -> None: ...
+
+    async def pipe_write(self, path: str, data: bytes, *, blocking: bool = True) -> int: ...
+
+    async def pipe_read(self, path: str, *, blocking: bool = True) -> bytes: ...
+
+    def pipe_write_nowait(self, path: str, data: bytes) -> int: ...
+
+    def pipe_peek(self, path: str) -> bytes | None: ...
+
+    def pipe_peek_all(self, path: str) -> list[bytes]: ...
+
+    def list_pipes(self) -> dict[str, dict]: ...
+
+    def close_all(self) -> None: ...
 
 
 class PipeManager:
@@ -70,14 +110,14 @@ class PipeManager:
         self._buffers: dict[str, RingBuffer] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
-    def create(
+    def mkpipe(
         self,
         path: str,
         *,
         capacity: int = 65_536,
         owner_id: str | None = None,
     ) -> RingBuffer:
-        """Create a new named pipe at the given VFS path.
+        """Create a new named pipe at the given VFS path (Linux: ``mkfifo``).
 
         Creates a DT_PIPE inode in MetastoreABC and a RingBuffer in memory.
 

@@ -28,8 +28,6 @@ from nexus.core.path_interner import (
     PathInterner,
     SegmentedPathInterner,
     get_path_interner,
-    get_segmented_interner,
-    reset_global_interners,
 )
 
 
@@ -151,6 +149,4 @@ __all__ = [
     "SegmentedPathInterner",
     "CompactFileMetadata",
     "get_path_interner",
-    "get_segmented_interner",
-    "reset_global_interners",
 ]

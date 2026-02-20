@@ -34,7 +34,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
         return []
 
     try:
-        from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
+        from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
         # Issue #2071: source max_indexing_concurrency from profile tuning
         _search_tuning = getattr(app.state, "profile_tuning", None)
@@ -65,10 +65,27 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
             with contextlib.suppress(Exception):
                 _async_sf = _record_store.async_session_factory
 
-        app.state.search_daemon = SearchDaemon(config, async_session_factory=_async_sf)
+        # Issue #2188: Create ZoektClient via DI (no module-level globals)
+        _zoekt_client = None
+        with contextlib.suppress(ImportError):
+            from nexus.bricks.search.config import search_config_from_env
+            from nexus.bricks.search.zoekt_client import ZoektClient
+
+            _search_cfg = search_config_from_env()
+            if _search_cfg.zoekt_enabled:
+                _zoekt_client = ZoektClient(
+                    base_url=_search_cfg.zoekt_url,
+                    timeout=_search_cfg.zoekt_timeout,
+                    enabled=True,
+                )
+
+        app.state.search_daemon = SearchDaemon(
+            config,
+            async_session_factory=_async_sf,
+            zoekt_client=_zoekt_client,
+        )
         await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True
-        set_search_daemon(app.state.search_daemon)
 
         # Issue #1520: Set FileReaderProtocol for index refresh (replaces _nexus_fs)
         from nexus.factory import _NexusFSFileReader

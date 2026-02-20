@@ -6,12 +6,12 @@ sub-50ms code search across large codebases using trigram indexing.
 Zoekt is optional - if not available, grep falls back to Rust regex.
 
 Usage:
-    # Check if Zoekt is available
-    if zoekt_client.is_available():
-        results = await zoekt_client.search("def authenticate")
+    # Create via DI (factory.py creates and injects)
+    client = ZoektClient(base_url="http://localhost:6070", enabled=True)
+    results = await client.search("def authenticate")
 
-    # Build/rebuild index
-    await zoekt_client.reindex()
+    # Close when done
+    await client.close()
 
 Setup:
     # Start Zoekt with docker-compose
@@ -29,24 +29,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-from nexus.constants import DEFAULT_ZOEKT_URL
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
-# Zoekt configuration from environment
-ZOEKT_URL = os.getenv("ZOEKT_URL", DEFAULT_ZOEKT_URL)
-ZOEKT_ENABLED = os.getenv("ZOEKT_ENABLED", "false").lower() == "true"
-ZOEKT_TIMEOUT = float(os.getenv("ZOEKT_TIMEOUT", "10.0"))  # seconds
 
 
 @dataclass
@@ -65,25 +54,46 @@ class ZoektClient:
 
     Provides async interface to Zoekt's HTTP API for fast code search.
     Falls back gracefully if Zoekt is not available.
+
+    Issue #2188: Accepts all config via constructor (no module-level globals).
+    Uses a persistent httpx.AsyncClient for connection pooling.
     """
 
     def __init__(
         self,
-        base_url: str = ZOEKT_URL,
-        timeout: float = ZOEKT_TIMEOUT,
-        enabled: bool = ZOEKT_ENABLED,
+        base_url: str = "http://localhost:6070",
+        timeout: float = 10.0,
+        enabled: bool = False,
     ):
         """Initialize Zoekt client.
 
         Args:
-            base_url: Zoekt webserver URL (default: http://localhost:6070)
-            timeout: Request timeout in seconds (default: 10.0)
-            enabled: Whether Zoekt is enabled (default: from ZOEKT_ENABLED env)
+            base_url: Zoekt webserver URL
+            timeout: Request timeout in seconds
+            enabled: Whether Zoekt is enabled
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._enabled = enabled
         self._available: bool | None = None  # Cached availability check
+        self._http_client: Any | None = None  # Lazy httpx.AsyncClient
+
+    async def _get_http_client(self) -> Any:
+        """Get or create the persistent HTTP client with connection pooling."""
+        if self._http_client is None:
+            import httpx
+
+            self._http_client = httpx.AsyncClient(
+                timeout=self.timeout,
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        """Close the HTTP client and release connections."""
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def is_available(self) -> bool:
         """Check if Zoekt server is available.
@@ -100,11 +110,12 @@ class ZoektClient:
         try:
             import httpx
 
+            # Use a short-lived client for health check (fast timeout)
             async with httpx.AsyncClient(timeout=2.0) as client:
                 resp = await client.get(f"{self.base_url}/")
                 self._available = resp.status_code == 200
         except Exception as e:
-            logger.debug(f"Zoekt not available: {e}")
+            logger.debug("Zoekt not available: %s", e)
             self._available = False
 
         return self._available
@@ -128,55 +139,39 @@ class ZoektClient:
 
         Returns:
             List of ZoektMatch objects with file, line, content, match
-
-        Examples:
-            # Literal search
-            await client.search("authentication")
-
-            # Regex search
-            await client.search("def \\w+_handler")
-
-            # Boolean operators
-            await client.search("error AND handler")
         """
         if not await self.is_available():
             return []
 
         try:
-            import httpx
+            client = await self._get_http_client()
 
-            # Build query params
-            # Use /search endpoint with format=json (not /api/search which returns HTML)
             params: dict[str, Any] = {
                 "q": query,
                 "num": num,
                 "format": "json",
             }
             if repos:
-                # Zoekt uses repo: prefix for filtering
                 repo_filter = " OR ".join(f"repo:{r}" for r in repos)
                 params["q"] = f"({query}) ({repo_filter})"
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.get(
-                    f"{self.base_url}/search",
-                    params=params,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            resp = await client.get(
+                f"{self.base_url}/search",
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
             return self._parse_results(data)
 
         except Exception as e:
-            logger.warning(f"Zoekt search failed: {e}")
+            logger.warning("Zoekt search failed: %s", e)
             return []
 
     def _parse_results(self, data: dict[str, Any]) -> list[ZoektMatch]:
         """Parse Zoekt API response into ZoektMatch objects."""
         results = []
 
-        # Zoekt /search?format=json response structure:
-        # {"result": {"FileMatches": [{"FileName": "...", "Matches": [...]}]}}
         result = data.get("result", {})
         file_matches = result.get("FileMatches", [])
 
@@ -186,17 +181,13 @@ class ZoektClient:
             for match in file_info.get("Matches", []):
                 line_num = match.get("LineNum", 0)
 
-                # Build content and match text from fragments
                 fragments = match.get("Fragments", [])
                 if fragments:
-                    # Combine fragments to build full line content
                     first_frag = fragments[0]
                     pre = first_frag.get("Pre", "")
                     match_text = first_frag.get("Match", "")
                     post = first_frag.get("Post", "")
                     line_content = f"{pre}{match_text}{post}".strip()
-
-                    # Combine all match texts
                     all_matches = "".join(f.get("Match", "") for f in fragments)
                 else:
                     line_content = ""
@@ -205,7 +196,7 @@ class ZoektClient:
 
                 results.append(
                     ZoektMatch(
-                        file=f"/{file_name}",  # Normalize to absolute path
+                        file=f"/{file_name}",
                         line=line_num,
                         content=line_content,
                         match=all_matches or match_text,
@@ -216,25 +207,18 @@ class ZoektClient:
         return results
 
     async def get_stats(self) -> dict[str, Any]:
-        """Get Zoekt index statistics.
-
-        Returns:
-            Dict with index stats (file count, size, etc.)
-        """
+        """Get Zoekt index statistics."""
         if not await self.is_available():
             return {"available": False}
 
         try:
-            import httpx
-
-            # Get stats via a simple search query
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.get(
-                    f"{self.base_url}/search",
-                    params={"q": ".", "num": 1, "format": "json"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            client = await self._get_http_client()
+            resp = await client.get(
+                f"{self.base_url}/search",
+                params={"q": ".", "num": 1, "format": "json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
             result = data.get("result", {})
             stats: dict[str, Any] = result.get("Stats", {})
@@ -242,45 +226,13 @@ class ZoektClient:
             stats["FileCount"] = stats.get("FileCount", 0)
             return stats
         except Exception as e:
-            logger.warning(f"Failed to get Zoekt stats: {e}")
+            logger.warning("Failed to get Zoekt stats: %s", e)
             return {"available": False, "error": str(e)}
-
-
-# Global client instance
-_client: ZoektClient | None = None
-
-
-def get_zoekt_client() -> ZoektClient:
-    """Get the global Zoekt client instance."""
-    global _client
-    if _client is None:
-        _client = ZoektClient()
-    return _client
-
-
-async def is_zoekt_available() -> bool:
-    """Check if Zoekt is available."""
-    return await get_zoekt_client().is_available()
-
-
-async def zoekt_search(
-    query: str,
-    num: int = 100,
-    repos: list[str] | None = None,
-) -> list[ZoektMatch]:
-    """Search using Zoekt (convenience function)."""
-    return await get_zoekt_client().search(query, num, repos)
 
 
 # =============================================================================
 # Zoekt Index Manager - Auto-reindexing with debouncing
 # =============================================================================
-
-# Configuration from environment
-ZOEKT_INDEX_DIR = os.getenv("ZOEKT_INDEX_DIR", "/app/data/.zoekt-index")
-ZOEKT_DATA_DIR = os.getenv("ZOEKT_DATA_DIR", "/app/data")
-ZOEKT_DEBOUNCE_SECONDS = float(os.getenv("ZOEKT_DEBOUNCE_SECONDS", "5.0"))
-ZOEKT_INDEX_BINARY = os.getenv("ZOEKT_INDEX_BINARY", "zoekt-index")
 
 
 class ZoektIndexManager:
@@ -289,22 +241,25 @@ class ZoektIndexManager:
     This class handles automatic reindexing when files are written or synced.
     It uses debouncing to batch multiple writes into a single reindex operation.
 
+    Issue #2188: Accepts all config via constructor (no module-level globals).
+
     Usage:
-        manager = get_zoekt_index_manager()
-
-        # After writing a file
+        manager = ZoektIndexManager(
+            index_dir="/app/data/.zoekt-index",
+            data_dir="/app/data",
+            enabled=True,
+        )
         manager.notify_write("/path/to/file.py")
-
-        # After sync completes
         manager.notify_sync_complete(files_synced=100)
     """
 
     def __init__(
         self,
-        index_dir: str = ZOEKT_INDEX_DIR,
-        data_dir: str = ZOEKT_DATA_DIR,
-        debounce_seconds: float = ZOEKT_DEBOUNCE_SECONDS,
-        enabled: bool = ZOEKT_ENABLED,
+        index_dir: str = "/app/data/.zoekt-index",
+        data_dir: str = "/app/data",
+        debounce_seconds: float = 5.0,
+        enabled: bool = False,
+        index_binary: str = "zoekt-index",
     ):
         """Initialize the index manager.
 
@@ -313,11 +268,13 @@ class ZoektIndexManager:
             data_dir: Directory containing files to index
             debounce_seconds: Wait time after last write before reindexing
             enabled: Whether Zoekt indexing is enabled
+            index_binary: Path to the zoekt-index binary
         """
         self.index_dir = Path(index_dir)
         self.data_dir = Path(data_dir)
         self.debounce_seconds = debounce_seconds
         self._enabled = enabled
+        self._index_binary = index_binary
 
         # Debouncing state
         self._pending_paths: set[str] = set()
@@ -349,12 +306,10 @@ class ZoektIndexManager:
             self._pending_paths.add(path)
             self._schedule_reindex()
 
-        logger.debug(f"Zoekt: queued for reindex: {path}")
+        logger.debug("Zoekt: queued for reindex: %s", path)
 
     def notify_sync_complete(self, files_synced: int = 0) -> None:
         """Notify that a sync operation completed.
-
-        This triggers an immediate reindex (with short debounce).
 
         Args:
             files_synced: Number of files that were synced
@@ -365,21 +320,16 @@ class ZoektIndexManager:
         if files_synced == 0:
             return
 
-        logger.info(f"Zoekt: sync completed with {files_synced} files, scheduling reindex")
+        logger.info("Zoekt: sync completed with %d files, scheduling reindex", files_synced)
 
         with self._lock:
-            # For sync completion, use a shorter debounce
             self._schedule_reindex(debounce_override=1.0)
 
     def _schedule_reindex(self, debounce_override: float | None = None) -> None:
         """Schedule a debounced reindex operation.
 
         Must be called with self._lock held.
-
-        Args:
-            debounce_override: Optional override for debounce time
         """
-        # Cancel existing timer
         if self._timer is not None:
             self._timer.cancel()
 
@@ -389,13 +339,9 @@ class ZoektIndexManager:
         self._timer.start()
 
     def _do_reindex(self) -> None:
-        """Execute the reindex operation.
-
-        This runs zoekt-index as a subprocess.
-        """
+        """Execute the reindex operation via zoekt-index subprocess."""
         with self._lock:
             if self._indexing:
-                # Already indexing, reschedule
                 self._schedule_reindex()
                 return
 
@@ -406,45 +352,45 @@ class ZoektIndexManager:
 
         try:
             logger.info(
-                f"Zoekt: starting reindex ({len(paths)} pending paths, "
-                f"index_dir={self.index_dir}, data_dir={self.data_dir})"
+                "Zoekt: starting reindex (%d pending paths, index_dir=%s, data_dir=%s)",
+                len(paths),
+                self.index_dir,
+                self.data_dir,
             )
 
-            # Run zoekt-index
             result = subprocess.run(
                 [
-                    ZOEKT_INDEX_BINARY,
+                    self._index_binary,
                     "-index",
                     str(self.index_dir),
                     str(self.data_dir),
                 ],
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 minute timeout
+                timeout=300,
             )
 
             if result.returncode == 0:
                 logger.info("Zoekt: reindex completed successfully")
                 if result.stdout:
-                    logger.debug(f"Zoekt stdout: {result.stdout[:500]}")
+                    logger.debug("Zoekt stdout: %s", result.stdout[:500])
             else:
-                logger.error(f"Zoekt: reindex failed with code {result.returncode}")
+                logger.error("Zoekt: reindex failed with code %d", result.returncode)
                 if result.stderr:
-                    logger.error(f"Zoekt stderr: {result.stderr[:500]}")
+                    logger.error("Zoekt stderr: %s", result.stderr[:500])
 
         except FileNotFoundError:
             logger.warning(
-                f"Zoekt: {ZOEKT_INDEX_BINARY} not found. Install Zoekt or disable ZOEKT_ENABLED."
+                "Zoekt: %s not found. Install Zoekt or disable zoekt_enabled.",
+                self._index_binary,
             )
         except subprocess.TimeoutExpired:
             logger.error("Zoekt: reindex timed out after 5 minutes")
         except Exception as e:
-            logger.error(f"Zoekt: reindex failed: {e}")
+            logger.error("Zoekt: reindex failed: %s", e)
         finally:
             with self._lock:
                 self._indexing = False
-
-                # If new paths were added during indexing, schedule another reindex
                 if self._pending_paths:
                     self._schedule_reindex()
 
@@ -462,7 +408,7 @@ class ZoektIndexManager:
 
             result = subprocess.run(
                 [
-                    ZOEKT_INDEX_BINARY,
+                    self._index_binary,
                     "-index",
                     str(self.index_dir),
                     str(self.data_dir),
@@ -476,11 +422,11 @@ class ZoektIndexManager:
                 logger.info("Zoekt: synchronous reindex completed")
                 return True
             else:
-                logger.error(f"Zoekt: reindex failed: {result.stderr[:200]}")
+                logger.error("Zoekt: reindex failed: %s", result.stderr[:200])
                 return False
 
         except Exception as e:
-            logger.error(f"Zoekt: reindex failed: {e}")
+            logger.error("Zoekt: reindex failed: %s", e)
             return False
 
     async def trigger_reindex_async(self) -> bool:
@@ -496,7 +442,7 @@ class ZoektIndexManager:
             logger.info("Zoekt: running async reindex")
 
             proc = await asyncio.create_subprocess_exec(
-                ZOEKT_INDEX_BINARY,
+                self._index_binary,
                 "-index",
                 str(self.index_dir),
                 str(self.data_dir),
@@ -510,34 +456,12 @@ class ZoektIndexManager:
                 logger.info("Zoekt: async reindex completed")
                 return True
             else:
-                logger.error(f"Zoekt: reindex failed: {stderr.decode()[:200]}")
+                logger.error("Zoekt: reindex failed: %s", stderr.decode()[:200])
                 return False
 
         except TimeoutError:
             logger.error("Zoekt: async reindex timed out")
             return False
         except Exception as e:
-            logger.error(f"Zoekt: async reindex failed: {e}")
+            logger.error("Zoekt: async reindex failed: %s", e)
             return False
-
-
-# Global index manager instance
-_index_manager: ZoektIndexManager | None = None
-
-
-def get_zoekt_index_manager() -> ZoektIndexManager:
-    """Get the global Zoekt index manager instance."""
-    global _index_manager
-    if _index_manager is None:
-        _index_manager = ZoektIndexManager()
-    return _index_manager
-
-
-def notify_zoekt_write(path: str) -> None:
-    """Convenience function to notify Zoekt of a file write."""
-    get_zoekt_index_manager().notify_write(path)
-
-
-def notify_zoekt_sync_complete(files_synced: int = 0) -> None:
-    """Convenience function to notify Zoekt of sync completion."""
-    get_zoekt_index_manager().notify_sync_complete(files_synced)

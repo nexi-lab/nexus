@@ -1411,6 +1411,15 @@ def create_app(
             app.state.memory_service = _memory_svc  # for cleanup in lifespan
     except Exception as _exc:
         logger.debug("MemoryService unavailable: %s", _exc)
+    # Issue #841: MetadataExportService lives outside kernel
+    try:
+        from nexus.factory import create_metadata_export_service
+
+        _meta_export_svc = create_metadata_export_service(nexus_fs)
+        if _meta_export_svc is not None:
+            _brick_sources.append(_meta_export_svc)
+    except Exception as _exc:
+        logger.debug("MetadataExportService unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)

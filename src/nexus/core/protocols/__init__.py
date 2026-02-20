@@ -20,7 +20,7 @@ References:
     - Issue #2359: Move non-kernel protocols out of core/protocols/
 """
 
-from nexus.core.protocols.caching import CachingConnectorContract
+from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
     ConnectorProtocol,
@@ -29,6 +29,7 @@ from nexus.core.protocols.connector import (
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
     PassthroughProtocol,
+    SearchableConnector,
     StreamingProtocol,
 )
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
@@ -36,6 +37,7 @@ from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterPr
 
 __all__ = [
     "BatchContentProtocol",
+    "CacheConfigContract",
     "CachingConnectorContract",
     "ConnectorProtocol",
     "ContentStoreProtocol",
@@ -45,6 +47,7 @@ __all__ = [
     "OAuthCapableProtocol",
     "PassthroughProtocol",
     "ResolvedPath",
+    "SearchableConnector",
     "StreamingProtocol",
     "VFSCoreProtocol",
     "VFSRouterProtocol",

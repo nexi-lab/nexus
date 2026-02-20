@@ -20,12 +20,10 @@ logger = logging.getLogger(__name__)
 
 async def startup_bricks(app: FastAPI) -> list[asyncio.Task[None]]:
     """Mount all registered bricks via BrickLifecycleManager."""
-    nx = getattr(app.state, "nexus_fs", None)
-    if nx is None:
+    if app.state.nexus_fs is None:
         return []
 
-    _sys = getattr(nx, "_system_services", None)
-    manager = getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
+    manager = app.state.brick_lifecycle_manager
     if manager is None:
         return []
 
@@ -44,7 +42,7 @@ async def startup_bricks(app: FastAPI) -> list[asyncio.Task[None]]:
         logger.error("[LIFECYCLE] mount_all failed: %s", exc)
 
     # Start brick reconciler (Issue #2060)
-    reconciler = getattr(_sys, "brick_reconciler", None)
+    reconciler = app.state.brick_reconciler
     if reconciler is not None:
         try:
             await reconciler.start()
@@ -56,17 +54,15 @@ async def startup_bricks(app: FastAPI) -> list[asyncio.Task[None]]:
 
 async def shutdown_bricks(app: FastAPI) -> None:
     """Unmount all active bricks in reverse-DAG order."""
-    nx = getattr(app.state, "nexus_fs", None)
-    if nx is None:
+    if app.state.nexus_fs is None:
         return
 
-    _sys = getattr(nx, "_system_services", None)
-    manager = getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
+    manager = app.state.brick_lifecycle_manager
     if manager is None:
         return
 
     # Stop brick reconciler before unmounting (Issue #2060)
-    reconciler = getattr(_sys, "brick_reconciler", None)
+    reconciler = app.state.brick_reconciler
     if reconciler is not None:
         try:
             await reconciler.stop()

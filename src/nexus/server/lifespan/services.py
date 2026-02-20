@@ -54,7 +54,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
     # Issue #625: Stop workflow dispatch consumer
-    wds = getattr(app.state, "workflow_dispatch", None)
+    wds = app.state.workflow_dispatch
     if wds is not None:
         try:
             await wds.stop()
@@ -63,7 +63,7 @@ async def shutdown_services(app: FastAPI) -> None:
             logger.warning("Error stopping workflow dispatch service: %s", e, exc_info=True)
 
     # Stop Task Queue runner (Issue #574)
-    task_runner = getattr(app.state, "task_runner", None)
+    task_runner = app.state.task_runner
     if task_runner:
         try:
             await task_runner.shutdown()
@@ -104,7 +104,7 @@ async def shutdown_services(app: FastAPI) -> None:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
     # Shutdown RLM thread pool (Issue #1306)
-    rlm_service = getattr(app.state, "rlm_service", None)
+    rlm_service = app.state.rlm_service
     if rlm_service is not None:
         try:
             rlm_service.shutdown()
@@ -135,12 +135,12 @@ async def shutdown_services(app: FastAPI) -> None:
             logger.warning("Error shutting down Search Daemon: %s", e, exc_info=True)
 
     # Stop DirectoryGrantExpander worker
-    if hasattr(app.state, "directory_grant_expander") and app.state.directory_grant_expander:
+    if app.state.directory_grant_expander:
         try:
             app.state.directory_grant_expander.stop()
             logger.info("DirectoryGrantExpander worker stopped")
         except Exception as e:
-            logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
+            logger.warning("Error stopping DirectoryGrantExpander: %s", e, exc_info=True)
 
     # Cancel pending event tasks in NexusFS (Issue #913)
     if app.state.nexus_fs and hasattr(app.state.nexus_fs, "_event_tasks"):
@@ -150,7 +150,7 @@ async def shutdown_services(app: FastAPI) -> None:
         if event_tasks:
             with suppress(asyncio.CancelledError):
                 await asyncio.gather(*event_tasks, return_exceptions=True)
-            logger.info(f"Cancelled {len(event_tasks)} pending event tasks")
+            logger.info("Cancelled %d pending event tasks", len(event_tasks))
 
 
 # ---------------------------------------------------------------------------
@@ -164,17 +164,17 @@ def _startup_agent_registry(app: FastAPI) -> None:
         try:
             from nexus.services.agents.agent_registry import AgentRegistry
 
-            _bg = getattr(getattr(app.state, "profile_tuning", None), "background_task", None)
+            _bg = getattr(app.state.profile_tuning, "background_task", None)
             app.state.agent_registry = AgentRegistry(
                 record_store=app.state.record_store,
-                entity_registry=getattr(app.state.nexus_fs, "_entity_registry", None),
+                entity_registry=app.state.entity_registry,
                 flush_interval=_bg.heartbeat_flush_interval if _bg else 60,
             )
             # Inject into NexusFS for RPC methods
             app.state.nexus_fs._agent_registry = app.state.agent_registry
 
             # Wire into sync PermissionEnforcer
-            perm_enforcer = getattr(app.state.nexus_fs, "_permission_enforcer", None)
+            perm_enforcer = app.state.permission_enforcer
             if perm_enforcer is not None:
                 perm_enforcer.agent_registry = app.state.agent_registry
 
@@ -211,14 +211,14 @@ def _startup_key_service(app: FastAPI) -> None:
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
-            _identity_record_store = getattr(app.state, "record_store", None)
+            _identity_record_store = app.state.record_store
             _identity_oauth_crypto = OAuthCrypto(
                 encryption_key=_enc_key, record_store=_identity_record_store
             )
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             app.state.key_service = KeyService(
-                record_store=app.state.nexus_fs._record_store,
+                record_store=app.state.record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
@@ -246,7 +246,7 @@ def _startup_reputation_delegation_from_bricks(app: FastAPI) -> None:
         return
 
     # Get from BrickServices (created by factory)
-    brk = getattr(nx, "_brick_services", None)
+    brk = app.state.brick_services
     app.state.reputation_service = getattr(brk, "reputation_service", None) if brk else None
     app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
 
@@ -256,9 +256,9 @@ def _startup_reputation_delegation_from_bricks(app: FastAPI) -> None:
         # Wire system-tier dependencies that weren't available during factory boot
         deleg = app.state.delegation_service
         if getattr(deleg, "_namespace_manager", None) is None:
-            deleg._namespace_manager = getattr(nx, "_namespace_manager", None)
+            deleg._namespace_manager = app.state.namespace_manager
         if getattr(deleg, "_agent_registry", None) is None:
-            deleg._agent_registry = getattr(app.state, "agent_registry", None)
+            deleg._agent_registry = app.state.agent_registry
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
 
@@ -307,14 +307,14 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
             SQLAlchemyAgentEventLog as AgentEventLog,
         )
 
-        _sandbox_rs = getattr(app.state, "record_store", None)
+        _sandbox_rs = app.state.record_store
         session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
         if not (_sandbox_rs and session_factory and callable(session_factory)):
             return
 
         # Get AgentEventLog from factory (preferred) or create fallback
-        _brk = getattr(app.state.nexus_fs, "_brick_services", None)
-        _factory_event_log = getattr(_brk, "agent_event_log", None) if _brk else None
+        brk = app.state.brick_services
+        _factory_event_log = getattr(brk, "agent_event_log", None) if brk else None
         if _factory_event_log is not None:
             app.state.agent_event_log = _factory_event_log
         else:
@@ -335,14 +335,14 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
 
         # Get NamespaceManager if available (best-effort)
         namespace_manager = None
-        sync_rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
+        sync_rebac = app.state.rebac_manager
         if sync_rebac:
             try:
                 from nexus.rebac.namespace_factory import (
                     create_namespace_manager,
                 )
 
-                ns_record_store = getattr(app.state.nexus_fs, "_record_store", None)
+                ns_record_store = app.state.record_store
                 namespace_manager = create_namespace_manager(
                     rebac_manager=sync_rebac,
                     record_store=ns_record_store,
@@ -390,7 +390,7 @@ def _startup_rlm_service(app: FastAPI) -> None:
     Falls back gracefully if either is unavailable — the /api/v2/rlm/infer
     endpoint will return 503.
     """
-    sandbox_auth = getattr(app.state, "sandbox_auth_service", None)
+    sandbox_auth = app.state.sandbox_auth_service
     if sandbox_auth is None:
         logger.debug("[RLM] SandboxAuthService not available, RLM service skipped")
         return
@@ -451,8 +451,7 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     # Use factory-constructed EvictionManager (DRY — avoid duplicate construction)
     app.state._eviction_task = None
     app.state._checkpoint_cleanup_task = None
-    _sys_svc = getattr(getattr(app.state, "nexus_fs", None), "_system_services", None)
-    _factory_em = getattr(_sys_svc, "eviction_manager", None) if _sys_svc else None
+    _factory_em = app.state.eviction_manager
     _eviction_tuning = getattr(app.state.profile_tuning, "eviction", None)
     if _factory_em is not None and _eviction_tuning is not None:
         try:
@@ -461,7 +460,6 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
                 checkpoint_cleanup_task,
             )
 
-            app.state.eviction_manager = _factory_em
             app.state._eviction_task = asyncio.create_task(
                 agent_eviction_task(
                     _factory_em,
@@ -556,14 +554,12 @@ async def _startup_scheduler(app: FastAPI) -> None:
         app.state.scheduler_service = scheduler_service
 
         # Wire emitter into AsyncAgentRegistry if available
-        async_reg = getattr(app.state, "async_agent_registry", None)
+        async_reg = app.state.async_agent_registry
         if async_reg is not None:
             async_reg._state_emitter = state_emitter
 
         # Wire hook cleanup handler into state emitter (Issue #1257)
-        _nx = getattr(app.state, "nexus_fs", None)
-        _sys = getattr(_nx, "_system_services", None) if _nx else None
-        scoped_hook_engine = getattr(_sys, "scoped_hook_engine", None) if _sys else None
+        scoped_hook_engine = app.state.scoped_hook_engine
         if scoped_hook_engine is not None:
             from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler
 
@@ -620,13 +616,13 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
             await engine.startup()
             logger.info("Workflow engine started — loaded workflows from storage")
         except Exception as e:
-            logger.warning(f"Workflow engine startup failed (non-fatal): {e}")
+            logger.warning("Workflow engine startup failed (non-fatal): %s", e)
 
     # Expose on app.state so routers can access without reaching into NexusFS
     app.state.workflow_engine = engine
 
     # Issue #625: Start workflow dispatch consumer (DT_PIPE → workflow engine)
-    wds = getattr(app.state, "workflow_dispatch", None)
+    wds = app.state.workflow_dispatch
     if wds is not None:
         try:
             await wds.start()

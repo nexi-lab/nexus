@@ -54,9 +54,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
         from nexus.rebac.async_manager import AsyncReBACManager
 
         # Reuse the sync ReBACManager from NexusFS (avoids creating standalone engine)
-        sync_rebac = (
-            getattr(app.state.nexus_fs, "_rebac_manager", None) if app.state.nexus_fs else None
-        )
+        sync_rebac = app.state.rebac_manager
         if sync_rebac:
             app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
             logger.info("Async ReBAC manager initialized (wrapping sync manager)")
@@ -86,14 +84,14 @@ async def _startup_async_rebac(app: FastAPI) -> None:
             # Issue #1239: Create namespace manager for per-subject visibility
             # Issue #1265: Factory function handles L3 persistent store wiring
             namespace_manager = None
-            if enforce_permissions and hasattr(app.state, "nexus_fs"):
-                sync_rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
+            if enforce_permissions and app.state.nexus_fs is not None:
+                sync_rebac = app.state.rebac_manager
                 if sync_rebac:
                     from nexus.rebac.namespace_factory import (
                         create_namespace_manager,
                     )
 
-                    ns_record_store = getattr(app.state.nexus_fs, "_record_store", None)
+                    ns_record_store = app.state.record_store
                     namespace_manager = create_namespace_manager(
                         rebac_manager=sync_rebac,
                         record_store=ns_record_store,
@@ -113,7 +111,7 @@ async def _startup_async_rebac(app: FastAPI) -> None:
             permission_enforcer = AsyncPermissionEnforcer(
                 rebac_manager=app.state.async_rebac_manager,
                 namespace_manager=namespace_manager,
-                agent_registry=getattr(app.state, "agent_registry", None),
+                agent_registry=app.state.agent_registry,
             )
 
             # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
@@ -129,8 +127,10 @@ async def _startup_async_rebac(app: FastAPI) -> None:
             )
             await app.state.async_nexus_fs.initialize()
             logger.info(
-                f"AsyncNexusFS initialized (backend={backend_root}, "
-                f"tenant={tenant_id}, enforce_permissions={enforce_permissions})"
+                "AsyncNexusFS initialized (backend=%s, tenant=%s, enforce_permissions=%s)",
+                backend_root,
+                tenant_id,
+                enforce_permissions,
             )
         except Exception as e:
             logger.warning("Failed to initialize AsyncNexusFS: %s", e, exc_info=True)
@@ -147,13 +147,10 @@ async def _startup_cache_brick(app: FastAPI) -> None:
     """
     try:
         # Prefer CacheBrick already in BrickServices (set by create_nexus_fs → lifespan)
-        cache_brick = getattr(app.state, "cache_brick", None)
+        cache_brick = app.state.cache_brick
         if cache_brick is None:
-            cache_brick = getattr(
-                getattr(getattr(app.state, "nexus_fs", None), "_brick_services", None),
-                "cache_brick",
-                None,
-            )
+            brk = app.state.brick_services
+            cache_brick = getattr(brk, "cache_brick", None) if brk else None
 
         if cache_brick is None:
             # Fallback: create CacheBrick from env settings (standalone mode)
@@ -161,7 +158,7 @@ async def _startup_cache_brick(app: FastAPI) -> None:
             from nexus.bricks.cache.settings import CacheSettings
 
             cache_settings = CacheSettings.from_env()
-            record_store = getattr(app.state.nexus_fs, "_record_store", None)
+            record_store = app.state.record_store
             cache_store = getattr(app.state.nexus_fs, "_cache_store", None)
             cache_brick = CacheBrick(
                 cache_store=cache_store,
@@ -175,11 +172,8 @@ async def _startup_cache_brick(app: FastAPI) -> None:
 
         # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
         if cache_brick.has_cache_store:
-            tiger_cache = getattr(
-                getattr(app.state.nexus_fs, "_rebac_manager", None),
-                "_tiger_cache",
-                None,
-            )
+            rebac = app.state.rebac_manager
+            tiger_cache = getattr(rebac, "_tiger_cache", None) if rebac is not None else None
             if tiger_cache:
                 dragonfly_tiger = cache_brick.get_tiger_cache()
                 tiger_cache.set_dragonfly_cache(dragonfly_tiger)
@@ -204,7 +198,7 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
         try:
             from nexus.server.background_tasks import tiger_cache_queue_task
 
-            _rebac_mgr = getattr(app.state.nexus_fs, "_rebac_manager", None)
+            _rebac_mgr = app.state.rebac_manager
             if _rebac_mgr is not None:
                 task = asyncio.create_task(
                     tiger_cache_queue_task(_rebac_mgr, interval_seconds=60, batch_size=1)
@@ -221,18 +215,18 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
     # Tiger Cache warm-up on startup (Issue #979)
     if app.state.nexus_fs:
         try:
-            _rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
+            _rebac = app.state.rebac_manager
             tiger_cache = getattr(_rebac, "_tiger_cache", None) if _rebac is not None else None
             if tiger_cache:
                 warm_limit = int(os.getenv("NEXUS_TIGER_CACHE_WARM_LIMIT", "500"))
 
                 async def _warm_tiger_cache() -> None:
                     loaded = await asyncio.to_thread(tiger_cache.warm_from_db, warm_limit)
-                    logger.info(f"Tiger Cache warmed with {loaded} entries from database")
+                    logger.info("Tiger Cache warmed with %d entries from database", loaded)
 
                 warm_task = asyncio.create_task(_warm_tiger_cache())
                 bg_tasks.append(warm_task)
-                logger.debug(f"Tiger Cache warm-up started (limit={warm_limit})")
+                logger.debug("Tiger Cache warm-up started (limit=%d)", warm_limit)
 
                 # Start DirectoryGrantExpander worker
                 try:
@@ -258,10 +252,10 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
                     bg_tasks.append(asyncio.create_task(_run_grant_expander()))
                     logger.info("DirectoryGrantExpander worker started for large folder grants")
                 except Exception as e:
-                    logger.debug(f"DirectoryGrantExpander startup skipped: {e}")
+                    logger.debug("DirectoryGrantExpander startup skipped: %s", e)
 
         except Exception as e:
-            logger.debug(f"Tiger Cache warm-up skipped: {e}")
+            logger.debug("Tiger Cache warm-up skipped: %s", e)
 
     return bg_tasks
 
@@ -283,14 +277,14 @@ def _startup_backfill(app: FastAPI) -> list[asyncio.Task]:
                             zone_id=None,
                         )
                         if created > 0:
-                            logger.info(f"Sparse index backfill: {created} entries for {prefix}")
+                            logger.info("Sparse index backfill: %d entries for %s", created, prefix)
                     except Exception as e:
-                        logger.debug(f"Sparse index backfill skipped for {prefix}: {e}")
+                        logger.debug("Sparse index backfill skipped for %s: %s", prefix, e)
 
             bg_tasks.append(asyncio.create_task(_backfill_system_paths()))
             logger.info("Sparse directory index backfill started for system paths")
         except Exception as e:
-            logger.warning(f"Sparse index backfill skipped: {e}")
+            logger.warning("Sparse index backfill skipped: %s", e)
 
     return bg_tasks
 
@@ -321,22 +315,24 @@ def _startup_cache_warmup(app: FastAPI) -> None:
                 max_files=warmup_max_files,
             )
             logger.info(
-                f"[WARMUP] Server startup warmup complete: "
-                f"{stats.files_warmed} files, {stats.metadata_warmed} metadata entries"
+                "[WARMUP] Server startup warmup complete: %d files, %d metadata entries",
+                stats.files_warmed,
+                stats.metadata_warmed,
             )
 
         asyncio.create_task(_warmup_file_cache())
         logger.info(
-            f"[WARMUP] Server startup warmup started "
-            f"(max_files={warmup_max_files}, depth={warmup_depth})"
+            "[WARMUP] Server startup warmup started (max_files=%d, depth=%d)",
+            warmup_max_files,
+            warmup_depth,
         )
     except Exception as e:
-        logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
+        logger.debug("[WARMUP] Server startup warmup skipped: %s", e)
 
 
 def _startup_circuit_breaker(app: FastAPI) -> None:
     """Wire circuit breaker and manifest resolver from factory (Issue #726, #2130)."""
     if app.state.nexus_fs:
-        _brk = getattr(app.state.nexus_fs, "_brick_services", None)
-        app.state.rebac_circuit_breaker = getattr(_brk, "rebac_circuit_breaker", None)
-        app.state.manifest_resolver = getattr(_brk, "manifest_resolver", None) if _brk else None
+        brk = app.state.brick_services
+        app.state.rebac_circuit_breaker = getattr(brk, "rebac_circuit_breaker", None)
+        app.state.manifest_resolver = getattr(brk, "manifest_resolver", None) if brk else None

@@ -587,9 +587,16 @@ module = [
     "nexus.skills.parser",
     "nexus.server.auth.oauth_factory",
     "nexus.bricks.workflows.storage",
+    "nexus.bricks.skills.parser",
+    "nexus.bricks.workflows.engine",
 ]
-# yaml/requests stubs handled at project level
+# yaml/requests/cachetools stubs handled at project level
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "nexus.bricks.workflows.api"
+# engine.workflows is LRUCache[str, Any] — dict-like .get() returns Any
+disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [

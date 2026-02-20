@@ -38,6 +38,7 @@ class AgentRPCService:
         vfs: VFSOperations,
         metastore: MetastoreABC,
         session_factory: Any,
+        record_store: Any | None = None,
         agent_registry: Any | None = None,
         entity_registry: Any | None = None,
         rebac_manager: Any | None = None,
@@ -53,6 +54,7 @@ class AgentRPCService:
         self._vfs = vfs
         self._metastore = metastore
         self._session_factory = session_factory
+        self._record_store = record_store
         self._agent_registry = agent_registry
         self._entity_registry = entity_registry
         self._rebac_manager = rebac_manager
@@ -346,7 +348,7 @@ class AgentRPCService:
         from nexus.services.agents.agent_registry import AgentRegistry
 
         self._agent_registry = AgentRegistry(
-            session_factory=self._session_factory,
+            record_store=self._record_store,
             entity_registry=self._entity_registry,
         )
 

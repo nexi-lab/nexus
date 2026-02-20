@@ -71,6 +71,7 @@ def wire_services(fs: Any) -> None:
         vfs=fs,
         metastore=fs.metadata,
         session_factory=fs.SessionLocal,
+        record_store=fs._record_store,
         agent_registry=fs._agent_registry,
         entity_registry=fs._entity_registry,
         rebac_manager=fs._rebac_manager,

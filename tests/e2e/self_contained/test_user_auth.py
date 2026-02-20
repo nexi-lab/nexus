@@ -20,7 +20,7 @@ from nexus.auth.oauth.crypto import OAuthCrypto
 from nexus.auth.oauth.providers.google import GoogleOAuthProvider
 from nexus.auth.oauth.user_auth import OAuthUserAuth
 from nexus.auth.providers.database_local import DatabaseLocalAuth
-from nexus.server.auth.user_helpers import (
+from nexus.auth.user_queries import (
     check_email_available,
     check_username_available,
     get_user_by_email,

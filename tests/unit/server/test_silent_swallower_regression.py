@@ -37,7 +37,7 @@ class TestAuthHelperLogging:
 
     def test_get_user_zones_logs_on_db_error(self, caplog: pytest.LogCaptureFixture) -> None:
         """get_user_zones should log warning when DB query fails."""
-        from nexus.server.auth.user_helpers import get_user_zones
+        from nexus.lib.zone_helpers import get_user_zones
 
         mock_session = MagicMock()
         mock_session.scalars.side_effect = RuntimeError("DB connection lost")
@@ -45,7 +45,7 @@ class TestAuthHelperLogging:
         mock_rebac = MagicMock()
         mock_rebac._connection.side_effect = RuntimeError("DB connection lost")
 
-        with caplog.at_level(logging.WARNING, logger="nexus.core.zone_helpers"):
+        with caplog.at_level(logging.WARNING, logger="nexus.lib.zone_helpers"):
             result = get_user_zones(mock_rebac, "user-123")
 
         assert result == []

@@ -11,22 +11,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from nexus.auth.providers.database_local import DatabaseLocalAuth
+from nexus.auth.user_queries import get_user_by_id
 from nexus.auth.zone_helpers import (
     create_zone,
     normalize_to_slug,
     suggest_zone_id,
     validate_zone_id,
 )
+from nexus.lib.zone_helpers import (
+    add_user_to_zone,
+    get_user_zones,
+    user_belongs_to_zone,
+)
 from nexus.server.auth.auth_routes import (
     get_auth_provider,
     get_authenticated_user,
     get_nexus_instance,
-)
-from nexus.server.auth.user_helpers import (
-    add_user_to_zone,
-    get_user_by_id,
-    get_user_zones,
-    user_belongs_to_zone,
 )
 from nexus.storage.models import ZoneModel
 

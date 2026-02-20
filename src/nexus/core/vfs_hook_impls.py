@@ -135,7 +135,7 @@ class AutoParseWriteHook:
 
     def _run_parse(self, path: str) -> None:
         try:
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             run_sync(self._parse_fn(path, store_result=True))
         except Exception as e:

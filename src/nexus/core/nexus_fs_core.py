@@ -222,14 +222,14 @@ class NexusFSCoreMixin:
                 logger.warning("Workflow event queue full, dropping event: %s", label)
         else:
             # Fallback: fire-and-forget (no queue — CLI or pre-startup)
-            from nexus.core.sync_bridge import fire_and_forget
+            from nexus.lib.sync_bridge import fire_and_forget
 
             fire_and_forget(
                 self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
             )
 
         if self.subscription_manager:  # type: ignore[attr-defined]
-            from nexus.core.sync_bridge import fire_and_forget
+            from nexus.lib.sync_bridge import fire_and_forget
 
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(

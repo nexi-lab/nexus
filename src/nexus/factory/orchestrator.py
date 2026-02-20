@@ -190,6 +190,7 @@ def create_nexus_services(
         observability_subsystem=system_dict["observability_subsystem"],
         resiliency_manager=system_dict["resiliency_manager"],
         eviction_manager=system_dict.get("eviction_manager"),
+        zone_lifecycle=system_dict.get("zone_lifecycle"),
     )
 
     brick_services = _BrickServices(

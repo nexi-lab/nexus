@@ -209,6 +209,8 @@ class NexusFS(  # type: ignore[misc]
         self._async_agent_registry = sys_svc.async_agent_registry
         self._async_namespace_manager = sys_svc.async_namespace_manager
         self._context_branch_service = sys_svc.context_branch_service
+        # Zone lifecycle — write gating during deprovisioning (Issue #2061)
+        self._zone_lifecycle = getattr(sys_svc, "zone_lifecycle", None)
 
         # =====================================================================
         # Tier 2: BRICK services (Issue #2034: from BrickServices)
@@ -753,6 +755,19 @@ class NexusFS(  # type: ignore[misc]
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
 
+    def _check_zone_writable(self, context: OperationContext | dict | None = None) -> None:
+        """Raise ZoneTerminatingError if the zone is being deprovisioned.
+
+        Issue #2061: Write-gating during zone finalization (Decision #4A).
+        """
+        if self._zone_lifecycle is None:
+            return
+        zone_id, _, _ = self._get_routing_params(context)
+        if zone_id and self._zone_lifecycle.is_zone_terminating(zone_id):
+            from nexus.contracts.exceptions import ZoneTerminatingError
+
+            raise ZoneTerminatingError(zone_id)
+
     @property
     def zone_id(self) -> str | None:
         """Default zone_id from the instance context."""
@@ -916,6 +931,9 @@ class NexusFS(  # type: ignore[misc]
 
         # Use provided context or default
         ctx = context if context is not None else self._default_context
+
+        # Block writes during zone deprovisioning (Issue #2061)
+        self._check_zone_writable(ctx)
 
         # Check write permission on the appropriate ancestor directory
         # - parents=False: check immediate parent (must exist)
@@ -1085,6 +1103,9 @@ class NexusFS(  # type: ignore[misc]
         import errno
 
         path = self._validate_path(path)
+
+        # Block writes during zone deprovisioning (Issue #2061)
+        self._check_zone_writable(context)
 
         # P0 Fixes: Create OperationContext
         if context is not None:

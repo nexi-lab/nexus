@@ -427,6 +427,34 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
 
+    # --- Zone Lifecycle Service (Issue #2061) ---
+    zone_lifecycle: Any = None
+    session_factory = getattr(ctx.record_store, "session_factory", None)
+    if session_factory is not None:
+        try:
+            from nexus.services.zone_lifecycle import ZoneLifecycleService
+
+            zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
+
+            # Register session-based finalizers (available at boot).
+            # Cache + Mount finalizers are registered later in service_wiring
+            # when their dependencies (file_cache, mount_service) exist.
+            try:
+                from nexus.services.zone_finalizers import (
+                    ReBACZoneFinalizer,
+                    SearchZoneFinalizer,
+                )
+
+                zone_lifecycle.register_finalizer(SearchZoneFinalizer(session_factory))
+                # ReBAC finalizer (MUST be last — Decision #13A)
+                zone_lifecycle.register_finalizer(ReBACZoneFinalizer(session_factory))
+            except Exception as exc:
+                logger.warning("[BOOT:SYSTEM] Zone finalizer registration failed: %s", exc)
+
+            logger.debug("[BOOT:SYSTEM] ZoneLifecycleService created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
+
     # =====================================================================
     # Assemble result
     # =====================================================================
@@ -459,6 +487,7 @@ def _boot_system_services(
         "brick_reconciler": brick_reconciler,
         "scoped_hook_engine": scoped_hook_engine,
         "eviction_manager": eviction_manager,
+        "zone_lifecycle": zone_lifecycle,
     }
 
     elapsed = time.perf_counter() - t0

@@ -3,6 +3,7 @@
 Provides endpoints for creating, updating, and managing zones.
 """
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -57,6 +58,8 @@ class ZoneResponse(BaseModel):
     name: str
     domain: str | None = None
     description: str | None = None
+    phase: str = "Active"
+    finalizers: list[str] = []
     is_active: bool
     created_at: str
     updated_at: str
@@ -151,7 +154,9 @@ async def create_zone_endpoint(
                 name=zone.name,
                 domain=zone.domain,
                 description=zone.description,
-                is_active=bool(zone.is_active),
+                phase=zone.phase,
+                finalizers=json.loads(zone.finalizers),
+                is_active=zone.is_active,
                 created_at=zone.created_at.isoformat(),
                 updated_at=zone.updated_at.isoformat(),
             )
@@ -195,11 +200,19 @@ async def get_zone(
         is_global_admin = user and user.is_global_admin == 1
 
         # Check zone access (global admins can access any zone)
-        if not is_global_admin and not user_belongs_to_zone(session, user_id, zone_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied: you are not a member of zone '{zone_id}'",
-            )
+        nx = get_nexus_instance()
+        rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
+        if not is_global_admin:
+            if rebac_mgr is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Cannot verify zone membership — ReBAC unavailable",
+                )
+            if not user_belongs_to_zone(rebac_mgr, user_id, zone_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied: you are not a member of zone '{zone_id}'",
+                )
 
         zone = session.get(ZoneModel, zone_id)
         if not zone:
@@ -213,7 +226,9 @@ async def get_zone(
             name=zone.name,
             domain=zone.domain,
             description=zone.description,
-            is_active=bool(zone.is_active),
+            phase=zone.phase,
+            finalizers=json.loads(zone.finalizers),
+            is_active=zone.is_active,
             created_at=zone.created_at.isoformat(),
             updated_at=zone.updated_at.isoformat(),
         )
@@ -254,7 +269,7 @@ async def list_zones(
             # Global admins see all active zones
             stmt = (
                 select(ZoneModel)
-                .where(ZoneModel.is_active == 1)
+                .where(ZoneModel.phase != "Terminated")
                 .order_by(ZoneModel.created_at.desc())
                 .limit(limit)
                 .offset(offset)
@@ -262,11 +277,13 @@ async def list_zones(
             zones = session.scalars(stmt).all()
 
             # Count total active zones
-            total_stmt = select(ZoneModel).where(ZoneModel.is_active == 1)
+            total_stmt = select(ZoneModel).where(ZoneModel.phase != "Terminated")
             total = len(session.scalars(total_stmt).all())
         else:
             # Regular users only see zones they belong to
-            user_zone_ids = get_user_zones(session, user_id)
+            nx = get_nexus_instance()
+            rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
+            user_zone_ids = get_user_zones(rebac_mgr, user_id) if rebac_mgr else []
 
             if not user_zone_ids:
                 return ZoneListResponse(zones=[], total=0)
@@ -275,7 +292,7 @@ async def list_zones(
             stmt = (
                 select(ZoneModel)
                 .where(
-                    ZoneModel.is_active == 1,
+                    ZoneModel.phase != "Terminated",
                     ZoneModel.zone_id.in_(user_zone_ids),
                 )
                 .order_by(ZoneModel.created_at.desc())
@@ -292,11 +309,112 @@ async def list_zones(
                     name=t.name,
                     domain=t.domain,
                     description=t.description,
-                    is_active=bool(t.is_active),
+                    phase=t.phase,
+                    finalizers=json.loads(t.finalizers),
+                    is_active=t.is_active,
                     created_at=t.created_at.isoformat(),
                     updated_at=t.updated_at.isoformat(),
                 )
                 for t in zones
             ],
             total=total,
+        )
+
+
+class ZoneDeprovisionResponse(BaseModel):
+    """Response for zone deprovision request."""
+
+    zone_id: str
+    phase: str
+    finalizers_completed: list[str]
+    finalizers_pending: list[str]
+    finalizers_failed: dict[str, str]
+
+
+@router.delete(
+    "/{zone_id}",
+    response_model=ZoneDeprovisionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def delete_zone_endpoint(
+    zone_id: str,
+    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+) -> ZoneDeprovisionResponse:
+    """Delete (deprovision) a zone.
+
+    Initiates ordered zone teardown using the finalizer protocol.
+    The zone enters ``Terminating`` phase, registered finalizers run
+    cleanup, and the zone transitions to ``Terminated`` when complete.
+
+    Idempotent: retrying on a ``Terminating`` zone retries pending finalizers.
+
+    - Active → 202 Accepted (finalization started)
+    - Terminating → 202 Accepted (retry pending finalizers)
+    - Terminated → 404 Not Found
+
+    Args:
+        zone_id: Zone identifier
+        user_info: Authenticated user (user_id, email) from JWT token
+        auth: Authentication provider
+
+    Raises:
+        403: User is not zone owner or global admin
+        404: Zone not found or already terminated
+    """
+    user_id, _email = user_info
+
+    # Get zone lifecycle service
+    nx = get_nexus_instance()
+    zone_lifecycle = getattr(nx, "_zone_lifecycle", None) if nx else None
+
+    with auth.session_factory() as session:
+        # Check authorization: must be zone owner or global admin
+        from nexus.server.auth.user_helpers import get_user_by_id
+
+        user = get_user_by_id(session, user_id)
+        is_global_admin = user and user.is_global_admin == 1
+
+        if not is_global_admin:
+            # Check if user is zone member via ReBAC
+            rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
+            if rebac_mgr is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Cannot verify zone ownership — ReBAC unavailable",
+                )
+            if not user_belongs_to_zone(rebac_mgr, user_id, zone_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied: you are not a member of zone '{zone_id}'",
+                )
+
+        zone = session.get(ZoneModel, zone_id)
+        if not zone:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Zone '{zone_id}' not found",
+            )
+
+        if zone.phase == "Terminated":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Zone '{zone_id}' is already terminated",
+            )
+
+        if zone_lifecycle is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Zone lifecycle service is not available",
+            )
+
+        # Active → start finalization; Terminating → retry pending finalizers
+        result = await zone_lifecycle.deprovision_zone(zone_id, session)
+
+        return ZoneDeprovisionResponse(
+            zone_id=result.zone_id,
+            phase=result.phase,
+            finalizers_completed=list(result.finalizers_completed),
+            finalizers_pending=list(result.finalizers_pending),
+            finalizers_failed=dict(result.finalizers_failed),
         )

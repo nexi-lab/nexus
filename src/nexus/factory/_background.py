@@ -40,3 +40,15 @@ def _start_background_services(system: dict[str, Any]) -> None:
     if dw is not None and hasattr(dw, "start"):
         dw.start()
         logger.debug("[BOOT:BG] EventDeliveryWorker started")
+
+    # Zone Lifecycle — load Terminating zones from DB (Issue #2061)
+    zl = system.get("zone_lifecycle")
+    if zl is not None and hasattr(zl, "load_terminating_zones"):
+        try:
+            session_factory = getattr(zl, "_session_factory", None)
+            if session_factory is not None:
+                with session_factory() as session:
+                    zl.load_terminating_zones(session)
+                logger.debug("[BOOT:BG] ZoneLifecycleService loaded terminating zones")
+        except Exception as exc:
+            logger.warning("[BOOT:BG] Failed to load terminating zones: %s", exc)

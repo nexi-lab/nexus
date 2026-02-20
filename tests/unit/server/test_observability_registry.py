@@ -382,3 +382,81 @@ class TestWriteBufferComponent:
         comp = WriteBufferComponent(write_observer=wo)
         await comp.shutdown()
         wo.stop.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# create_registry() wiring tests (Issue #2072)
+# ---------------------------------------------------------------------------
+
+
+class TestCreateRegistry:
+    """Tests for create_registry() wiring (Issue #2072)."""
+
+    def test_registers_all_providers(self) -> None:
+        """create_registry() should register 5 observability providers."""
+        from nexus.server.lifespan.observability import create_registry
+
+        registry = create_registry()
+        names = [name for name, _, _ in registry._components]
+        assert "logging" in names
+        assert "otel-tracing" in names
+        assert "sentry" in names
+        assert "pyroscope" in names
+        assert "prometheus" in names
+        assert len(names) == 5  # No write-buffer when write_observer=None
+
+    def test_registers_write_buffer_when_observer_provided(self) -> None:
+        from unittest.mock import MagicMock
+
+        from nexus.server.lifespan.observability import create_registry
+
+        registry = create_registry(write_observer=MagicMock())
+        names = [name for name, _, _ in registry._components]
+        assert "write-buffer" in names
+        assert len(names) == 6
+
+    def test_registration_order_matches_dependency_order(self) -> None:
+        from nexus.server.lifespan.observability import create_registry
+
+        registry = create_registry()
+        names = [name for name, _, _ in registry._components]
+        # Logging must be first (other components may log during startup)
+        assert names[0] == "logging"
+
+    @pytest.mark.asyncio
+    async def test_start_all_does_not_raise_on_missing_deps(self) -> None:
+        """start_all() should gracefully handle missing optional deps."""
+        from nexus.server.lifespan.observability import create_registry
+
+        registry = create_registry()
+        # All components are optional (required=False), so even if
+        # otel/sentry/pyroscope aren't installed, start should succeed
+        statuses = await registry.start_all()
+        # At minimum logging should start
+        assert any(s.started for s in statuses)
+        await registry.shutdown_all()
+
+
+# ---------------------------------------------------------------------------
+# Registry performance benchmark (Issue #2072)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryPerformance:
+    """Benchmark registry overhead (Issue #2072)."""
+
+    @pytest.mark.asyncio
+    async def test_start_shutdown_overhead_under_100ms(self) -> None:
+        """Registry with 10 mock components should start+shutdown in <100ms."""
+        import time
+
+        registry = ObservabilityRegistry()
+        for i in range(10):
+            registry.register(f"mock-{i}", FakeComponent(f"mock-{i}"))
+
+        start = time.perf_counter()
+        await registry.start_all()
+        await registry.shutdown_all()
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        assert elapsed_ms < 100, f"Registry overhead: {elapsed_ms:.1f}ms"

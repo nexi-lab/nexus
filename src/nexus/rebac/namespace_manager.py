@@ -235,6 +235,11 @@ class NamespaceManager:
         self._dcache_hits = 0
         self._dcache_misses = 0
         self._dcache_negative_hits = 0
+        # Latency tracking (nanoseconds) — Issue #1244
+        self._dcache_hit_total_ns = 0
+        self._dcache_miss_total_ns = 0
+        self._dcache_hit_count = 0
+        self._dcache_miss_count = 0
 
     def get_mount_table(
         self,
@@ -277,22 +282,16 @@ class NamespaceManager:
         Returns:
             True if the path is under a mounted prefix, False if invisible.
         """
+        start_ns = time.perf_counter_ns()
         dcache_key = self._dcache_key(subject, path, zone_id)
 
         # Layer 1: dcache lookup (O(1))
         with self._dcache_lock:
-            positive = self._dcache_positive.get(dcache_key)
-            if positive is not None:
-                self._dcache_hits += 1
-                return True
-
-            negative = self._dcache_negative.get(dcache_key)
-            if negative is not None:
-                self._dcache_hits += 1
-                self._dcache_negative_hits += 1
-                return False
-
-        self._dcache_misses += 1
+            cached = self._dcache_lookup(dcache_key)
+        if cached is not None:
+            self._dcache_hit_total_ns += time.perf_counter_ns() - start_ns
+            self._dcache_hit_count += 1
+            return cached
 
         # Layer 2: mount table bisect (O(log m))
         _entries, mount_paths = self._get_mount_data(subject, zone_id)
@@ -305,6 +304,10 @@ class NamespaceManager:
             else:
                 self._dcache_negative[dcache_key] = False
 
+        elapsed_ns = time.perf_counter_ns() - start_ns
+        with self._dcache_lock:
+            self._dcache_miss_total_ns += elapsed_ns
+            self._dcache_miss_count += 1
         return result
 
     def filter_visible(
@@ -343,22 +346,11 @@ class NamespaceManager:
         with self._dcache_lock:
             for i, path in enumerate(paths):
                 key = (subject_type, subject_id, path, zone_id, revision_bucket)
-
-                positive = self._dcache_positive.get(key)
-                if positive is not None:
-                    self._dcache_hits += 1
-                    visibility[i] = True
-                    continue
-
-                negative = self._dcache_negative.get(key)
-                if negative is not None:
-                    self._dcache_hits += 1
-                    self._dcache_negative_hits += 1
-                    visibility[i] = False
-                    continue
-
-                self._dcache_misses += 1
-                miss_indices.append(i)
+                cached = self._dcache_lookup(key)
+                if cached is not None:
+                    visibility[i] = cached
+                else:
+                    miss_indices.append(i)
 
         # Resolve misses via mount table bisect
         if miss_indices:
@@ -436,21 +428,31 @@ class NamespaceManager:
                     "[NAMESPACE] Failed to invalidate L3 persistent view for %s:%s",
                     subject[0],
                     subject[1],
+                    exc_info=True,
                 )
 
     def invalidate_all(self) -> None:
-        """Clear the entire mount table cache and dcache.
+        """Clear the entire mount table cache, dcache, and L3 entries.
 
         Use sparingly — typically zone revision quantization is sufficient.
         """
         with self._lock:
             self._cache.clear()
         self.invalidate_dcache()
+        # L3: Clear all persistent views
+        if self._persistent_store is not None:
+            try:
+                self._persistent_store.delete_all_views()
+            except Exception:
+                logger.warning(
+                    "[NAMESPACE] Failed to clear L3 persistent views",
+                    exc_info=True,
+                )
 
     def get_grants_hash(
         self,
         subject: tuple[str, str],
-        zone_id: str | None = None,
+        zone_id: str | None = None,  # noqa: ARG002
     ) -> str | None:
         """Get the grants_hash for a subject's cached mount table.
 
@@ -461,11 +463,10 @@ class NamespaceManager:
 
         Args:
             subject: (subject_type, subject_id) tuple
-            zone_id: Zone ID — if provided, validates against cached zone
+            zone_id: Zone ID (unused, for future multi-zone hash partitioning)
 
         Returns:
-            16-char hex string if cached, None if subject is not in cache
-            or if the cached zone doesn't match zone_id.
+            16-char hex string if cached, None if subject is not in cache.
         """
         with self._lock:
             cached = self._cache.get(subject)
@@ -473,14 +474,23 @@ class NamespaceManager:
         if cached is None:
             return None
 
-        _mount_entries, _mount_paths, _revision, cached_zone, grants_hash = cached
-        if zone_id is not None and cached_zone != zone_id:
-            return None
+        _mount_entries, _mount_paths, _revision, _zone, grants_hash = cached
         return grants_hash
 
     @property
     def metrics(self) -> dict[str, Any]:
         """Return cache metrics for monitoring."""
+        # Compute average latencies (nanoseconds → microseconds for readability)
+        avg_hit_us = (
+            (self._dcache_hit_total_ns / self._dcache_hit_count / 1000)
+            if self._dcache_hit_count > 0
+            else 0.0
+        )
+        avg_miss_us = (
+            (self._dcache_miss_total_ns / self._dcache_miss_count / 1000)
+            if self._dcache_miss_count > 0
+            else 0.0
+        )
         return {
             "mount_table_hits": self._hits,
             "mount_table_misses": self._misses,
@@ -495,6 +505,9 @@ class NamespaceManager:
             "dcache_negative_size": len(self._dcache_negative),
             "dcache_positive_maxsize": self._dcache_positive.maxsize,
             "dcache_negative_maxsize": self._dcache_negative.maxsize,
+            # Latency metrics (Issue #1244) — microseconds
+            "avg_dcache_hit_us": round(avg_hit_us, 2),
+            "avg_dcache_miss_us": round(avg_miss_us, 2),
             # Backward compatibility aliases
             "hits": self._hits,
             "misses": self._misses,
@@ -525,6 +538,26 @@ class NamespaceManager:
         """
         revision_bucket = self._get_current_revision_bucket(zone_id)
         return (subject[0], subject[1], path, zone_id, revision_bucket)
+
+    def _dcache_lookup(self, key: _DCacheKey) -> bool | None:
+        """Check dcache for cached visibility result.
+
+        Caller must hold self._dcache_lock.
+
+        Returns:
+            True on positive hit, False on negative hit, None on miss.
+        """
+        positive = self._dcache_positive.get(key)
+        if positive is not None:
+            self._dcache_hits += 1
+            return True
+        negative = self._dcache_negative.get(key)
+        if negative is not None:
+            self._dcache_hits += 1
+            self._dcache_negative_hits += 1
+            return False
+        self._dcache_misses += 1
+        return None
 
     def _get_current_revision_bucket(self, zone_id: str | None) -> int:
         """Get the current revision bucket for key-based quantization.

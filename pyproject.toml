@@ -514,6 +514,7 @@ disable_error_code = ["no-any-return"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.services.rebac.rebac_share_mixin",
+    "nexus.rebac.share_mixin",
 ]
 # Mixin classes access `self.*` attributes defined on the concrete class
 # (ReBACService). Mypy cannot see across mixin boundaries.
@@ -629,9 +630,17 @@ module = [
     "nexus.rebac.cache.iterator",
     "nexus.rebac.cache.boundary",
     "nexus.rebac.cache.result_cache",
+    "nexus.rebac.namespace_manager",
+    "nexus.rebac.cache.enforcer_cache",
+    "nexus.rebac.manager",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.validation.config"
+# PyYAML lazy import
+disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
 module = "nexus.config"
@@ -702,7 +711,7 @@ module = [
     "nexus.core.distributed_lock",
 ]
 # Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
-disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
+disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc", "import-untyped"]
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]

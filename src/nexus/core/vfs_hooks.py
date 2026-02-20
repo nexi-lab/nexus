@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from nexus.core.operation_result import OperationWarning
 
 if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
     from nexus.core.metadata import FileMetadata
-    from nexus.core.permissions import OperationContext
 
 
 # ---------------------------------------------------------------------------

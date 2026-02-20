@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.server.api.core.features import router
 from nexus.server.lifespan import _compute_features_info
+from nexus.server.lifespan.services_container import LifespanServices
 
 
 @pytest.fixture
@@ -29,7 +30,13 @@ def app_full_profile() -> FastAPI:
     app.state.profile_tuning = profile.tuning()
     app.state.deployment_mode = "standalone"
 
-    _compute_features_info(app)
+    svc = LifespanServices(
+        deployment_profile=profile.value,
+        deployment_mode="standalone",
+        enabled_bricks=profile.default_bricks(),
+        profile_tuning=profile.tuning(),
+    )
+    _compute_features_info(app, svc)
     app.include_router(router)
     return app
 
@@ -44,7 +51,13 @@ def app_lite_profile() -> FastAPI:
     app.state.profile_tuning = profile.tuning()
     app.state.deployment_mode = "standalone"
 
-    _compute_features_info(app)
+    svc = LifespanServices(
+        deployment_profile=profile.value,
+        deployment_mode="standalone",
+        enabled_bricks=profile.default_bricks(),
+        profile_tuning=profile.tuning(),
+    )
+    _compute_features_info(app, svc)
     app.include_router(router)
     return app
 

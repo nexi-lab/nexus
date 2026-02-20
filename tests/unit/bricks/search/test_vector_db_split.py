@@ -12,8 +12,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 if TYPE_CHECKING:
     from nexus.bricks.search.vector_db import VectorDatabase
 

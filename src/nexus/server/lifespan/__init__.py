@@ -156,6 +156,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await startup_observability(app, svc)
     # Re-extract observability_registry after startup_observability writes it
     svc.observability_registry = getattr(app.state, "observability_registry", None)
+
+    # Configure thread pool size (Issue #932) — server infra, not observability
+    from anyio import to_thread
+
+    limiter = to_thread.current_default_thread_limiter()
+    limiter.total_tokens = svc.thread_pool_size
+    logger.info("Thread pool size set to %d", limiter.total_tokens)
+
     _done(StartupPhase.OBSERVABILITY)
 
     _compute_features_info(app, svc)

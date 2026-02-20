@@ -24,7 +24,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
@@ -67,6 +67,7 @@ from nexus.bricks.rebac.rebac_tracing import (
     start_graph_traversal_span,
 )
 from nexus.bricks.rebac.tuples.repository import TupleRepository
+from nexus.bricks.rebac.tuples.writer import TupleWriter
 from nexus.bricks.rebac.types import (
     CheckResult,
     ConsistencyLevel,
@@ -76,7 +77,6 @@ from nexus.bricks.rebac.types import (
     TraversalStats,
     WriteResult,
 )
-from nexus.bricks.rebac.utils.changelog import insert_changelog_entry
 from nexus.bricks.rebac.utils.fast import (
     check_permissions_bulk_with_fallback,
     is_rust_available,
@@ -264,6 +264,23 @@ class ReBACManager:
             tiger_cache=self._tiger_cache,
         )
 
+        # Issue #2179: Tuple writer (handles write/delete SQL operations)
+        self._tuple_writer = TupleWriter(
+            connection_factory=self._connection,
+            create_cursor=self._create_cursor,
+            fix_sql=self._fix_sql_placeholders,
+            is_postgresql=is_postgresql,
+            repo=self._repo,
+            zone_manager=self._zone_manager,
+            ensure_namespaces_cb=self._ensure_namespaces_initialized,
+            validate_cross_zone_cb=self._validate_cross_zone,
+            would_create_cycle_cb=self._would_create_cycle_with_conn,
+            increment_zone_revision_cb=self._increment_zone_revision,
+            invalidate_cache_cb=self._invalidate_cache_for_tuple,
+            get_tuple_version=lambda: self._tuple_version,
+            set_tuple_version=lambda v: setattr(self, "_tuple_version", v),
+        )
+
         # Issue #1459 Phase 13: Directory permission expander (Leopard-style)
         self._directory_expander = DirectoryExpander(
             engine=engine,
@@ -324,6 +341,20 @@ class ReBACManager:
             boundary_cache=self._boundary_cache,
             iterator_cache=self._iterator_cache,
             zone_graph_cache=self._zone_graph_cache,
+            # Database access (Issue #2179 Step 2.5)
+            connection_factory=self._connection,
+            get_connection=self._get_connection,
+            close_connection=self._close_connection,
+            create_cursor=self._create_cursor,
+            fix_sql=self._fix_sql_placeholders,
+            # Eager recompute callbacks
+            get_namespace_cb=self.get_namespace,
+            compute_permission_cb=self._compute_permission,
+            cache_check_result_cb=self._cache_check_result,
+            # Stats / cleanup
+            cache_ttl_seconds=self.cache_ttl_seconds,
+            get_tuple_version=lambda: self._tuple_version,
+            set_tuple_version=lambda v: setattr(self, "_tuple_version", v),
         )
 
     def rebac_check(
@@ -1516,168 +1547,18 @@ class ReBACManager:
         subject_zone_id: str | None = None,
         object_zone_id: str | None = None,
     ) -> str:
-        """Insert a relationship tuple with zone isolation.
-
-        Handles zone validation, subject parsing, tuple insertion, changelog
-        logging, and cache invalidation. Returns the tuple ID.
-
-        If zone isolation is disabled, delegates to ReBACManager.rebac_write.
-        """
-        # Ensure default namespaces are initialized
-        self._ensure_namespaces_initialized()
-
-        # If zone isolation is disabled, use base write implementation
-        if not self.enforce_zone_isolation:
-            return self._rebac_write_base(
-                subject=subject,
-                relation=relation,
-                object=object,
-                expires_at=expires_at,
-                conditions=conditions,
-                zone_id=zone_id,
-                subject_zone_id=subject_zone_id,
-                object_zone_id=object_zone_id,
-            )
-
-        # Delegate zone validation to ZoneManager (Issue #1459)
-        zone_id, subject_zone_id, object_zone_id, _is_cross_zone = (
-            self._zone_manager.validate_write_zones(
-                zone_id, subject_zone_id, object_zone_id, relation
-            )
+        """Insert a relationship tuple with zone isolation. Delegates to TupleWriter."""
+        return self._tuple_writer.write_tuple_zone_aware(
+            subject=subject,
+            relation=relation,
+            object=object,
+            enforce_zone_isolation=self.enforce_zone_isolation,
+            expires_at=expires_at,
+            conditions=conditions,
+            zone_id=zone_id,
+            subject_zone_id=subject_zone_id,
+            object_zone_id=object_zone_id,
         )
-
-        # Parse subject (support userset-as-subject with 3-tuple) - P0 FIX
-        if len(subject) == 3:
-            subject_type, subject_id, subject_relation = subject
-            subject_entity = Entity(subject_type, subject_id)
-        elif len(subject) == 2:
-            subject_type, subject_id = subject
-            subject_relation = None
-            subject_entity = Entity(subject_type, subject_id)
-        else:
-            raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
-
-        # Create tuple with zone isolation
-        tuple_id = str(uuid.uuid4())
-        object_entity = Entity(object[0], object[1])
-
-        with self._connection() as conn:
-            # CYCLE DETECTION: Prevent cycles in parent relations
-            if relation == "parent" and self._would_create_cycle_with_conn(
-                conn, subject_entity, object_entity, zone_id
-            ):
-                raise ValueError(
-                    f"Cycle detected: Creating parent relation from "
-                    f"{subject_entity.entity_type}:{subject_entity.entity_id} to "
-                    f"{object_entity.entity_type}:{object_entity.entity_id} would create a cycle"
-                )
-
-            cursor = self._create_cursor(conn)
-
-            # Check if tuple already exists (idempotency fix)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT tuple_id FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                    AND (subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL))
-                    AND relation = ?
-                    AND object_type = ? AND object_id = ?
-                    AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
-                    """
-                ),
-                (
-                    subject_entity.entity_type,
-                    subject_entity.entity_id,
-                    subject_relation,
-                    subject_relation,
-                    relation,
-                    object_entity.entity_type,
-                    object_entity.entity_id,
-                    zone_id,
-                    zone_id,
-                ),
-            )
-            existing = cursor.fetchone()
-            if existing:
-                return cast(
-                    str, existing[0] if isinstance(existing, tuple) else existing["tuple_id"]
-                )
-
-            # Insert tuple with zone_id columns
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_tuples (
-                        tuple_id, zone_id, subject_type, subject_id, subject_relation, subject_zone_id,
-                        relation, object_type, object_id, object_zone_id,
-                        created_at, expires_at, conditions
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    tuple_id,
-                    zone_id,
-                    subject_entity.entity_type,
-                    subject_entity.entity_id,
-                    subject_relation,
-                    subject_zone_id,
-                    relation,
-                    object_entity.entity_type,
-                    object_entity.entity_id,
-                    object_zone_id,
-                    datetime.now(UTC).isoformat(),
-                    expires_at.isoformat() if expires_at else None,
-                    json.dumps(conditions) if conditions else None,
-                ),
-            )
-
-            # Log to changelog
-            insert_changelog_entry(
-                cursor,
-                self._fix_sql_placeholders,
-                change_type="INSERT",
-                tuple_id=tuple_id,
-                subject_type=subject_entity.entity_type,
-                subject_id=subject_entity.entity_id,
-                relation=relation,
-                object_type=object_entity.entity_type,
-                object_id=object_entity.entity_id,
-                zone_id=zone_id,
-            )
-
-            # Increment zone revision before commit for atomicity (Issue #909)
-            # Without this, namespace caches never invalidate after writes.
-            self._increment_zone_revision(zone_id, conn)
-            conn.commit()
-            self._tuple_version += 1  # Invalidate Rust graph cache
-
-            # Invalidate cache entries affected by this change
-            self._invalidate_cache_for_tuple(
-                subject_entity,
-                relation,
-                object_entity,
-                zone_id,
-                subject_relation,
-                expires_at,
-                conn=conn,
-            )
-
-            # CROSS-ZONE FIX: If subject is from a different zone, also invalidate
-            # cache for the subject's zone
-            if subject_zone_id != zone_id:
-                self._invalidate_cache_for_tuple(
-                    subject_entity,
-                    relation,
-                    object_entity,
-                    subject_zone_id,
-                    subject_relation,
-                    expires_at,
-                    conn=conn,
-                )
-
-        return tuple_id
 
     def rebac_expand(
         self,
@@ -2054,84 +1935,12 @@ class ReBACManager:
         subject_id: str,
         zone_id: str | None = None,
     ) -> int:
-        """Delete all ReBAC tuples for a given subject.
-
-        Uses batch DELETE + changelog INSERT in a single transaction.
-        This is the proper public API for bulk subject removal (e.g., revoking
-        all permissions for a delegated agent).
-
-        Args:
-            subject_type: Subject type (e.g., "agent", "user")
-            subject_id: Subject identifier
-            zone_id: Optional zone scope (normalized internally)
-
-        Returns:
-            Number of tuples deleted
-        """
-        from datetime import UTC, datetime
-
-        normalized_zone = normalize_zone_id(zone_id)
-        now = datetime.now(UTC).isoformat()
-        fix = self._fix_sql_placeholders
-
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # 1. SELECT all tuples to capture for changelog
-            select_q = (
-                "SELECT tuple_id, subject_type, subject_id, relation, "
-                "object_type, object_id, zone_id "
-                "FROM rebac_tuples "
-                "WHERE subject_type = ? AND subject_id = ?"
-            )
-            params: list = [subject_type, subject_id]
-            if normalized_zone:
-                select_q += " AND zone_id = ?"
-                params.append(normalized_zone)
-            cursor.execute(fix(select_q), params)
-            rows = cursor.fetchall()
-
-            if not rows:
-                return 0
-
-            # 2. Batch DELETE
-            delete_q = "DELETE FROM rebac_tuples WHERE subject_type = ? AND subject_id = ?"
-            delete_params: list = [subject_type, subject_id]
-            if normalized_zone:
-                delete_q += " AND zone_id = ?"
-                delete_params.append(normalized_zone)
-            cursor.execute(fix(delete_q), delete_params)
-
-            # 3. Batch INSERT changelog entries
-            for row in rows:
-                cursor.execute(
-                    fix(
-                        "INSERT INTO rebac_changelog ("
-                        "  change_type, tuple_id, subject_type, subject_id,"
-                        "  relation, object_type, object_id, zone_id, created_at"
-                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    ),
-                    (
-                        "DELETE",
-                        row["tuple_id"],
-                        row["subject_type"],
-                        row["subject_id"],
-                        row["relation"],
-                        row["object_type"],
-                        row["object_id"],
-                        row["zone_id"] or ROOT_ZONE_ID,
-                        now,
-                    ),
-                )
-
-            # 4. Increment zone revision + commit
-            self._increment_zone_revision(zone_id, conn)
-            conn.commit()
-
-            # 5. Invalidate graph cache
-            self._tuple_version += 1
-
-        return len(rows)
+        """Delete all ReBAC tuples for a given subject. Delegates to TupleWriter."""
+        return self._tuple_writer.delete_by_subject(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            zone_id=zone_id,
+        )
 
     # ========================================================================
     # Leopard Index Methods (Issue #692)
@@ -2164,58 +1973,16 @@ class ReBACManager:
         permission: str,
         object: tuple[str, str],
         zone_id: str,
-        logger: Any = None,
+        _logger: Any = None,
     ) -> None:
-        """Write-through single permission result to Tiger Cache (Issue #935).
-
-        Called after a single permission check computes a positive result.
-        This is the READ path - must be non-blocking to keep reads fast.
-
-        Strategy:
-        1. Check if resource int_id is already in memory cache (no DB)
-        2. If yes: update in-memory bitmap (~microseconds)
-        3. If no: skip (permission grant will populate via write-through)
-
-        Args:
-            subject: (subject_type, subject_id) tuple
-            permission: Permission that was granted
-            object: (object_type, object_id) tuple
-            zone_id: Zone ID
-            logger: Optional logger instance
-        """
-        if not self._tiger_cache:
-            return
-
-        try:
-            # Check memory cache ONLY - no DB hit on read path
-            # Note: resource_key excludes zone - paths are globally unique
-            resource_key = (object[0], object[1])
-            resource_int_id = self._tiger_cache._resource_map._uuid_to_int.get(resource_key)
-
-            if resource_int_id is not None:
-                # Fast path: resource already mapped, just update in-memory bitmap
-                self._tiger_cache.add_to_bitmap(
-                    subject_type=subject[0],
-                    subject_id=subject[1],
-                    permission=permission,
-                    resource_type=object[0],
-                    zone_id=zone_id,
-                    resource_int_id=resource_int_id,
-                )
-                if logger:
-                    logger.debug(
-                        f"[TIGER] Read write-through: {subject[0]}:{subject[1]} "
-                        f"{permission} {object[0]}:{object[1]} (int_id={resource_int_id})"
-                    )
-            else:
-                # Resource not in memory cache - skip
-                # The permission grant (write path) will populate via persist_single_grant
-                if logger and logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[TIGER] Read skip: resource {object[1]} not in memory cache")
-        except (RuntimeError, ValueError, KeyError) as e:
-            # Don't fail the permission check if Tiger write fails
-            if logger and logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"[TIGER] Write-through failed: {e}")
+        """Write-through single permission result to Tiger Cache. Delegates to TupleWriter."""
+        self._tuple_writer.tiger_write_through_single(
+            subject=subject,
+            permission=permission,
+            object=object,
+            zone_id=zone_id,
+            tiger_cache=self._tiger_cache,
+        )
 
     def get_cached_permission(
         self,
@@ -3215,7 +2982,6 @@ class ReBACManager:
         Args:
             namespace: Namespace configuration to create
         """
-        import json
         from datetime import UTC, datetime
 
         with self._connection() as conn:
@@ -3279,7 +3045,6 @@ class ReBACManager:
         Returns:
             NamespaceConfig or None if not found
         """
-        import json
         from datetime import datetime
 
         from nexus.bricks.rebac.domain import NamespaceConfig
@@ -3328,7 +3093,6 @@ class ReBACManager:
             List of namespace dicts with keys: namespace_id, object_type,
             config (parsed JSON), created_at, updated_at.
         """
-        import json
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -3397,7 +3161,6 @@ class ReBACManager:
         Returns:
             Parsed conditions dict, or None if not found / no conditions.
         """
-        import json
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -3429,7 +3192,7 @@ class ReBACManager:
         TupleRepository.validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
 
     # ====================================================================================
-    # Write (Base implementation — no zone-aware wrapping)
+    # Write/Delete — thin delegates to TupleWriter (Issue #2179 Step 2.4)
     # ====================================================================================
 
     def _rebac_write_base(
@@ -3443,454 +3206,24 @@ class ReBACManager:
         subject_zone_id: str | None = None,
         object_zone_id: str | None = None,
     ) -> str:
-        """Base tuple write — no zone-aware wrapping.
-
-        Used when ``enforce_zone_isolation`` is False.
-        """
-        self._ensure_namespaces_initialized()
-
-        tuple_id = str(uuid.uuid4())
-
-        # Parse subject (support userset-as-subject with 3-tuple)
-        if len(subject) == 3:
-            subject_type, subject_id, subject_relation = subject
-            subject_entity = Entity(subject_type, subject_id)
-        elif len(subject) == 2:
-            subject_type, subject_id = subject
-            subject_relation = None
-            subject_entity = Entity(subject_type, subject_id)
-        else:
-            raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
-        object_entity = Entity(object[0], object[1])
-
-        if zone_id is None:
-            zone_id = ROOT_ZONE_ID
-        if subject_zone_id is None:
-            subject_zone_id = zone_id
-        if object_zone_id is None:
-            object_zone_id = zone_id
-
-        self._validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
-
-        with self._connection() as conn:
-            if relation == "parent" and self._would_create_cycle_with_conn(
-                conn, subject_entity, object_entity, zone_id
-            ):
-                raise ValueError(
-                    f"Cycle detected: Creating parent relation from "
-                    f"{subject_entity.entity_type}:{subject_entity.entity_id} to "
-                    f"{object_entity.entity_type}:{object_entity.entity_id} would create a cycle"
-                )
-            cursor = self._create_cursor(conn)
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT tuple_id FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                    AND (subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL))
-                    AND relation = ?
-                    AND object_type = ? AND object_id = ?
-                    AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
-                    """
-                ),
-                (
-                    subject_entity.entity_type,
-                    subject_entity.entity_id,
-                    subject_relation,
-                    subject_relation,
-                    relation,
-                    object_entity.entity_type,
-                    object_entity.entity_id,
-                    zone_id,
-                    zone_id,
-                ),
-            )
-            existing = cursor.fetchone()
-            if existing:
-                return cast(
-                    str, existing[0] if isinstance(existing, tuple) else existing["tuple_id"]
-                )
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_tuples (
-                        tuple_id, subject_type, subject_id, subject_relation, relation,
-                        object_type, object_id, created_at, expires_at, conditions,
-                        zone_id, subject_zone_id, object_zone_id
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    tuple_id,
-                    subject_entity.entity_type,
-                    subject_entity.entity_id,
-                    subject_relation,
-                    relation,
-                    object_entity.entity_type,
-                    object_entity.entity_id,
-                    datetime.now(UTC).isoformat(),
-                    expires_at.isoformat() if expires_at else None,
-                    json.dumps(conditions) if conditions else None,
-                    zone_id,
-                    subject_zone_id,
-                    object_zone_id,
-                ),
-            )
-
-            insert_changelog_entry(
-                cursor,
-                self._fix_sql_placeholders,
-                change_type="INSERT",
-                tuple_id=tuple_id,
-                subject_type=subject_entity.entity_type,
-                subject_id=subject_entity.entity_id,
-                relation=relation,
-                object_type=object_entity.entity_type,
-                object_id=object_entity.entity_id,
-                zone_id=zone_id or ROOT_ZONE_ID,
-            )
-
-            self._increment_zone_revision(zone_id, conn)
-            conn.commit()
-            self._tuple_version += 1
-
-            self._invalidate_cache_for_tuple(
-                subject_entity,
-                relation,
-                object_entity,
-                zone_id,
-                subject_relation,
-                expires_at,
-                conn=conn,
-            )
-
-            if subject_zone_id is not None and subject_zone_id != zone_id:
-                self._invalidate_cache_for_tuple(
-                    subject_entity,
-                    relation,
-                    object_entity,
-                    subject_zone_id,
-                    subject_relation,
-                    expires_at,
-                    conn=conn,
-                )
-
-        return tuple_id
-
-    # Write Batch (Renamed from rebac_write_batch)
-    # ====================================================================================
+        """Base tuple write — no zone-aware wrapping. Delegates to TupleWriter."""
+        return self._tuple_writer.write_base(
+            subject=subject,
+            relation=relation,
+            object=object,
+            expires_at=expires_at,
+            conditions=conditions,
+            zone_id=zone_id,
+            subject_zone_id=subject_zone_id,
+            object_zone_id=object_zone_id,
+        )
 
     def _rebac_write_batch_base(
         self,
         tuples: list[dict[str, Any]],
     ) -> int:
-        """Create multiple relationship tuples in a single transaction (batch operation).
-
-        This is much more efficient than calling rebac_write() multiple times
-        because it uses a single database transaction and bulk operations.
-
-        Args:
-            tuples: List of dicts with keys:
-                - subject: (type, id) or (type, id, relation) tuple
-                - relation: str
-                - object: (type, id) tuple
-                - zone_id: str | None (optional, defaults to "root")
-                - expires_at: datetime | None (optional)
-                - conditions: dict | None (optional)
-                - subject_zone_id: str | None (optional)
-                - object_zone_id: str | None (optional)
-
-        Returns:
-            Number of tuples created (excluding duplicates)
-
-        Example:
-            >>> manager.rebac_write_batch([
-            ...     {
-            ...         "subject": ("file", "/a/b/c.txt"),
-            ...         "relation": "parent",
-            ...         "object": ("file", "/a/b"),
-            ...         "zone_id": "org_123"
-            ...     },
-            ...     {
-            ...         "subject": ("file", "/a/b"),
-            ...         "relation": "parent",
-            ...         "object": ("file", "/a"),
-            ...         "zone_id": "org_123"
-            ...     }
-            ... ])
-            2
-        """
-        import json
-        import logging
-        import uuid
-        from datetime import UTC, datetime
-
-        from nexus.bricks.rebac.domain import Entity
-
-        logger = logging.getLogger(__name__)
-
-        if not tuples:
-            return 0
-
-        # Ensure default namespaces are initialized
-        self._ensure_namespaces_initialized()
-
-        created_count = 0
-        now = datetime.now(UTC).isoformat()
-
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            try:
-                # Step 1: Parse and validate all tuples
-                parsed_tuples: list[dict[str, Any]] = []
-                for t in tuples:
-                    subject = t["subject"]
-                    relation = t["relation"]
-                    obj = t["object"]
-                    zone_id = t.get("zone_id")
-                    expires_at = t.get("expires_at")
-                    conditions = t.get("conditions")
-                    subject_zone_id = t.get("subject_zone_id")
-                    object_zone_id = t.get("object_zone_id")
-
-                    # Parse subject (support userset-as-subject with 3-tuple)
-                    if len(subject) == 3:
-                        subject_type, subject_id, subject_relation = subject
-                        subject_entity = Entity(subject_type, subject_id)
-                    elif len(subject) == 2:
-                        subject_type, subject_id = subject
-                        subject_relation = None
-                        subject_entity = Entity(subject_type, subject_id)
-                    else:
-                        raise ValueError(
-                            f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple"
-                        )
-
-                    object_entity = Entity(obj[0], obj[1])
-
-                    # Issue #773: Default zone_id values if not provided
-                    if zone_id is None:
-                        zone_id = ROOT_ZONE_ID
-                    if subject_zone_id is None:
-                        subject_zone_id = zone_id
-                    if object_zone_id is None:
-                        object_zone_id = zone_id
-
-                    # P0-4: Cross-zone validation (delegated to helper)
-                    self._validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
-
-                    # CYCLE DETECTION: For parent relations, check for cycles
-                    if relation == "parent" and self._would_create_cycle_with_conn(
-                        conn, subject_entity, object_entity, zone_id
-                    ):
-                        logger.warning(
-                            f"Skipping tuple creation - cycle detected: "
-                            f"{subject_entity.entity_type}:{subject_entity.entity_id} -> "
-                            f"{object_entity.entity_type}:{object_entity.entity_id}"
-                        )
-                        continue
-
-                    parsed_tuples.append(
-                        {
-                            "tuple_id": str(uuid.uuid4()),
-                            "subject_type": subject_type,
-                            "subject_id": subject_id,
-                            "subject_relation": subject_relation,
-                            "subject_entity": subject_entity,
-                            "relation": relation,
-                            "object_type": obj[0],
-                            "object_id": obj[1],
-                            "object_entity": object_entity,
-                            "zone_id": zone_id,
-                            "expires_at": expires_at,
-                            "conditions": conditions,
-                            "subject_zone_id": subject_zone_id,
-                            "object_zone_id": object_zone_id,
-                        }
-                    )
-
-                if not parsed_tuples:
-                    return 0
-
-                # Step 2: Bulk check which tuples already exist
-                existing_tuples = self._bulk_check_tuples_exist(cursor, parsed_tuples)
-
-                # Step 3: Filter out existing tuples and create new ones
-                tuples_to_create = []
-                for pt in parsed_tuples:
-                    key = (
-                        (pt["subject_type"], pt["subject_id"], pt["subject_relation"]),
-                        pt["relation"],
-                        (pt["object_type"], pt["object_id"]),
-                        pt["zone_id"],
-                    )
-                    if key not in existing_tuples:
-                        tuples_to_create.append(pt)
-
-                if not tuples_to_create:
-                    return 0
-
-                # Step 4: PERF OPTIMIZATION - Bulk insert tuples using executemany()
-                # This is 10-50x faster than individual execute() calls
-                tuple_insert_sql = self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_tuples (
-                        tuple_id, subject_type, subject_id, subject_relation, relation,
-                        object_type, object_id, created_at, expires_at, conditions,
-                        zone_id, subject_zone_id, object_zone_id
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                )
-
-                # Prepare all tuple data for bulk insert
-                tuple_data = [
-                    (
-                        pt["tuple_id"],
-                        pt["subject_type"],
-                        pt["subject_id"],
-                        pt["subject_relation"],
-                        pt["relation"],
-                        pt["object_type"],
-                        pt["object_id"],
-                        now,
-                        pt["expires_at"].isoformat() if pt["expires_at"] else None,
-                        json.dumps(pt["conditions"]) if pt["conditions"] else None,
-                        pt["zone_id"],
-                        pt["subject_zone_id"],
-                        pt["object_zone_id"],
-                    )
-                    for pt in tuples_to_create
-                ]
-
-                # Bulk insert all tuples in one call
-                cursor.executemany(tuple_insert_sql, tuple_data)
-
-                # Step 5: PERF OPTIMIZATION - Bulk insert changelog entries
-                changelog_insert_sql = self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_changelog (
-                        change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, zone_id, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                )
-
-                changelog_data = [
-                    (
-                        "INSERT",
-                        pt["tuple_id"],
-                        pt["subject_type"],
-                        pt["subject_id"],
-                        pt["relation"],
-                        pt["object_type"],
-                        pt["object_id"],
-                        pt["zone_id"] or ROOT_ZONE_ID,
-                        now,
-                    )
-                    for pt in tuples_to_create
-                ]
-
-                cursor.executemany(changelog_insert_sql, changelog_data)
-
-                created_count = len(tuples_to_create)
-
-                # Step 6: PERF OPTIMIZATION - Batch cache invalidation
-                # Collect unique (subject, relation, object, zone) combinations
-                # and invalidate once per combination instead of per tuple
-                invalidation_keys: set[tuple[str, str, str, str, str, str | None]] = set()
-                for pt in tuples_to_create:
-                    inv_key: tuple[str, str, str, str, str, str | None] = (
-                        pt["subject_entity"].entity_type,
-                        pt["subject_entity"].entity_id,
-                        pt["relation"],
-                        pt["object_entity"].entity_type,
-                        pt["object_entity"].entity_id,
-                        pt["zone_id"],
-                    )
-                    invalidation_keys.add(inv_key)
-
-                    # Cross-zone invalidation
-                    if pt["subject_zone_id"] and pt["subject_zone_id"] != pt["zone_id"]:
-                        cross_inv_key: tuple[str, str, str, str, str, str | None] = (
-                            pt["subject_entity"].entity_type,
-                            pt["subject_entity"].entity_id,
-                            pt["relation"],
-                            pt["object_entity"].entity_type,
-                            pt["object_entity"].entity_id,
-                            pt["subject_zone_id"],
-                        )
-                        invalidation_keys.add(cross_inv_key)
-
-                # PERF OPTIMIZATION: For batch writes, use simple invalidation (no eager recompute)
-                # Eager recomputation is expensive and defeats the purpose of batching
-                # The next permission check will rebuild the cache as needed
-
-                # L1 cache: invalidate all affected subject-object pairs
-                if self._l1_cache:
-                    for inv_key in invalidation_keys:
-                        subj_type, subj_id, _rel, obj_type, obj_id, tid = inv_key
-                        self._l1_cache.invalidate_subject_object_pair(
-                            subj_type, subj_id, obj_type, obj_id, tid
-                        )
-
-                # L2 cache: bulk delete affected entries
-                if invalidation_keys:
-                    # Build bulk delete for all subject-object pairs
-                    delete_conditions = []
-                    delete_params: list[str] = []
-                    for inv_key in invalidation_keys:
-                        subj_type, subj_id, _rel, obj_type, obj_id, tid = inv_key
-                        delete_conditions.append(
-                            "(zone_id = ? AND subject_type = ? AND subject_id = ? "
-                            "AND object_type = ? AND object_id = ?)"
-                        )
-                        delete_params.extend(
-                            [tid or ROOT_ZONE_ID, subj_type, subj_id, obj_type, obj_id]
-                        )
-
-                    # Chunk the deletes to avoid too large SQL
-                    CHUNK_SIZE = 50
-                    for i in range(0, len(delete_conditions), CHUNK_SIZE):
-                        chunk_conditions = delete_conditions[i : i + CHUNK_SIZE]
-                        chunk_params = delete_params[i * 5 : (i + CHUNK_SIZE) * 5]
-
-                        if chunk_conditions:
-                            delete_sql = f"""
-                                DELETE FROM rebac_check_cache
-                                WHERE {" OR ".join(chunk_conditions)}
-                            """
-                            cursor.execute(self._fix_sql_placeholders(delete_sql), chunk_params)
-
-                # Increment revision for all affected zones before commit (Issue #909)
-                if created_count > 0:
-                    affected_zones = set()
-                    for pt in parsed_tuples:
-                        affected_zones.add(pt["zone_id"] or ROOT_ZONE_ID)
-                        if pt["subject_zone_id"] and pt["subject_zone_id"] != pt["zone_id"]:
-                            affected_zones.add(pt["subject_zone_id"])
-                    for zone in affected_zones:
-                        self._increment_zone_revision(zone, conn)
-
-                # Commit transaction after all inserts succeed
-                conn.commit()
-                if created_count > 0:
-                    self._tuple_version += 1  # Invalidate Rust graph cache
-
-            except Exception as e:  # rollback-then-reraise: ensures transaction cleanup
-                conn.rollback()
-                logger.error(
-                    f"Failed to batch create {len(tuples)} tuples: {type(e).__name__}: {e}",
-                    exc_info=True,
-                )
-                raise
-
-        return created_count
+        """Batch tuple write. Delegates to TupleWriter."""
+        return self._tuple_writer.write_batch(tuples, l1_cache=self._l1_cache)
 
     def _bulk_check_tuples_exist(
         self,
@@ -3900,121 +3233,9 @@ class ReBACManager:
         """Check which tuples already exist. Delegates to TupleRepository (Issue #1459)."""
         return self._repo.bulk_check_tuples_exist(cursor, parsed_tuples)
 
-    # ====================================================================================
-    # Delete (Renamed from rebac_delete)
-    # ====================================================================================
-
     def _rebac_delete_base(self, tuple_id: str) -> bool:
-        """Delete a relationship tuple.
-
-        Args:
-            tuple_id: ID of tuple to delete
-
-        Returns:
-            True if tuple was deleted, False if not found
-        """
-        from datetime import UTC, datetime
-
-        from nexus.bricks.rebac.domain import Entity
-
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-            now = datetime.now(UTC).isoformat()
-
-            # PostgreSQL: Use DELETE...RETURNING to get deleted row in single query
-            # This eliminates the SELECT+DELETE round-trip for better performance
-            # Note: DELETE only has one row version, so no need for OLD prefix
-            if self._is_postgresql:
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_tuples
-                        WHERE tuple_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        RETURNING
-                            subject_type,
-                            subject_id,
-                            subject_relation,
-                            relation,
-                            object_type,
-                            object_id,
-                            zone_id
-                        """
-                    ),
-                    (tuple_id, now),
-                )
-                row = cursor.fetchone()
-            else:
-                # SQLite / older PostgreSQL: SELECT then DELETE (2 queries)
-                # P0-5: Filter expired tuples at read-time (prevent deleted/expired access leak)
-                # BUGFIX: Use >= instead of > for exact expiration boundary
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id, subject_relation, relation, object_type, object_id, zone_id
-                        FROM rebac_tuples
-                        WHERE tuple_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (tuple_id, now),
-                )
-                row = cursor.fetchone()
-
-                if row:
-                    # Delete tuple
-                    cursor.execute(
-                        self._fix_sql_placeholders("DELETE FROM rebac_tuples WHERE tuple_id = ?"),
-                        (tuple_id,),
-                    )
-
-            if not row:
-                return False
-
-            # Both SQLite and PostgreSQL now return dict-like rows
-            subject = Entity(row["subject_type"], row["subject_id"])
-            subject_relation = row["subject_relation"]
-            relation = row["relation"]
-            obj = Entity(row["object_type"], row["object_id"])
-            zone_id = row["zone_id"]
-
-            # Log to changelog (Issue #773: include zone_id)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_changelog (
-                        change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, zone_id, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    "DELETE",
-                    tuple_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    zone_id or ROOT_ZONE_ID,
-                    now,
-                ),
-            )
-
-            # Increment zone revision before commit for atomicity (Issue #909)
-            self._increment_zone_revision(zone_id, conn)
-
-            conn.commit()
-            self._tuple_version += 1  # Invalidate Rust graph cache
-
-            # Invalidate cache entries affected by this change
-            # FIX: Pass conn to avoid opening new connection (pool exhaustion)
-            self._invalidate_cache_for_tuple(
-                subject, relation, obj, zone_id, subject_relation, conn=conn
-            )
-
-        return True
+        """Delete a relationship tuple. Delegates to TupleWriter."""
+        return self._tuple_writer.delete_base(tuple_id)
 
     # ====================================================================================
     # Update Object Path
@@ -5051,315 +4272,14 @@ class ReBACManager:
         expires_at: datetime | None = None,
         conn: Any | None = None,
     ) -> None:
-        """Invalidate and optionally recompute cache entries affected by tuple change.
-
-        When a tuple is added or removed, we need to invalidate cache entries that
-        might be affected. This uses PRECISE invalidation to minimize cache churn:
-
-        1. Direct: Invalidate (subject, *, object) - permissions on this specific pair
-        2. Transitive (if subject has subject_relation): Invalidate members of this group
-        3. Transitive (for object): Invalidate derived permissions on related objects
-
-        OPTIMIZATION: For simple direct relations, we RECOMPUTE and UPDATE the cache
-        instead of just invalidating. This means the next read is instant (<1ms) instead
-        of requiring expensive graph traversal (50-500ms).
-
-        Args:
-            subject: Subject entity
-            relation: Relation type (used for precise invalidation)
-            obj: Object entity
-            zone_id: Optional zone ID for zone-scoped invalidation
-            subject_relation: Optional subject relation for userset-as-subject
-            expires_at: Optional expiration time (disables eager recomputation)
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        # Use "root" zone if not specified
-        effective_zone_id = zone_id if zone_id is not None else ROOT_ZONE_ID
-
-        # Track write for adaptive TTL (Phase 4)
-        if self._l1_cache:
-            self._l1_cache.track_write(obj.entity_id)
-
-        # Use provided connection or create new one (avoids SQLite lock contention)
-        should_close = conn is None
-        if conn is None:
-            conn = self._get_connection()
-        try:
-            cursor = self._create_cursor(conn)
-
-            # 1. DIRECT: For simple direct relations, try to eagerly recompute permissions
-            #    instead of just invalidating. This avoids cache miss on next read.
-            #
-            # Only do eager recomputation for:
-            # - Direct relations (not group-based)
-            # - Not hierarchy relations (parent/member)
-            # - Single subject-object pair (not wildcards)
-            # - NOT expiring tuples (cache would become stale when tuple expires)
-            should_eager_recompute = (
-                expires_at is None  # Not an expiring tuple
-                and subject_relation is None  # Not a userset-as-subject
-                and relation not in ("member-of", "member", "parent")  # Not hierarchy
-                and subject.entity_type != "*"  # Not wildcard
-                and subject.entity_id != "*"
-            )
-
-            # BUG FIX (PR #969): ALWAYS invalidate L1 cache first, regardless of eager recompute
-            # The eager recompute only updates L2 (database) cache, but L1 (in-memory) cache
-            # will still have stale entries. We must invalidate L1 before any recomputation.
-            if self._l1_cache:
-                self._l1_cache.invalidate_subject_object_pair(
-                    subject.entity_type,
-                    subject.entity_id,
-                    obj.entity_type,
-                    obj.entity_id,
-                    zone_id,
-                )
-
-            if should_eager_recompute:
-                # Get the namespace to find which permissions this relation grants
-                namespace = self.get_namespace(obj.entity_type)
-                if namespace and namespace.config and "relations" in namespace.config:
-                    # Find permissions that this relation affects
-                    affected_permissions = []
-                    relations = namespace.config.get("relations", {})
-                    for perm, rel_spec in relations.items():
-                        # Check if this permission uses our relation
-                        if (
-                            isinstance(rel_spec, dict)
-                            and "union" in rel_spec
-                            and relation in rel_spec["union"]
-                        ):
-                            affected_permissions.append(perm)
-
-                    # Eagerly recompute and update cache for these permissions
-                    import time as time_module
-
-                    for permission in affected_permissions[:5]:  # Limit to 5 most common
-                        try:
-                            # Recompute the permission with delta tracking for XFetch (Issue #718)
-                            start_time = time_module.perf_counter()
-                            result = self._compute_permission(
-                                subject,
-                                permission,
-                                obj,
-                                visited=set(),
-                                depth=0,
-                                zone_id=zone_id,
-                            )
-                            delta = time_module.perf_counter() - start_time
-                            # Update cache immediately (not invalidate)
-                            self._cache_check_result(
-                                subject, permission, obj, result, zone_id, conn=conn, delta=delta
-                            )
-                            logger.debug(
-                                f"Eager cache update: ({subject}, {permission}, {obj}) = {result}"
-                            )
-                        except Exception as e:  # fail-safe: fall back to invalidation
-                            logger.debug(
-                                f"Eager recomputation failed, falling back to invalidation: {e}"
-                            )
-                            break
-
-            # If we didn't do eager recomputation, also invalidate L2 cache
-            # (L1 was already invalidated above)
-            if not should_eager_recompute:
-                # L2 cache invalidation
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE zone_id = ?
-                          AND subject_type = ? AND subject_id = ?
-                          AND object_type = ? AND object_id = ?
-                        """
-                    ),
-                    (
-                        effective_zone_id,
-                        subject.entity_type,
-                        subject.entity_id,
-                        obj.entity_type,
-                        obj.entity_id,
-                    ),
-                )
-
-            # 2. TRANSITIVE (Groups): If subject is a group/set (has subject_relation),
-            #    invalidate cache for potential members of this group accessing the object
-            #    Example: If we add "group:eng#member can edit file:doc", then cache entries
-            #    for (alice, *, file:doc) need invalidation IF alice is in group:eng
-            #
-            # Note: We could query for actual members, but that's expensive. Instead,
-            # we invalidate (*, *, object) only when the tuple involves a subject set.
-            # This is still more precise than invalidating ALL subject entries.
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT subject_relation FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                    LIMIT 1
-                    """
-                ),
-                (subject.entity_type, subject.entity_id, relation, obj.entity_type, obj.entity_id),
-            )
-            row = cursor.fetchone()
-            has_subject_relation = row and row["subject_relation"]
-
-            if has_subject_relation:
-                # This is a group-based permission - invalidate all cache for this object
-                # because we don't know who's in the group without expensive queries
-
-                # L1 cache invalidation
-                if self._l1_cache:
-                    self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, zone_id)
-
-                # L2 cache invalidation
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE zone_id = ?
-                          AND object_type = ? AND object_id = ?
-                        """
-                    ),
-                    (effective_zone_id, obj.entity_type, obj.entity_id),
-                )
-
-            # 3. TRANSITIVE (Hierarchy): If this is a group membership change (e.g., adding alice to group:eng),
-            #    invalidate cache entries where the subject might gain permissions via this group
-            #    Example: If we add "alice member-of group:eng", and "group:eng#member can edit file:doc",
-            #    then (alice, edit, file:doc) cache needs invalidation
-            if relation in ("member-of", "member", "parent"):
-                # Subject joined a group or hierarchy - invalidate subject's permissions
-
-                # L1 cache invalidation
-                if self._l1_cache:
-                    self._l1_cache.invalidate_subject(
-                        subject.entity_type, subject.entity_id, zone_id
-                    )
-
-                # L2 cache invalidation
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE zone_id = ?
-                          AND subject_type = ? AND subject_id = ?
-                        """
-                    ),
-                    (effective_zone_id, subject.entity_type, subject.entity_id),
-                )
-
-            # 4. PARENT PERMISSION CHANGE: If this tuple grants/changes permissions on a parent path,
-            #    invalidate cache for ALL child paths that inherit via parent_owner/parent_editor/parent_viewer
-            #    Example: If we add "admin direct_owner file:/workspace", then cache entries for
-            #    file:/workspace/project/* need invalidation because they inherit via parent_owner
-            if obj.entity_type == "file" and relation in (
-                "direct_owner",
-                "direct_editor",
-                "direct_viewer",
-                "owner",
-                "editor",
-                "viewer",
-                # Cross-zone sharing relations (PR #647)
-                "shared-viewer",
-                "shared-editor",
-                "shared-owner",
-            ):
-                # Invalidate all cache entries for paths that are children of this object
-                # Match object_id that starts with obj.entity_id/ (children)
-
-                # L1 cache invalidation - invalidate prefix
-                if self._l1_cache:
-                    self._l1_cache.invalidate_object_prefix(obj.entity_type, obj.entity_id, zone_id)
-
-                # L2 cache invalidation
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE zone_id = ?
-                          AND object_type = ?
-                          AND (object_id = ? OR object_id LIKE ?)
-                        """
-                    ),
-                    (effective_zone_id, obj.entity_type, obj.entity_id, obj.entity_id + "/%"),
-                )
-                logger.debug(
-                    f"Invalidated cache for {obj} and all children (parent permission change)"
-                )
-
-            # 5. USERSET-AS-SUBJECT: If subject_relation is present (like "group:eng#member"),
-            #    this grants access to ALL members of that group. Since we don't know who's in the group
-            #    without expensive queries, invalidate ALL cache (aggressive but safe).
-            #    Example: "group:project1-editors#member direct_editor file:/workspace" means any member
-            #    of project1-editors now has access, so invalidate everything to be safe.
-            if subject_relation is not None:
-                logger.debug(
-                    f"Userset-as-subject detected ({subject}#{subject_relation}), clearing ALL cache for safety"
-                )
-
-                # L1 cache invalidation - clear all for this zone
-                if self._l1_cache:
-                    self._l1_cache.clear()  # Conservative: clear entire L1 cache
-
-                # L2 cache invalidation
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE zone_id = ?
-                        """
-                    ),
-                    (effective_zone_id,),
-                )
-
-            conn.commit()
-        finally:
-            if should_close:
-                self._close_connection(conn)
+        """Invalidate caches for tuple change. Delegates to CacheCoordinator."""
+        self._cache_coordinator.invalidate_for_tuple_change(
+            subject, relation, obj, zone_id, subject_relation, expires_at, conn
+        )
 
     def _invalidate_cache_for_namespace(self, object_type: str) -> None:
-        """Invalidate all cache entries for objects of a given type in both L1 and L2.
-
-        When a namespace configuration is updated, all cached permission checks
-        for objects of that type may be stale and must be invalidated.
-
-        Args:
-            object_type: Type of object whose namespace was updated
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        # L1 cache invalidation - clear all (conservative approach)
-        if self._l1_cache:
-            self._l1_cache.clear()
-            logger.info(f"Cleared L1 cache due to namespace '{object_type}' config update")
-
-        # L2 cache invalidation
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # Invalidate all cache entries for this object type
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE object_type = ?
-                    """
-                ),
-                (object_type,),
-            )
-
-            conn.commit()
-            logger.debug(
-                f"Invalidated all cached checks for namespace '{object_type}' "
-                f"due to config update (deleted {cursor.rowcount} cache entries)"
-            )
+        """Invalidate caches for namespace change. Delegates to CacheCoordinator."""
+        self._cache_coordinator.invalidate_for_namespace_change(object_type)
 
     # ====================================================================================
     # Maintenance Methods
@@ -5388,191 +4308,24 @@ class ReBACManager:
         self.cleanup_expired_tuples()
 
     def cleanup_expired_cache(self) -> int:
-        """Remove expired cache entries.
-
-        Returns:
-            Number of cache entries removed
-        """
-        from datetime import UTC, datetime
-
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            cursor.execute(
-                self._fix_sql_placeholders("DELETE FROM rebac_check_cache WHERE expires_at <= ?"),
-                (datetime.now(UTC).isoformat(),),
-            )
-
-            conn.commit()
-            return int(cursor.rowcount) if cursor.rowcount else 0
+        """Remove expired cache entries. Delegates to CacheCoordinator."""
+        return self._cache_coordinator.cleanup_expired_cache()
 
     def cleanup_expired_tuples(self) -> int:
-        """Remove expired relationship tuples.
-
-        Returns:
-            Number of tuples removed
-        """
-        from datetime import UTC, datetime
-
-        from nexus.bricks.rebac.domain import Entity
-
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # Get expired tuples for changelog
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation, relation, object_type, object_id, zone_id
-                    FROM rebac_tuples
-                    WHERE expires_at IS NOT NULL AND expires_at <= ?
-                    """
-                ),
-                (datetime.now(UTC).isoformat(),),
-            )
-
-            expired_tuples = cursor.fetchall()
-
-            # Delete expired tuples
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_tuples
-                    WHERE expires_at IS NOT NULL AND expires_at <= ?
-                    """
-                ),
-                (datetime.now(UTC).isoformat(),),
-            )
-
-            # Log to changelog and invalidate caches for expired tuples
-            for row in expired_tuples:
-                # Both SQLite and PostgreSQL now return dict-like rows
-                tuple_id = row["tuple_id"]
-                subject_type = row["subject_type"]
-                subject_id = row["subject_id"]
-                subject_relation = row["subject_relation"]
-                relation = row["relation"]
-                object_type = row["object_type"]
-                object_id = row["object_id"]
-                zone_id = row["zone_id"]
-
-                # Issue #773: include zone_id in changelog
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_changelog (
-                            change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, zone_id, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """
-                    ),
-                    (
-                        "DELETE",
-                        tuple_id,
-                        subject_type,
-                        subject_id,
-                        relation,
-                        object_type,
-                        object_id,
-                        zone_id or ROOT_ZONE_ID,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                )
-
-                # Invalidate cache for this tuple
-                # Pass a dummy expires_at to prevent eager recomputation during cleanup
-                # FIX: Pass conn to avoid opening new connection (pool exhaustion)
-                subject = Entity(subject_type, subject_id)
-                obj = Entity(object_type, object_id)
-                self._invalidate_cache_for_tuple(
-                    subject,
-                    relation,
-                    obj,
-                    zone_id,
-                    subject_relation,
-                    expires_at=datetime.now(UTC),
-                    conn=conn,
-                )
-
-            conn.commit()
-            if expired_tuples:
-                self._tuple_version += 1  # Invalidate Rust graph cache
-            return len(expired_tuples)
+        """Remove expired relationship tuples. Delegates to CacheCoordinator."""
+        return self._cache_coordinator.cleanup_expired_tuples()
 
     # ====================================================================================
     # Stats and Monitoring
     # ====================================================================================
 
     def get_cache_stats(self) -> dict[str, Any]:
-        """Get cache statistics for monitoring and debugging.
-
-        Returns comprehensive statistics about both L1 (in-memory) and L2 (database)
-        cache performance, including hit rates, sizes, and latency metrics.
-
-        Returns:
-            Dictionary with cache statistics:
-                - l1_enabled: Whether L1 cache is enabled
-                - l1_stats: L1 cache statistics (if enabled)
-                - l2_enabled: Whether L2 cache is enabled (always True)
-                - l2_size: Number of entries in L2 cache
-                - l2_ttl_seconds: L2 cache TTL
-
-        Example:
-            >>> stats = manager.get_cache_stats()
-            >>> print(f"L1 hit rate: {stats['l1_stats']['hit_rate_percent']}%")
-            >>> print(f"L1 avg latency: {stats['l1_stats']['avg_lookup_time_ms']}ms")
-            >>> print(f"L2 cache size: {stats['l2_size']} entries")
-        """
-        from datetime import UTC, datetime
-
-        stats: dict[str, Any] = {
-            "l1_enabled": self._l1_cache is not None,
-            "l2_enabled": True,
-            "l2_ttl_seconds": self.cache_ttl_seconds,
-        }
-
-        # L1 cache stats
-        if self._l1_cache:
-            stats["l1_stats"] = self._l1_cache.get_stats()
-        else:
-            stats["l1_stats"] = None
-
-        # L2 cache stats (query database)
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
-
-            # Count total entries in L2 cache
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT COUNT(*) as count
-                    FROM rebac_check_cache
-                    WHERE expires_at > ?
-                    """
-                ),
-                (datetime.now(UTC).isoformat(),),
-            )
-            row = cursor.fetchone()
-            stats["l2_size"] = row["count"] if row else 0
-
-        return stats
+        """Get cache statistics. Delegates to CacheCoordinator."""
+        return self._cache_coordinator.get_cache_stats()
 
     def reset_cache_stats(self) -> None:
-        """Reset cache statistics counters.
-
-        Useful for benchmarking and monitoring. Resets hit/miss counters
-        and timing metrics for L1 cache.
-
-        Note: Only resets metrics, does not clear cache entries.
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        if self._l1_cache:
-            self._l1_cache.reset_stats()
-            logger.info("Cache statistics reset")
+        """Reset cache statistics. Delegates to CacheCoordinator."""
+        self._cache_coordinator.reset_cache_stats()
 
     def close(self) -> None:
         """Close database connection.

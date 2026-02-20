@@ -1,10 +1,9 @@
-"""MessageProcessor registry for IPC hook integration (Issue #2037).
+"""MessageProcessor registry for lifecycle management (Issue #2037).
 
-Provides a registry to look up MessageProcessor instances by agent_id,
-required for POST_WRITE hooks to trigger inbox processing.
+Maps agent_id → MessageProcessor instances, handles start/stop lifecycle.
+Enables POST_WRITE hooks to trigger the correct processor for each agent.
 
-This is a Tier 3 System Service that manages the lifecycle of MessageProcessor
-instances and provides O(1) lookup for the POST_WRITE hook handler.
+Architecture: Tier 3 System Service per NEXUS-LEGO-ARCHITECTURE.md §2.4.
 """
 
 from __future__ import annotations
@@ -23,13 +22,16 @@ class MessageProcessorRegistry:
     """Registry for MessageProcessor instances (Tier 3 System Service).
 
     Maps agent_id → MessageProcessor and manages lifecycle (start/stop).
-    Thread-safe via asyncio.Lock.
+    Thread-safe for async concurrent access via asyncio.Lock.
 
-    Usage:
-        registry = MessageProcessorRegistry()
-        await registry.register("agent_123", processor)
-        processor = registry.get("agent_123")
-        await registry.unregister("agent_123")
+    Example:
+        >>> registry = MessageProcessorRegistry()
+        >>> processor = MessageProcessor(storage, "agent_a", handler, zone_id="root")
+        >>> await registry.register("agent_a", processor)
+        >>> await registry.start_all()
+        >>> # Later...
+        >>> processor = registry.get("agent_a")
+        >>> await registry.stop_all()
     """
 
     def __init__(self) -> None:
@@ -39,63 +41,87 @@ class MessageProcessorRegistry:
     async def register(self, agent_id: str, processor: MessageProcessor) -> None:
         """Register a MessageProcessor for an agent.
 
-        If a processor already exists for this agent, it will be stopped
-        and replaced with the new processor.
+        If a processor already exists for this agent_id, it is stopped
+        and replaced.
 
         Args:
-            agent_id: Agent identifier.
-            processor: MessageProcessor instance to register.
+            agent_id: The agent ID.
+            processor: The MessageProcessor instance.
         """
         async with self._lock:
-            # Stop old processor if exists
+            # Stop existing processor if any
             if agent_id in self._processors:
+                logger.info("Replacing existing processor for agent %s", agent_id)
                 old_processor = self._processors[agent_id]
-                await old_processor.stop()
-                logger.info(
-                    "Replaced MessageProcessor for agent %s",
-                    agent_id,
-                )
+                try:
+                    await old_processor.stop()
+                except Exception:
+                    logger.warning(
+                        "Failed to stop old processor for agent %s",
+                        agent_id,
+                        exc_info=True,
+                    )
 
             self._processors[agent_id] = processor
-            logger.info(
-                "Registered MessageProcessor for agent %s",
-                agent_id,
-            )
+            logger.debug("Registered processor for agent %s", agent_id)
 
     async def unregister(self, agent_id: str) -> bool:
         """Unregister and stop a MessageProcessor.
 
         Args:
-            agent_id: Agent identifier.
+            agent_id: The agent ID.
 
         Returns:
-            True if processor was found and removed, False otherwise.
+            True if the processor was found and unregistered, False otherwise.
         """
         async with self._lock:
             processor = self._processors.pop(agent_id, None)
             if processor is None:
                 return False
 
-            await processor.stop()
-            logger.info(
-                "Unregistered MessageProcessor for agent %s",
-                agent_id,
-            )
+            try:
+                await processor.stop()
+            except Exception:
+                logger.warning(
+                    "Failed to stop processor for agent %s during unregister",
+                    agent_id,
+                    exc_info=True,
+                )
+
+            logger.debug("Unregistered processor for agent %s", agent_id)
             return True
 
     def get(self, agent_id: str) -> MessageProcessor | None:
         """Get the MessageProcessor for an agent (no lock needed for read).
 
         Args:
-            agent_id: Agent identifier.
+            agent_id: The agent ID.
 
         Returns:
-            MessageProcessor instance or None if not registered.
+            The MessageProcessor instance, or None if not registered.
         """
         return self._processors.get(agent_id)
 
+    async def start_all(self) -> None:
+        """Start all registered processors (hot-path listeners).
+
+        Called during application startup after all processors are registered.
+        """
+        tasks = []
+        for agent_id, processor in self._processors.items():
+            logger.debug("Starting processor for agent %s", agent_id)
+            tasks.append(processor.start())
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.info("Started %d MessageProcessor(s)", len(tasks))
+
     async def stop_all(self) -> None:
-        """Stop all registered processors (for graceful shutdown)."""
+        """Stop all registered processors (graceful shutdown).
+
+        Called during application shutdown. Waits for all pending
+        handler tasks to complete.
+        """
         async with self._lock:
             for agent_id, processor in self._processors.items():
                 try:
@@ -115,5 +141,9 @@ class MessageProcessorRegistry:
         return len(self._processors)
 
     def list_agents(self) -> list[str]:
-        """Return list of agent IDs with registered processors."""
+        """List all agent IDs with registered processors.
+
+        Returns:
+            List of agent IDs.
+        """
         return list(self._processors.keys())

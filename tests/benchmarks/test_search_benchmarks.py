@@ -463,7 +463,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_simple(self, benchmark):
         """Benchmark Rust glob for simple patterns (if available)."""
-        from nexus.core.glob_fast import RUST_AVAILABLE, glob_match_bulk
+        from nexus.bricks.search.primitives.glob_fast import RUST_AVAILABLE, glob_match_bulk
 
         paths = [f"/dir/file_{i:04d}.txt" for i in range(1000)]
         paths += [f"/dir/file_{i:04d}.py" for i in range(1000)]
@@ -486,7 +486,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_multiple_patterns(self, benchmark):
         """Benchmark Rust glob with multiple patterns."""
-        from nexus.core.glob_fast import glob_match_bulk
+        from nexus.bricks.search.primitives.glob_fast import glob_match_bulk
 
         paths = [f"/dir/file_{i:04d}.txt" for i in range(500)]
         paths += [f"/dir/file_{i:04d}.py" for i in range(500)]
@@ -508,7 +508,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_recursive_pattern(self, benchmark):
         """Benchmark Rust glob with recursive pattern (**/*)."""
-        from nexus.core.glob_fast import glob_match_bulk
+        from nexus.bricks.search.primitives.glob_fast import glob_match_bulk
 
         # Generate paths with directory structure
         paths = []
@@ -712,7 +712,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_build_1k_files(self, benchmark):
         """Benchmark building trigram index from 1K files."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -734,7 +734,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_literal(self, benchmark):
         """Benchmark trigram search for literal pattern."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -751,7 +751,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_regex(self, benchmark):
         """Benchmark trigram search for regex pattern."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -768,7 +768,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_search_no_match(self, benchmark):
         """Benchmark trigram search for non-matching pattern."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")
@@ -786,7 +786,7 @@ class TestTrigramBenchmarks:
 
     def test_trigram_vs_mmap_grep(self, benchmark):
         """Compare trigram index search vs mmap grep."""
-        from nexus.core import trigram_fast
+        from nexus.bricks.search.primitives import trigram_fast
 
         if not trigram_fast.is_available():
             pytest.skip("Trigram index not available")

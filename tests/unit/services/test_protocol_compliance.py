@@ -375,6 +375,12 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("content_service", "nexus/core/protocols/content_service.py"),
     ("describable", "nexus/core/protocols/describable.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
+    # Issue #2133: New kernel protocol files
+    ("rebac_manager", "nexus/core/protocols/rebac_manager.py"),
+    ("permission_enforcer", "nexus/core/protocols/permission_enforcer.py"),
+    ("entity_registry", "nexus/core/protocols/entity_registry.py"),
+    ("workspace_manager", "nexus/core/protocols/workspace_manager.py"),
+    ("wirable_fs", "nexus/core/protocols/wirable_fs.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

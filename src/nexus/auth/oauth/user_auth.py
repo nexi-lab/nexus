@@ -11,7 +11,7 @@ import logging
 import secrets
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +22,9 @@ from nexus.auth.oauth.protocol import OAuthProviderProtocol
 from nexus.auth.oauth.types import OAuthError
 from nexus.auth.providers.local import LocalAuth
 from nexus.storage.models import UserModel, UserOAuthAccountModel
+
+if TYPE_CHECKING:
+    from nexus.auth.protocols.user_provisioner import UserProvisionerProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,7 @@ class OAuthUserAuth:
         jwt_secret: str | None = None,
         token_expiry: int = 3600,
         oauth_crypto: OAuthCrypto | None = None,
+        user_provisioner: UserProvisionerProtocol | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.providers = providers
@@ -53,6 +57,7 @@ class OAuthUserAuth:
         self.token_expiry = token_expiry
         self.oauth_crypto = oauth_crypto or OAuthCrypto()
         self.local_auth = LocalAuth(jwt_secret=self.jwt_secret, token_expiry=token_expiry)
+        self._user_provisioner = user_provisioner
 
         if logger.isEnabledFor(logging.INFO):
             logger.info(
@@ -194,7 +199,7 @@ class OAuthUserAuth:
         oauth_credential: Any,
     ) -> tuple[UserModel, bool]:
         """Get existing user or create from OAuth (with race condition protection)."""
-        from nexus.server.auth.user_helpers import get_user_by_email
+        from nexus.auth.user_queries import get_user_by_email
 
         with session.begin():
             stmt = select(UserOAuthAccountModel).where(
@@ -354,28 +359,17 @@ class OAuthUserAuth:
         email: str,
         display_name: str | None,
     ) -> None:
-        from nexus.contracts.types import OperationContext
-        from nexus.server.auth.auth_routes import get_nexus_instance
-
-        nx = get_nexus_instance()
-        if nx is None:
+        if self._user_provisioner is None:
             logger.error(
-                "Cannot provision OAuth user: NexusFS instance not available. "
+                "Cannot provision OAuth user: no UserProvisionerProtocol injected. "
                 "User created but missing zone, directories, workspace, agents, skills, API key."
             )
             return
 
         zone_id = email.split("@")[0] if email else user_id
 
-        admin_context = OperationContext(
-            user_id="system",
-            groups=[],
-            zone_id=zone_id,
-            is_admin=True,
-        )
-
         try:
-            result = nx.provision_user(
+            result = self._user_provisioner.provision_user(
                 user_id=user_id,
                 email=email,
                 display_name=display_name,
@@ -383,7 +377,6 @@ class OAuthUserAuth:
                 create_api_key=True,
                 create_agents=True,
                 import_skills=True,
-                context=admin_context,
             )
 
             if logger.isEnabledFor(logging.INFO):

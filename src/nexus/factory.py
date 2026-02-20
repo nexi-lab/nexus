@@ -1107,7 +1107,7 @@ def _boot_brick_services(
     # --- API key creator (Issue #1519, 3A: inject server auth into kernel) ---
     api_key_creator: Any = None
     try:
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         api_key_creator = DatabaseAPIKeyAuth
     except ImportError:

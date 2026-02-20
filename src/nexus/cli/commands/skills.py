@@ -1638,9 +1638,10 @@ def skills_mcp_mount(
             try:
                 import os
 
+                from nexus.auth.oauth.token_manager import TokenManager
+
                 # Get TokenManager (same logic as oauth CLI)
                 from nexus.lib.env import get_database_url
-                from nexus.server.auth import TokenManager
 
                 db_url = get_database_url()
                 if db_url:

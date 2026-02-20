@@ -28,9 +28,9 @@ from rich.console import Console
 from rich.table import Table
 
 from nexus.auth.oauth.providers.x import XOAuthProvider
+from nexus.auth.oauth.token_manager import TokenManager
 from nexus.cli.utils import console
 from nexus.constants import ROOT_ZONE_ID
-from nexus.server.auth.token_manager import TokenManager
 
 # Rich console for output
 _console = Console()

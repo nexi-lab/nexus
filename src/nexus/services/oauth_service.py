@@ -1,24 +1,20 @@
-"""OAuth Service - Extracted from NexusFSOAuthMixin.
+"""OAuth Service — RPC surface + MCP integration.
 
-This service handles all OAuth credential management operations:
-- List available OAuth providers
-- Generate authorization URLs with PKCE support
-- Exchange authorization codes for tokens
-- Manage stored credentials (list, revoke, test)
-- Connect to MCP providers via Klavis hosted OAuth
+Thin wrapper around ``nexus.auth.oauth.credential_service.OAuthCredentialService``
+(pure business logic in the auth brick) with ``@rpc_expose`` decorators and the
+``mcp_connect`` orchestration that depends on server-layer modules.
 
-Phase 2: Core Refactoring (Issue #988, Task 2.6)
-Extracted from: nexus_fs_oauth.py (1,116 lines)
+Issue #2281 / #8B: Split OAuthService into brick (credential lifecycle) + services (RPC + MCP).
 """
 
 from __future__ import annotations
 
 import builtins
-import json
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.auth.oauth.credential_service import OAuthCredentialService, PKCEStateStore
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.services.protocols.filesystem import NexusFilesystem
@@ -27,68 +23,22 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.cache_store import CacheStoreABC
 
-
-class PKCEStateStore:
-    """PKCE state store backed by CacheStoreABC.
-
-    Uses CacheStoreABC for TTL-based ephemeral storage per
-    KERNEL-ARCHITECTURE.md §2 (CacheStore pillar: ephemeral KV with TTL).
-
-    PKCE state entries are JSON-serialized and stored with a TTL so that
-    abandoned OAuth flows are automatically evicted. When no cache_store
-    is provided, a NullCacheStore is used and PKCE state is effectively
-    discarded (graceful degradation).
-    """
-
-    def __init__(
-        self,
-        cache_store: CacheStoreABC | None = None,
-        ttl: int = 600,
-    ) -> None:
-        self._cache_store = cache_store
-        self._ttl = ttl
-
-    def _key(self, state: str) -> str:
-        """Cache key for PKCE state token."""
-        return f"oauth:pkce:{state}"
-
-    async def save(self, state: str, pkce_data: dict[str, str]) -> None:
-        """Store PKCE data keyed by state token."""
-        if self._cache_store is None:
-            return
-        await self._cache_store.set(self._key(state), json.dumps(pkce_data).encode(), ttl=self._ttl)
-
-    async def pop(self, state: str) -> dict[str, str] | None:
-        """Retrieve and delete PKCE data (single-use). Returns None if missing/expired."""
-        if self._cache_store is None:
-            return None
-        key = self._key(state)
-        raw = await self._cache_store.get(key)
-        if raw is None:
-            return None
-        await self._cache_store.delete(key)
-        result: dict[str, str] = json.loads(raw)
-        return result
+# Re-export for backward compatibility (tests import PKCEStateStore from here)
+__all__ = ["OAuthService", "PKCEStateStore"]
 
 
 class OAuthService:
-    """Independent OAuth service extracted from NexusFS.
+    """OAuth service with RPC surface and MCP integration.
 
-    Handles all OAuth credential management operations:
-    - Provider discovery and configuration
-    - OAuth flow (authorization URL + code exchange)
-    - PKCE support for providers that require it
-    - Credential lifecycle (list, revoke, test validity)
-    - MCP provider integration via Klavis
+    Composes ``OAuthCredentialService`` for pure credential lifecycle and
+    adds ``@rpc_expose`` decorators + the ``mcp_connect`` method that
+    depends on server-layer modules (ServiceMap, MCP models, Klavis API).
 
     Architecture:
-        - Works with OAuthProviderFactory for provider creation
-        - Uses TokenManager for credential storage
-        - Supports multi-zone credential isolation
-        - Per-user permission enforcement
-        - Clean dependency injection
+        - Credential lifecycle delegated to ``OAuthCredentialService`` (auth brick)
+        - MCP integration stays here (depends on ``nexus.backends``, ``nexus.mcp``)
+        - ``@rpc_expose`` applied here (RPC is a services-layer concern)
 
     Example:
         ```python
@@ -104,31 +54,6 @@ class OAuthService:
         auth_data = oauth_service.oauth_get_auth_url(
             provider="google",
             redirect_uri="http://localhost:3000/oauth/callback"
-        )
-        # User visits auth_data["url"]
-
-        # Exchange code for tokens
-        result = await oauth_service.oauth_exchange_code(
-            provider="google",
-            code="auth_code_from_callback",
-            user_email="user@example.com"
-        )
-
-        # List user's credentials
-        creds = await oauth_service.oauth_list_credentials(context=context)
-
-        # Test credential validity
-        test_result = await oauth_service.oauth_test_credential(
-            provider="google",
-            user_email="user@example.com",
-            context=context
-        )
-
-        # Revoke credential
-        await oauth_service.oauth_revoke_credential(
-            provider="google",
-            user_email="user@example.com",
-            context=context
         )
         ```
     """
@@ -156,24 +81,36 @@ class OAuthService:
                           for connector mount discovery
             pkce_store: Optional PKCE state store (defaults to in-memory with 10min TTL)
         """
-        self._oauth_factory = oauth_factory
-        self._token_manager = token_manager
+        # Compose the brick-level credential service
+        self._cred = OAuthCredentialService(
+            oauth_factory=oauth_factory,
+            token_manager=token_manager,
+            database_url=database_url,
+            oauth_config=oauth_config,
+            pkce_store=pkce_store,
+        )
+
+        # MCP-specific dependencies (not needed by credential service)
         self._filesystem = filesystem
+        self._mount_lister = mount_lister
+
+        # Expose internals for backward compat (tests access these directly)
+        self._oauth_factory = self._cred._oauth_factory
+        self._token_manager = self._cred._token_manager
         self._database_url = database_url
         self._oauth_config = oauth_config
-        self._mount_lister = mount_lister
-        self._pkce_store = pkce_store or PKCEStateStore()
+        self._pkce_store = self._cred._pkce_store
 
         logger.info("[OAuthService] Initialized")
 
     # =========================================================================
-    # Public API: Provider Discovery
+    # Public API: Provider Discovery (delegates to brick)
     # =========================================================================
 
     @rpc_expose(description="List all available OAuth providers")
     async def oauth_list_providers(
         self,
-        context: OperationContext | None = None,  # noqa: ARG002 - Required by RPC protocol
+        context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all available OAuth providers from configuration.
 
@@ -191,39 +128,11 @@ class OAuthService:
                 - requires_pkce: Whether provider requires PKCE (bool)
                 - icon_url: Optional URL to provider icon/logo (str|None)
                 - metadata: Additional provider-specific metadata (dict)
-
-        Examples:
-            # List all providers
-            providers = service.oauth_list_providers()
-            for p in providers:
-                print(f"{p['display_name']}: {', '.join(p['scopes'])}")
-
-            # Find specific provider
-            providers = service.oauth_list_providers()
-            google = next((p for p in providers if p['name'] == 'google-drive'), None)
-            if google:
-                print(f"Google Drive requires PKCE: {google['requires_pkce']}")
         """
-        factory = self._get_oauth_factory()
-        providers = []
-
-        for provider_config in factory.list_providers():
-            provider_dict = {
-                "name": provider_config.name,
-                "display_name": provider_config.display_name,
-                "scopes": provider_config.scopes,
-                "requires_pkce": provider_config.requires_pkce,
-                "metadata": provider_config.metadata,
-            }
-            if provider_config.icon_url:
-                provider_dict["icon_url"] = provider_config.icon_url
-            providers.append(provider_dict)
-
-        logger.info(f"Listed {len(providers)} OAuth providers")
-        return providers
+        return await self._cred.list_providers(context=context)
 
     # =========================================================================
-    # Public API: OAuth Flow
+    # Public API: OAuth Flow (delegates to brick)
     # =========================================================================
 
     @rpc_expose(description="Get OAuth authorization URL for any provider")
@@ -249,52 +158,9 @@ class OAuthService:
                 - url: Authorization URL to redirect user to (str)
                 - state: CSRF state token (str)
                 - pkce_data: PKCE parameters if provider requires it (dict|None)
-                    - code_verifier: PKCE code verifier
-                    - code_challenge: PKCE code challenge
-                    - code_challenge_method: Challenge method (S256)
-
-        Examples:
-            # Get Google Drive auth URL
-            auth_data = service.oauth_get_auth_url(
-                provider="google",
-                redirect_uri="http://localhost:3000/oauth/callback"
-            )
-            print(f"Visit: {auth_data['url']}")
-
-            # Get X/Twitter auth URL with PKCE
-            auth_data = service.oauth_get_auth_url(
-                provider="x",
-                redirect_uri="http://localhost:3000/oauth/callback"
-            )
-            # Store auth_data['pkce_data']['code_verifier'] for exchange step
-
-            # Custom scopes
-            auth_data = service.oauth_get_auth_url(
-                provider="google",
-                scopes=["https://www.googleapis.com/auth/drive.readonly"]
-            )
-
-        Note:
-            - State token is used for CSRF protection
-            - For PKCE providers, store pkce_data for use in oauth_exchange_code
-            - User must visit the returned URL to authorize access
         """
-        import secrets
-
-        logger.info(f"Generating OAuth authorization URL for provider={provider}")
-
-        # Generate state token
-        state = secrets.token_urlsafe(32)
-
-        # Create provider using factory
-        provider_instance = self._create_provider(provider, redirect_uri, scopes)
-
-        # Register provider
-        self._register_provider(provider_instance)
-
-        # Get authorization URL with PKCE support if needed
-        return await self._get_authorization_url_with_pkce_support(
-            provider_instance, provider, state
+        return await self._cred.get_auth_url(
+            provider=provider, redirect_uri=redirect_uri, scopes=scopes
         )
 
     @rpc_expose(description="Exchange OAuth authorization code for tokens")
@@ -317,10 +183,10 @@ class OAuthService:
         Args:
             provider: OAuth provider name (e.g., "google", "microsoft", "x")
             code: Authorization code from OAuth callback
-            user_email: User email for credential storage (optional, auto-fetched if not provided)
-            state: CSRF state token from authorization request (used to retrieve PKCE data)
+            user_email: User email for credential storage (optional, auto-fetched)
+            state: CSRF state token from authorization request
             redirect_uri: OAuth redirect URI (must match authorization request)
-            code_verifier: PKCE code verifier (required for X/Twitter and other PKCE providers)
+            code_verifier: PKCE code verifier (required for PKCE providers)
             context: Operation context for zone isolation
 
         Returns:
@@ -330,124 +196,19 @@ class OAuthService:
                 - user_email: User email address (str)
                 - expires_at: Token expiration timestamp in ISO format (str)
                 - provider: Provider name (str)
-
-        Raises:
-            ValueError: If code exchange fails or PKCE verifier missing
-
-        Examples:
-            # Exchange Google code
-            result = await service.oauth_exchange_code(
-                provider="google",
-                code="4/0AbCD...",
-                user_email="user@example.com"
-            )
-            print(f"Credential ID: {result['credential_id']}")
-
-            # Exchange X/Twitter code with PKCE
-            result = await service.oauth_exchange_code(
-                provider="x",
-                code="auth_code",
-                state="state_from_auth_url",
-                code_verifier="verifier_from_pkce_data"
-            )
-
-            # Auto-fetch user email
-            result = await service.oauth_exchange_code(
-                provider="google",
-                code="4/0AbCD...",
-                context=context
-            )
-            # user_email will be fetched from provider
-
-        Note:
-            - For PKCE providers, code_verifier from oauth_get_auth_url is required
-            - If user_email not provided, service attempts to fetch it from provider
-            - Credentials are stored per-zone for isolation
         """
-        from nexus.core.context_utils import get_zone_id
-
-        logger.info(
-            f"Exchanging OAuth code for provider={provider}, user_email={'provided' if user_email else 'will fetch'}"
+        return await self._cred.exchange_code(
+            provider=provider,
+            code=code,
+            user_email=user_email,
+            state=state,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+            context=context,
         )
 
-        # Create provider using factory
-        provider_instance = self._create_provider(provider, redirect_uri)
-
-        # Register provider
-        self._register_provider(provider_instance)
-
-        # Exchange code for credential
-        try:
-            # Check if provider requires PKCE
-            factory = self._get_oauth_factory()
-            config_name = self._map_provider_name(provider)
-            provider_config = factory.get_provider_config(config_name)
-            requires_pkce = provider_config and provider_config.requires_pkce
-
-            if requires_pkce:
-                pkce_verifier = await self._get_pkce_verifier(provider, code_verifier, state)
-                credential = await provider_instance.exchange_code_pkce(code, pkce_verifier)
-            else:
-                credential = await provider_instance.exchange_code(code)
-        except ValueError:
-            # Re-raise ValueError as-is (e.g., missing PKCE verifier)
-            raise
-        except Exception as e:
-            logger.error(f"Failed to exchange OAuth code: {e}")
-            raise ValueError(f"Failed to exchange authorization code: {e}") from e
-
-        # If user_email not provided, try to fetch it from the provider
-        if not user_email:
-            user_email = await self._get_user_email_from_provider(provider_instance, credential)
-            if not user_email:
-                raise ValueError(
-                    "user_email is required. Could not automatically fetch email from provider. "
-                    "Please provide user_email parameter."
-                )
-
-        # Store credential
-        token_manager = self._get_token_manager()
-        zone_id = get_zone_id(context)
-
-        # Extract user_id from context (Nexus user identity)
-        current_user_id = None
-        if context:
-            current_user_id = getattr(context, "user_id", None)
-        created_by = current_user_id or user_email
-
-        # Use provider's actual name for storage
-        provider_name = provider_instance.provider_name
-
-        # Set user_email on credential for storage
-        credential.user_email = user_email
-
-        try:
-            credential_id = await token_manager.store_credential(
-                provider=provider_name,
-                user_email=user_email,
-                credential=credential,
-                zone_id=zone_id,
-                created_by=created_by,
-                user_id=current_user_id,
-            )
-
-            logger.info(
-                f"Successfully stored OAuth credential for {user_email} "
-                f"(credential_id={credential_id})"
-            )
-
-            return {
-                "credential_id": credential_id,
-                "user_email": user_email,
-                "expires_at": credential.expires_at.isoformat() if credential.expires_at else None,
-                "success": True,
-            }
-        except Exception as e:
-            logger.error(f"Failed to store OAuth credential: {e}")
-            raise ValueError(f"Failed to store credential: {e}") from e
-
     # =========================================================================
-    # Public API: Credential Management
+    # Public API: Credential Management (delegates to brick)
     # =========================================================================
 
     @rpc_expose(description="List all OAuth credentials")
@@ -459,88 +220,17 @@ class OAuthService:
     ) -> builtins.list[dict[str, Any]]:
         """List all OAuth credentials for the current user.
 
-        Returns credentials accessible to the current user. Non-admin users
-        can only see their own credentials. Admins can see all credentials
-        in their zone.
-
         Args:
             provider: Optional provider filter (e.g., "google")
             include_revoked: Include revoked credentials (default: False)
             context: Operation context for user/zone identification
 
         Returns:
-            List of credential dictionaries containing:
-                - credential_id: Unique identifier (str)
-                - provider: OAuth provider name (str)
-                - user_email: User email address (str)
-                - scopes: List of granted scopes (list[str])
-                - expires_at: Token expiration timestamp in ISO format (str)
-                - created_at: Creation timestamp in ISO format (str)
-                - last_used_at: Last usage timestamp in ISO format (str|None)
-                - revoked: Whether credential is revoked (bool)
-
-        Examples:
-            # List all user's credentials
-            creds = await service.oauth_list_credentials(context=context)
-            for cred in creds:
-                print(f"{cred['provider']}: {cred['user_email']}")
-
-            # List Google credentials only
-            google_creds = await service.oauth_list_credentials(
-                provider="google",
-                context=context
-            )
-
-            # List including revoked
-            all_creds = await service.oauth_list_credentials(
-                include_revoked=True,
-                context=context
-            )
-
-        Note:
-            - User isolation enforced automatically via context
-            - Admins see all credentials in their zone
-            - Credentials from other zones are never visible
+            List of credential dictionaries.
         """
-        from nexus.core.context_utils import get_zone_id
-
-        token_manager = self._get_token_manager()
-        zone_id = get_zone_id(context)
-
-        # Extract current user's identity from context
-        current_user_id = None
-        if context:
-            current_user_id = getattr(context, "user_id", None)
-        is_admin = context and getattr(context, "is_admin", False)
-
-        # List credentials for zone (and optionally user)
-        credentials = await token_manager.list_credentials(
-            zone_id=zone_id, user_id=current_user_id if not is_admin else None
+        return await self._cred.list_credentials(
+            provider=provider, include_revoked=include_revoked, context=context
         )
-
-        # Filter by provider and revoked status if needed
-        result = []
-        for cred in credentials:
-            # Per-user isolation: non-admins can only see their own credentials
-            if not is_admin and current_user_id:
-                cred_user_id = cred.get("user_id")
-                cred_user_email = cred.get("user_email")
-                # Match if user_id matches OR (user_id not set and email matches)
-                if cred_user_id and cred_user_id != current_user_id:
-                    continue
-                if not cred_user_id and cred_user_email and cred_user_email != current_user_id:
-                    continue
-            if provider and cred["provider"] != provider:
-                continue
-            if not include_revoked and cred.get("revoked", False):
-                continue
-            result.append(cred)
-
-        logger.info(
-            f"Listed {len(result)} OAuth credentials for user_id={current_user_id}, "
-            f"zone={zone_id}, provider={provider}"
-        )
-        return result
 
     @rpc_expose(description="Revoke OAuth credential")
     async def oauth_revoke_credential(
@@ -551,70 +241,17 @@ class OAuthService:
     ) -> dict[str, Any]:
         """Revoke an OAuth credential.
 
-        Marks a credential as revoked, preventing further use. Users can only
-        revoke their own credentials unless they are admin.
-
         Args:
             provider: OAuth provider name (e.g., "google")
             user_email: User email address
             context: Operation context for permission checking
 
         Returns:
-            Dictionary containing:
-                - success: True if revoked successfully (bool)
-                - credential_id: Revoked credential ID (str)
-
-        Raises:
-            ValueError: If credential not found or user doesn't have permission
-
-        Examples:
-            # Revoke a credential
-            result = await service.oauth_revoke_credential(
-                provider="google",
-                user_email="user@example.com",
-                context=context
-            )
-            if result["success"]:
-                print(f"Revoked {result['credential_id']}")
-
-            # Admin revokes any credential
-            result = await service.oauth_revoke_credential(
-                provider="google",
-                user_email="other@example.com",
-                context=admin_context
-            )
-
-        Note:
-            - Users can only revoke their own credentials
-            - Admins can revoke any credential in their zone
-            - Revoked credentials cannot be unrevoked (create new credential instead)
+            Dictionary containing success status.
         """
-        from nexus.core.context_utils import get_zone_id
-
-        token_manager = self._get_token_manager()
-        zone_id = get_zone_id(context)
-
-        # Permission check (Issue #997: DRY extraction)
-        await self._check_credential_ownership(
-            provider, user_email, zone_id, context, action="revoke"
+        return await self._cred.revoke_credential(
+            provider=provider, user_email=user_email, context=context
         )
-
-        try:
-            success = await token_manager.revoke_credential(
-                provider=provider,
-                user_email=user_email,
-                zone_id=zone_id,
-            )
-
-            if success:
-                logger.info(f"Revoked OAuth credential for {provider}:{user_email}")
-                return {"success": True}
-            else:
-                raise ValueError(f"Credential not found: {provider}:{user_email}")
-
-        except Exception as e:
-            logger.error(f"Failed to revoke credential: {e}")
-            raise ValueError(f"Failed to revoke credential: {e}") from e
 
     @rpc_expose(description="Test OAuth credential validity")
     async def oauth_test_credential(
@@ -625,100 +262,20 @@ class OAuthService:
     ) -> dict[str, Any]:
         """Test if an OAuth credential is valid and can be refreshed.
 
-        Attempts to get a valid token, refreshing if necessary. Users can only
-        test their own credentials unless they are admin.
-
         Args:
             provider: OAuth provider name (e.g., "google")
             user_email: User email address
             context: Operation context for permission checking
 
         Returns:
-            Dictionary containing:
-                - valid: True if credential is valid (bool)
-                - refreshed: True if token was refreshed (bool)
-                - expires_at: Token expiration timestamp in ISO format (str|None)
-                - error: Error message if invalid (str|None)
-
-        Raises:
-            ValueError: If credential not found or user doesn't have permission
-
-        Examples:
-            # Test a credential
-            result = await service.oauth_test_credential(
-                provider="google",
-                user_email="user@example.com",
-                context=context
-            )
-            if result["valid"]:
-                print(f"Valid until {result['expires_at']}")
-            else:
-                print(f"Invalid: {result['error']}")
-
-            # Check before using
-            result = await service.oauth_test_credential(
-                provider="google",
-                user_email="user@example.com",
-                context=context
-            )
-            if not result["valid"]:
-                # Prompt user to re-authenticate
-                print("Please re-authenticate")
-
-        Note:
-            - Automatically attempts token refresh if expired
-            - Returns detailed error if credential cannot be refreshed
-            - Does not revoke invalid credentials (use oauth_revoke_credential)
+            Dictionary with valid, refreshed, expires_at, error fields.
         """
-        from nexus.core.context_utils import get_zone_id
-
-        token_manager = self._get_token_manager()
-        zone_id = get_zone_id(context)
-
-        # Permission check (Issue #997: DRY extraction)
-        await self._check_credential_ownership(
-            provider, user_email, zone_id, context, action="test"
+        return await self._cred.test_credential(
+            provider=provider, user_email=user_email, context=context
         )
 
-        try:
-            # Try to get a valid token (will auto-refresh if needed)
-            token = await token_manager.get_valid_token(
-                provider=provider,
-                user_email=user_email,
-                zone_id=zone_id,
-            )
-
-            if token:
-                # Get credential details
-                credentials = await token_manager.list_credentials(
-                    zone_id=zone_id, user_email=user_email
-                )
-                cred_dict = next(
-                    (c for c in credentials if c.get("user_email") == user_email),
-                    None,
-                )
-
-                logger.info(f"OAuth credential test successful for {provider}:{user_email}")
-                return {
-                    "valid": True,
-                    "refreshed": True,
-                    "expires_at": cred_dict.get("expires_at") if cred_dict else None,
-                }
-            else:
-                return {
-                    "valid": False,
-                    "error": "Could not retrieve valid token",
-                }
-
-        except Exception as e:
-            logger.error(f"OAuth credential test failed: {e}")
-            return {
-                "valid": False,
-                "error": str(e),
-            }
-
     # =========================================================================
-    # Public API: MCP Integration
+    # Public API: MCP Integration (stays in services layer)
     # =========================================================================
 
     @rpc_expose(description="Connect to MCP provider via Klavis")
@@ -823,7 +380,8 @@ class OAuthService:
                     mapping = oauth_mappings.get_mapping(oauth_provider)
                     local_providers = mapping.local_providers if mapping else [oauth_provider]
                     logger.info(
-                        f"Looking for credentials: oauth_provider={oauth_provider}, local_providers={local_providers}, user_id={user_id}"
+                        f"Looking for credentials: oauth_provider={oauth_provider}, "
+                        f"local_providers={local_providers}, user_id={user_id}"
                     )
 
                     # Try listing credentials to find one for this provider
@@ -831,7 +389,9 @@ class OAuthService:
                     logger.info(f"Found {len(credentials)} credentials for user_id={user_id}")
                     for cred_info in credentials:
                         logger.debug(
-                            f"  Credential: provider={cred_info.get('provider')}, user_email={cred_info.get('user_email')}, user_id={cred_info.get('user_id')}"
+                            f"  Credential: provider={cred_info.get('provider')}, "
+                            f"user_email={cred_info.get('user_email')}, "
+                            f"user_id={cred_info.get('user_id')}"
                         )
 
                     # Also try without user_id filter (fallback)
@@ -843,12 +403,13 @@ class OAuthService:
                         logger.info(f"Found {len(credentials)} total credentials")
                         for cred_info in credentials:
                             logger.debug(
-                                f"  Credential: provider={cred_info.get('provider')}, user_email={cred_info.get('user_email')}, user_id={cred_info.get('user_id')}"
+                                f"  Credential: provider={cred_info.get('provider')}, "
+                                f"user_email={cred_info.get('user_email')}, "
+                                f"user_id={cred_info.get('user_id')}"
                             )
 
                     for cred_info in credentials:
                         cred_provider = cred_info.get("provider")
-                        # Check if credential provider matches our oauth provider or any of its local names
                         if cred_provider == oauth_provider or cred_provider in local_providers:
                             user_email = cred_info.get("user_email")
                             if user_email:
@@ -858,12 +419,12 @@ class OAuthService:
                                 )
                             if credential:
                                 logger.info(
-                                    f"Found matching credential for {cred_provider}:{cred_info.get('user_email')}"
+                                    f"Found matching credential for "
+                                    f"{cred_provider}:{cred_info.get('user_email')}"
                                 )
                                 break
 
                     if credential and credential.access_token:
-                        # Pass our token to Klavis via set_auth
                         logger.info(
                             f"Passing stored {oauth_provider} token to Klavis for {provider}"
                         )
@@ -902,7 +463,6 @@ class OAuthService:
             create_resp.raise_for_status()
             instance_data = create_resp.json()
             instance_id = instance_data.get("instanceId")
-            # Get server URL from instance creation response
             server_url = instance_data.get("serverUrl") or instance_data.get("url")
             logger.info(f"Klavis instance created: id={instance_id}, server_url={server_url}")
             logger.debug(f"Klavis instance data: {instance_data}")
@@ -915,7 +475,6 @@ class OAuthService:
             status_resp.raise_for_status()
             status_data = status_resp.json()
             logger.debug(f"Klavis instance status: {status_data}")
-            # Also try to get server URL from status if not in create response
             if not server_url:
                 server_url = status_data.get("serverUrl") or status_data.get("url")
 
@@ -925,7 +484,6 @@ class OAuthService:
             if not is_authenticated:
                 oauth_url = status_data.get("oauthUrl")
                 if redirect_url and oauth_url:
-                    # Append redirect_url to oauth_url
                     separator = "&" if "?" in oauth_url else "?"
                     oauth_url = f"{oauth_url}{separator}redirect_url={redirect_url}"
 
@@ -939,7 +497,7 @@ class OAuthService:
                     "user_id": klavis_user_id,
                 }
 
-            # Step 4: Get strata URL for authenticated user (optional - may not be needed)
+            # Step 4: Get strata URL for authenticated user
             strata_url = None
             try:
                 strata_resp = await client.post(
@@ -955,14 +513,14 @@ class OAuthService:
                     strata_url = strata_data.get("strataUrl")
                 else:
                     logger.warning(
-                        f"Klavis strata/create returned {strata_resp.status_code}: {strata_resp.text}"
+                        f"Klavis strata/create returned "
+                        f"{strata_resp.status_code}: {strata_resp.text}"
                     )
             except Exception as e:
                 logger.warning(f"Klavis strata/create failed: {e}")
 
             # Step 5: Get available tools
-            tools = []
-            # Build request - use serverUrl if available, otherwise serverName
+            tools: list[dict[str, Any]] = []
             list_tools_payload: dict[str, Any] = {"userId": klavis_user_id}
             if server_url:
                 list_tools_payload["serverUrl"] = server_url
@@ -978,7 +536,8 @@ class OAuthService:
             if tools_resp.status_code == 200:
                 tools_data = tools_resp.json()
                 logger.info(
-                    f"Klavis list-tools data: success={tools_data.get('success')}, tools_count={len(tools_data.get('tools', []))}"
+                    f"Klavis list-tools data: success={tools_data.get('success')}, "
+                    f"tools_count={len(tools_data.get('tools', []))}"
                 )
                 if tools_data.get("success"):
                     tools = tools_data.get("tools", [])
@@ -989,33 +548,30 @@ class OAuthService:
                     f"Klavis list-tools failed: {tools_resp.status_code} - {tools_resp.text}"
                 )
 
-            # Step 6: Generate SKILL.md, mount.json, and {tool}.json files in user's folder
+            # Step 6: Generate SKILL.md, mount.json, and tool files
             service_name = ServiceMap.get_service_name(mcp=provider) or provider
             skill_base_path = f"/skills/users/{user_id}/"
             skill_path = f"{skill_base_path}{service_name}/"
             skill_file = f"{skill_path}SKILL.md"
             mount_file = f"{skill_path}mount.json"
 
-            # Find connector mount path if connector exists for this service
             service_info = ServiceMap.get_service_info(service_name)
-            data_mount_path = skill_path  # default to skill path for MCP-only services
+            data_mount_path = skill_path
             logger.info(
-                f"Looking for connector mount: service={service_name}, connector={service_info.connector if service_info else None}"
+                f"Looking for connector mount: service={service_name}, "
+                f"connector={service_info.connector if service_info else None}"
             )
             if service_info and service_info.connector and self._mount_lister is not None:
-                # Look for existing mount with this connector via injected mount_lister
                 mount_entries = self._mount_lister()
                 logger.info(f"Found {len(mount_entries)} mounts via mount_lister")
-                # Normalize connector name for comparison
                 connector_variants = [
-                    service_info.connector.lower().replace("_", ""),  # gdriveconnector
-                    service_info.connector.lower().replace("_connector", ""),  # gdrive
-                    "googledrive",  # common variant
+                    service_info.connector.lower().replace("_", ""),
+                    service_info.connector.lower().replace("_connector", ""),
+                    "googledrive",
                 ]
                 for mount_point_str, backend_type in mount_entries:
                     backend_type_lower = backend_type.lower()
                     logger.info(f"  Mount: {mount_point_str} -> {backend_type_lower}")
-                    # Check if any variant matches
                     for variant in connector_variants:
                         if variant in backend_type_lower:
                             data_mount_path = mount_point_str
@@ -1033,29 +589,25 @@ class OAuthService:
                 mcp_tools=tools,
             )
 
-            # Write skill files
             try:
                 if self._filesystem is not None:
                     self._filesystem.mkdir(skill_path, parents=True, exist_ok=True)
-
-                    # Write SKILL.md
                     self._filesystem.write(skill_file, skill_md.encode("utf-8"), context=context)
                     logger.info(f"Generated MCP skill: {skill_file}")
 
-                    # Write mount.json
                     now = datetime.now(UTC)
                     mount_config = MCPMount(
                         name=service_name,
-                        description=service_info.description
-                        if service_info
-                        else f"{provider} MCP integration",
+                        description=(
+                            service_info.description
+                            if service_info
+                            else f"{provider} MCP integration"
+                        ),
                         transport="klavis_rest",
                         url=server_url or strata_url,
                         klavis_strata_id=instance_id,
                         auth_type="oauth",
-                        auth_config={
-                            "klavis_user_id": klavis_user_id
-                        },  # Store user ID for API calls
+                        auth_config={"klavis_user_id": klavis_user_id},
                         tools_path=skill_path,
                         mounted=True,
                         mounted_at=now,
@@ -1068,12 +620,10 @@ class OAuthService:
                     self._filesystem.write(mount_file, mount_json.encode("utf-8"), context=context)
                     logger.info(f"Generated mount config: {mount_file}")
 
-                    # Write {tool}.json for each tool
                     for tool in tools:
                         tool_name = tool.get("name", "")
                         if not tool_name:
                             continue
-
                         tool_config = MCPToolConfig(
                             endpoint=f"mcp://{service_name}/{tool_name}",
                             input_schema=tool.get("inputSchema", {}),
@@ -1081,7 +631,6 @@ class OAuthService:
                             mount_name=service_name,
                             when_to_use=tool.get("description", ""),
                         )
-
                         tool_def = MCPToolDefinition(
                             name=tool_name,
                             description=tool.get("description", ""),
@@ -1091,11 +640,12 @@ class OAuthService:
                             created_at=now,
                             modified_at=now,
                         )
-
                         tool_file = f"{skill_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
                         self._filesystem.write(
-                            tool_file, tool_json.encode("utf-8"), context=context
+                            tool_file,
+                            tool_json.encode("utf-8"),
+                            context=context,
                         )
 
                     logger.info(f"Generated {len(tools)} tool definitions in {skill_path}")
@@ -1117,8 +667,33 @@ class OAuthService:
             }
 
     # =========================================================================
-    # Helper Methods
+    # Backward-compat helper access (tests use these directly)
     # =========================================================================
+
+    def _get_oauth_factory(self) -> Any:
+        """Get or create OAuth provider factory (delegates to brick)."""
+        return self._cred._get_oauth_factory()
+
+    def _get_token_manager(self) -> Any:
+        """Get or create TokenManager instance (delegates to brick)."""
+        return self._cred._get_token_manager()
+
+    def _map_provider_name(self, provider: str) -> str:
+        """Map user-facing provider name (delegates to brick)."""
+        return self._cred._map_provider_name(provider)
+
+    def _create_provider(
+        self,
+        provider: str,
+        redirect_uri: str | None = None,
+        scopes: builtins.list[str] | None = None,
+    ) -> Any:
+        """Create OAuth provider instance (delegates to brick)."""
+        return self._cred._create_provider(provider, redirect_uri, scopes)
+
+    def _register_provider(self, provider_instance: Any) -> None:
+        """Register provider with TokenManager (delegates to brick)."""
+        self._cred._register_provider(provider_instance)
 
     async def _check_credential_ownership(
         self,
@@ -1129,130 +704,16 @@ class OAuthService:
         *,
         action: str = "access",
     ) -> None:
-        """Verify that the current user owns the credential (or is admin).
-
-        Raises ValueError if the user doesn't own the credential and isn't admin.
-        """
-        current_user_id = None
-        if context:
-            current_user_id = getattr(context, "user_id", None)
-        is_admin = context and getattr(context, "is_admin", False)
-
-        if is_admin or not current_user_id:
-            return
-
-        token_manager = self._get_token_manager()
-        cred = await token_manager.get_credential(
-            provider=provider, user_email=user_email, zone_id=zone_id
-        )
-        if not cred:
-            return
-
-        stored_user_id = cred.metadata.get("user_id") if cred.metadata else None
-        stored_user_email = cred.user_email
-
-        if stored_user_id and stored_user_id != current_user_id:
-            raise ValueError(
-                f"Permission denied: Cannot {action} credentials for {user_email}. "
-                f"Only your own credentials can be {action}d."
-            )
-        if not stored_user_id and stored_user_email and stored_user_email != current_user_id:
-            raise ValueError(
-                f"Permission denied: Cannot {action} credentials for {user_email}. "
-                f"Only your own credentials can be {action}d."
-            )
-
-    def _get_oauth_factory(self) -> Any:
-        """Get or create OAuth provider factory.
-
-        Returns:
-            OAuthProviderFactory instance
-        """
-        if self._oauth_factory is None:
-            from nexus.auth.oauth.factory import OAuthProviderFactory
-
-            self._oauth_factory = OAuthProviderFactory(config=self._oauth_config)
-
-        return self._oauth_factory
-
-    def _get_token_manager(self) -> Any:
-        """Get or create TokenManager instance.
-
-        Returns:
-            TokenManager instance
-        """
-        if self._token_manager is None:
-            from nexus.server.auth.token_manager import TokenManager
-
-            db_path = self._database_url
-
-            if not db_path:
-                raise RuntimeError("Database path not configured for TokenManager")
-
-            logger.debug(f"TokenManager database URL resolved to: {db_path}")
-
-            # TokenManager accepts db_url for any database type, or db_path for SQLite
-            if db_path.startswith(("postgresql://", "mysql://", "sqlite://")):
-                self._token_manager = TokenManager(db_url=db_path)
-            else:
-                self._token_manager = TokenManager(db_path=db_path)
-
-        return self._token_manager
-
-    def _map_provider_name(self, provider: str) -> str:
-        """Map user-facing provider name to config provider name.
-
-        Args:
-            provider: User-facing provider name (e.g., "google", "microsoft")
-
-        Returns:
-            Config provider name (e.g., "google-drive", "microsoft-onedrive")
-        """
-        provider_name_map = {
-            "google": "google-drive",  # Default to drive for user convenience
-            "twitter": "x",
-            "x": "x",
-            "microsoft": "microsoft-onedrive",
-            "microsoft-onedrive": "microsoft-onedrive",
-        }
-        return provider_name_map.get(provider, provider)
-
-    def _create_provider(
-        self,
-        provider: str,
-        redirect_uri: str | None = None,
-        scopes: builtins.list[str] | None = None,
-    ) -> Any:
-        """Create OAuth provider instance using factory.
-
-        Args:
-            provider: User-facing provider name
-            redirect_uri: OAuth redirect URI
-            scopes: Optional scopes
-
-        Returns:
-            OAuthProvider instance
-        """
-        factory = self._get_oauth_factory()
-        config_name = self._map_provider_name(provider)
-
-        provider_instance = factory.create_provider(
-            name=config_name,
-            redirect_uri=redirect_uri,
-            scopes=scopes,
+        """Verify credential ownership (delegates to brick)."""
+        await self._cred._check_credential_ownership(
+            provider, user_email, zone_id, context, action=action
         )
 
-        logger.debug(f"Created provider {provider} using factory (config: {config_name})")
-        return provider_instance
-
-    def _register_provider(self, provider_instance: Any) -> None:
-        """Register provider with TokenManager.
-
-        Args:
-            provider_instance: OAuthProvider instance to register
-        """
-        token_manager = self._get_token_manager()
-        token_manager.register_provider(provider_instance.provider_name, provider_instance)
+    async def _get_user_email_from_provider(
+        self, provider_instance: Any, credential: Any
+    ) -> str | None:
+        """Get user email from provider (delegates to brick)."""
+        return await self._cred._get_user_email_from_provider(provider_instance, credential)
 
     async def _get_authorization_url_with_pkce_support(
         self,
@@ -1260,42 +721,10 @@ class OAuthService:
         provider: str,
         state: str,
     ) -> dict[str, Any]:
-        """Get authorization URL with PKCE support if needed.
-
-        Args:
-            provider_instance: OAuthProvider instance
-            provider: Provider name (for logging)
-            state: CSRF state token
-
-        Returns:
-            Dictionary with url, state, and optionally pkce_data
-        """
-        # Check if provider requires PKCE from config
-        factory = self._get_oauth_factory()
-        config_name = self._map_provider_name(provider)
-        provider_config = factory.get_provider_config(config_name)
-        requires_pkce = provider_config and provider_config.requires_pkce
-
-        if requires_pkce:
-            auth_url, pkce_data = provider_instance.get_authorization_url_with_pkce(state=state)
-            await self._pkce_store.save(state, pkce_data)
-            logger.info(
-                "Generated OAuth authorization URL for %s with PKCE (state=%s)",
-                provider,
-                state,
-            )
-            return {
-                "url": auth_url,
-                "state": state,
-                "pkce_data": pkce_data,
-            }
-        else:
-            auth_url = provider_instance.get_authorization_url(state=state)
-            logger.info("Generated OAuth authorization URL for %s (state=%s)", provider, state)
-            return {
-                "url": auth_url,
-                "state": state,
-            }
+        """Get authorization URL with PKCE (delegates to brick)."""
+        return await self._cred._get_authorization_url_with_pkce_support(
+            provider_instance, provider, state
+        )
 
     async def _get_pkce_verifier(
         self,
@@ -1303,132 +732,11 @@ class OAuthService:
         code_verifier: str | None,
         state: str | None,
     ) -> str:
-        """Get PKCE verifier from parameter or cache.
-
-        Args:
-            provider: Provider name
-            code_verifier: PKCE verifier from parameter
-            state: State token to look up in cache
-
-        Returns:
-            PKCE verifier string
-
-        Raises:
-            ValueError: If PKCE verifier cannot be found
-        """
-        # If provided directly, use it
-        if code_verifier:
-            return code_verifier
-
-        # Atomic pop from instance-level PKCE store (single-use)
-        if state:
-            pkce_data = await self._pkce_store.pop(state)
-            if pkce_data:
-                verifier = pkce_data.get("code_verifier")
-                if verifier:
-                    return verifier
-
-        # PKCE verifier not found
-        raise ValueError(
-            f"{provider} OAuth requires PKCE. Provide code_verifier parameter or use "
-            "oauth_get_auth_url which returns pkce_data with code_verifier."
-        )
-
-    async def _get_user_email_from_provider(
-        self, provider_instance: Any, credential: Any
-    ) -> str | None:
-        """Get user email from OAuth provider using the access token.
-
-        Args:
-            provider_instance: OAuth provider instance
-            credential: OAuth credential with access_token
-
-        Returns:
-            User email if found, None otherwise
-        """
-        import httpx
-
-        provider_name = provider_instance.provider_name
-
-        try:
-            # Google: Use tokeninfo endpoint or userinfo endpoint
-            if provider_name in ("google-drive", "gmail", "google-cloud-storage"):
-                # Try tokeninfo endpoint first (simpler, but may not have email)
-                async with httpx.AsyncClient() as client:
-                    try:
-                        response = await client.get(
-                            "https://oauth2.googleapis.com/tokeninfo",
-                            params={"access_token": credential.access_token},
-                        )
-                        response.raise_for_status()
-                        token_info = response.json()
-                        # tokeninfo may have email if scopes include it
-                        if "email" in token_info:
-                            email = token_info.get("email")
-                            return str(email) if email else None
-                    except httpx.HTTPError as e:
-                        logger.debug("Google tokeninfo lookup failed: %s", e)
-
-                    # If tokeninfo doesn't have email, try userinfo endpoint
-                    try:
-                        response = await client.get(
-                            "https://www.googleapis.com/oauth2/v2/userinfo",
-                            headers={"Authorization": f"Bearer {credential.access_token}"},
-                        )
-                        response.raise_for_status()
-                        user_info = response.json()
-                        if "email" in user_info:
-                            email = user_info.get("email")
-                            return str(email) if email else None
-                    except httpx.HTTPError as e:
-                        logger.debug("Google userinfo lookup failed: %s", e)
-
-            # Microsoft: Use Microsoft Graph API
-            elif provider_name == "microsoft-onedrive":
-                async with httpx.AsyncClient() as client:
-                    try:
-                        response = await client.get(
-                            "https://graph.microsoft.com/v1.0/me",
-                            headers={"Authorization": f"Bearer {credential.access_token}"},
-                        )
-                        response.raise_for_status()
-                        user_info = response.json()
-                        if "mail" in user_info:
-                            email = user_info.get("mail")
-                            return str(email) if email else None
-                        elif "userPrincipalName" in user_info:
-                            email = user_info.get("userPrincipalName")
-                            return str(email) if email else None
-                    except httpx.HTTPError as e:
-                        logger.debug("Microsoft Graph user lookup failed: %s", e)
-
-            # X/Twitter: Use X API v2
-            elif provider_name == "x":
-                async with httpx.AsyncClient() as client:
-                    try:
-                        response = await client.get(
-                            "https://api.twitter.com/2/users/me",
-                            headers={"Authorization": f"Bearer {credential.access_token}"},
-                            params={"user.fields": "email"},
-                        )
-                        response.raise_for_status()
-                        user_info = response.json()
-                        if "data" in user_info and "email" in user_info["data"]:
-                            email = user_info["data"].get("email")
-                            return str(email) if email else None
-                    except httpx.HTTPError as e:
-                        logger.debug("X/Twitter user lookup failed: %s", e)
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch user email from provider {provider_name}: {e}")
-
-        return None
+        """Get PKCE verifier (delegates to brick)."""
+        return await self._cred._get_pkce_verifier(provider, code_verifier, state)
 
 
 # =============================================================================
 # Phase 2 Extraction: Complete ✅
+# Issue #2281 / #8B: Split into brick (OAuthCredentialService) + services (OAuthService)
 # =============================================================================
-#
-# All 7 OAuth methods extracted + PKCE support + Klavis MCP integration.
-# Unit tests: tests/unit/services/test_oauth_service.py
-#

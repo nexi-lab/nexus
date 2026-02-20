@@ -2,12 +2,15 @@
 
 Extracted from server/dependencies.py. Provides TTL-based caching
 for authentication results with explicit invalidation for revocation.
+Includes singleflight deduplication for concurrent requests (Issue #15).
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from cachetools import TTLCache
@@ -32,6 +35,8 @@ class AuthCache:
         max_size: int = _DEFAULT_MAX_SIZE,
     ) -> None:
         self._cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=max_size, ttl=ttl)
+        # Singleflight: at most one in-flight fetch per unique token hash (Issue #15)
+        self._inflight: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
 
     @staticmethod
     def _token_hash(token: str) -> str:
@@ -80,6 +85,47 @@ class AuthCache:
     def clear(self) -> None:
         """Clear the entire cache. Used by tests for isolation."""
         self._cache.clear()
+
+    async def get_or_fetch(
+        self,
+        token: str,
+        fetch: Callable[[], Awaitable[dict[str, Any] | None]],
+    ) -> dict[str, Any] | None:
+        """Singleflight: one in-flight fetch per unique token (Issue #15).
+
+        Checks cache first. On miss, ensures only one concurrent ``fetch``
+        call per unique token — subsequent callers await the first result.
+
+        Returns:
+            Shallow copy of the result dict, or None.
+        """
+        cached = self.get(token)
+        if cached is not None:
+            return cached
+
+        key = self._token_hash(token)
+
+        # Another coroutine is already fetching — wait for its result
+        if key in self._inflight:
+            result = await self._inflight[key]
+            return dict(result) if result is not None else None
+
+        # First caller: register future, run fetch, notify waiters
+        future: asyncio.Future[dict[str, Any] | None] = asyncio.get_running_loop().create_future()
+        # Suppress "Future exception was never retrieved" when no waiters exist
+        future.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
+        self._inflight[key] = future
+        try:
+            result = await fetch()
+            if result is not None:
+                self.set(token, result)
+            future.set_result(result)
+            return dict(result) if result is not None else None
+        except BaseException as exc:
+            future.set_exception(exc)
+            raise
+        finally:
+            self._inflight.pop(key, None)
 
     @property
     def size(self) -> int:

@@ -389,7 +389,7 @@ class NexusFS(  # type: ignore[misc]
         if self._inject_rebac_service is not None:
             self.rebac_service = self._inject_rebac_service
         else:
-            from nexus.services.rebac_service import ReBACService
+            from nexus.rebac.service import ReBACService
 
             self.rebac_service = ReBACService(
                 rebac_manager=self._rebac_manager,

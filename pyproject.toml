@@ -504,6 +504,7 @@ module = [
     "nexus.services.search_listing_mixin",
     "nexus.services.search_grep_mixin",
     "nexus.services.rebac_share_mixin",
+    "nexus.rebac.share_mixin",
 ]
 # Mixin classes access `self.*` attributes defined on the concrete class
 # (SearchService / ReBACService). Mypy cannot see across mixin boundaries.
@@ -689,7 +690,7 @@ module = [
     "nexus.core.distributed_lock",
 ]
 # Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
-disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
+disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc", "import-untyped"]
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]

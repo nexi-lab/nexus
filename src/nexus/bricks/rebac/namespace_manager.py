@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MountEntry:
     """A namespace mount entry representing a visible path for a subject.
 
@@ -305,9 +305,9 @@ class NamespaceManager:
                 self._dcache_negative[dcache_key] = False
 
         elapsed_ns = time.perf_counter_ns() - start_ns
-        with self._dcache_lock:
-            self._dcache_miss_total_ns += elapsed_ns
-            self._dcache_miss_count += 1
+        self._dcache_miss_total_ns += elapsed_ns
+        self._dcache_miss_count += 1
+
         return result
 
     def filter_visible(

@@ -26,6 +26,7 @@ EXCEPTIONS = [
     "src/nexus/core/nexus_fs_oauth.py",  # 1,116 lines - Phase 2 refactoring
     "src/nexus/core/nexus_fs_skills.py",  # 874 lines - Phase 2 refactoring
     "src/nexus/rebac/manager.py",  # 5,288 lines - flattened from rebac_manager + enhanced (#1385)
+    "src/nexus/bricks/rebac/manager.py",  # 4,856 lines - actively decomposing (#2179 Steps 2.4-2.6)
     "src/nexus/services/permissions/rebac_manager.py",  # 4,400 lines - backward compat shim
     "src/nexus/services/permissions/rebac_manager_enhanced.py",  # backward compat shim
     "src/nexus/services/permissions/tiger_cache.py",  # 2,896 lines - Leopard-style directory grants

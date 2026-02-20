@@ -17,6 +17,7 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+import types
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -370,10 +371,9 @@ class TestServerWiring:
         """fastapi_server.py imports cleanly with async wrapper wiring."""
         from nexus.server import fastapi_server
 
-        # Verify AppState has the new attribute
-        state = fastapi_server.AppState()
-        assert hasattr(state, "async_agent_registry")
-        assert state.async_agent_registry is None  # None until lifespan runs
+        # AppState class was removed (Issue #1288); app state now lives on
+        # app.state directly.  Just verify the module imports cleanly.
+        assert hasattr(fastapi_server, "create_app")
 
     def test_async_agent_registry_import(self) -> None:
         """AsyncAgentRegistry can be imported from the expected path."""
@@ -413,7 +413,6 @@ class TestServerLifespanWiring:
     @pytest.mark.asyncio()
     async def test_lifespan_wiring_with_real_db(self, tmp_path: Path) -> None:
         """Simulate server lifespan: AgentRegistry + AsyncAgentRegistry wiring."""
-        from nexus.server import fastapi_server
         from nexus.services.agents.agent_registry import AgentRegistry
         from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
@@ -426,8 +425,9 @@ class TestServerLifespanWiring:
             flush_interval=60,
         )
 
-        # Simulate the lifespan wiring (lines 800-803 of fastapi_server.py)
-        state = fastapi_server.AppState()
+        # Simulate the lifespan wiring — AppState was removed (Issue #1288),
+        # app state now lives on app.state (a SimpleNamespace).
+        state = types.SimpleNamespace()
         state.agent_registry = agent_registry
         state.async_agent_registry = AsyncAgentRegistry(state.agent_registry)
 

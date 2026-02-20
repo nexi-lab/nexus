@@ -6,8 +6,10 @@ Replaces 6 inline _startup_* / 3 shutdown_* calls with a single registry.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.server.observability.registry import ObservabilityRegistry
@@ -18,6 +20,35 @@ if TYPE_CHECKING:
     from nexus.server.lifespan.services_container import LifespanServices
 
 logger = logging.getLogger(__name__)
+
+# Declarative registration table: (name, module_path, setup_function, shutdown_function)
+_OBSERVABILITY_PROVIDERS: list[tuple[str, str, str, str]] = [
+    ("logging", "nexus.server.logging_config", "configure_logging", "shutdown_logging"),
+    ("otel-tracing", "nexus.server.telemetry", "setup_telemetry", "shutdown_telemetry"),
+    ("sentry", "nexus.server.sentry", "setup_sentry", "shutdown_sentry"),
+    ("pyroscope", "nexus.server.profiling", "setup_profiling", "shutdown_profiling"),
+    ("prometheus", "nexus.server.metrics", "setup_prometheus", "shutdown_prometheus"),
+]
+
+
+def _make_start(mod: str, fn: str) -> Callable[..., None]:
+    """Factory for lazy-import start functions (avoids closure-over-loop-variable bugs)."""
+
+    def _start(**kwargs: Any) -> None:
+        module = importlib.import_module(mod)
+        getattr(module, fn)(**kwargs)
+
+    return _start
+
+
+def _make_stop(mod: str, fn: str) -> Callable[[], None]:
+    """Factory for lazy-import stop functions (avoids closure-over-loop-variable bugs)."""
+
+    def _stop() -> None:
+        module = importlib.import_module(mod)
+        getattr(module, fn)()
+
+    return _stop
 
 
 def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
@@ -31,93 +62,20 @@ def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
     from nexus.server.observability.components import FunctionPairComponent, WriteBufferComponent
 
     registry = ObservabilityRegistry()
-
-    # Logging — lazy import start/stop functions
     env = os.environ.get("NEXUS_ENV", "dev")
 
-    def _start_logging() -> None:
-        from nexus.server.logging_config import configure_logging
-
-        configure_logging(env=env)
-
-    def _stop_logging() -> None:
-        from nexus.server.logging_config import shutdown_logging
-
-        shutdown_logging()
-
-    registry.register(
-        "logging",
-        FunctionPairComponent("logging", start_fn=_start_logging, stop_fn=_stop_logging),
-        required=False,
-    )
-
-    # OTel Tracing
-    def _start_otel() -> None:
-        from nexus.server.telemetry import setup_telemetry
-
-        setup_telemetry()
-
-    def _stop_otel() -> None:
-        from nexus.server.telemetry import shutdown_telemetry
-
-        shutdown_telemetry()
-
-    registry.register(
-        "otel-tracing",
-        FunctionPairComponent("otel-tracing", start_fn=_start_otel, stop_fn=_stop_otel),
-        required=False,
-    )
-
-    # Sentry
-    def _start_sentry() -> None:
-        from nexus.server.sentry import setup_sentry
-
-        setup_sentry()
-
-    def _stop_sentry() -> None:
-        from nexus.server.sentry import shutdown_sentry
-
-        shutdown_sentry()
-
-    registry.register(
-        "sentry",
-        FunctionPairComponent("sentry", start_fn=_start_sentry, stop_fn=_stop_sentry),
-        required=False,
-    )
-
-    # Pyroscope
-    def _start_pyroscope() -> None:
-        from nexus.server.profiling import setup_profiling
-
-        setup_profiling()
-
-    def _stop_pyroscope() -> None:
-        from nexus.server.profiling import shutdown_profiling
-
-        shutdown_profiling()
-
-    registry.register(
-        "pyroscope",
-        FunctionPairComponent("pyroscope", start_fn=_start_pyroscope, stop_fn=_stop_pyroscope),
-        required=False,
-    )
-
-    # Prometheus
-    def _start_prometheus() -> None:
-        from nexus.server.metrics import setup_prometheus
-
-        setup_prometheus()
-
-    def _stop_prometheus() -> None:
-        from nexus.server.metrics import shutdown_prometheus
-
-        shutdown_prometheus()
-
-    registry.register(
-        "prometheus",
-        FunctionPairComponent("prometheus", start_fn=_start_prometheus, stop_fn=_stop_prometheus),
-        required=False,
-    )
+    for comp_name, module_path, setup_fn_name, shutdown_fn_name in _OBSERVABILITY_PROVIDERS:
+        start_kwargs: dict[str, Any] = {"env": env} if comp_name == "logging" else {}
+        registry.register(
+            comp_name,
+            FunctionPairComponent(
+                comp_name,
+                start_fn=_make_start(module_path, setup_fn_name),
+                stop_fn=_make_stop(module_path, shutdown_fn_name),
+                start_kwargs=start_kwargs,
+            ),
+            required=False,
+        )
 
     # WriteBuffer (Issue #1370) — managed shutdown, started by factory
     if write_observer is not None:
@@ -144,7 +102,6 @@ async def startup_observability(app: FastAPI, svc: LifespanServices) -> None:
         logger.info("Observability components skipped: %s", ", ".join(failed))
 
     logger.info("Starting FastAPI Nexus server...")
-    _startup_thread_pool(svc)
 
 
 async def shutdown_observability(app: FastAPI, _svc: LifespanServices) -> None:
@@ -153,12 +110,3 @@ async def shutdown_observability(app: FastAPI, _svc: LifespanServices) -> None:
     if registry:
         await registry.shutdown_all()
         app.state.observability_registry = None
-
-
-def _startup_thread_pool(svc: LifespanServices) -> None:
-    """Configure thread pool size (Issue #932)."""
-    from anyio import to_thread
-
-    limiter = to_thread.current_default_thread_limiter()
-    limiter.total_tokens = svc.thread_pool_size
-    logger.info("Thread pool size set to %d", limiter.total_tokens)

@@ -146,12 +146,14 @@ class TestMessageSender:
     @pytest.mark.asyncio
     async def test_send_path_traversal_rejected(self, vfs: InMemoryVFS) -> None:
         """Sender/recipient with path separators must be rejected."""
+        from pydantic import ValidationError
+
         await _provision_agent(vfs, "agent:bob")
         sender = MessageSender(vfs, zone_id=ZONE)
-        env = _make_envelope(sender="../../etc/passwd", recipient="agent:bob")
 
-        with pytest.raises(EnvelopeValidationError, match="path separators"):
-            await sender.send(env)
+        # Validation now happens at envelope construction time (Pydantic validators)
+        with pytest.raises(ValidationError, match="path separators"):
+            _make_envelope(sender="../../etc/passwd", recipient="agent:bob")
 
     @pytest.mark.asyncio
     async def test_send_payload_too_large_rejected(self, vfs: InMemoryVFS) -> None:

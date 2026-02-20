@@ -219,28 +219,22 @@ class ScopedHookEngine:
         entries: list[_ScopedEntry],
         context: HookContext,
     ) -> HookResult:
-        """Execute hooks concurrently (POST phases) with fire-and-forget semantics.
+        """Execute hooks concurrently (POST phases). No veto possible."""
 
-        POST hooks run in background with timeout enforcement. The caller is not
-        blocked waiting for hook completion. Failures are logged but don't affect
-        the operation.
-        """
+        async def _run_one(entry: _ScopedEntry) -> HookResult:
+            return await self._execute_with_enforcement(entry, context)
 
-        async def _run_all() -> None:
-            """Background task that runs all POST hooks."""
-            results = await asyncio.gather(
-                *(self._execute_with_enforcement(e, context) for e in entries),
-                return_exceptions=True,
-            )
-            # Log failures (best-effort)
-            for r in results:
-                if isinstance(r, BaseException):
-                    logger.warning("[HOOK] POST hook failed: %s", r, exc_info=r)
+        results = await asyncio.gather(
+            *(_run_one(e) for e in entries),
+            return_exceptions=True,
+        )
 
-        # Fire-and-forget: create task but don't await
-        asyncio.create_task(_run_all())
+        # POST hooks don't veto; collect any modifications
+        for r in results:
+            if isinstance(r, BaseException):
+                logger.warning("[HOOK] POST hook failed: %s", r)
+                continue
 
-        # Return immediately without waiting for hooks
         return HookResult(proceed=True, modified_context=None, error=None)
 
     # ------------------------------------------------------------------

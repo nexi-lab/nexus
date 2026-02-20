@@ -1,4 +1,4 @@
-"""In-memory RecordStoreABC implementation for unit tests.
+"""In-memory RecordStoreABC implementation for unit tests (Issue #2200).
 
 Wraps an in-memory SQLite database with all tables created, providing a
 lightweight test double that supports real SQL operations without external

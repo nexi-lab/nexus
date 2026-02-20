@@ -37,7 +37,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
         # Issue #2071: source max_indexing_concurrency from profile tuning
-        _search_tuning = getattr(app.state, "profile_tuning", None)
+        _search_tuning = app.state.profile_tuning
         _max_indexing = _search_tuning.search.search_max_concurrency if _search_tuning else None
 
         _daemon_kwargs: dict = {
@@ -59,7 +59,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
         config = DaemonConfig(**_daemon_kwargs)
 
         # Inject async_session_factory from RecordStoreABC when available
-        _record_store = getattr(app.state.nexus_fs, "_record_store", None)
+        _record_store = app.state.record_store
         _async_sf = None
         if _record_store is not None:
             with contextlib.suppress(Exception):
@@ -99,7 +99,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
             app.state.search_daemon._adaptive_k_provider = ContextBuilder()
 
         # Issue #2036: Register with BrickLifecycleManager
-        _blm = getattr(app.state, "brick_lifecycle_manager", None)
+        _blm = app.state.brick_lifecycle_manager
         if _blm is not None:
             with contextlib.suppress(Exception):
                 from nexus.bricks.search.lifecycle_adapter import (
@@ -114,11 +114,12 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
 
         stats = app.state.search_daemon.get_stats()
         logger.info(
-            f"Search Daemon started: {stats['bm25_documents']} docs indexed, "
-            f"startup={stats['startup_time_ms']:.1f}ms"
+            "Search Daemon started: %d docs indexed, startup=%.1fms",
+            stats["bm25_documents"],
+            stats["startup_time_ms"],
         )
     except Exception as e:
-        logger.warning(f"Failed to start Search Daemon: {e}")
+        logger.warning("Failed to start Search Daemon: %s", e)
         app.state.search_daemon_enabled = False
 
     return []

@@ -15,7 +15,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -32,7 +32,8 @@ def _compute_features_info(app: FastAPI) -> None:
     from nexus.contracts.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
     from nexus.server.api.core.features import FeaturesResponse, PerformanceTuningInfo
 
-    # Read profile from app state (set during server init)
+    # Read profile from app state (set during server init).
+    # Use getattr() for resilience — e2e tests may create apps without init_app_state().
     profile_str: str = getattr(app.state, "deployment_profile", "full")
     try:
         profile = DeploymentProfile(profile_str)
@@ -41,7 +42,9 @@ def _compute_features_info(app: FastAPI) -> None:
         profile = DeploymentProfile.FULL
 
     # Read enabled_bricks from app state (set during factory wiring)
-    enabled: frozenset[str] = getattr(app.state, "enabled_bricks", profile.default_bricks())
+    enabled: frozenset[str] = (
+        getattr(app.state, "enabled_bricks", frozenset()) or profile.default_bricks()
+    )
 
     mode: str = getattr(app.state, "deployment_mode", "standalone")
 
@@ -95,14 +98,13 @@ def _compute_features_info(app: FastAPI) -> None:
 def _wire_query_observer(app: FastAPI) -> None:
     """Register QueryObserverComponent into the observability registry.
 
-    Called after startup_services so NexusFS._service_extras is available.
+    Called after startup_services so observability_subsystem is available.
     """
-    registry = getattr(app.state, "observability_registry", None)
-    nexus_fs = getattr(app.state, "nexus_fs", None)
-    if registry is None or nexus_fs is None:
+    registry = app.state.observability_registry
+    if registry is None:
         return
 
-    obs_subsystem = getattr(nexus_fs, "_service_extras", {}).get("observability_subsystem")
+    obs_subsystem = app.state.observability_subsystem
     if obs_subsystem is None:
         return
 
@@ -194,7 +196,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if bg_tasks:
         with suppress(asyncio.CancelledError):
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
-        logger.debug(f"Cancelled {len(bg_tasks)} background tasks")
+        logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
     await shutdown_a2a_grpc(app)
     await shutdown_ipc(app)
@@ -203,25 +205,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await shutdown_realtime(app)
 
     # Close NexusFS kernel
-    if app.state.nexus_fs:
-        # Stop WriteBuffer to drain pending events before closing kernel (Issue #1370)
-        _wo = getattr(app.state.nexus_fs, "_write_observer", None)
-        if _wo is not None and hasattr(_wo, "stop"):
-            try:
-                _wo.stop()
-                logger.info("WriteBuffer stopped")
-            except Exception as e:
-                logger.warning(f"Error stopping WriteBuffer: {e}")
-
-        if hasattr(app.state.nexus_fs, "close"):
-            app.state.nexus_fs.close()
+    # (WriteBuffer shutdown is now handled by ObservabilityRegistry via WriteBufferComponent)
+    if app.state.nexus_fs and hasattr(app.state.nexus_fs, "close"):
+        app.state.nexus_fs.close()
 
     # Shutdown CacheBrick (Issue #1524)
-    if hasattr(app.state, "cache_brick") and app.state.cache_brick:
+    if app.state.cache_brick:
         try:
             await app.state.cache_brick.stop()
             logger.info("CacheBrick stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down CacheBrick: {e}")
+            logger.warning("Error shutting down CacheBrick: %s", e, exc_info=True)
 
-    await shutdown_observability()
+    await shutdown_observability(app)

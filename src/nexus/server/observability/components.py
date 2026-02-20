@@ -2,10 +2,14 @@
 
 Issue #2072: Each adapter implements the LifecycleComponent protocol,
 delegating to existing functions without duplicating logic.
+
+FunctionPairComponent replaces 5 near-identical adapter classes with a
+single generic class parameterized by start/shutdown callables.
 """
 
+import asyncio
 import logging
-import os
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -14,157 +18,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class LoggingComponent:
-    """Wraps configure_logging() / shutdown_logging() as a lifecycle component."""
+class FunctionPairComponent:
+    """Generic lifecycle component wrapping a start/shutdown function pair.
 
-    def __init__(self, env: str | None = None) -> None:
-        self._env = env or os.environ.get("NEXUS_ENV", "dev")
+    Replaces LoggingComponent, OTelTracingComponent, SentryComponent,
+    PyroscopeComponent, and PrometheusComponent with a single DRY class.
+
+    Args:
+        component_name: Human-readable name for logging.
+        start_fn: Callable invoked during ``start()``.
+        stop_fn: Optional callable invoked during ``shutdown()``.
+        start_kwargs: Keyword arguments forwarded to ``start_fn``.
+    """
+
+    def __init__(
+        self,
+        component_name: str,
+        *,
+        start_fn: Callable[..., Any],
+        stop_fn: Callable[[], Any] | None = None,
+        start_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        self._name = component_name
+        self._start_fn = start_fn
+        self._stop_fn = stop_fn
+        self._start_kwargs = start_kwargs or {}
         self._started = False
 
     @property
     def name(self) -> str:
-        return "logging"
+        return self._name
 
     async def start(self) -> None:
-        from nexus.server.logging_config import configure_logging
-
-        configure_logging(env=self._env)
+        self._start_fn(**self._start_kwargs)
         self._started = True
 
     async def shutdown(self, timeout_ms: int = 5000) -> None:  # noqa: ARG002
         if not self._started:
             return
-        try:
-            from nexus.server.logging_config import shutdown_logging
-
-            shutdown_logging()
-        except ImportError:
-            pass
-        self._started = False
-
-    def is_healthy(self) -> bool:
-        return self._started
-
-
-class OTelTracingComponent:
-    """Wraps setup_telemetry() / shutdown_telemetry() as a lifecycle component."""
-
-    def __init__(self) -> None:
-        self._started = False
-
-    @property
-    def name(self) -> str:
-        return "otel-tracing"
-
-    async def start(self) -> None:
-        from nexus.server.telemetry import setup_telemetry
-
-        setup_telemetry()
-        self._started = True
-
-    async def shutdown(self, timeout_ms: int = 5000) -> None:  # noqa: ARG002
-        if not self._started:
-            return
-        try:
-            from nexus.server.telemetry import shutdown_telemetry
-
-            shutdown_telemetry()
-        except ImportError:
-            pass
-        self._started = False
-
-    def is_healthy(self) -> bool:
-        return self._started
-
-
-class SentryComponent:
-    """Wraps setup_sentry() / shutdown_sentry() as a lifecycle component."""
-
-    def __init__(self, **kwargs: Any) -> None:
-        self._kwargs = kwargs
-        self._started = False
-
-    @property
-    def name(self) -> str:
-        return "sentry"
-
-    async def start(self) -> None:
-        from nexus.server.sentry import setup_sentry
-
-        setup_sentry(**self._kwargs)
-        self._started = True
-
-    async def shutdown(self, timeout_ms: int = 5000) -> None:  # noqa: ARG002
-        if not self._started:
-            return
-        try:
-            from nexus.server.sentry import shutdown_sentry
-
-            shutdown_sentry()
-        except ImportError:
-            pass
-        self._started = False
-
-    def is_healthy(self) -> bool:
-        return self._started
-
-
-class PyroscopeComponent:
-    """Wraps setup_profiling() / shutdown_profiling() as a lifecycle component."""
-
-    def __init__(self) -> None:
-        self._started = False
-
-    @property
-    def name(self) -> str:
-        return "pyroscope"
-
-    async def start(self) -> None:
-        from nexus.server.profiling import setup_profiling
-
-        setup_profiling()
-        self._started = True
-
-    async def shutdown(self, timeout_ms: int = 5000) -> None:  # noqa: ARG002
-        if not self._started:
-            return
-        try:
-            from nexus.server.profiling import shutdown_profiling
-
-            shutdown_profiling()
-        except ImportError:
-            pass
-        self._started = False
-
-    def is_healthy(self) -> bool:
-        return self._started
-
-
-class PrometheusComponent:
-    """Wraps setup_prometheus() / shutdown_prometheus() as a lifecycle component."""
-
-    def __init__(self) -> None:
-        self._started = False
-
-    @property
-    def name(self) -> str:
-        return "prometheus"
-
-    async def start(self) -> None:
-        from nexus.server.metrics import setup_prometheus
-
-        setup_prometheus()
-        self._started = True
-
-    async def shutdown(self, timeout_ms: int = 5000) -> None:  # noqa: ARG002
-        if not self._started:
-            return
-        try:
-            from nexus.server.metrics import shutdown_prometheus
-
-            shutdown_prometheus()
-        except ImportError:
-            pass
+        if self._stop_fn is not None:
+            try:
+                self._stop_fn()
+            except Exception:
+                logger.warning("Error in %s shutdown", self._name, exc_info=True)
         self._started = False
 
     def is_healthy(self) -> bool:
@@ -198,3 +94,42 @@ class QueryObserverComponent:
             return False
         health = self._subsystem.health_check()
         return health.get("status") == "ok"
+
+
+class WriteBufferComponent:
+    """Lifecycle component for WriteBuffer shutdown.
+
+    The WriteBuffer is started by the factory (not by this component).
+    This component manages its graceful shutdown during server teardown.
+    """
+
+    def __init__(self, write_observer: Any) -> None:
+        self._wo = write_observer
+        self._started = False
+
+    @property
+    def name(self) -> str:
+        return "write-buffer"
+
+    async def start(self) -> None:
+        # WriteBuffer is started by the factory — mark as started
+        self._started = True
+
+    async def shutdown(self, timeout_ms: int = 5000) -> None:
+        if not self._started:
+            return
+        if self._wo is not None and hasattr(self._wo, "stop"):
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._wo.stop),
+                    timeout=timeout_ms / 1000.0,
+                )
+                logger.info("WriteBuffer stopped")
+            except TimeoutError:
+                logger.warning("WriteBuffer stop timed out after %dms", timeout_ms)
+            except Exception as e:
+                logger.warning("Error stopping WriteBuffer: %s", e, exc_info=True)
+        self._started = False
+
+    def is_healthy(self) -> bool:
+        return self._started

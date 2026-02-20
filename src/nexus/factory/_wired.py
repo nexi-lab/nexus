@@ -5,18 +5,21 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.core.config import BrickServices, KernelServices, WiredServices
 
 logger = logging.getLogger(__name__)
 
 
 def _boot_wired_services(
     nx: Any,
-    kernel_services: Any,
+    kernel_services: KernelServices,
     system_services: Any,
-    brick_services: Any,
+    brick_services: BrickServices,
     brick_on: Callable[[str], bool] | None = None,
-) -> dict[str, Any]:
+) -> WiredServices:
     """Boot Tier 2b (WIRED) — services needing NexusFS reference.
 
     Two-phase init: called AFTER NexusFS construction in ``create_nexus_fs()``.
@@ -28,6 +31,9 @@ def _boot_wired_services(
     Issue #643: Migrated from ``NexusFS._wire_services()`` to factory.py
     so the kernel never imports or creates services.
 
+    Issue #2133: Typed with KernelServices + BrickServices
+    and returns WiredServices instead of dict[str, Any].
+
     Args:
         nx: The NexusFS instance (already constructed).
         kernel_services: KernelServices container (Tier 0 — router only).
@@ -36,8 +42,9 @@ def _boot_wired_services(
         brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
 
     Returns:
-        Dict of service name -> instance (some may be None).
+        WiredServices frozen dataclass (some fields may be None).
     """
+    from nexus.core.config import WiredServices as _WiredServices
     from nexus.factory._helpers import _make_gate
 
     t0 = time.perf_counter()
@@ -60,11 +67,11 @@ def _boot_wired_services(
 
         rebac_service = ReBACService(
             rebac_manager=system_services.rebac_manager,
-            enforce_permissions=getattr(nx, "_enforce_permissions", True),
+            enforce_permissions=nx._enforce_permissions,
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
             file_reader=lambda path: nx.read(path),
-            permission_enforcer=getattr(nx, "_permission_enforcer", None),
+            permission_enforcer=nx._permission_enforcer,
         )
         logger.debug("[BOOT:WIRED] ReBACService created")
     except Exception as exc:
@@ -114,7 +121,7 @@ def _boot_wired_services(
                 token_manager=None,
                 filesystem=nx,
                 database_url=os.getenv("TOKEN_MANAGER_DB"),
-                oauth_config=getattr(getattr(nx, "_config", None), "oauth", None),
+                oauth_config=getattr(nx._config, "oauth", None) if nx._config else None,
                 mount_lister=lambda: [
                     (m.mount_point, type(m.backend).__name__)
                     for m in kernel_services.router.list_mounts()
@@ -220,7 +227,7 @@ def _boot_wired_services(
             )
             logger.debug("[BOOT:WIRED] SkillPackageService created")
         except Exception:
-            pass  # Optional, may not be importable
+            logger.warning("[BOOT:WIRED] SkillPackageService unavailable (optional)")
 
     # --- SearchService: list/glob/grep are kernel-level VFS operations (Issue #2194) ---
     # Always create SearchService regardless of "search" brick — basic directory
@@ -253,7 +260,7 @@ def _boot_wired_services(
 
             share_link_service = ShareLinkService(
                 gateway=gateway,
-                enforce_permissions=getattr(nx, "_enforce_permissions", True),
+                enforce_permissions=nx._enforce_permissions,
             )
             logger.debug("[BOOT:WIRED] ShareLinkService created")
         except Exception as exc:
@@ -284,7 +291,94 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] EventsService disabled by profile")
 
-    # --- MetadataExportService: JSONL metadata export/import ---
+    # --- RPC / helper services (Issue #2133: migrated from service_wiring.py) ---
+    # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
+    _nx_default_context: Any = getattr(nx, "_default_context", None)
+    _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
+    _nx_memory_config: Any = getattr(nx, "_memory_config", None)
+
+    workspace_rpc_service: Any = None
+    try:
+        from nexus.services.workspace_rpc_service import WorkspaceRPCService
+
+        workspace_rpc_service = WorkspaceRPCService(
+            workspace_manager=system_services.workspace_manager,
+            workspace_registry=system_services.workspace_registry,
+            vfs=nx,
+            default_context=_nx_default_context,
+            snapshot_service=brick_services.snapshot_service,
+        )
+        logger.debug("[BOOT:WIRED] WorkspaceRPCService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] WorkspaceRPCService unavailable: %s", exc)
+
+    agent_rpc_service: Any = None
+    try:
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
+
+        agent_rpc_service = AgentRPCService(
+            vfs=nx,
+            metastore=nx.metadata,
+            session_factory=_nx_session_factory,
+            record_store=nx._record_store,
+            agent_registry=getattr(nx, "_agent_registry", None),
+            entity_registry=system_services.entity_registry,
+            rebac_manager=system_services.rebac_manager,
+            wallet_provisioner=brick_services.wallet_provisioner,
+            api_key_creator=brick_services.api_key_creator,
+            key_service=getattr(nx, "_key_service", None),
+            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
+            rebac_list_tuples_fn=(rebac_service.rebac_list_tuples_sync if rebac_service else None),
+            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
+        )
+        logger.debug("[BOOT:WIRED] AgentRPCService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] AgentRPCService unavailable: %s", exc)
+
+    user_provisioning_service: Any = None
+    try:
+        from nexus.services.user_provisioning import UserProvisioningService
+
+        user_provisioning_service = UserProvisioningService(
+            vfs=nx,
+            session_factory=_nx_session_factory,
+            entity_registry=system_services.entity_registry,
+            api_key_creator=brick_services.api_key_creator,
+            backend=nx.backend,
+            rebac_manager=system_services.rebac_manager,
+            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
+            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
+            register_workspace_fn=(
+                workspace_rpc_service.register_workspace if workspace_rpc_service else None
+            ),
+            register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
+            skills_import_fn=getattr(nx, "skills_import", None),
+            list_cache=getattr(nx, "_list_cache", None),
+            exists_cache=getattr(nx, "_exists_cache", None),
+        )
+        logger.debug("[BOOT:WIRED] UserProvisioningService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] UserProvisioningService unavailable: %s", exc)
+
+    sandbox_rpc_service: Any = None
+    if _on("sandbox"):
+        try:
+            from nexus.sandbox.sandbox_rpc_service import SandboxRPCService
+
+            sandbox_rpc_service = SandboxRPCService(
+                session_factory=_nx_session_factory,
+                default_context=_nx_default_context,
+                config=nx._config,
+            )
+            logger.debug("[BOOT:WIRED] SandboxRPCService created")
+        except ImportError:
+            logger.debug("[BOOT:WIRED] SandboxRPCService not installed")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] SandboxRPCService unavailable: %s", exc)
+
+    # --- MetadataExportService: JSONL metadata export/import (Issue #662) ---
     metadata_export_service: Any = None
     try:
         from nexus.factory._metadata_export import create_metadata_export_service
@@ -293,28 +387,87 @@ def _boot_wired_services(
     except Exception as exc:
         logger.debug("[BOOT:WIRED] MetadataExportService unavailable: %s", exc)
 
-    result = {
-        "rebac_service": rebac_service,
-        "mount_service": mount_service,
-        "gateway": gateway,
-        "mount_core_service": mount_core_service,
-        "sync_service": sync_service,
-        "sync_job_service": sync_job_service,
-        "mount_persist_service": mount_persist_service,
-        "mcp_service": mcp_service,
-        "llm_service": llm_service,
-        "llm_subsystem": llm_subsystem,
-        "oauth_service": oauth_service,
-        "skill_service": skill_service,
-        "skill_package_service": skill_package_service,
-        "search_service": search_service,
-        "share_link_service": share_link_service,
-        "events_service": events_service,
-        "task_queue_service": brick_services.task_queue_service,
-        "metadata_export_service": metadata_export_service,
-    }
+    ace_rpc_service: Any = None
+    try:
+        from nexus.services.ace_rpc_service import ACERPCService
+
+        ace_rpc_service = ACERPCService(
+            session_factory=_nx_session_factory,
+            backend=nx.backend,
+            default_context=_nx_default_context,
+            entity_registry=system_services.entity_registry,
+            ensure_entity_registry_fn=getattr(nx, "_ensure_entity_registry", None),
+        )
+        logger.debug("[BOOT:WIRED] ACERPCService created")
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] ACERPCService unavailable: %s", exc)
+
+    descendant_checker: Any = None
+    try:
+        from nexus.services.descendant_access import DescendantAccessChecker
+
+        descendant_checker = DescendantAccessChecker(
+            rebac_manager=system_services.rebac_manager,
+            rebac_service=rebac_service,
+            dir_visibility_cache=system_services.dir_visibility_cache,
+            permission_enforcer=system_services.permission_enforcer,
+            metadata_store=nx.metadata,
+        )
+        logger.debug("[BOOT:WIRED] DescendantAccessChecker created")
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] DescendantAccessChecker unavailable: %s", exc)
+
+    memory_provider: Any = None
+    try:
+        from nexus.services.memory_provider import MemoryProvider
+
+        memory_provider = MemoryProvider(
+            session_factory=_nx_session_factory,
+            backend=nx.backend,
+            entity_registry=system_services.entity_registry,
+            enable_paging=getattr(nx, "_enable_memory_paging", True),
+            main_capacity=getattr(nx, "_memory_main_capacity", 100),
+            recall_max_age_hours=getattr(nx, "_memory_recall_max_age_hours", 24.0),
+            memory_config=_nx_memory_config,
+        )
+        logger.debug("[BOOT:WIRED] MemoryProvider created")
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] MemoryProvider unavailable: %s", exc)
+
+    result = _WiredServices(
+        rebac_service=rebac_service,
+        mount_service=mount_service,
+        gateway=gateway,
+        mount_core_service=mount_core_service,
+        sync_service=sync_service,
+        sync_job_service=sync_job_service,
+        mount_persist_service=mount_persist_service,
+        mcp_service=mcp_service,
+        llm_service=llm_service,
+        llm_subsystem=llm_subsystem,
+        oauth_service=oauth_service,
+        skill_service=skill_service,
+        skill_package_service=skill_package_service,
+        search_service=search_service,
+        share_link_service=share_link_service,
+        events_service=events_service,
+        task_queue_service=brick_services.task_queue_service,
+        workspace_rpc_service=workspace_rpc_service,
+        agent_rpc_service=agent_rpc_service,
+        user_provisioning_service=user_provisioning_service,
+        sandbox_rpc_service=sandbox_rpc_service,
+        metadata_export_service=metadata_export_service,
+        ace_rpc_service=ace_rpc_service,
+        descendant_checker=descendant_checker,
+        memory_provider=memory_provider,
+    )
 
     elapsed = time.perf_counter() - t0
-    active = sum(1 for v in result.values() if v is not None)
-    logger.info("[BOOT:WIRED] %d/%d services ready (%.3fs)", active, len(result), elapsed)
+    active = sum(1 for f in result.__dataclass_fields__ if getattr(result, f) is not None)
+    logger.info(
+        "[BOOT:WIRED] %d/%d services ready (%.3fs)",
+        active,
+        len(result.__dataclass_fields__),
+        elapsed,
+    )
     return result

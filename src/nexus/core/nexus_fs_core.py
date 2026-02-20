@@ -51,7 +51,7 @@ class NexusFSCoreMixin:
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core.metastore import MetastoreABC
-        from nexus.rebac.enforcer import PermissionEnforcer
+        from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
 
         metadata: MetastoreABC
         backend: Backend
@@ -62,7 +62,7 @@ class NexusFSCoreMixin:
         _default_context: OperationContext
         _parser_threads: list[threading.Thread]
         _parser_threads_lock: threading.Lock
-        _permission_enforcer: PermissionEnforcer | None
+        _permission_enforcer: PermissionEnforcerProtocol | None
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
         _overlay_resolver: Any  # Issue #1264: OverlayResolver service
         _workspace_registry: Any  # Workspace registry for overlay config lookup

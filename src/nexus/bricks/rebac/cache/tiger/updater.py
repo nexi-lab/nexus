@@ -167,7 +167,8 @@ class TigerCacheUpdater:
         try:
             self.reset_stuck_entries(stuck_timeout_minutes=5)
         except (OperationalError, RuntimeError) as e:
-            logger.debug(f"[TIGER] Could not reset stuck entries: {e}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("[TIGER] Could not reset stuck entries: %s", e)
 
         # Helper to check if error is a database lock/deadlock error
         def is_lock_error(e: Exception) -> bool:

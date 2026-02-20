@@ -11,9 +11,8 @@ Migration from v0.5.x:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.bricks.memory.router import MemoryViewRouter
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.contracts.types import OperationContext, Permission
@@ -22,6 +21,17 @@ from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.manager import EnhancedReBACManager
+
+
+@runtime_checkable
+class MemoryRouter(Protocol):
+    """Protocol for resolving virtual paths to memory objects.
+
+    Decouples the rebac brick from the memory brick (LEGO Principle 3).
+    The concrete MemoryViewRouter in nexus.bricks.memory satisfies this.
+    """
+
+    def resolve(self, virtual_path: str) -> MemoryModel | None: ...
 
 
 class MemoryPermissionEnforcer(PermissionEnforcer):
@@ -37,7 +47,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         self,
         metadata_store: Any = None,
         rebac_manager: EnhancedReBACManager | None = None,
-        memory_router: MemoryViewRouter | None = None,
+        memory_router: MemoryRouter | None = None,
         entity_registry: EntityRegistry | None = None,
     ) -> None:
         """Initialize memory permission enforcer.

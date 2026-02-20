@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import get_auth_result
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,7 @@ async def stream_events(
     effective_zone = zone_id
     if effective_zone is None and _auth_result:
         effective_zone = _auth_result.get("zone_id")
-    zone_key = effective_zone or "default"
+    zone_key = effective_zone or ROOT_ZONE_ID
 
     # Check Last-Event-ID header for resume
     last_event_id = request.headers.get("Last-Event-ID")

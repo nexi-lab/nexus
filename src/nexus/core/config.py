@@ -29,6 +29,10 @@ from nexus.constants import DEFAULT_NATS_URL
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
+    from nexus.core.protocols.entity_registry import EntityRegistryProtocol
+    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
+    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
+    from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
@@ -136,19 +140,19 @@ class KernelServices:
     # VFS routing
     router: Any = None
 
-    # ReBAC permission subsystem
-    rebac_manager: Any = None
+    # ReBAC permission subsystem (Issue #2133: typed with Protocols)
+    rebac_manager: ReBACManagerProtocol | None = None
     dir_visibility_cache: Any = None
     audit_store: Any = None
-    entity_registry: Any = None
-    permission_enforcer: Any = None
+    entity_registry: EntityRegistryProtocol | None = None
+    permission_enforcer: PermissionEnforcerProtocol | None = None
     hierarchy_manager: Any = None
     deferred_permission_buffer: Any = None
 
-    # Workspace subsystem
+    # Workspace subsystem (Issue #2133: typed with Protocols)
     workspace_registry: Any = None
     mount_manager: Any = None
-    workspace_manager: Any = None
+    workspace_manager: WorkspaceManagerProtocol | None = None
 
     # Write sync
     write_observer: WriteObserverProtocol | None = None

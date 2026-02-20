@@ -89,22 +89,22 @@ class TestReBACTypesIdentity:
 
 
 class TestSearchTypesIdentity:
-    """Verify nexus.contracts.search_types ↔ nexus.search.strategies identity."""
+    """Verify nexus.contracts.search_types ↔ nexus.bricks.search.strategies identity."""
 
     def test_search_strategy_identity(self) -> None:
+        from nexus.bricks.search.strategies import SearchStrategy as shim
         from nexus.contracts.search_types import SearchStrategy as canonical
-        from nexus.search.strategies import SearchStrategy as shim
 
         assert canonical is shim
 
     def test_glob_strategy_identity(self) -> None:
+        from nexus.bricks.search.strategies import GlobStrategy as shim
         from nexus.contracts.search_types import GlobStrategy as canonical
-        from nexus.search.strategies import GlobStrategy as shim
 
         assert canonical is shim
 
     def test_grep_sequential_threshold_identity(self) -> None:
+        from nexus.bricks.search.strategies import GREP_SEQUENTIAL_THRESHOLD as shim
         from nexus.contracts.search_types import GREP_SEQUENTIAL_THRESHOLD as canonical
-        from nexus.search.strategies import GREP_SEQUENTIAL_THRESHOLD as shim
 
         assert canonical == shim

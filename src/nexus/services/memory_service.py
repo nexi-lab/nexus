@@ -180,7 +180,7 @@ class MemoryService:
             embedding_provider_obj = None
             if embedding_provider:
                 try:
-                    from nexus.search.embeddings import create_embedding_provider
+                    from nexus.bricks.search.embeddings import create_embedding_provider
 
                     embedding_provider_obj = create_embedding_provider(provider=embedding_provider)
                 except Exception as e:

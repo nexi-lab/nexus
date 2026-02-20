@@ -29,18 +29,25 @@ def upgrade() -> None:
     # that used the old runtime DDL).
     conn = op.get_bind()
     inspector = sa.inspect(conn)
+    is_sqlite = conn.dialect.name == "sqlite"
+
+    # Dialect-aware defaults: PostgreSQL uses gen_random_uuid()/now(),
+    # SQLite uses lower(hex(randomblob(16)))/CURRENT_TIMESTAMP.
+    id_default = (
+        sa.text("lower(hex(randomblob(16)))") if is_sqlite else sa.text("gen_random_uuid()::text")
+    )
+    now_default = sa.text("CURRENT_TIMESTAMP") if is_sqlite else sa.text("now()")
+
     if "scheduled_tasks" not in inspector.get_table_names():
         op.create_table(
             "scheduled_tasks",
-            sa.Column(
-                "id", sa.Text(), server_default=sa.text("gen_random_uuid()::text"), nullable=False
-            ),
+            sa.Column("id", sa.Text(), server_default=id_default, nullable=False),
             sa.Column("agent_id", sa.Text(), nullable=False),
             sa.Column("executor_id", sa.Text(), nullable=False),
             sa.Column("task_type", sa.Text(), nullable=False),
             sa.Column(
                 "payload",
-                postgresql.JSONB(astext_type=sa.Text()),
+                sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"),
                 server_default="{}",
                 nullable=False,
             ),
@@ -50,7 +57,7 @@ def upgrade() -> None:
                 "enqueued_at",
                 sa.DateTime(timezone=True),
                 nullable=False,
-                server_default=sa.text("now()"),
+                server_default=now_default,
             ),
             sa.Column("deadline", sa.DateTime(timezone=True), nullable=True),
             sa.Column(

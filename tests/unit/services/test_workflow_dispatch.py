@@ -106,7 +106,7 @@ class TestFire:
             enable_workflows=True,
         )
 
-        with patch("nexus.core.sync_bridge.fire_and_forget") as mock_ff:
+        with patch("nexus.lib.sync_bridge.fire_and_forget") as mock_ff:
             svc.fire("file_delete", {"path": "/x"}, "file_delete:/x")
             mock_ff.assert_called_once()
 
@@ -114,7 +114,7 @@ class TestFire:
         """Pipe manager exists but start() not called yet."""
         svc, _ = _make_service()
 
-        with patch("nexus.core.sync_bridge.fire_and_forget") as mock_ff:
+        with patch("nexus.lib.sync_bridge.fire_and_forget") as mock_ff:
             svc.fire("file_write", {"path": "/y"}, "file_write:/y")
             mock_ff.assert_called_once()
 

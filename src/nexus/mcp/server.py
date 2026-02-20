@@ -795,7 +795,7 @@ def create_mcp_server(
             )
 
         try:
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             fetch_limit = offset + limit * 2
             all_results = run_sync(nx_instance.semantic_search(query, path="/", limit=fetch_limit))

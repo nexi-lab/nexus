@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.async_local import AsyncLocalBackend
-from nexus.core.sync_bridge import (
+from nexus.lib.sync_bridge import (
     fire_and_forget,
     run_sync,
     shutdown_sync_bridge,

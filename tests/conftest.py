@@ -181,9 +181,6 @@ def make_test_nexus(
         kernel_services=services,
         system_services=system_services,
     )
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
     return nx
 
 

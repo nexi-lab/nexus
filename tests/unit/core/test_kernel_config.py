@@ -201,19 +201,9 @@ class TestKernelServices:
     """Tests for KernelServices frozen dataclass (Tier 0 — kernel only)."""
 
     def test_defaults_all_none(self) -> None:
+        """Issue #2193: KernelServices has only router field."""
         ks = KernelServices()
         assert ks.router is None
-        assert ks.rebac_manager is None
-        assert ks.dir_visibility_cache is None
-        assert ks.audit_store is None
-        assert ks.entity_registry is None
-        assert ks.permission_enforcer is None
-        assert ks.hierarchy_manager is None
-        assert ks.deferred_permission_buffer is None
-        assert ks.workspace_registry is None
-        assert ks.mount_manager is None
-        assert ks.workspace_manager is None
-        assert ks.write_observer is None
 
     def test_frozen(self) -> None:
         """KernelServices is frozen — attributes cannot be set after init."""
@@ -223,10 +213,8 @@ class TestKernelServices:
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
-        ks = KernelServices(write_observer=sentinel, router=sentinel)
-        assert ks.write_observer is sentinel
+        ks = KernelServices(router=sentinel)
         assert ks.router is sentinel
-        assert ks.rebac_manager is None  # others still None
 
     def test_replace(self) -> None:
         """Use dataclasses.replace() to create modified copies."""
@@ -243,39 +231,22 @@ class TestKernelServices:
     def test_all_kernel_fields_present(self) -> None:
         """Verify KernelServices has exactly the Tier 0 kernel fields.
 
-        Issue #2034: version_service, overlay_resolver, cache_observer removed.
+        Issue #2193: Only router remains. All other fields moved to SystemServices.
         """
         field_names = {f.name for f in dataclasses.fields(KernelServices)}
-        expected_fields = {
-            "router",
-            "rebac_manager",
-            "dir_visibility_cache",
-            "audit_store",
-            "entity_registry",
-            "permission_enforcer",
-            "hierarchy_manager",
-            "deferred_permission_buffer",
-            "workspace_registry",
-            "mount_manager",
-            "workspace_manager",
-            "write_observer",
-            "hook_pipeline",
-        }
+        expected_fields = {"router"}
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
         )
 
-    def test_protocol_type_annotations(self) -> None:
-        """Verify Protocol-typed fields have correct annotation strings."""
+    def test_router_annotation(self) -> None:
+        """Issue #2193: KernelServices.router is typed Any."""
         annotations = KernelServices.__annotations__
-        # write_observer should reference WriteObserverProtocol | None
-        wo_ann = str(annotations.get("write_observer", ""))
-        assert "WriteObserverProtocol" in wo_ann
-        assert "None" in wo_ann
+        assert "router" in annotations
 
 
 # ---------------------------------------------------------------------------
-# SystemServices (Issue #2034 — Tier 1)
+# SystemServices (Issue #2034, #2193 — Tier 1)
 # ---------------------------------------------------------------------------
 
 
@@ -284,6 +255,20 @@ class TestSystemServices:
 
     def test_defaults_all_none(self) -> None:
         ss = SystemServices()
+        # Former-kernel critical
+        assert ss.rebac_manager is None
+        assert ss.audit_store is None
+        assert ss.entity_registry is None
+        assert ss.permission_enforcer is None
+        assert ss.write_observer is None
+        # Former-kernel degradable
+        assert ss.dir_visibility_cache is None
+        assert ss.hierarchy_manager is None
+        assert ss.deferred_permission_buffer is None
+        assert ss.workspace_registry is None
+        assert ss.mount_manager is None
+        assert ss.workspace_manager is None
+        # Original system services
         assert ss.agent_registry is None
         assert ss.async_agent_registry is None
         assert ss.namespace_manager is None
@@ -314,9 +299,27 @@ class TestSystemServices:
         assert ss.observability_subsystem is None
 
     def test_all_system_fields_present(self) -> None:
-        """Verify SystemServices has exactly the Tier 1 system fields."""
+        """Verify SystemServices has exactly the Tier 1 system fields.
+
+        Issue #2193: Absorbed 11 former-kernel fields.
+        """
         field_names = {f.name for f in dataclasses.fields(SystemServices)}
         expected_fields = {
+            # Former-kernel critical
+            "rebac_manager",
+            "audit_store",
+            "entity_registry",
+            "permission_enforcer",
+            "write_observer",
+            # Former-kernel degradable
+            "dir_visibility_cache",
+            "hierarchy_manager",
+            "deferred_permission_buffer",
+            "workspace_registry",
+            "mount_manager",
+            "workspace_manager",
+            "hook_pipeline",
+            # Original system services
             "agent_registry",
             "async_agent_registry",
             "eviction_manager",
@@ -339,6 +342,10 @@ class TestSystemServices:
         ns_ann = str(annotations.get("namespace_manager", ""))
         assert "NamespaceManagerProtocol" in ns_ann
         assert "None" in ns_ann
+        # Issue #2193: write_observer moved from KernelServices
+        wo_ann = str(annotations.get("write_observer", ""))
+        assert "WriteObserverProtocol" in wo_ann
+        assert "None" in wo_ann
 
 
 # ---------------------------------------------------------------------------

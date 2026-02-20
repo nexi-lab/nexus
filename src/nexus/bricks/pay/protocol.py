@@ -18,13 +18,15 @@ Detection chain order:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.pay.audit_types import TransactionProtocol
 from nexus.constants import ROOT_ZONE_ID
+from nexus.services.protocols.payment import (
+    ProtocolTransferRequest,
+    ProtocolTransferResult,
+)
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.x402 import X402Client
@@ -56,37 +58,6 @@ class ProtocolNotFoundError(ProtocolError):
 
 class ProtocolDetectionError(ProtocolError):
     """Raised when no protocol matches the destination."""
-
-
-# =============================================================================
-# Data Classes
-# =============================================================================
-
-
-@dataclass(frozen=True)
-class ProtocolTransferRequest:
-    """Immutable request for a protocol transfer."""
-
-    from_agent: str
-    to: str
-    amount: Decimal
-    memo: str = ""
-    idempotency_key: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ProtocolTransferResult:
-    """Immutable result from a protocol transfer."""
-
-    protocol: TransactionProtocol
-    tx_id: str
-    amount: Decimal
-    from_agent: str
-    to: str
-    tx_hash: str | None = None
-    timestamp: datetime | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================

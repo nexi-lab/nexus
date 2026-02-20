@@ -9,8 +9,8 @@ import json
 import logging
 import shlex
 
-from nexus.validation.models import ValidationError, ValidatorConfig
-from nexus.validation.parsers.base import Validator
+from nexus.parsers.validation.models import ValidationError, ValidatorConfig
+from nexus.parsers.validation.parsers.base import Validator
 
 logger = logging.getLogger(__name__)
 

@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.contracts.types import Permission
 from nexus.core.hash_fast import hash_content
@@ -29,10 +30,6 @@ from nexus.core.mutation_hooks import MutationOp
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
-
-# Kernel-reserved path prefix for internal system entries (zone revisions, etc.)
-# These entries are stored in MetastoreABC but filtered from user-visible operations.
-SYSTEM_PATH_PREFIX = "/__sys__/"
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend

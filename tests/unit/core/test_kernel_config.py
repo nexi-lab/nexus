@@ -419,6 +419,12 @@ class TestBrickServices:
             "version_service",
             "memory_router",
             "memory_permission",
+            # Factory-created bricks (Issue #2134)
+            "parse_fn",
+            "content_cache",
+            "parser_registry",
+            "provider_registry",
+            "vfs_lock_manager",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

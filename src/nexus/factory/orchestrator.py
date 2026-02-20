@@ -227,34 +227,6 @@ def create_nexus_services(
     return kernel_services, system_services, brick_services
 
 
-def _create_provider_registry(parsing: Any) -> Any:
-    """Create ProviderRegistry with auto-discovered providers (Issue #657)."""
-    from nexus.parsers.providers import ProviderRegistry
-    from nexus.parsers.providers.base import ProviderConfig
-
-    registry = ProviderRegistry()
-    if parsing is None:
-        registry.auto_discover()
-        return registry
-    parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
-    if parse_providers:
-        configs = [
-            ProviderConfig(
-                name=p.get("name", "unknown"),
-                enabled=p.get("enabled", True),
-                priority=p.get("priority", 50),
-                api_key=p.get("api_key"),
-                api_url=p.get("api_url"),
-                supported_formats=p.get("supported_formats"),
-            )
-            for p in parse_providers
-        ]
-        registry.auto_discover(configs)
-    else:
-        registry.auto_discover()
-    return registry
-
-
 def create_nexus_fs(
     backend: Backend,
     metadata_store: MetastoreABC,
@@ -376,10 +348,6 @@ def create_nexus_fs(
 
     from dataclasses import replace as _dc_replace
 
-    # Inject workflow_engine override if provided directly (frozen — use replace)
-    if workflow_engine is not None:
-        brick_services = _dc_replace(brick_services, workflow_engine=workflow_engine)
-
     # Create ParsersBrick — owns both registries (Issue #1523)
     from nexus.parsers.brick import ParsersBrick
 
@@ -393,7 +361,6 @@ def create_nexus_fs(
         cache_store=cache_store,
         record_store=record_store,
     )
-    brick_services = _dc_replace(brick_services, cache_brick=_cache_brick)
 
     # Create content cache (Issue #657)
     _content_cache = None
@@ -413,6 +380,19 @@ def create_nexus_fs(
 
     _vfs_lock_manager = create_vfs_lock_manager()
 
+    # Pack factory-created bricks into BrickServices container (Issue #2134)
+    _brick_updates: dict[str, Any] = {
+        "cache_brick": _cache_brick,
+        "parse_fn": _parse_fn,
+        "content_cache": _content_cache,
+        "parser_registry": parsers_brick.parser_registry,
+        "provider_registry": parsers_brick.provider_registry,
+        "vfs_lock_manager": _vfs_lock_manager,
+    }
+    if workflow_engine is not None:
+        _brick_updates["workflow_engine"] = workflow_engine
+    brick_services = _dc_replace(brick_services, **_brick_updates)
+
     nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
@@ -428,11 +408,6 @@ def create_nexus_fs(
         kernel_services=kernel_services,
         system_services=system_services,
         brick_services=brick_services,
-        parse_fn=_parse_fn,
-        content_cache=_content_cache,
-        parser_registry=parsers_brick.parser_registry,
-        provider_registry=parsers_brick.provider_registry,
-        vfs_lock_manager=_vfs_lock_manager,
     )
 
     # --- Phase 2: Wire services needing NexusFS reference (Issue #643) ---

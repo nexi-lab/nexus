@@ -36,10 +36,6 @@ from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
-
-if TYPE_CHECKING:
-    from nexus.parsers.registry import ParserRegistry
-
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -82,11 +78,6 @@ class NexusFS(  # type: ignore[misc]
         kernel_services: KernelServices | None = None,
         system_services: SystemServices | None = None,
         brick_services: BrickServices | None = None,
-        parse_fn: Any | None = None,
-        content_cache: Any | None = None,
-        parser_registry: ParserRegistry | None = None,
-        provider_registry: Any | None = None,
-        vfs_lock_manager: Any | None = None,
     ):
         """Initialize NexusFS kernel."""
         # Config defaults
@@ -120,9 +111,9 @@ class NexusFS(  # type: ignore[misc]
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
 
-        # Content cache
-        if content_cache is not None:
-            backend.content_cache = content_cache
+        # Content cache (Issue #2134: from BrickServices)
+        if brk_svc.content_cache is not None:
+            backend.content_cache = brk_svc.content_cache
 
         # Four pillars: backend, metadata, record store, cache store
         self.backend = backend
@@ -151,24 +142,24 @@ class NexusFS(  # type: ignore[misc]
                     self.router.register_namespace(ns_config)
         self.router.add_mount("/", self.backend, priority=0)
 
-        # Parser registries (injected by ParsersBrick, fallback for tests)
-        if parser_registry is not None:
-            self.parser_registry = parser_registry
+        # Parser registries (Issue #2134: from BrickServices, fallback for tests)
+        if brk_svc.parser_registry is not None:
+            self.parser_registry = brk_svc.parser_registry
         else:
             from nexus.parsers.markitdown_parser import MarkItDownParser as _MkD
             from nexus.parsers.registry import ParserRegistry as _PR
 
             self.parser_registry = _PR()
             self.parser_registry.register(_MkD())
-        if provider_registry is not None:
-            self.provider_registry = provider_registry
+        if brk_svc.provider_registry is not None:
+            self.provider_registry = brk_svc.provider_registry
         else:
             from nexus.parsers.providers.registry import ProviderRegistry as _PvR
 
             self.provider_registry = _PvR()
             self.provider_registry.auto_discover()
 
-        self._virtual_view_parse_fn = parse_fn
+        self._virtual_view_parse_fn = brk_svc.parse_fn
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
@@ -239,9 +230,9 @@ class NexusFS(  # type: ignore[misc]
         self._coordination_client: Any = None
         self._event_client: Any = None
 
-        # VFS lock manager
-        if vfs_lock_manager is not None:
-            self._vfs_lock_manager = vfs_lock_manager
+        # VFS lock manager (Issue #2134: from BrickServices)
+        if brk_svc.vfs_lock_manager is not None:
+            self._vfs_lock_manager = brk_svc.vfs_lock_manager
         else:
             from nexus.core.lock_fast import create_vfs_lock_manager
 

@@ -11,4 +11,5 @@ Modules:
     registry: Generic BaseRegistry[T] + BrickRegistry
     rpc_codec: JSON-RPC encode/decode with special-type handling
     rpc_decorator: @rpc_expose decorator for marking RPC-exposed methods
+    zone_helpers: ReBAC-based zone group naming and membership checks
 """

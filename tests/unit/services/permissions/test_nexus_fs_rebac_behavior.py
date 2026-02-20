@@ -124,7 +124,7 @@ class MockNexusFS:
                 if not zone_id and hasattr(op_context, "zone_id"):
                     zone_id = op_context.zone_id
                 if zone_id and op_context.user_id:
-                    from nexus.core.zone_helpers import is_zone_admin
+                    from nexus.lib.zone_helpers import is_zone_admin
 
                     if is_zone_admin(self._rebac_manager, op_context.user_id, zone_id):
                         return

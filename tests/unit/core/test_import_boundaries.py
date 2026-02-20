@@ -282,18 +282,15 @@ class TestConfigDoesNotImportServer:
         assert OAuthConfig is not None
 
 
-class TestZoneHelpersInCore:
-    """Verify zone helpers are importable from core (Issue #1519, 3A)."""
+class TestZoneHelpersInLib:
+    """Verify zone helpers are importable from lib/ (Issue #1519, 3A)."""
 
-    def test_zone_helpers_importable_from_core(self):
-        from nexus.core.zone_helpers import zone_group_id
+    def test_zone_helpers_importable_from_lib(self):
+        from nexus.lib.zone_helpers import zone_group_id
 
         assert zone_group_id("acme") == "zone-acme"
 
-    def test_zone_helpers_available_in_server(self):
-        """Both core and server layers provide is_zone_admin (separate implementations OK)."""
-        from nexus.core.zone_helpers import is_zone_admin as CoreFn
-        from nexus.server.auth.user_helpers import is_zone_admin as ServerFn
+    def test_zone_helpers_callable(self):
+        from nexus.lib.zone_helpers import is_zone_admin
 
-        assert callable(CoreFn)
-        assert callable(ServerFn)
+        assert callable(is_zone_admin)

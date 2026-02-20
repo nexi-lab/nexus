@@ -227,7 +227,7 @@ When user signs in with Google OAuth:
 ### 3. Get user's tenants
 
 ```python
-from nexus.server.auth.user_helpers import get_user_tenants
+from nexus.lib.zone_helpers import get_user_zones as get_user_tenants
 from nexus.storage.models import TenantModel
 
 # Get zone IDs from ReBAC

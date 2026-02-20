@@ -458,6 +458,15 @@ class NexusFSGateway:
             return self._fs.SessionLocal
         return None
 
+    @property
+    def record_store(self) -> Any:
+        """Get RecordStoreABC instance.
+
+        Returns:
+            RecordStoreABC if available, None otherwise
+        """
+        return getattr(self._fs, "_record_store", None)
+
     # =========================================================================
     # Database URL
     # =========================================================================

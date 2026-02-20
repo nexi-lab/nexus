@@ -6,12 +6,15 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.core.event_bus import FileEvent
 from nexus.services.event_bus.base import EventBusBase
 from nexus.services.event_bus.protocol import AckableEvent, PubSubClientProtocol
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +36,7 @@ class RedisEventBus(EventBusBase):
         This gives subscribers a reliable replay log for catch-up.
 
     Example:
-        >>> bus = RedisEventBus(redis_client, session_factory=SessionLocal)
+        >>> bus = RedisEventBus(redis_client, record_store=record_store)
         >>> await bus.start()
         >>> await bus.startup_sync()  # Sync missed events from PG
         >>>
@@ -51,7 +54,7 @@ class RedisEventBus(EventBusBase):
     def __init__(
         self,
         redis_client: PubSubClientProtocol,
-        session_factory: Any | None = None,
+        record_store: RecordStoreABC | None = None,
         node_id: str | None = None,
         event_log: Any | None = None,
     ):
@@ -59,11 +62,11 @@ class RedisEventBus(EventBusBase):
 
         Args:
             redis_client: PubSubClientProtocol provider (e.g., DragonflyClient)
-            session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
+            record_store: RecordStoreABC for PG SSOT (optional)
             node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
             event_log: Optional EventLogProtocol for durable WAL persistence (Issue #1397)
         """
-        super().__init__(session_factory=session_factory, node_id=node_id)
+        super().__init__(record_store=record_store, node_id=node_id)
         self._redis = redis_client
         self._event_log = event_log
         self._pubsub: Any = None

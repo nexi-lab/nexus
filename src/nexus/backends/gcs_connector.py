@@ -51,9 +51,8 @@ from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from nexus.contracts.types import OperationContext
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -138,8 +137,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         prefix: str = "",
         # OAuth access token (alternative to credentials_path)
         access_token: str | None = None,
-        # Session factory for caching support
-        session_factory: "type[Session] | None" = None,
+        # RecordStore for caching support
+        record_store: "RecordStoreABC | None" = None,
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
     ):
@@ -152,8 +151,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             credentials_path: Optional path to service account credentials JSON file
             prefix: Optional prefix for all paths in bucket (e.g., "data/")
             access_token: OAuth access token (alternative to credentials_path)
-            session_factory: Optional session factory (e.g., metadata_store.session_factory)
-                           for caching support.
+            record_store: Optional RecordStoreABC instance for caching support.
             operation_timeout: Timeout for standard blob operations (seconds).
             upload_timeout: Timeout for large file uploads (seconds).
         """
@@ -197,7 +195,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             )
 
             # Store session info for caching support (CacheConnectorMixin)
-            self.session_factory = session_factory
+            self.session_factory = record_store.session_factory if record_store else None
 
         except Exception as e:
             if isinstance(e, BackendError):

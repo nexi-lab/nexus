@@ -10,7 +10,7 @@ mapping, which translates external config keys to constructor params.
 Usage:
     >>> from nexus.backends.factory import BackendFactory
     >>> backend = BackendFactory.create("local", {"data_dir": "/path"})
-    >>> backend = BackendFactory.create("gcs_connector", config, session_factory=sf)
+    >>> backend = BackendFactory.create("gcs_connector", config, record_store=rs)
 """
 
 from __future__ import annotations
@@ -38,14 +38,14 @@ class BackendFactory:
         """Create a backend instance by type name and config dict.
 
         Uses ConnectorRegistry for all registered connectors. Extra kwargs
-        (e.g., ``session_factory``) are passed directly to the constructor
+        (e.g., ``record_store``) are passed directly to the constructor
         only if the constructor accepts them.
 
         Args:
             backend_type: Backend type identifier (e.g., "local", "gcs_connector")
             config: Backend configuration dict with external config keys
             **extra_kwargs: Additional constructor kwargs not in config
-                (e.g., session_factory, metadata_store)
+                (e.g., record_store, metadata_store)
 
         Returns:
             Instantiated Backend

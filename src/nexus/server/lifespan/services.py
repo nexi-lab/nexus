@@ -165,7 +165,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
 
             _bg = getattr(getattr(app.state, "profile_tuning", None), "background_task", None)
             app.state.agent_registry = AgentRegistry(
-                session_factory=app.state.nexus_fs.SessionLocal,
+                record_store=app.state.record_store,
                 entity_registry=getattr(app.state.nexus_fs, "_entity_registry", None),
                 flush_interval=_bg.heartbeat_flush_interval if _bg else 60,
             )
@@ -210,9 +210,9 @@ def _startup_key_service(app: FastAPI) -> None:
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
-            _session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
+            _identity_record_store = getattr(app.state, "record_store", None)
             _identity_oauth_crypto = OAuthCrypto(
-                encryption_key=_enc_key, session_factory=_session_factory
+                encryption_key=_enc_key, record_store=_identity_record_store
             )
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
@@ -277,8 +277,9 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
             SQLAlchemyAgentEventLog as AgentEventLog,
         )
 
+        _sandbox_rs = getattr(app.state, "record_store", None)
         session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
-        if not (session_factory and callable(session_factory)):
+        if not (_sandbox_rs and session_factory and callable(session_factory)):
             return
 
         # Get AgentEventLog from factory (preferred) or create fallback
@@ -287,14 +288,12 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         if _factory_event_log is not None:
             app.state.agent_event_log = _factory_event_log
         else:
-            from nexus.bricks.sandbox.events import AgentEventLog
-
-            app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
+            app.state.agent_event_log = AgentEventLog(record_store=_sandbox_rs)
 
         # Create SandboxManager
         sandbox_config = getattr(app.state.nexus_fs, "config", None)
         sandbox_mgr = SandboxManager(
-            session_factory=session_factory,
+            record_store=_sandbox_rs,
             e2b_api_key=os.getenv("E2B_API_KEY"),
             e2b_team_id=os.getenv("E2B_TEAM_ID"),
             e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),

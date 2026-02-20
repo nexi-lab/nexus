@@ -171,7 +171,9 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     )
 
     # Wire database auth
-    db_key_auth = DatabaseAPIKeyAuth(session_factory=session_factory)
+    from types import SimpleNamespace
+
+    db_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))
     auth_provider = DiscriminatingAuthProvider(
         api_key_provider=db_key_auth,
         jwt_provider=None,

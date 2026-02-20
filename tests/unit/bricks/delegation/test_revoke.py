@@ -59,12 +59,12 @@ def _make_service(
     """
     from nexus.bricks.delegation.service import DelegationService
 
-    session_factory = MagicMock()
+    mock_record_store = MagicMock()
     rebac_manager = MagicMock()
     agent_registry = MagicMock()
 
     service = DelegationService(
-        session_factory=session_factory,
+        record_store=mock_record_store,
         rebac_manager=rebac_manager,
         agent_registry=agent_registry,
     )

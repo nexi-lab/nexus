@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +98,8 @@ def _record_from_row(row: Any) -> EventRecord:
 class EventReplayService:
     """Service for replaying and streaming historical events from operation_log."""
 
-    def __init__(self, session_factory: Callable[..., Any]) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: RecordStoreABC) -> None:
+        self._session_factory = record_store.session_factory
 
     def replay(
         self,

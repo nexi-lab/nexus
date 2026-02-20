@@ -39,6 +39,7 @@ from nexus.services.agents.agent_registry import (
     StaleAgentError,
 )
 from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # PostgreSQL connection for E2E tests
 POSTGRES_URL = os.getenv(
@@ -107,9 +108,17 @@ def pg_session_factory(pg_engine):
 
 
 @pytest.fixture
-def pg_registry(pg_session_factory):
+def pg_record_store(pg_engine):
+    """Create a RecordStore backed by PostgreSQL (no table creation, pg_engine already did it)."""
+    store = SQLAlchemyRecordStore(db_url=POSTGRES_URL, create_tables=False)
+    yield store
+    store.close()
+
+
+@pytest.fixture
+def pg_registry(pg_record_store, pg_session_factory):
     """Create an AgentRegistry backed by PostgreSQL."""
-    registry = AgentRegistry(session_factory=pg_session_factory, flush_interval=1)
+    registry = AgentRegistry(record_store=pg_record_store, flush_interval=1)
     yield registry
 
     # Cleanup: remove test agents

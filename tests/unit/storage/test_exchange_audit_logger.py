@@ -11,6 +11,7 @@ import hashlib
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, update
@@ -24,6 +25,7 @@ from nexus.storage.exchange_audit_logger import (
 )
 from nexus.storage.models._base import Base
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
+from nexus.storage.record_store import RecordStoreABC
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -51,8 +53,15 @@ def session(session_factory):
 
 
 @pytest.fixture
-def audit_logger(session_factory):
-    return ExchangeAuditLogger(session_factory=session_factory)
+def record_store(session_factory):
+    mock_rs = MagicMock(spec=RecordStoreABC)
+    mock_rs.session_factory = session_factory
+    return mock_rs
+
+
+@pytest.fixture
+def audit_logger(record_store):
+    return ExchangeAuditLogger(record_store=record_store)
 
 
 def _make_record_kwargs(**overrides: Any) -> dict[str, Any]:

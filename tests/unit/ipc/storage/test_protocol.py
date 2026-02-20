@@ -32,8 +32,12 @@ class TestProtocolConformance:
         assert isinstance(driver, IPCStorageDriver)
 
     def test_recordstore_storage_driver_satisfies_protocol(self) -> None:
+        from unittest.mock import MagicMock
+
         from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
-        # Use a mock session_factory — we only check structural protocol conformance
-        driver = RecordStoreStorageDriver(session_factory=None)
+        # Use a mock record_store — we only check structural protocol conformance
+        mock_rs = MagicMock()
+        mock_rs.session_factory = None
+        driver = RecordStoreStorageDriver(record_store=mock_rs)
         assert isinstance(driver, IPCStorageDriver)

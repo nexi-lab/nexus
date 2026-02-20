@@ -85,7 +85,6 @@ def _make_boot_context(**overrides: object) -> _BootContext:
         "router": MagicMock(),
         "engine": record_store.engine,
         "read_engine": record_store.read_engine,
-        "session_factory": record_store.session_factory,
         "perm": PermissionConfig(enforce=False, enable_deferred=False, enable_tiger_cache=False),
         "cache_ttl_seconds": 300,
         "dist": DistributedConfig(

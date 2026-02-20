@@ -10,16 +10,18 @@ Uses SyncStoreBase for shared session management and dialect detection.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +50,17 @@ class ChangeLogStore(SyncStoreBase):
 
     def __init__(
         self,
-        session_factory: Callable[..., Any] | None,
+        record_store: RecordStoreABC | None,
         *,
         is_postgresql: bool = False,
     ) -> None:
         """Initialize change log store.
 
         Args:
-            session_factory: SQLAlchemy session factory callable.
+            record_store: RecordStoreABC instance providing session factory.
             is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
-        super().__init__(session_factory, is_postgresql=is_postgresql)
+        super().__init__(record_store, is_postgresql=is_postgresql)
 
     def get_change_log(
         self, path: str, backend_name: str, zone_id: str = ROOT_ZONE_ID

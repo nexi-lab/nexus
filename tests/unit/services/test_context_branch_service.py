@@ -7,6 +7,7 @@ Tests: ensure_main_branch, create_branch, list_branches, get_branch,
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -85,11 +86,16 @@ def mock_workspace_manager():
 
 
 @pytest.fixture
-def service(mock_workspace_manager, session_factory):
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def service(mock_workspace_manager, record_store):
     """ContextBranchService with mocked WM and real DB."""
     return ContextBranchService(
         workspace_manager=mock_workspace_manager,
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=None,  # No ReBAC for unit tests (allows all)
         default_zone_id="test-zone",
         default_agent_id="agent-1",

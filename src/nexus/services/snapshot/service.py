@@ -19,7 +19,7 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.services.protocols.snapshot import (
@@ -28,6 +28,9 @@ from nexus.services.protocols.snapshot import (
     TransactionInfo,
 )
 from nexus.services.snapshot.registry import TransactionRegistry
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -99,18 +102,18 @@ class TransactionalSnapshotService:
 
     def __init__(
         self,
-        session_factory: Any,
+        record_store: RecordStoreABC,
         cas_store: Any,
         metadata_store: Any,
     ) -> None:
         """Initialize the snapshot service.
 
         Args:
-            session_factory: SQLAlchemy session factory for DB persistence.
+            record_store: RecordStoreABC for DB persistence.
             cas_store: CASBlobStore for hold_reference/release.
             metadata_store: MetastoreABC for reading current file state.
         """
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._cas_store = cas_store
         self._metadata_store = metadata_store
         self._registry = TransactionRegistry()

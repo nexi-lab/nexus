@@ -10,6 +10,8 @@ instead of raw asyncpg.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -22,6 +24,7 @@ from nexus.ipc.storage.recordstore_driver import (
 )
 from nexus.storage.models._base import Base
 from nexus.storage.models.ipc_message import IPCMessageModel  # noqa: F401 — register model
+from nexus.storage.record_store import RecordStoreABC
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -46,9 +49,16 @@ def session_factory():
 
 
 @pytest.fixture
-def driver(session_factory):
-    """Create a RecordStoreStorageDriver with test session factory."""
-    return RecordStoreStorageDriver(session_factory=session_factory)
+def record_store(session_factory):
+    mock_rs = MagicMock(spec=RecordStoreABC)
+    mock_rs.session_factory = session_factory
+    return mock_rs
+
+
+@pytest.fixture
+def driver(record_store):
+    """Create a RecordStoreStorageDriver with test record_store."""
+    return RecordStoreStorageDriver(record_store=record_store)
 
 
 # ---------------------------------------------------------------------------

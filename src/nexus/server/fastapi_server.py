@@ -135,19 +135,6 @@ class WhoamiResponse(BaseModel):
 
 
 # ============================================================================
-# Lock API Models — extracted to api/v1/models/locks.py (Issue #1288)
-# Re-exported for backward compatibility with tests/consumers.
-# ============================================================================
-from nexus.server.api.v1.models.locks import LOCK_MAX_TTL as LOCK_MAX_TTL  # noqa: E402
-from nexus.server.api.v1.models.locks import LockAcquireRequest as LockAcquireRequest  # noqa: E402
-from nexus.server.api.v1.models.locks import LockExtendRequest as LockExtendRequest  # noqa: E402
-from nexus.server.api.v1.models.locks import LockHolderResponse as LockHolderResponse  # noqa: E402
-from nexus.server.api.v1.models.locks import LockInfoMutex as LockInfoMutex  # noqa: E402
-from nexus.server.api.v1.models.locks import LockInfoSemaphore as LockInfoSemaphore  # noqa: E402
-from nexus.server.api.v1.models.locks import LockListResponse as LockListResponse  # noqa: E402
-from nexus.server.api.v1.models.locks import LockResponse as LockResponse  # noqa: E402
-from nexus.server.api.v1.models.locks import LockStatusResponse as LockStatusResponse  # noqa: E402
-
 # Rate limiting and error handlers are now in rate_limiting.py and error_handlers.py.
 # The `limiter` global, rate limit constants, and handler functions are imported above.
 from nexus.server.rate_limiting import limiter  # noqa: F811, E402 — re-import for module-level use
@@ -1456,15 +1443,6 @@ def create_app(
 
     # Register routes
     _register_routes(app)
-
-    # Register extracted v1 domain routers (#1288)
-    try:
-        from nexus.server.api.v1.versioning import build_v1_registry, register_v1_routers
-
-        v1_registry = build_v1_registry()
-        register_v1_routers(app, v1_registry)
-    except Exception as e:
-        logger.warning("Failed to register v1 routers: %s", e)
 
     # Register NexusFS instance for zone routes, migration, and user provisioning.
     # This must happen unconditionally (not only when OAuth is configured).

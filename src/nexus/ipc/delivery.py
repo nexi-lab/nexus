@@ -34,6 +34,7 @@ from nexus.ipc.exceptions import (
     EnvelopeValidationError,
     InboxFullError,
     InboxNotFoundError,
+    NonRetryableError,
 )
 from nexus.ipc.protocols import EventPublisher, EventSubscriber, HotPathPublisher, HotPathSubscriber
 from nexus.ipc.storage.protocol import IPCStorageDriver
@@ -443,7 +444,8 @@ class MessageProcessor:
 
     async def _hot_listen_loop(self) -> None:
         """Subscribe to hot-path subject and dispatch messages."""
-        assert self._hot_subscriber is not None  # noqa: S101
+        if self._hot_subscriber is None:
+            return
         subject = f"agents.{self._agent_id}.inbox"
         try:
             async for raw in self._hot_subscriber.subscribe(subject):
@@ -494,7 +496,8 @@ class MessageProcessor:
         Listens for "message_delivered" events on the agent's inbox channel
         and triggers process_inbox() when messages arrive.
         """
-        assert self._event_subscriber is not None  # noqa: S101
+        if self._event_subscriber is None:
+            return
         channel = f"ipc.inbox.{self._agent_id}"
         try:
             async for _event in self._event_subscriber.subscribe(channel):
@@ -537,6 +540,10 @@ class MessageProcessor:
 
     async def process_inbox(self) -> int:
         """Process all messages currently in the inbox.
+
+        May be triggered by multiple sources (polling, EventBus, POST_WRITE hook).
+        Concurrent calls are safe: per-message dedup via CacheStore prevents
+        double-processing, and asyncio single-thread model prevents true data races.
 
         Returns:
             Number of messages processed (including expired/deduped).
@@ -631,11 +638,29 @@ class MessageProcessor:
         if not await self._verify_signature(msg_path, envelope):
             return
 
-        # Invoke handler with exponential backoff retry
+        # Invoke handler with exponential backoff retry.
+        # NonRetryableError skips retry and dead-letters immediately.
         for attempt in range(self._max_retries + 1):
             try:
                 await self._handler(envelope)
                 break  # Success - exit retry loop
+            except NonRetryableError as exc:
+                # Handler explicitly signals no retry (e.g. invalid payload,
+                # permission denied). Dead-letter immediately.
+                logger.error(
+                    "Handler raised NonRetryableError for message %s: %s",
+                    envelope.id,
+                    exc,
+                    exc_info=True,
+                )
+                await self._dead_letter(
+                    msg_path,
+                    DLQReason.HANDLER_ERROR,
+                    msg_id=envelope.id,
+                    timestamp=envelope.timestamp,
+                    detail=f"Non-retryable: {exc}",
+                )
+                return
             except Exception as exc:
                 if attempt < self._max_retries:
                     # Retry with exponential backoff

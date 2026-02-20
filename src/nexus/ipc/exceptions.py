@@ -28,6 +28,16 @@ class IPCError(Exception):
     """Base exception for all IPC brick errors."""
 
 
+class NonRetryableError(IPCError):
+    """Raised by handlers to indicate the failure should not be retried.
+
+    When a handler raises this (or a subclass), the message is immediately
+    dead-lettered without exponential backoff retry. Use for errors where
+    retry would produce the same failure (e.g. invalid payload, permission
+    denied, business logic rejection).
+    """
+
+
 class EnvelopeValidationError(IPCError):
     """Raised when a message envelope fails validation."""
 

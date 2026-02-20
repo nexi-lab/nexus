@@ -233,9 +233,11 @@ class TestRunSync:
         """Create a minimal VectorDatabase with a mock engine."""
         from unittest.mock import MagicMock
 
+        from nexus.bricks.search.vector_db import VectorDatabase as _VDB
+
         engine = MagicMock()
         engine.dialect.name = "sqlite"
-        return VectorDatabase(engine)
+        return _VDB(engine)
 
     def test_run_sync_outside_event_loop(self) -> None:
         """_run_sync should work when no event loop is running."""

@@ -168,7 +168,7 @@ def make_test_nexus(
 
             metadata_store = InMemoryMetastore()
 
-    return NexusFS(
+    nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -181,6 +181,7 @@ def make_test_nexus(
         kernel_services=services,
         system_services=system_services,
     )
+    return nx
 
 
 @pytest.fixture(autouse=True)

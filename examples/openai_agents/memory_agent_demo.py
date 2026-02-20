@@ -93,6 +93,9 @@ def connect_to_nexus(tenant_id: str = "openai-memory-demo", agent_id: str = "mem
             tenant_id=tenant_id,
             agent_id=agent_id,
         )
+        from nexus.services.service_wiring import wire_services
+
+        wire_services(nx)
         print(f"✓ Using local filesystem at {data_dir}")
         return nx
 

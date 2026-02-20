@@ -55,7 +55,14 @@ def _boot_wired_services(
     try:
         from nexus.services.gateway import NexusFSGateway
 
-        gateway = NexusFSGateway(nx)
+        gateway = NexusFSGateway(
+            nx,
+            hierarchy_manager=getattr(nx, "_hierarchy_manager", None),
+            descendant_checker=getattr(nx, "_descendant_checker", None),
+            get_routing_params_fn=getattr(nx, "_get_routing_params", None),
+            get_backend_directory_entries_fn=getattr(nx, "_get_backend_directory_entries", None),
+            record_read_if_tracking_fn=getattr(nx, "_record_read_if_tracking", None),
+        )
         logger.debug("[BOOT:WIRED] NexusFSGateway created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] NexusFSGateway unavailable: %s", exc)

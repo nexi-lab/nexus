@@ -2007,8 +2007,18 @@ class NexusFS(  # type: ignore[misc]
 
     @staticmethod
     def _run_async(coro: Any) -> Any:
-        """Run async coroutine safely (Issue #1300)."""
-        from nexus.core.sync_bridge import run_sync
+        """Run async coroutine safely, handling both running and non-running event loops.
+
+        Uses the unified sync_bridge to avoid the ThreadPoolExecutor + asyncio.run()
+        anti-pattern (Issue #1300).
+
+        Args:
+            coro: Coroutine to run
+
+        Returns:
+            Result of the coroutine
+        """
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(coro)
 

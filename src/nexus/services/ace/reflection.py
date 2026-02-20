@@ -439,6 +439,6 @@ Provide your analysis as valid JSON only, no additional commentary.
         Returns:
             Reflection results
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(self.reflect_async(trajectory_id, context, reflection_prompt))

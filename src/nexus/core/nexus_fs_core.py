@@ -178,7 +178,7 @@ class NexusFSCoreMixin:
             )
 
             # Fire event asynchronously (fire-and-forget via sync bridge)
-            from nexus.core.sync_bridge import fire_and_forget
+            from nexus.lib.sync_bridge import fire_and_forget
 
             # Ensure event bus is started (lazy init for NATS JetStream)
             if not getattr(self._event_bus, "_started", False):
@@ -597,7 +597,7 @@ class NexusFSCoreMixin:
                 timeout=timeout,
             )
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         lock_id = run_sync(acquire_lock())
 
@@ -630,7 +630,7 @@ class NexusFSCoreMixin:
         async def release_lock() -> None:
             await self._lock_manager.release(lock_id, zone_id, path)
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             run_sync(release_lock())
@@ -819,7 +819,7 @@ class NexusFSCoreMixin:
                 return future.result()
         except RuntimeError:
             # No running loop - use sync bridge
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             return run_sync(self._get_parsed_content_async(path, content))
 
@@ -2926,7 +2926,7 @@ class NexusFSCoreMixin:
         """
         try:
             # Run async parse via sync bridge (thread-safe)
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             run_sync(self.parse(path, store_result=True))
         except Exception as e:

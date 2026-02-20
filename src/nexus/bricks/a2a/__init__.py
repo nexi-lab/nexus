@@ -28,6 +28,7 @@ def create_a2a_router(
     auth_required: bool = False,
     auth_fn: Any = None,
     data_dir: str | None = None,
+    hook_engine: Any = None,
 ) -> tuple[APIRouter, TaskManager]:
     """Create the A2A protocol FastAPI router.
 
@@ -44,6 +45,8 @@ def create_a2a_router(
             are persisted as MessageEnvelope JSON files under
             ``{data_dir}/agents/{agent_id}/tasks/`` (§17.6 convergence).
             When None, tasks are stored in-memory only.
+        hook_engine: Optional HookEngineProtocol instance for artifact
+            indexing hooks (Issue #1861).
 
     Returns:
         Tuple of (configured FastAPI APIRouter, TaskManager instance).
@@ -58,10 +61,10 @@ def create_a2a_router(
 
         storage = LocalStorageDriver(root=data_dir)
         store = VFSTaskStore(storage=storage)
-        task_manager = _TaskManager(store=store)
+        task_manager = _TaskManager(store=store, hook_engine=hook_engine)
 
     if task_manager is None:
-        task_manager = _TaskManager()
+        task_manager = _TaskManager(hook_engine=hook_engine)
 
     router = build_router(
         _nexus_fs=nexus_fs,

@@ -1413,20 +1413,6 @@ def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] ReBACService unavailable: %s", exc)
 
-    # --- MountService: Dynamic backend mounting operations ---
-    mount_service: Any = None
-    try:
-        from nexus.services.mount_service import MountService
-
-        mount_service = MountService(
-            router=kernel_services.router,
-            mount_manager=kernel_services.mount_manager,
-            nexus_fs=nx,
-        )
-        logger.debug("[BOOT:WIRED] MountService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
-
     # --- MCPService: Model Context Protocol operations ---
     mcp_service: Any = None
     if _on("mcp"):
@@ -1530,6 +1516,26 @@ def _boot_wired_services(
             logger.debug("[BOOT:WIRED] MountPersistService created")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] MountPersistService unavailable: %s", exc)
+
+    # --- MountService: Dynamic backend mounting operations ---
+    # Moved after sub-services so DI deps are available (Issue #636).
+    mount_service: Any = None
+    try:
+        from nexus.services.mount_service import MountService
+
+        mount_service = MountService(
+            router=kernel_services.router,
+            mount_manager=kernel_services.mount_manager,
+            nexus_fs=nx,
+            sync_service=sync_service,
+            sync_job_service=sync_job_service,
+            mount_core_service=mount_core_service,
+            mount_persist_service=mount_persist_service,
+            oauth_service=oauth_service,
+        )
+        logger.debug("[BOOT:WIRED] MountService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
 
     # --- SkillService: Skill management (Issue #2035) ---
     skill_service: Any = brick_services.skill_service
@@ -1700,6 +1706,8 @@ def create_nexus_services(
 
     _factory_log = _factory_logging.getLogger(__name__)
 
+    # --- Profile-based brick gating (Issue #1389) ---
+    from nexus.contracts.deployment_profile import DeploymentProfile
     from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
@@ -1707,16 +1715,13 @@ def create_nexus_services(
     from nexus.core.config import PermissionConfig as _PermissionConfig
     from nexus.core.config import SystemServices as _SystemServices
 
-    # --- Profile-based brick gating (Issue #1389) ---
-    from nexus.core.deployment_profile import DeploymentProfile
-
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
 
     def _brick_on(name: str) -> bool:
         return name in enabled_bricks
 
-    from nexus.core.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
+    from nexus.contracts.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
 
     _factory_log.info(
         "Factory: enabled_bricks=%d/%d %s",
@@ -2152,7 +2157,7 @@ def create_nexus_fs(
 
     # --- Phase 2: Wire services needing NexusFS reference (Issue #643) ---
     # Resolve enabled_bricks for brick gating (same pattern as create_nexus_services)
-    from nexus.core.deployment_profile import DeploymentProfile as _DP
+    from nexus.contracts.deployment_profile import DeploymentProfile as _DP
 
     _resolved_bricks = enabled_bricks
     if _resolved_bricks is None:

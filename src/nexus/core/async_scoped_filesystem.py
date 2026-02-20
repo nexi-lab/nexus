@@ -264,48 +264,6 @@ class AsyncScopedFilesystem(ScopedPathMixin):
         return await self._fs.is_directory(self._scope_path(path), context)
 
     # ============================================================
-    # Version Tracking Operations (Async)
-    # ============================================================
-
-    async def get_version(
-        self,
-        path: str,
-        version: int,
-        context: Any = None,
-    ) -> bytes:
-        """Get a specific version of a file (async)."""
-        return await self._fs.get_version(self._scope_path(path), version, context)
-
-    async def list_versions(
-        self,
-        path: str,
-        context: Any = None,
-    ) -> builtins.list[dict[str, Any]]:
-        """List all versions of a file (async)."""
-        result = await self._fs.list_versions(self._scope_path(path), context)
-        return [self._unscope_dict(r, ["path"]) for r in result]
-
-    async def rollback(
-        self,
-        path: str,
-        version: int,
-        context: Any = None,
-    ) -> None:
-        """Rollback file to a previous version (async)."""
-        await self._fs.rollback(self._scope_path(path), version, context)
-
-    async def diff_versions(
-        self,
-        path: str,
-        v1: int,
-        v2: int,
-        mode: str = "metadata",
-        context: Any = None,
-    ) -> dict[str, Any] | str:
-        """Compare two versions of a file (async)."""
-        return await self._fs.diff_versions(self._scope_path(path), v1, v2, mode, context)
-
-    # ============================================================
     # Mount Operations (Async)
     # ============================================================
 

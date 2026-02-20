@@ -148,7 +148,7 @@ def create_nexus_services(
     from nexus.core.config import SystemServices as _SystemServices
 
     # --- Profile-based brick gating (Issue #1389) ---
-    from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.contracts.deployment_profile import DeploymentProfile
 
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
@@ -254,6 +254,9 @@ def create_nexus_services(
         snapshot_service=brick["snapshot_service"],
         task_queue_service=brick["task_queue_service"],
         version_service=brick.get("version_service"),
+        memory_router=brick.get("memory_router"),
+        memory_permission=brick.get("memory_permission"),
+        cache_brick=brick.get("cache_brick"),
     )
 
     return kernel_svc, system_svc, brick_svc

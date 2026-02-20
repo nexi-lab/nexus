@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.core.deployment_profile import DeploymentProfile
+from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.core.performance_tuning import (
     BackgroundTaskTuning,
     CacheTuning,

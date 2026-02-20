@@ -373,6 +373,9 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "reputation_service": reputation_service,
         "rebac_circuit_breaker": rebac_circuit_breaker,
         "version_service": version_service,
+        "memory_router": None,  # Issue #2177: wired later if Memory Brick available
+        "memory_permission": None,  # Issue #2177: wired later if Memory Brick available
+        "cache_brick": None,  # Issue #1524: wired later if CacheBrick available
     }
 
     elapsed = time.perf_counter() - t0
@@ -443,6 +446,9 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "agent_event_log",  # event log, not a lifecycle brick
         "rebac_circuit_breaker",  # infrastructure, not a lifecycle brick
         "version_service",  # wired via BrickServices, lifecycle managed separately
+        "memory_router",  # Issue #2177: memory brick, wired later
+        "memory_permission",  # Issue #2177: memory brick permission adapter
+        "cache_brick",  # Issue #1524: CacheBrick lifecycle separate
     }
 )
 

@@ -227,29 +227,6 @@ class ScopedFilesystem(ScopedPathMixin):
         return self._fs.get_available_namespaces()
 
     # ============================================================
-    # Version Tracking Operations
-    # ============================================================
-
-    def get_version(self, path: str, version: int) -> bytes:
-        """Get a specific version of a file."""
-        return self._fs.get_version(self._scope_path(path), version)
-
-    def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
-        """List all versions of a file."""
-        result = self._fs.list_versions(self._scope_path(path))
-        return [self._unscope_dict(r, ["path"]) for r in result]
-
-    def rollback(self, path: str, version: int, context: Any = None) -> None:
-        """Rollback file to a previous version."""
-        self._fs.rollback(self._scope_path(path), version, context)
-
-    def diff_versions(
-        self, path: str, v1: int, v2: int, mode: str = "metadata"
-    ) -> dict[str, Any] | str:
-        """Compare two versions of a file."""
-        return self._fs.diff_versions(self._scope_path(path), v1, v2, mode)
-
-    # ============================================================
     # Workspace Versioning
     # ============================================================
 
@@ -476,46 +453,6 @@ class ScopedFilesystem(ScopedPathMixin):
     ) -> dict[Any, Any]:
         """Disconnect from user-managed sandbox."""
         return self._fs.sandbox_disconnect(sandbox_id, provider, sandbox_api_key, context)
-
-    # ============================================================
-    # Mount Operations
-    # ============================================================
-
-    def add_mount(
-        self,
-        mount_point: str,
-        backend_type: str,
-        backend_config: dict[str, Any],
-        priority: int = 0,
-        readonly: bool = False,
-        io_profile: str = "balanced",
-    ) -> str:
-        """Add a dynamic backend mount to the filesystem."""
-        return self._fs.add_mount(
-            mount_point=self._scope_path(mount_point),
-            backend_type=backend_type,
-            backend_config=backend_config,
-            priority=priority,
-            readonly=readonly,
-            io_profile=io_profile,
-        )
-
-    def remove_mount(self, mount_point: str) -> dict[str, Any]:
-        """Remove a backend mount from the filesystem."""
-        result = self._fs.remove_mount(self._scope_path(mount_point))
-        return self._unscope_dict(result, ["mount_point"])
-
-    def list_mounts(self) -> builtins.list[dict[str, Any]]:
-        """List all active backend mounts."""
-        result = self._fs.list_mounts()
-        return [self._unscope_dict(r, ["mount_point"]) for r in result]
-
-    def get_mount(self, mount_point: str) -> dict[str, Any] | None:
-        """Get details about a specific mount."""
-        result = self._fs.get_mount(self._scope_path(mount_point))
-        if result:
-            return self._unscope_dict(result, ["mount_point"])
-        return None
 
     # ============================================================
     # Lifecycle Management

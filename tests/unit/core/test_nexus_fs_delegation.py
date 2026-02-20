@@ -6,14 +6,9 @@ the underlying service instances with proper argument transformation.
 Uses mock services (no Raft required) via object.__new__(NexusFS).
 
 Covers:
-- VersionService: 4 async methods (direct pass-through)
 - ReBACService: 8 async methods (parameter renaming: zone_id→_zone_id)
-- MCPService: 5 async methods (_context→context renaming)
-- SkillService: 10 sync methods (result wrapping)
-- LLMService: 4 methods (direct pass-through)
-- OAuthService: 7 async methods (_context→context renaming)
-- SearchService: 4 sync + 4 async (direct pass-through)
-- ShareLinkService: 6 async methods (direct pass-through)
+- SkillService: direct service method calls (no __getattr__ compat)
+- SearchService: 4 sync + 2 async (direct pass-through)
 """
 
 from __future__ import annotations
@@ -41,13 +36,9 @@ def mock_fs():
     fs = object.__new__(NexusFS)
     fs.version_service = MagicMock()
     fs.rebac_service = MagicMock()
-    fs.mcp_service = MagicMock()
     fs.skill_service = MagicMock()
-    fs.llm_service = MagicMock()
-    fs.oauth_service = MagicMock()
-    fs.mount_service = MagicMock()
+    fs.skill_package_service = MagicMock()
     fs.search_service = MagicMock()
-    fs.share_link_service = MagicMock()
     return fs
 
 

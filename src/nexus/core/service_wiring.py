@@ -50,6 +50,7 @@ def wire_services(fs: Any) -> None:
             enforce_permissions=fs._enforce_permissions,
             enable_audit_logging=True,
             circuit_breaker=brk_svc.rebac_circuit_breaker,
+            permission_enforcer=fs._permission_enforcer,
         )
 
     # WorkspaceRPCService: Replaces NexusFS workspace/memory/snapshot facades

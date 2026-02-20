@@ -7,7 +7,8 @@ import builtins
 import contextlib
 import logging
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.backends.backend import Backend
@@ -1555,7 +1556,7 @@ class NexusFS(  # type: ignore[misc]
         "namespace_list": ("rebac_service", "namespace_list_sync"),
         "get_namespace": ("rebac_service", "get_namespace_sync"),
         # ReBACService direct methods (no _sync suffix)
-        "rebac_expand_with_privacy": ("rebac_service", "rebac_expand_with_privacy"),
+        "rebac_expand_with_privacy": ("rebac_service", "rebac_expand_with_privacy_sync"),
         # SkillService (Issue #2035): NexusFS facade → skill_service RPC methods
         "skills_share": ("skill_service", "rpc_share"),
         "skills_discover": ("skill_service", "rpc_discover"),

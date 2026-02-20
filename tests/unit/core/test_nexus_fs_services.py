@@ -109,37 +109,9 @@ class TestNexusFSServiceComposition:
         assert fs.events_service._backend == fs.backend
 
     def test_version_service_delegation(self, tmp_path: Path):
-        """Test that VersionService delegation methods work correctly."""
+        """Test that VersionService is available on NexusFS."""
         fs = _make_fs(tmp_path, enforce_permissions=False)
 
-        # Verify sync methods exist (with @rpc_expose, wrap async methods)
-        assert hasattr(fs, "get_version")
-        assert hasattr(fs, "list_versions")
-        assert hasattr(fs, "rollback")
-        assert hasattr(fs, "diff_versions")
-
-        # Verify async delegation methods exist (with "a" prefix)
-        assert hasattr(fs, "aget_version")
-        assert hasattr(fs, "alist_versions")
-        assert hasattr(fs, "arollback")
-        assert hasattr(fs, "adiff_versions")
-
-        # Verify async methods are coroutine functions
-        import inspect
-
-        assert inspect.iscoroutinefunction(fs.aget_version)
-        assert inspect.iscoroutinefunction(fs.alist_versions)
-        assert inspect.iscoroutinefunction(fs.arollback)
-        assert inspect.iscoroutinefunction(fs.adiff_versions)
-
-        # Verify sync methods are NOT coroutine functions (they wrap async)
-        assert not inspect.iscoroutinefunction(fs.get_version)
-        assert not inspect.iscoroutinefunction(fs.list_versions)
-        assert not inspect.iscoroutinefunction(fs.rollback)
-        assert not inspect.iscoroutinefunction(fs.diff_versions)
-
-        # Verify sync methods have @rpc_expose decorator
-        assert hasattr(fs.get_version, "_rpc_exposed")
-        assert hasattr(fs.list_versions, "_rpc_exposed")
-        assert hasattr(fs.rollback, "_rpc_exposed")
-        assert hasattr(fs.diff_versions, "_rpc_exposed")
+        # Verify version_service exists and is not None
+        assert hasattr(fs, "version_service"), "VersionService not instantiated"
+        assert fs.version_service is not None

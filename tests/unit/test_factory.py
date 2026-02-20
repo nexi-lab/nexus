@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.contracts.exceptions import BootError, NexusError
-from nexus.core.deployment_profile import DeploymentProfile
 
 # ---------------------------------------------------------------------------
 # TestBootError
@@ -269,6 +269,7 @@ class TestBootBrickServices:
             "rebac_circuit_breaker",
             "memory_router",
             "memory_permission",
+            "cache_brick",
         }
         assert expected_keys == set(result.keys())
 

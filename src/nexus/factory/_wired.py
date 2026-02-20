@@ -461,3 +461,68 @@ def _boot_wired_services(
         elapsed,
     )
     return result
+
+
+def register_vfs_hooks(fs: Any) -> None:
+    """Register concrete VFS hook implementations on the kernel pipeline.
+
+    Hook implementations are service-tier policy (S15 Lifecycle Hooks / P17
+    HookEngineProtocol) — the kernel only provides the dispatch mechanism
+    (VFSHookPipeline).  Concrete hooks live in ``services/vfs_hook_impls``.
+
+    Moved from ``NexusFS._register_vfs_hooks()`` (Issue #690) so that
+    core/ never imports from services/.
+    """
+    from nexus.services.vfs_hook_impls import (
+        AutoParseWriteHook,
+        DynamicViewerReadHook,
+        TigerCacheRenameHook,
+    )
+
+    pipeline = fs._hook_pipeline
+
+    # DynamicViewerReadHook (post-read: column-level CSV filtering)
+    rebac_mgr = getattr(fs, "_rebac_manager", None)
+    has_viewer = (
+        rebac_mgr is not None
+        and hasattr(fs, "_get_subject_from_context")
+        and hasattr(fs, "get_dynamic_viewer_config")
+        and hasattr(fs, "apply_dynamic_viewer_filter")
+    )
+    if has_viewer:
+        pipeline.register_read_hook(
+            DynamicViewerReadHook(
+                get_subject=fs._get_subject_from_context,
+                get_viewer_config=fs.get_dynamic_viewer_config,
+                apply_filter=fs.apply_dynamic_viewer_filter,
+            )
+        )
+
+    # AutoParseWriteHook (post-write: background parsing)
+    parser_reg = getattr(fs, "parser_registry", None)
+    parse_fn = getattr(fs, "_virtual_view_parse_fn", None)
+    if parser_reg is not None and parse_fn is not None and getattr(fs, "auto_parse", False):
+        pipeline.register_write_hook(
+            AutoParseWriteHook(
+                get_parser=parser_reg.get_parser,
+                parse_fn=parse_fn,
+            )
+        )
+
+    # TigerCacheRenameHook (post-rename: bitmap updates)
+    tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
+    if tiger_cache is not None:
+
+        def _metadata_list_iter(
+            prefix: str,
+            recursive: bool = True,
+            zone_id: str = "root",  # noqa: ARG001
+        ) -> Any:
+            return fs.metadata.list(prefix=prefix, recursive=recursive)
+
+        pipeline.register_rename_hook(
+            TigerCacheRenameHook(
+                tiger_cache=tiger_cache,
+                metadata_list_iter=_metadata_list_iter,
+            )
+        )

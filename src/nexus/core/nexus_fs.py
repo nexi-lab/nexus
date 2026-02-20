@@ -272,9 +272,6 @@ class NexusFS(  # type: ignore[misc]
         )
         self._post_mutation_hooks: builtins.list[Any] = []
 
-        # Register VFS hooks (services wired by factory via _bind_wired_services)
-        self._register_vfs_hooks()
-
         # PermissionChecker: core module, safe to create here (Issue #2133)
         from nexus.core.permission_checker import PermissionChecker
 
@@ -323,62 +320,6 @@ class NexusFS(  # type: ignore[misc]
                 warm_cache_fn=getattr(self, "warm_tiger_cache", None),
             )
             self._tiger_cache_manager.initialize()
-
-    def _register_vfs_hooks(self) -> None:
-        """Register VFS hook implementations on the pipeline."""
-        from nexus.core.vfs_hook_impls import (
-            AutoParseWriteHook,
-            DynamicViewerReadHook,
-            TigerCacheRenameHook,
-        )
-
-        pipeline = self._hook_pipeline
-
-        # DynamicViewerReadHook (post-read: column-level CSV filtering)
-        rebac_mgr = getattr(self, "_rebac_manager", None)
-        has_viewer = (
-            rebac_mgr is not None
-            and hasattr(self, "_get_subject_from_context")
-            and hasattr(self, "get_dynamic_viewer_config")
-            and hasattr(self, "apply_dynamic_viewer_filter")
-        )
-        if has_viewer:
-            pipeline.register_read_hook(
-                DynamicViewerReadHook(
-                    get_subject=self._get_subject_from_context,  # type: ignore[arg-type]
-                    get_viewer_config=self.get_dynamic_viewer_config,  # type: ignore[attr-defined]
-                    apply_filter=self.apply_dynamic_viewer_filter,  # type: ignore[attr-defined]
-                )
-            )
-
-        # AutoParseWriteHook (post-write: background parsing)
-        parser_reg = getattr(self, "parser_registry", None)
-        parse_fn = getattr(self, "_virtual_view_parse_fn", None)
-        if parser_reg is not None and parse_fn is not None and getattr(self, "auto_parse", False):
-            pipeline.register_write_hook(
-                AutoParseWriteHook(
-                    get_parser=parser_reg.get_parser,
-                    parse_fn=parse_fn,
-                )
-            )
-
-        # TigerCacheRenameHook (post-rename: bitmap updates)
-        tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
-        if tiger_cache is not None:
-
-            def _metadata_list_iter(
-                prefix: str,
-                recursive: bool = True,
-                zone_id: str = "root",  # noqa: ARG001
-            ) -> Any:
-                return self.metadata.list(prefix=prefix, recursive=recursive)
-
-            pipeline.register_rename_hook(
-                TigerCacheRenameHook(
-                    tiger_cache=tiger_cache,
-                    metadata_list_iter=_metadata_list_iter,
-                )
-            )
 
     def _bind_wired_services(self, wired: WiredServices | dict[str, Any]) -> None:
         """Bind wired services from factory two-phase init.

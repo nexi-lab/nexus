@@ -14,10 +14,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.server.lifespan.services_container import LifespanServices
+
 logger = logging.getLogger(__name__)
 
 
-async def startup_search(app: FastAPI) -> list[asyncio.Task]:
+async def startup_search(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
     """Initialize search daemon and return background tasks."""
     search_daemon_enabled = os.getenv("NEXUS_SEARCH_DAEMON", "").lower() in (
         "true",
@@ -26,7 +28,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
     ) or (
         # Auto-enable if not explicitly disabled and database URL is set
         os.getenv("NEXUS_SEARCH_DAEMON", "").lower() not in ("false", "0", "no")
-        and app.state.database_url
+        and svc.database_url
     )
 
     if not search_daemon_enabled:
@@ -37,11 +39,11 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
         # Issue #2071: source max_indexing_concurrency from profile tuning
-        _search_tuning = app.state.profile_tuning
+        _search_tuning = svc.profile_tuning
         _max_indexing = _search_tuning.search.search_max_concurrency if _search_tuning else None
 
         _daemon_kwargs: dict = {
-            "database_url": app.state.database_url,
+            "database_url": svc.database_url,
             "bm25s_index_dir": os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
             "db_pool_min_size": int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
             "db_pool_max_size": int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
@@ -59,7 +61,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
         config = DaemonConfig(**_daemon_kwargs)
 
         # Inject async_session_factory from RecordStoreABC when available
-        _record_store = app.state.record_store
+        _record_store = svc.record_store
         _async_sf = None
         if _record_store is not None:
             with contextlib.suppress(Exception):
@@ -90,7 +92,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
         # Issue #1520: Set FileReaderProtocol for index refresh (replaces _nexus_fs)
         from nexus.factory import _NexusFSFileReader
 
-        app.state.search_daemon._file_reader = _NexusFSFileReader(app.state.nexus_fs)
+        app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
 
         # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
         with contextlib.suppress(Exception):
@@ -99,7 +101,7 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
             app.state.search_daemon._adaptive_k_provider = ContextBuilder()
 
         # Issue #2036: Register with BrickLifecycleManager
-        _blm = app.state.brick_lifecycle_manager
+        _blm = svc.brick_lifecycle_manager
         if _blm is not None:
             with contextlib.suppress(Exception):
                 from nexus.bricks.search.lifecycle_adapter import (

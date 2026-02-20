@@ -116,7 +116,7 @@ class GovernanceGraphService:
             created_at=now,
         )
 
-    async def remove_constraint(self, edge_id: str) -> bool:
+    async def remove_constraint(self, edge_id: str, *, zone_id: str) -> bool:
         """Remove a constraint by edge ID.
 
         Returns True if removed, False if not found.
@@ -127,7 +127,10 @@ class GovernanceGraphService:
 
         async with self._session_factory() as session, session.begin():
             # Fetch for cache invalidation
-            stmt = select(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
+            stmt = select(GovernanceEdgeModel).where(
+                GovernanceEdgeModel.id == edge_id,
+                GovernanceEdgeModel.zone_id == zone_id,
+            )
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
 
@@ -222,6 +225,8 @@ class GovernanceGraphService:
     async def update_constraint(
         self,
         edge_id: str,
+        *,
+        zone_id: str,
         constraint_type: ConstraintType | None = None,
         reason: str | None = None,
     ) -> GovernanceEdge | None:
@@ -231,7 +236,10 @@ class GovernanceGraphService:
         from nexus.bricks.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session, session.begin():
-            stmt = select(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
+            stmt = select(GovernanceEdgeModel).where(
+                GovernanceEdgeModel.id == edge_id,
+                GovernanceEdgeModel.zone_id == zone_id,
+            )
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:

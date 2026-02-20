@@ -371,6 +371,10 @@ def create_app(
     app.state.reputation_service = None
     app.state.rlm_service = None  # Issue #1306: RLM inference brick
     app.state.manifest_resolver = None  # Issue #2130: context manifest brick
+    app.state.governance_anomaly_service = None  # Issue #2129: governance brick
+    app.state.governance_collusion_service = None
+    app.state.governance_graph_service = None
+    app.state.governance_response_service = None
 
     # Initialize subscription manager if we have a metadata store
     try:

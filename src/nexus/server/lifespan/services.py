@@ -32,6 +32,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     _startup_agent_registry(app)
     _startup_key_service(app)
     _startup_reputation_delegation_from_bricks(app)
+    _startup_governance(app)
     _startup_sandbox_auth(app)
     _startup_transactional_snapshot(app)
     _startup_rlm_service(app)
@@ -259,6 +260,39 @@ def _startup_reputation_delegation_from_bricks(app: FastAPI) -> None:
         if getattr(deleg, "_agent_registry", None) is None:
             deleg._agent_registry = getattr(app.state, "agent_registry", None)
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
+
+
+def _startup_governance(app: FastAPI) -> None:
+    """Initialize governance brick services (Issue #2129)."""
+    session_factory = getattr(app.state, "async_session_factory", None)
+    if session_factory is None:
+        logger.info("[GOV] No async_session_factory — governance services skipped")
+        return
+
+    try:
+        from nexus.bricks.governance.anomaly_service import AnomalyService
+        from nexus.bricks.governance.collusion_service import CollusionService
+        from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
+        from nexus.bricks.governance.response_service import ResponseService
+
+        anomaly = AnomalyService(session_factory)
+        collusion = CollusionService(session_factory)
+        graph = GovernanceGraphService(session_factory)
+        response = ResponseService(
+            session_factory=session_factory,
+            anomaly_service=anomaly,
+            collusion_service=collusion,
+            graph_service=graph,
+        )
+
+        app.state.governance_anomaly_service = anomaly
+        app.state.governance_collusion_service = collusion
+        app.state.governance_graph_service = graph
+        app.state.governance_response_service = response
+
+        logger.info("[GOV] Governance services initialized")
+    except Exception as e:
+        logger.warning("[GOV] Failed to initialize governance services: %s", e)
 
 
 def _startup_sandbox_auth(app: FastAPI) -> None:

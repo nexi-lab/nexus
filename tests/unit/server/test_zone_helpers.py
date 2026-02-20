@@ -1,4 +1,5 @@
-"""Tests for nexus.lib.zone_helpers (Issue #2138).
+"""Tests for nexus.lib.zone_helpers (Issues #2138, #2078).
+
 
 TDD Red Phase: These tests expose bugs in the current implementation:
 1. remove_user_from_zone calls rebac_delete with wrong kwargs (TypeError)

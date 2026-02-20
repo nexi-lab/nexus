@@ -175,7 +175,7 @@ def test_provision_user() -> bool:
             if zone:
                 print(f"   - Zone exists: {zone.zone_id} ✓")
                 print(f"     Name: {zone.name}")
-                print(f"     Active: {zone.is_active}")
+                print(f"     Phase: {zone.phase}")
             else:
                 print("   - Zone not found ✗")
 

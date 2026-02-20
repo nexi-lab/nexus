@@ -216,7 +216,7 @@ def _is_merge_revision(module, path: Path | None = None) -> bool:
     DAG topology issues (Issue #1296).
     """
     down_rev = getattr(module, "down_revision", None)
-    if isinstance(down_rev, (tuple, list)):
+    if isinstance(down_rev, tuple | list):
         return True
     # Detect linearized merges by filename convention
     return path is not None and "merge" in path.stem.lower()

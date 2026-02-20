@@ -72,9 +72,6 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
             parsing=ParseConfig(auto_parse=False),
             system_services=SystemServices(write_observer=write_observer),
         )
-        from nexus.services.service_wiring import wire_services
-
-        wire_services(nx)
     else:
         nx = create_nexus_fs(
             backend=LocalBackend(str(temp_dir / "data")),

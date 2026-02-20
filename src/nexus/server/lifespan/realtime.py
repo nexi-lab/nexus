@@ -14,12 +14,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-    from nexus.server.lifespan.services_container import LifespanServices
-
 logger = logging.getLogger(__name__)
 
 
-async def startup_realtime(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+async def startup_realtime(app: FastAPI) -> list[asyncio.Task]:
     """Initialize realtime infrastructure and return background tasks.
 
     Covers:
@@ -32,26 +30,27 @@ async def startup_realtime(app: FastAPI, svc: LifespanServices) -> list[asyncio.
     """
     bg_tasks: list[asyncio.Task] = []
 
-    _startup_event_log(app, svc)
-    await _startup_event_bus(app, svc)
-    _startup_exporter_registry(app, svc)
-    await _startup_websocket(app, svc)
-    await _startup_writeback(app, svc)
-    await _startup_lock_manager(app, svc)
+    _startup_event_log(app)
+    await _startup_event_bus(app)
+    _startup_exporter_registry(app)
+    await _startup_websocket(app)
+    await _startup_writeback(app)
+    await _startup_lock_manager(app)
 
     return bg_tasks
 
 
-async def shutdown_realtime(app: FastAPI, svc: LifespanServices) -> None:
+async def shutdown_realtime(app: FastAPI) -> None:
     """Shutdown realtime infrastructure in reverse order."""
     # Disconnect Lock Manager coordination client (Issue #1186)
-    coord_client = svc.coordination_client
-    if svc.nexus_fs and coord_client is not None:
-        try:
-            await coord_client.disconnect()
-            logger.info("Lock manager coordination client disconnected")
-        except Exception as e:
-            logger.warning("Error disconnecting coordination client: %s", e, exc_info=True)
+    if app.state.nexus_fs and hasattr(app.state.nexus_fs, "_coordination_client"):
+        coord_client = app.state.nexus_fs._coordination_client
+        if coord_client is not None:
+            try:
+                await coord_client.disconnect()
+                logger.info("Lock manager coordination client disconnected")
+            except Exception as e:
+                logger.warning("Error disconnecting coordination client: %s", e, exc_info=True)
 
     # Shutdown WebSocket manager (Issue #1116)
     if app.state.websocket_manager:
@@ -70,7 +69,7 @@ async def shutdown_realtime(app: FastAPI, svc: LifespanServices) -> None:
             logger.warning("Error shutting down WriteBack service: %s", e, exc_info=True)
 
     # Stop event bus (Issue #1331)
-    _ebus = svc.event_bus
+    _ebus = app.state.event_bus
     if _ebus is not None:
         try:
             await _ebus.stop()
@@ -108,11 +107,11 @@ async def shutdown_realtime(app: FastAPI, svc: LifespanServices) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_event_log(app: FastAPI, _svc: LifespanServices) -> None:
+def _startup_event_log(app: FastAPI) -> None:
     """Event Log WAL for durable event persistence (Issue #1397)."""
     app.state.event_log = None
     try:
-        from nexus.services.event_log import EventLogConfig, create_event_log
+        from nexus.services.event_subsystem.log import EventLogConfig, create_event_log
 
         wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
         sync_mode = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
@@ -130,12 +129,12 @@ def _startup_event_log(app: FastAPI, _svc: LifespanServices) -> None:
         logger.warning("Failed to initialize event log: %s", e)
 
 
-async def _startup_event_bus(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_event_bus(app: FastAPI) -> None:
     """Start event bus and wire event log for WAL-first persistence (Issue #1397)."""
-    if not svc.nexus_fs:
+    if not app.state.nexus_fs:
         return
 
-    event_bus_ref = svc.event_bus
+    event_bus_ref = app.state.event_bus
     if event_bus_ref is None:
         return
 
@@ -156,7 +155,7 @@ async def _startup_event_bus(app: FastAPI, svc: LifespanServices) -> None:
             logger.warning("Failed to start event bus: %s", e)
 
     # Issue #1331: Store main event loop ref for cross-thread event publishing
-    svc.nexus_fs._main_event_loop = asyncio.get_running_loop()
+    app.state.nexus_fs._main_event_loop = asyncio.get_running_loop()
 
     # Wire event_log into EventBus for WAL-first durability (Issue #1397)
     if app.state.event_log is not None and hasattr(event_bus_ref, "set_event_log"):
@@ -164,12 +163,12 @@ async def _startup_event_bus(app: FastAPI, svc: LifespanServices) -> None:
         logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
 
-async def _startup_websocket(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_websocket(app: FastAPI) -> None:
     """Initialize WebSocket Manager for real-time events (Issue #1116)."""
     try:
         from nexus.server.websocket import WebSocketManager
 
-        event_bus = svc.event_bus
+        event_bus = app.state.event_bus
 
         app.state.websocket_manager = WebSocketManager(
             event_bus=event_bus,
@@ -181,10 +180,10 @@ async def _startup_websocket(app: FastAPI, svc: LifespanServices) -> None:
         logger.warning("Failed to start WebSocket manager: %s", e)
 
 
-async def _startup_writeback(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_writeback(app: FastAPI) -> None:
     """Initialize WriteBack Service for bidirectional sync (Issue #1129/#1130)."""
     write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
-    if not (write_back_enabled and svc.nexus_fs):
+    if not (write_back_enabled and app.state.nexus_fs):
         return
 
     try:
@@ -195,22 +194,14 @@ async def _startup_writeback(app: FastAPI, svc: LifespanServices) -> None:
         from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
         from nexus.system_services.sync.write_back_service import WriteBackService
 
-        _nfs = svc.nexus_fs
-        gw = NexusFSGateway(
-            _nfs,
-            hierarchy_manager=getattr(_nfs, "_hierarchy_manager", None),
-            descendant_checker=getattr(_nfs, "_descendant_checker", None),
-            get_routing_params_fn=getattr(_nfs, "_get_routing_params", None),
-            get_backend_directory_entries_fn=getattr(_nfs, "_get_backend_directory_entries", None),
-            record_read_if_tracking_fn=getattr(_nfs, "_record_read_if_tracking", None),
-        )
+        gw = NexusFSGateway(app.state.nexus_fs)
 
         # ConflictLogStore is always available for the REST API
         _is_pg = gw.is_postgresql
         conflict_log_store = ConflictLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
         app.state.conflict_log_store = conflict_log_store
 
-        wb_event_bus = svc.event_bus
+        wb_event_bus = app.state.event_bus
         if wb_event_bus:
             backlog_store = SyncBacklogStore(record_store=gw.record_store, is_postgresql=_is_pg)
             change_log_store = ChangeLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
@@ -242,12 +233,12 @@ async def _startup_writeback(app: FastAPI, svc: LifespanServices) -> None:
         logger.warning("Failed to start WriteBack service: %s", e)
 
 
-async def _startup_lock_manager(_app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_lock_manager(app: FastAPI) -> None:
     """Connect Lock Manager coordination client (Issue #1186)."""
-    if not svc.nexus_fs:
+    if not (app.state.nexus_fs and hasattr(app.state.nexus_fs, "_coordination_client")):
         return
 
-    coord_client = svc.coordination_client
+    coord_client = app.state.nexus_fs._coordination_client
     if coord_client is not None:
         try:
             await coord_client.connect()
@@ -256,14 +247,14 @@ async def _startup_lock_manager(_app: FastAPI, svc: LifespanServices) -> None:
             logger.warning("Failed to connect lock manager coordination client: %s", e)
 
 
-def _startup_exporter_registry(app: FastAPI, _svc: LifespanServices) -> None:
+def _startup_exporter_registry(app: FastAPI) -> None:
     """Initialize ExporterRegistry and configured exporters (Issue #1138)."""
     app.state.exporter_registry = None
 
     try:
-        from nexus.services.event_log.exporter_registry import ExporterRegistry
-        from nexus.services.event_log.exporters.config import EventStreamConfig
-        from nexus.services.event_log.exporters.factory import create_exporter
+        from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
+        from nexus.services.event_subsystem.log.exporters.config import EventStreamConfig
+        from nexus.services.event_subsystem.log.exporters.factory import create_exporter
 
         # Read config from env vars
         enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")

@@ -38,9 +38,6 @@ def nexus_fs_local(tmp_path: Path):
         record_store=record_store,
         permissions=PermissionConfig(enforce=False),
     )
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
     yield nx
     nx.close()
 

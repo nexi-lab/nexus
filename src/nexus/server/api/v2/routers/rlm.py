@@ -22,7 +22,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from nexus.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -43,7 +42,7 @@ class RLMInferenceRequestModel(BaseModel):
         default_factory=list,
         description="Nexus VFS paths to relevant files",
     )
-    zone_id: str = Field(default=ROOT_ZONE_ID, description="Zone ID for scoping")
+    zone_id: str = Field(default="default", description="Zone ID for scoping")
     model: str = Field(
         default="claude-sonnet-4-20250514",
         description="LLM model to use for reasoning",

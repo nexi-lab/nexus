@@ -13,10 +13,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.services.change_log_store import ChangeLogStore
 from nexus.services.conflict_log_store import ConflictLogStore
 from nexus.services.conflict_resolution import ConflictStrategy
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 from nexus.services.sync_backlog_store import SyncBacklogStore
 from nexus.services.write_back_service import WriteBackService
 from nexus.storage.record_store import SQLAlchemyRecordStore

@@ -49,9 +49,6 @@ async def init_semantic_search() -> bool:
         backend = LocalBackend(data_dir)
         metadata_store = RaftMetadataStore.embedded(str(database_url).replace(".db", ""))
         nx = NexusFS(backend, metadata_store=metadata_store)
-        from nexus.services.service_wiring import wire_services
-
-        wire_services(nx)
 
         # Check if explicitly requested to use vector embeddings
         # Default: keyword-only mode (safer, more stable)

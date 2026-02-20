@@ -166,12 +166,12 @@ class TestOAuthServiceE2E:
     def test_list_providers(self, test_app):
         """List OAuth providers (empty on fresh server)."""
         result = rpc_result(test_app, "oauth_list_providers")
-        assert isinstance(result, (list, dict))
+        assert isinstance(result, list | dict)
 
     def test_list_credentials(self, test_app):
         """List OAuth credentials (empty on fresh server)."""
         result = rpc_result(test_app, "oauth_list_credentials")
-        assert isinstance(result, (list, dict))
+        assert isinstance(result, list | dict)
 
 
 # ─── MCPService ───────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ class TestMCPServiceE2E:
     def test_list_mcp_mounts(self, test_app):
         """List MCP mounts (empty on fresh server)."""
         result = rpc_result(test_app, "mcp_list_mounts")
-        assert isinstance(result, (list, dict))
+        assert isinstance(result, list | dict)
 
 
 # ─── ShareLinkService ────────────────────────────────────────────────
@@ -248,7 +248,7 @@ class TestShareLinkServiceE2E:
         """List share links for current user."""
         raw = rpc_result(test_app, "list_share_links")
         result = self._extract_data(raw)
-        assert isinstance(result, (list, dict))
+        assert isinstance(result, list | dict)
         if isinstance(result, dict):
             assert "links" in result
 

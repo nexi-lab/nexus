@@ -34,11 +34,10 @@ def nx_with_db(tmp_path):
     nx = make_test_nexus(tmp_path)
     nx.SessionLocal = session_factory
 
-    # Mock entity registry + bypass _memory_provider
+    # Mock entity registry
     mock_registry = MagicMock()
     mock_registry.get_entity.return_value = None
     nx._entity_registry = mock_registry
-    nx._ensure_entity_registry = lambda: mock_registry
 
     # Mock API key creator
     mock_key_creator = MagicMock()
@@ -51,7 +50,19 @@ def nx_with_db(tmp_path):
     # Issue #2133: service_wiring.py deleted — explicitly create UserProvisioningService
     from nexus.services.user_provisioning import UserProvisioningService
 
-    nx._user_provisioning_service = UserProvisioningService(nx=nx)
+    nx._user_provisioning_service = UserProvisioningService(
+        vfs=nx,
+        session_factory=session_factory,
+        entity_registry=mock_registry,
+        api_key_creator=mock_key_creator,
+        backend=nx.backend,
+        rebac_manager=nx._rebac_manager,
+        rmdir_fn=nx.rmdir,
+        rebac_create_fn=MagicMock(),
+        rebac_delete_fn=MagicMock(),
+        register_workspace_fn=MagicMock(),
+        register_agent_fn=MagicMock(),
+    )
 
     return nx
 
@@ -249,9 +260,20 @@ class TestProvisionUserPartialFailure:
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = None
         nx._entity_registry = mock_registry
-        nx._ensure_entity_registry = lambda: mock_registry
         # Issue #2133: explicitly create service with session_factory=None
-        nx._user_provisioning_service = UserProvisioningService(nx=nx)
+        nx._user_provisioning_service = UserProvisioningService(
+            vfs=nx,
+            session_factory=None,
+            entity_registry=mock_registry,
+            api_key_creator=None,
+            backend=nx.backend,
+            rebac_manager=MagicMock(),
+            rmdir_fn=nx.rmdir,
+            rebac_create_fn=MagicMock(),
+            rebac_delete_fn=MagicMock(),
+            register_workspace_fn=MagicMock(),
+            register_agent_fn=MagicMock(),
+        )
         # Don't set SessionLocal — it defaults to None
         with pytest.raises(TypeError):
             nx.provision_user(user_id="alice", email="alice@example.com")

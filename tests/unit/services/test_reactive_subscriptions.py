@@ -10,13 +10,13 @@ import time
 
 import pytest
 
-from nexus.core.event_bus import FileEvent
 from nexus.core.read_set import ReadSet, ReadSetRegistry
 from nexus.lib.path_utils import path_matches_pattern
-from nexus.services.reactive_subscriptions import (
+from nexus.services.event_subsystem.subscriptions import (
     ReactiveSubscriptionManager,
     Subscription,
 )
+from nexus.services.event_subsystem.types import FileEvent
 
 # ---------------------------------------------------------------------------
 # TestSubscription

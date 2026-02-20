@@ -17,7 +17,7 @@ import os
 
 import pytest
 
-from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 NATS_URL = os.environ.get("NEXUS_NATS_URL", "nats://localhost:4222")
 
@@ -48,7 +48,7 @@ pytestmark = [
 @pytest.fixture
 async def nats_bus():
     """Create, start, and clean up a NatsEventBus for testing."""
-    from nexus.services.event_bus.nats import NatsEventBus
+    from nexus.services.event_subsystem.bus.nats import NatsEventBus
 
     bus = NatsEventBus(nats_url=NATS_URL)
     await bus.start()

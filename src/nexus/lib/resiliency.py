@@ -454,7 +454,7 @@ def with_resiliency(
             cb_name = circuit_breaker or "default"
 
         # Look up timeout policy
-        if isinstance(timeout, (int, float)):
+        if isinstance(timeout, int | float):
             timeout_seconds = float(timeout)
         else:
             tp = mgr.config.timeouts.get(
@@ -524,7 +524,7 @@ def parse_duration(value: str | int | float) -> float:
     Raises:
         ValueError: If the format is unrecognised.
     """
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
 
     m = _DURATION_RE.match(value)

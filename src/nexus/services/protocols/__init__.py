@@ -28,9 +28,11 @@ References:
 from nexus.bricks.governance.protocols import AnomalyDetectorProtocol
 from nexus.rebac.namespace_manager import NamespaceMount
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
+from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
+from nexus.services.protocols.file_reader import FileReaderProtocol
 from nexus.services.protocols.filesystem import NexusFilesystem
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
@@ -91,12 +93,14 @@ from nexus.services.protocols.write_back import WriteBackProtocol
 
 __all__ = [
     "APIKeyCreatorProtocol",
+    "AdaptiveKProtocol",
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
     "AnomalyDetectorProtocol",
     "ChunkedUploadProtocol",
     "EventLogConfig",
+    "FileReaderProtocol",
     "EventLogProtocol",
     "HookContext",
     "HookEngineProtocol",

@@ -149,7 +149,7 @@ async def search_query(
     effective_limit = limit
 
     if graph_mode == "auto":
-        from nexus.search.query_router import QueryRouter
+        from nexus.bricks.search.query_router import QueryRouter
 
         query_router = QueryRouter()
         routed = query_router.route(q, base_limit=limit)
@@ -309,7 +309,7 @@ async def search_expand(
     """
     import os
 
-    from nexus.search.query_expansion import (
+    from nexus.bricks.search.query_expansion import (
         OpenRouterQueryExpander,
         QueryExpansionConfig,
     )

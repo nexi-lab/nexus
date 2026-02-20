@@ -102,7 +102,7 @@ class MemoryWithPaging(Memory):
         # Create VectorDatabase from engine if not provided directly
         if vector_db is None and engine is not None:
             try:
-                from nexus.search.vector_db import VectorDatabase
+                from nexus.bricks.search.vector_db import VectorDatabase
 
                 vector_db = VectorDatabase(engine)
                 vector_db.initialize()

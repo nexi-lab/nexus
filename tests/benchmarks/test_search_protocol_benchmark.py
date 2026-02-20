@@ -61,7 +61,7 @@ class FastMockSearchBrick:
         pass
 
     def verify_imports(self) -> dict[str, bool]:
-        return {"nexus.search.semantic": True}
+        return {"nexus.bricks.search.semantic": True}
 
 
 # =============================================================================

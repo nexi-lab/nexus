@@ -117,13 +117,6 @@ def wire_services(fs: Any) -> None:
     except ImportError:
         fs._sandbox_rpc_service = None
 
-    # MetadataExportService: Replaces NexusFS export/import facades
-    from nexus.services.metadata_export import MetadataExportService
-
-    fs._metadata_export_service = MetadataExportService(
-        metadata=fs.metadata,
-    )
-
     # ACERPCService: Replaces NexusFS ACE trajectory/playbook facades
     from nexus.services.ace_rpc_service import ACERPCService
 

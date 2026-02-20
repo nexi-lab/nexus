@@ -302,7 +302,7 @@ class SearchGrepMixin:
     ) -> builtins.list[dict[str, Any]] | None:
         """Try Zoekt for accelerated grep. Returns None if not available."""
         try:
-            from nexus.search.zoekt_client import get_zoekt_client
+            from nexus.bricks.search.zoekt_client import get_zoekt_client
         except ImportError:
             return None
 

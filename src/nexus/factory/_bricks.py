@@ -124,7 +124,7 @@ def _boot_independent_bricks(
     # --- Search Brick Import Validation (Issue #1520) ---
     if _on("search"):
         try:
-            from nexus.search.manifest import verify_imports as _verify_search
+            from nexus.bricks.search.manifest import verify_imports as _verify_search
 
             _search_status = _verify_search()
             logger.debug("[BOOT:BRICK] Search brick imports: %s", _search_status)
@@ -133,7 +133,10 @@ def _boot_independent_bricks(
 
         # Wire zoekt callbacks into backends (Issue #1520)
         try:
-            from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
+            from nexus.bricks.search.zoekt_client import (
+                notify_zoekt_sync_complete,
+                notify_zoekt_write,
+            )
 
             if hasattr(ctx.backend, "on_write_callback") and ctx.backend.on_write_callback is None:
                 ctx.backend.on_write_callback = notify_zoekt_write
@@ -302,7 +305,7 @@ def _boot_independent_bricks(
     # --- API key creator (Issue #1519, 3A: inject server auth into kernel) ---
     api_key_creator: Any = None
     try:
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         api_key_creator = DatabaseAPIKeyAuth
     except ImportError:

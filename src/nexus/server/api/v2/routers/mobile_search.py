@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from nexus.search.mobile_config import (
+from nexus.bricks.search.mobile_config import (
     DeviceTier,
     detect_device_tier,
     get_config_for_tier,
@@ -164,7 +164,7 @@ async def download_models(request: ModelDownloadRequest) -> ModelDownloadRespons
         )
 
     try:
-        from nexus.search.mobile_providers import download_models_for_tier
+        from nexus.bricks.search.mobile_providers import download_models_for_tier
 
         results = await download_models_for_tier(tier.value)
 

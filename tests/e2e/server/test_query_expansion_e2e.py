@@ -40,7 +40,7 @@ class TestQueryExpansionE2E:
     @pytest.mark.asyncio
     async def test_basic_expansion_deepseek(self, api_key: str):
         """Test basic query expansion with DeepSeek model."""
-        from nexus.search.query_expansion import (
+        from nexus.bricks.search.query_expansion import (
             ExpansionType,
             OpenRouterQueryExpander,
             QueryExpansionConfig,
@@ -88,7 +88,7 @@ class TestQueryExpansionE2E:
     @pytest.mark.asyncio
     async def test_expansion_with_context(self, api_key: str):
         """Test expansion with collection context."""
-        from nexus.search.query_expansion import (
+        from nexus.bricks.search.query_expansion import (
             OpenRouterQueryExpander,
             QueryExpansionConfig,
         )
@@ -123,7 +123,7 @@ class TestQueryExpansionE2E:
     @pytest.mark.asyncio
     async def test_expansion_service_smart_triggering(self, api_key: str):
         """Test smart triggering with signal detection."""
-        from nexus.search.query_expansion import (
+        from nexus.bricks.search.query_expansion import (
             OpenRouterQueryExpander,
             QueryExpansionConfig,
             QueryExpansionService,
@@ -172,7 +172,7 @@ class TestQueryExpansionE2E:
     @pytest.mark.asyncio
     async def test_free_model_fallback(self, api_key: str):
         """Test fallback to free models."""
-        from nexus.search.query_expansion import (
+        from nexus.bricks.search.query_expansion import (
             OpenRouterQueryExpander,
             QueryExpansionConfig,
         )
@@ -208,7 +208,7 @@ class TestQueryExpansionE2E:
     @pytest.mark.asyncio
     async def test_technical_query_preservation(self, api_key: str):
         """Test that technical terms are preserved in expansions."""
-        from nexus.search.query_expansion import (
+        from nexus.bricks.search.query_expansion import (
             OpenRouterQueryExpander,
             QueryExpansionConfig,
         )
@@ -246,7 +246,7 @@ class TestQueryExpansionE2E:
     @pytest.mark.asyncio
     async def test_multiple_queries_latency(self, api_key: str):
         """Test latency across multiple queries."""
-        from nexus.search.query_expansion import (
+        from nexus.bricks.search.query_expansion import (
             OpenRouterQueryExpander,
             QueryExpansionConfig,
         )
@@ -304,7 +304,7 @@ async def run_quick_test():
     if src_path not in sys.path:
         sys.path.insert(0, src_path)
 
-    from nexus.search.query_expansion import (
+    from nexus.bricks.search.query_expansion import (
         ExpansionType,
         OpenRouterQueryExpander,
         QueryExpansionConfig,

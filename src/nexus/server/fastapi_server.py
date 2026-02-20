@@ -548,7 +548,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     if search_daemon_enabled:
         try:
-            from nexus.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
+            from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
 
             # Issue #2071: source max_indexing_concurrency from profile tuning
             _search_tuning = _app.state.profile_tuning.search
@@ -1697,11 +1697,21 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
             ],
             provider_name="google-auth",
         )
+        # Issue #2281: inject UserProvisionerProtocol to break circular dep
+        user_provisioner = None
+        try:
+            from nexus.auth.stores.nexusfs_provisioner import NexusFSUserProvisioner
+
+            user_provisioner = NexusFSUserProvisioner(nexus_fs)
+        except Exception:
+            logger.debug("NexusFSUserProvisioner unavailable; OAuth user provisioning disabled")
+
         oauth_provider = OAuthUserAuth(
             session_factory=session_factory,
             providers={"google": google_provider},
             jwt_secret=jwt_secret,
             oauth_crypto=oauth_crypto,
+            user_provisioner=user_provisioner,
         )
 
         set_oauth_provider(oauth_provider)
@@ -2607,7 +2617,7 @@ def _handle_query_memories(params: Any, context: Any) -> dict[str, Any]:
         embedding_provider_obj = None
         if params.embedding_provider:
             try:
-                from nexus.search.embeddings import create_embedding_provider
+                from nexus.bricks.search.embeddings import create_embedding_provider
 
                 embedding_provider_obj = create_embedding_provider(
                     provider=params.embedding_provider

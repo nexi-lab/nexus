@@ -97,7 +97,7 @@ Map **scenario requiring properties** ↔ **Ops ABC providing properties**.
 ## STEP 1: SCENARIO ENUMERATION
 
 **Source of truth:** Code audit of all user-facing entry points:
-- 90+ API routes (`server/api/v1/` + `v2/`)
+- 90+ API routes (`server/api/v2/`)
 - 180+ CLI commands (`cli/commands/`)
 - 120+ NexusFS `@rpc_expose` methods (`core/nexus_fs.py`)
 - 14 FUSE operations (`fuse/`)

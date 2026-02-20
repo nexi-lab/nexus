@@ -118,9 +118,10 @@ class ZoneAwareTraversal:
                 logger.debug(f"{indent}[MEMO-HIT] {memo_key} = {cached_result}")
             return cached_result
 
-        logger.debug(
-            f"{indent}┌─[PERM-CHECK depth={depth}] {subject.entity_type}:{subject.entity_id} → '{permission}' → {obj.entity_type}:{obj.entity_id}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"{indent}┌─[PERM-CHECK depth={depth}] {subject.entity_type}:{subject.entity_id} → '{permission}' → {obj.entity_type}:{obj.entity_id}"
+            )
 
         # P0-5: Check execution time (using perf_counter for monotonic measurement)
         if self.enable_graph_limits:

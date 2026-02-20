@@ -8,9 +8,9 @@ Architecture decisions:
       event-triggered on state transitions
     - FAILED→REGISTERED reset (7A) via lifecycle manager
     - Per-brick 2s timeout on health_check (13A)
-    - Fixed 30s reconcile interval (14C)
+    - Fixed 30s reconcile interval with jitter (14C)
     - Reuse per-brick lock from lifecycle manager (15A)
-    - max_retries=3 before giving up (16A)
+    - max_retries=3 with exponential backoff before giving up (16A)
 
 References:
     - Issue #2060: Brick Spec/Status Separation for Drift Detection
@@ -21,13 +21,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 import time
 from typing import Any
 
+from nexus.services._tracing import lazy_tracer
 from nexus.services.protocols.brick_lifecycle import (
     BrickLifecycleProtocol,
     BrickSpec,
     BrickState,
+    DriftAction,
     DriftReport,
     ReconcileResult,
 )
@@ -36,35 +39,28 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # OTel tracing — zero-overhead when telemetry is not enabled
+# Shared implementation in nexus.services._tracing
 # ---------------------------------------------------------------------------
 
-_tracer: Any = None
-_tracer_resolved: bool = False
+_get_tracer, _lifecycle_span = lazy_tracer("nexus.brick_reconciler")
 
+# ---------------------------------------------------------------------------
+# Backoff constants
+# ---------------------------------------------------------------------------
 
-def _get_tracer() -> Any:
-    """Lazy-resolve the OTel tracer (returns None if unavailable)."""
-    global _tracer, _tracer_resolved  # noqa: PLW0603
-    if _tracer_resolved:
-        return _tracer
-    _tracer_resolved = True
-    try:
-        from nexus.server.telemetry import get_tracer
-
-        _tracer = get_tracer("nexus.brick_reconciler")
-    except Exception:
-        _tracer = None
-    return _tracer
+_BACKOFF_BASE: float = 30.0  # Base retry interval in seconds
+_BACKOFF_MAX: float = 300.0  # Max retry interval cap
+_JITTER_MAX: float = 5.0  # Max jitter added to loop interval
 
 
 class BrickReconciler:
     """Drift detection and self-healing for bricks (Issue #2060).
 
     Kubernetes-inspired reconciliation loop:
-    - Periodic sweep every ``reconcile_interval`` seconds
+    - Periodic sweep every ``reconcile_interval`` seconds (+ jitter)
     - Event-triggered: immediate reconcile on ``notify_state_change()``
-    - Self-healing: reset and remount FAILED bricks (max retries)
-    - Health checks: ACTIVE bricks verified with per-brick timeout
+    - Self-healing: reset and remount FAILED bricks (exponential backoff)
+    - Health checks: ACTIVE bricks verified concurrently with per-brick timeout
     """
 
     def __init__(
@@ -83,6 +79,25 @@ class BrickReconciler:
         self._event = asyncio.Event()
         self._reconcile_count: int = 0
         self._stopped = False
+        # Cached result for read-only drift endpoint (#14A)
+        self._last_result: ReconcileResult | None = None
+        self._last_reconcile_at: float | None = None
+        # Per-brick next-eligible-retry timestamps (#3A)
+        self._next_retry_after: dict[str, float] = {}
+
+    # ------------------------------------------------------------------
+    # Public read-only accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def last_reconcile_at(self) -> float | None:
+        """Monotonic timestamp of the last reconcile pass start."""
+        return self._last_reconcile_at
+
+    @property
+    def reconcile_count(self) -> int:
+        """Total number of reconcile passes completed."""
+        return self._reconcile_count
 
     # ------------------------------------------------------------------
     # Loop lifecycle
@@ -109,6 +124,7 @@ class BrickReconciler:
         self._task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await self._task
+        self._task = None
         logger.info("[RECONCILER] Stopped")
 
     def notify_state_change(self, brick_name: str) -> None:
@@ -121,14 +137,15 @@ class BrickReconciler:
     # ------------------------------------------------------------------
 
     async def _loop(self) -> None:
-        """Periodic reconciliation loop with event-triggered wake."""
+        """Periodic reconciliation loop with event-triggered wake and jitter."""
         while not self._stopped:
             try:
-                # Wait for interval OR event trigger
+                # Wait for interval OR event trigger (with jitter)
+                jitter = random.uniform(0, _JITTER_MAX)  # noqa: S311
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
                         self._event.wait(),
-                        timeout=self._reconcile_interval,
+                        timeout=self._reconcile_interval + jitter,
                     )
 
                 if self._stopped:
@@ -154,25 +171,34 @@ class BrickReconciler:
                 break
 
     # ------------------------------------------------------------------
-    # Read-only drift detection (no side effects)
+    # Read-only drift detection (cached, for GET endpoints)
     # ------------------------------------------------------------------
 
     def detect_drift(self) -> ReconcileResult:
-        """Detect drift between specs and statuses without taking actions.
+        """Return cached drift report from last reconcile pass.
 
-        Safe for GET endpoints — no state transitions, no health checks,
-        no mount/unmount/reset. Just compares spec vs current state.
+        Returns the cached result from the most recent ``reconcile()`` call.
+        If no reconciliation has occurred yet, performs a fresh read-only scan.
+
+        Safe for GET endpoints — no state transitions, no side effects.
         """
-        bricks = self._manager._bricks
+        if self._last_result is not None:
+            return self._last_result
+        # Fallback: fresh scan (only before first reconcile)
+        return self._detect_drift_fresh()
+
+    def _detect_drift_fresh(self) -> ReconcileResult:
+        """Perform a fresh read-only drift scan via public API."""
+        brick_list = self._manager.iter_bricks()
         drifts: list[DriftReport] = []
 
-        for _name, entry in list(bricks.items()):
-            drift = self._detect_drift(entry.spec, entry.state, entry)
+        for _name, spec, state, retry_count, _instance in brick_list:
+            drift = self._compute_drift(spec, state, retry_count)
             if drift is not None:
                 drifts.append(drift)
 
         return ReconcileResult(
-            total_bricks=len(bricks),
+            total_bricks=len(brick_list),
             drifted=len(drifts),
             actions_taken=0,
             errors=0,
@@ -183,52 +209,54 @@ class BrickReconciler:
     # Drift detection (internal)
     # ------------------------------------------------------------------
 
-    def _detect_drift(
+    def _compute_drift(
         self,
         spec: BrickSpec,
         state: BrickState,
-        entry: Any,
+        retry_count: int,
     ) -> DriftReport | None:
-        """Compare spec vs status, return drift report or None if converged."""
+        """Compare spec vs status, return drift report or None if converged.
+
+        Uses only immutable data — no access to internal manager structures.
+        """
         if spec.enabled:
             if state == BrickState.FAILED:
-                if entry.retry_count >= self._max_retries:
+                if retry_count >= self._max_retries:
                     return DriftReport(
                         brick_name=spec.name,
                         spec_state="enabled",
                         actual_state=state,
-                        action="skip",
+                        action=DriftAction.SKIP,
                         detail=f"Max retries ({self._max_retries}) exceeded",
                     )
                 return DriftReport(
                     brick_name=spec.name,
                     spec_state="enabled",
                     actual_state=state,
-                    action="reset",
+                    action=DriftAction.RESET,
                     detail="Brick FAILED, will reset and remount",
                 )
             if state == BrickState.REGISTERED:
-                # Check if dependencies are met
+                # Check if dependencies are met via public API
                 for dep_name in spec.depends_on:
-                    dep_entry = self._manager._bricks.get(dep_name)
-                    if dep_entry is None or dep_entry.state != BrickState.ACTIVE:
+                    dep_status = self._manager.get_status(dep_name)
+                    if dep_status is None or dep_status.state != BrickState.ACTIVE:
                         return DriftReport(
                             brick_name=spec.name,
                             spec_state="enabled",
                             actual_state=state,
-                            action="skip",
+                            action=DriftAction.SKIP,
                             detail=f"Dependency {dep_name!r} not ACTIVE",
                         )
                 return DriftReport(
                     brick_name=spec.name,
                     spec_state="enabled",
                     actual_state=state,
-                    action="mount",
+                    action=DriftAction.MOUNT,
                     detail="Brick REGISTERED but should be ACTIVE",
                 )
             if state == BrickState.ACTIVE:
-                # Will be checked for health in _take_action
-                return None  # Handled separately below
+                return None  # Handled by health check phase
         else:
             # spec.enabled is False
             if state == BrickState.ACTIVE:
@@ -236,41 +264,64 @@ class BrickReconciler:
                     brick_name=spec.name,
                     spec_state="disabled",
                     actual_state=state,
-                    action="unmount",
+                    action=DriftAction.UNMOUNT,
                     detail="Brick ACTIVE but spec says disabled",
                 )
 
         return None
 
     # ------------------------------------------------------------------
-    # Health checks (for ACTIVE bricks)
+    # Health checks (for ACTIVE bricks) — runs concurrently (#13A)
     # ------------------------------------------------------------------
 
-    async def _health_check_brick(self, entry: Any) -> bool | None:
+    async def _health_check_brick(self, name: str, instance: Any) -> tuple[str, bool | None]:
         """Call health_check() with per-brick timeout.
 
-        Returns True if healthy, False if unhealthy, None if no health_check.
-        Timeout = unhealthy.
+        Returns (name, healthy) where healthy is True/False/None.
         """
-        if not isinstance(entry.instance, BrickLifecycleProtocol):
-            return None  # Stateless brick — no health check
+        if not isinstance(instance, BrickLifecycleProtocol):
+            return (name, None)  # Stateless brick — no health check
 
         try:
             result = await asyncio.wait_for(
-                entry.instance.health_check(),
+                instance.health_check(),
                 timeout=self._health_check_timeout,
             )
-            return bool(result)
+            return (name, bool(result))
         except TimeoutError:
             logger.warning(
                 "[RECONCILER] Health check timeout for %r (%.1fs)",
-                entry.name,
+                name,
                 self._health_check_timeout,
             )
-            return False
+            return (name, False)
         except Exception as exc:
-            logger.warning("[RECONCILER] Health check error for %r: %s", entry.name, exc)
-            return False
+            logger.warning("[RECONCILER] Health check error for %r: %s", name, exc)
+            return (name, False)
+
+    # ------------------------------------------------------------------
+    # Backoff calculation (#3A)
+    # ------------------------------------------------------------------
+
+    def _should_retry(self, name: str) -> bool:
+        """Check if a brick is eligible for retry based on backoff schedule."""
+        deadline = self._next_retry_after.get(name, 0.0)
+        return time.monotonic() >= deadline
+
+    def _set_backoff(self, name: str, retry_count: int) -> None:
+        """Set exponential backoff deadline for a brick's next retry."""
+        delay = min(_BACKOFF_BASE * (2 ** (retry_count - 1)), _BACKOFF_MAX)
+        self._next_retry_after[name] = time.monotonic() + delay
+        logger.debug(
+            "[RECONCILER] Backoff for %r: %.0fs (retry %d)",
+            name,
+            delay,
+            retry_count,
+        )
+
+    def _clear_backoff(self, name: str) -> None:
+        """Clear backoff for a brick (on success or manual reset)."""
+        self._next_retry_after.pop(name, None)
 
     # ------------------------------------------------------------------
     # Corrective actions
@@ -279,7 +330,6 @@ class BrickReconciler:
     async def _take_action(
         self,
         name: str,
-        entry: Any,
         drift: DriftReport,
     ) -> bool:
         """Execute the action prescribed by a DriftReport.
@@ -288,37 +338,46 @@ class BrickReconciler:
         """
         action = drift.action
 
-        if action == "skip":
+        if action is DriftAction.SKIP:
             return False
 
-        if action == "reset":
-            return await self._action_reset_and_mount(name, entry)
+        if action is DriftAction.RESET:
+            return await self._action_reset_and_mount(name)
 
-        if action == "mount":
+        if action is DriftAction.MOUNT:
             return await self._action_mount(name)
 
-        if action == "unmount":
+        if action is DriftAction.UNMOUNT:
             return await self._action_unmount(name)
 
         return False
 
-    async def _action_reset_and_mount(self, name: str, entry: Any) -> bool:
+    async def _action_reset_and_mount(self, name: str) -> bool:
         """Reset a FAILED brick and attempt to remount it."""
         try:
-            retry = entry.retry_count + 1
-            self._manager.reset(name)  # Clears retry_count to 0
-            entry.retry_count = retry  # Restore incremented count
+            # Check backoff schedule
+            if not self._should_retry(name):
+                return False
+
+            new_retry = self._manager.reset_for_retry(name)
             await self._manager.mount(name)
-            # Success — clear retry counter
-            if entry.state == BrickState.ACTIVE:
-                entry.retry_count = 0
+
+            # Check if mount succeeded
+            status = self._manager.get_status(name)
+            if status is not None and status.state == BrickState.ACTIVE:
+                self._manager.clear_retry_count(name)
+                self._clear_backoff(name)
                 logger.info("[RECONCILER] Self-healed brick %r", name)
+            else:
+                self._set_backoff(name, new_retry)
             return True
         except Exception as exc:
+            retry_count = self._manager.get_retry_count(name)
+            self._set_backoff(name, retry_count)
             logger.warning(
                 "[RECONCILER] Failed to reset+mount %r (retry %d/%d): %s",
                 name,
-                entry.retry_count,
+                retry_count,
                 self._max_retries,
                 exc,
             )
@@ -355,7 +414,7 @@ class BrickReconciler:
         1. If spec.enabled and status.state == ACTIVE:
            → call health_check() with timeout; if unhealthy → transition to FAILED
         2. If spec.enabled and status.state == FAILED and retry_count < max_retries:
-           → reset + mount (self-healing)
+           → reset + mount (self-healing with exponential backoff)
         3. If spec.enabled and status.state == REGISTERED:
            → mount (brick should be active but isn't)
         4. If not spec.enabled and status.state == ACTIVE:
@@ -371,71 +430,90 @@ class BrickReconciler:
         actions_taken = 0
         errors = 0
 
-        bricks = self._manager._bricks
+        try:
+            # Snapshot via public API
+            brick_list = self._manager.iter_bricks()
 
-        # Track bricks that just failed health check — don't auto-heal same pass
-        health_failed: set[str] = set()
+            # Track bricks that just failed health check — don't auto-heal same pass
+            health_failed: set[str] = set()
 
-        # Phase 1: Health check ACTIVE bricks
-        for name, entry in list(bricks.items()):
-            if entry.spec.enabled and entry.state == BrickState.ACTIVE:
-                healthy = await self._health_check_brick(entry)
-                if healthy is False:
-                    # Transition to FAILED via public API
-                    try:
-                        self._manager.fail_brick(name, "Health check failed")
-                        health_failed.add(name)
-                        drifts.append(
-                            DriftReport(
-                                brick_name=name,
-                                spec_state="enabled",
-                                actual_state=BrickState.FAILED,
-                                action="health_check_failed",
-                                detail="Brick failed health check",
-                            )
-                        )
-                        actions_taken += 1
-                    except Exception as exc:
+            # Phase 1: Health check ACTIVE bricks concurrently (#13A)
+            active_bricks = [
+                (name, instance)
+                for name, spec, state, _retry, instance in brick_list
+                if spec.enabled and state == BrickState.ACTIVE
+            ]
+
+            if active_bricks:
+                check_results = await asyncio.gather(
+                    *(self._health_check_brick(name, inst) for name, inst in active_bricks),
+                    return_exceptions=True,
+                )
+                for check_result in check_results:
+                    if isinstance(check_result, BaseException):
                         errors += 1
-                        logger.warning(
-                            "[RECONCILER] Failed to transition %r to FAILED: %s",
-                            name,
-                            exc,
-                        )
+                        continue
+                    name, healthy = check_result
+                    if healthy is False:
+                        try:
+                            self._manager.fail_brick(name, "Health check failed")
+                            health_failed.add(name)
+                            drifts.append(
+                                DriftReport(
+                                    brick_name=name,
+                                    spec_state="enabled",
+                                    actual_state=BrickState.FAILED,
+                                    action=DriftAction.HEALTH_CHECK_FAILED,
+                                    detail="Brick failed health check",
+                                )
+                            )
+                            actions_taken += 1
+                        except Exception as exc:
+                            errors += 1
+                            logger.warning(
+                                "[RECONCILER] Failed to transition %r to FAILED: %s",
+                                name,
+                                exc,
+                            )
 
-        # Phase 2: Detect drift and take corrective actions
-        for name, entry in list(bricks.items()):
-            # Skip bricks that just failed health check — let next pass handle retry
-            if name in health_failed:
-                continue
-            spec = entry.spec
-            state = entry.state
+            # Phase 2: Detect drift and take corrective actions
+            # Re-snapshot to pick up state changes from Phase 1
+            brick_list = self._manager.iter_bricks()
+            for name, spec, state, retry_count, _instance in brick_list:
+                if name in health_failed:
+                    continue
 
-            drift = self._detect_drift(spec, state, entry)
-            if drift is None:
-                continue
+                drift = self._compute_drift(spec, state, retry_count)
+                if drift is None:
+                    continue
 
-            drifts.append(drift)
+                drifts.append(drift)
 
-            try:
-                acted = await self._take_action(name, entry, drift)
-                if acted:
-                    actions_taken += 1
-            except Exception as exc:
-                errors += 1
-                logger.warning("[RECONCILER] Action failed for %r: %s", name, exc)
+                try:
+                    acted = await self._take_action(name, drift)
+                    if acted:
+                        actions_taken += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning("[RECONCILER] Action failed for %r: %s", name, exc)
+        finally:
+            elapsed = time.monotonic() - t0
 
-        elapsed = time.monotonic() - t0
-        if span is not None:
-            span.set_attribute("reconciler.total_bricks", len(bricks))
-            span.set_attribute("reconciler.drifted", len(drifts))
-            span.set_attribute("reconciler.elapsed_ms", elapsed * 1000)
-            span.end()
+            if span is not None:
+                span.set_attribute("reconciler.total_bricks", len(drifts))
+                span.set_attribute("reconciler.elapsed_ms", elapsed * 1000)
+                span.end()
 
-        return ReconcileResult(
-            total_bricks=len(bricks),
+        result = ReconcileResult(
+            total_bricks=len(brick_list),
             drifted=len(drifts),
             actions_taken=actions_taken,
             errors=errors,
             drifts=tuple(drifts),
         )
+
+        # Cache for read-only drift endpoint (#14A)
+        self._last_result = result
+        self._last_reconcile_at = t0
+
+        return result

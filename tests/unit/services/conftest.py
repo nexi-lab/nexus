@@ -7,6 +7,41 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.contracts.types import OperationContext
+from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
+
+# ---------------------------------------------------------------------------
+# Brick mock factories (shared by test_brick_lifecycle + test_brick_reconciler)
+# ---------------------------------------------------------------------------
+
+
+def make_lifecycle_brick(name: str = "test") -> MagicMock:
+    """Create a mock brick that satisfies BrickLifecycleProtocol."""
+    brick = AsyncMock(spec=BrickLifecycleProtocol)
+    brick.start = AsyncMock(return_value=None)
+    brick.stop = AsyncMock(return_value=None)
+    brick.health_check = AsyncMock(return_value=True)
+    brick.__class__.__name__ = f"{name.capitalize()}Brick"
+    return brick
+
+
+def make_stateless_brick(name: str = "pay") -> MagicMock:
+    """Create a mock brick without lifecycle methods (stateless)."""
+    brick = MagicMock()
+    brick.__class__.__name__ = f"{name.capitalize()}Brick"
+    if hasattr(brick, "start"):
+        del brick.start
+    if hasattr(brick, "stop"):
+        del brick.stop
+    if hasattr(brick, "health_check"):
+        del brick.health_check
+    return brick
+
+
+def make_failing_brick(error: Exception | None = None) -> MagicMock:
+    """Create a mock brick whose start() raises."""
+    brick = make_lifecycle_brick("failing")
+    brick.start = AsyncMock(side_effect=error or RuntimeError("Connection refused"))
+    return brick
 
 
 @pytest.fixture

@@ -16,11 +16,11 @@ import statistics
 import threading
 import time
 
-from nexus.core.lock_fast import PythonVFSLockManager
+from nexus.lib.lock_fast import PythonVFSLockManager
 
 # Try to load Rust implementation.
 try:
-    from nexus.core.lock_fast import RustVFSLockManager
+    from nexus.lib.lock_fast import RustVFSLockManager
 
     HAS_RUST = True
 except (ImportError, Exception):

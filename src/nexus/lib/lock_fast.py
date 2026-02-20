@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +61,10 @@ def _normalize_path(path: str) -> str:
     """Normalize a path: collapse repeated slashes, remove trailing slash (except root)."""
     if not path:
         return "/"
-    # Collapse repeated slashes.
-    import re
-
-    result = re.sub(r"/+", "/", path)
+    # Collapse repeated slashes using string split/join (no regex).
+    result = "/".join(part for part in path.split("/") if part)
+    if not result or path.startswith("/"):
+        result = "/" + result
     # Remove trailing slash (keep root "/").
     if len(result) > 1 and result.endswith("/"):
         result = result[:-1]
@@ -273,26 +273,26 @@ class RustVFSLockManager:
     def __init__(self) -> None:
         from nexus_fast import VFSLockManager
 
-        self._inner = VFSLockManager()
+        self._inner: Any = VFSLockManager()
 
     def acquire(self, path: str, mode: str, timeout_ms: int = 0) -> int:
-        return self._inner.acquire(path, mode, timeout_ms)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return cast(int, self._inner.acquire(path, mode, timeout_ms))
 
     def release(self, handle: int) -> bool:
-        return self._inner.release(handle)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return cast(bool, self._inner.release(handle))
 
     def is_locked(self, path: str) -> bool:
-        return self._inner.is_locked(path)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return cast(bool, self._inner.is_locked(path))
 
     def holders(self, path: str) -> dict | None:
-        return self._inner.holders(path)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return cast("dict | None", self._inner.holders(path))
 
     def stats(self) -> dict:
-        return self._inner.stats()  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return cast(dict, self._inner.stats())
 
     @property
     def active_locks(self) -> int:
-        return self._inner.active_locks  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return cast(int, self._inner.active_locks)
 
 
 # ---------------------------------------------------------------------------

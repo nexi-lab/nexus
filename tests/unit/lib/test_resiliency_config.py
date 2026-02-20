@@ -54,7 +54,7 @@ class TestResiliencyConfigFromDict:
         assert "default" in cfg.circuit_breakers
 
     def test_malformed_falls_back(self) -> None:
-        raw = {"timeouts": "not_a_dict"}  # type: ignore[dict-item]
+        raw: dict[str, object] = {"timeouts": "not_a_dict"}
         cfg = ResiliencyConfig.from_dict(raw)
         assert cfg == ResiliencyConfig()
 

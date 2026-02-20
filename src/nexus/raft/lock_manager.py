@@ -18,7 +18,7 @@ import logging
 import uuid
 from typing import Any
 
-from nexus.core.distributed_lock import (
+from nexus.lib.distributed_lock import (
     ExtendResult,
     HolderInfo,
     LockInfo,
@@ -133,7 +133,7 @@ class RaftLockManager(LockManagerBase):
         holder_id = str(uuid.uuid4())
         ttl_secs = int(ttl)
 
-        deadline = asyncio.get_event_loop().time() + timeout
+        deadline = asyncio.get_running_loop().time() + timeout
         retry_interval = self.RETRY_BASE_INTERVAL
 
         while True:
@@ -144,15 +144,18 @@ class RaftLockManager(LockManagerBase):
 
             if acquired:
                 logger.debug(
-                    f"Raft lock acquired: {lock_key} -> {holder_id} "
-                    f"(max_holders={max_holders}, TTL={ttl}s)"
+                    "Raft lock acquired: %s -> %s (max_holders=%d, TTL=%ss)",
+                    lock_key,
+                    holder_id,
+                    max_holders,
+                    ttl,
                 )
                 return holder_id
 
             # Check if we've exceeded timeout
-            remaining = deadline - asyncio.get_event_loop().time()
+            remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                logger.debug(f"Raft lock acquisition timeout: {lock_key}")
+                logger.debug("Raft lock acquisition timeout: %s", lock_key)
                 return None
 
             # Exponential backoff
@@ -188,12 +191,12 @@ class RaftLockManager(LockManagerBase):
         try:
             released = self._store.release_lock(lock_key, lock_id)
             if released:
-                logger.debug(f"Raft lock released: {lock_key}")
+                logger.debug("Raft lock released: %s", lock_key)
             else:
-                logger.debug(f"Raft lock release failed (not owned or expired): {lock_key}")
+                logger.debug("Raft lock release failed (not owned or expired): %s", lock_key)
             return released
         except Exception as e:
-            logger.error(f"Failed to release Raft lock {lock_key}: {e}")
+            logger.error("Failed to release Raft lock %s: %s", lock_key, e)
             return False
 
     async def extend(
@@ -223,15 +226,15 @@ class RaftLockManager(LockManagerBase):
         try:
             extended = self._store.extend_lock(lock_key, lock_id, ttl_secs)
             if not extended:
-                logger.debug(f"Raft lock extend failed (not owned or expired): {lock_key}")
+                logger.debug("Raft lock extend failed (not owned or expired): %s", lock_key)
                 return ExtendResult(success=False)
 
-            logger.debug(f"Raft lock extended: {lock_key} (new TTL: {ttl}s)")
+            logger.debug("Raft lock extended: %s (new TTL: %ss)", lock_key, ttl)
             # Fetch updated lock info to return with the result
             lock_info = await self.get_lock_info(zone_id, path)
             return ExtendResult(success=True, lock_info=lock_info)
         except Exception as e:
-            logger.error(f"Failed to extend Raft lock {lock_key}: {e}")
+            logger.error("Failed to extend Raft lock %s: %s", lock_key, e)
             return ExtendResult(success=False)
 
     async def get_lock_info(self, zone_id: str, path: str) -> LockInfo | None:
@@ -252,7 +255,7 @@ class RaftLockManager(LockManagerBase):
                 return None
             return self._store_info_to_lock_info(store_info)
         except Exception as e:
-            logger.error(f"Failed to get lock info for {lock_key}: {e}")
+            logger.error("Failed to get lock info for %s: %s", lock_key, e)
             return None
 
     async def is_locked(self, zone_id: str, path: str) -> bool:
@@ -287,7 +290,7 @@ class RaftLockManager(LockManagerBase):
                 results = [r for r in results if pattern in r.path]
             return results
         except Exception as e:
-            logger.error(f"Failed to list locks for zone {zone_id}: {e}")
+            logger.error("Failed to list locks for zone %s: %s", zone_id, e)
             return []
 
     async def force_release(
@@ -309,12 +312,12 @@ class RaftLockManager(LockManagerBase):
         try:
             released = self._store.force_release_lock(lock_key)
             if released:
-                logger.warning(f"Raft lock force-released: {lock_key}")
+                logger.warning("Raft lock force-released: %s", lock_key)
             else:
-                logger.debug(f"Raft lock force-release: no lock found for {lock_key}")
+                logger.debug("Raft lock force-release: no lock found for %s", lock_key)
             return released
         except Exception as e:
-            logger.error(f"Failed to force-release Raft lock {lock_key}: {e}")
+            logger.error("Failed to force-release Raft lock %s: %s", lock_key, e)
             return False
 
     async def health_check(self) -> bool:
@@ -324,7 +327,7 @@ class RaftLockManager(LockManagerBase):
             self._store.get("/__health_check__")
             return True
         except Exception as e:
-            logger.warning(f"Raft lock manager health check failed: {e}")
+            logger.warning("Raft lock manager health check failed: %s", e)
             return False
 
 
@@ -352,26 +355,3 @@ def create_lock_manager(
     if raft_store is None:
         raise ValueError("raft_store is required")
     return RaftLockManager(raft_store)
-
-
-# Singleton instance for shared use
-_distributed_lock_manager: LockManagerBase | None = None
-
-
-def get_distributed_lock_manager() -> LockManagerBase | None:
-    """Get the global distributed lock manager instance.
-
-    Returns:
-        LockManagerBase instance if initialized, None otherwise
-    """
-    return _distributed_lock_manager
-
-
-def set_distributed_lock_manager(manager: LockManagerBase | None) -> None:
-    """Set the global distributed lock manager instance.
-
-    Args:
-        manager: LockManagerBase instance to set as global, or None to clear
-    """
-    global _distributed_lock_manager  # noqa: PLW0603
-    _distributed_lock_manager = manager

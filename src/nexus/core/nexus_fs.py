@@ -235,7 +235,7 @@ class NexusFS(  # type: ignore[misc]
         if brk_svc.vfs_lock_manager is not None:
             self._vfs_lock_manager = brk_svc.vfs_lock_manager
         else:
-            from nexus.core.lock_fast import create_vfs_lock_manager
+            from nexus.lib.lock_fast import create_vfs_lock_manager
 
             self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)

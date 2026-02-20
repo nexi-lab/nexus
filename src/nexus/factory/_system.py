@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from nexus.contracts.write_observer import WriteObserverProtocol
@@ -474,6 +474,72 @@ def _boot_system_services(
             logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
 
     # =====================================================================
+    # EventLog + Scheduler (Issue #2195, LEGO §2.4 System Services)
+    # =====================================================================
+
+    # --- Event Log WAL (Issue #2195) ---
+    event_log: Any = None
+    if not _on("eventlog"):
+        logger.debug("[BOOT:SYSTEM] EventLog disabled by profile")
+    else:
+        try:
+            from pathlib import Path
+
+            from nexus.services.event_log import EventLogConfig, create_event_log
+
+            _wal_dir: str = (
+                ctx.wal_dir
+                if ctx.wal_dir is not None
+                else os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
+            )
+            _sync_mode: str = (
+                ctx.wal_sync_mode
+                if ctx.wal_sync_mode is not None
+                else os.getenv("NEXUS_WAL_SYNC_MODE", "every")
+            )
+            _seg_size = ctx.wal_segment_size or int(
+                os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024))
+            )
+
+            _el_config = EventLogConfig(
+                wal_dir=Path(_wal_dir),
+                segment_size_bytes=_seg_size,
+                sync_mode=cast(Literal["every", "none"], _sync_mode),
+            )
+            event_log = create_event_log(_el_config)
+            if event_log:
+                logger.debug("[BOOT:SYSTEM] EventLog created (WAL)")
+            else:
+                logger.debug("[BOOT:SYSTEM] EventLog: WAL unavailable, graceful degrade")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] EventLog unavailable: %s", exc)
+
+    # --- Scheduler Service (Issue #2195, two-phase: pool created in lifespan) ---
+    scheduler_service: Any = None
+    if not _on("scheduler"):
+        logger.debug("[BOOT:SYSTEM] SchedulerService disabled by profile")
+    elif ctx.db_url.startswith(("postgres", "postgresql")):
+        try:
+            from nexus.services.scheduler.events import AgentStateEmitter
+            from nexus.services.scheduler.policies.fair_share import FairShareCounter
+            from nexus.services.scheduler.queue import TaskQueue
+            from nexus.services.scheduler.service import SchedulerService
+
+            _sched_state_emitter = AgentStateEmitter()
+            _sched_fair_share = FairShareCounter()
+            scheduler_service = SchedulerService(
+                queue=TaskQueue(),
+                db_pool=None,  # Two-phase: pool created in lifespan (async)
+                credits_service=None,  # No pay brick coupling (Issue #2195 §11A)
+                state_emitter=_sched_state_emitter,
+                fair_share=_sched_fair_share,
+                use_hrrn=True,
+            )
+            logger.debug("[BOOT:SYSTEM] SchedulerService created (awaiting async init)")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] SchedulerService unavailable: %s", exc)
+
+    # =====================================================================
     # Assemble result
     # =====================================================================
 
@@ -507,6 +573,9 @@ def _boot_system_services(
         "scoped_hook_engine": scoped_hook_engine,
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
+        # EventLog + Scheduler (Issue #2195)
+        "event_log": event_log,
+        "scheduler_service": scheduler_service,
     }
 
     elapsed = time.perf_counter() - t0

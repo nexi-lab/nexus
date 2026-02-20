@@ -73,7 +73,7 @@ def _boot_wired_services(
         from nexus.services.rebac.rebac_service import ReBACService
 
         rebac_service = ReBACService(
-            rebac_manager=system_services.rebac_manager,
+            rebac_manager=system_services.permission.rebac_manager,
             enforce_permissions=nx._enforce_permissions,
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
@@ -180,7 +180,7 @@ def _boot_wired_services(
             from nexus.services.mount.mount_persist_service import MountPersistService
 
             mount_persist_service = MountPersistService(
-                mount_manager=system_services.mount_manager,
+                mount_manager=system_services.workspace.mount_manager,
                 mount_service=mount_core_service,
                 sync_service=sync_service,
             )
@@ -196,7 +196,7 @@ def _boot_wired_services(
 
         mount_service = MountService(
             router=kernel_services.router,
-            mount_manager=system_services.mount_manager,
+            mount_manager=system_services.workspace.mount_manager,
             nexus_fs=nx,
             sync_service=sync_service,
             sync_job_service=sync_job_service,
@@ -249,7 +249,7 @@ def _boot_wired_services(
             metadata_store=nx.metadata,
             permission_enforcer=getattr(nx, "_permission_enforcer", None),
             router=kernel_services.router,
-            rebac_manager=system_services.rebac_manager,
+            rebac_manager=system_services.permission.rebac_manager,
             enforce_permissions=getattr(nx, "_enforce_permissions", True),
             default_context=getattr(nx, "_default_context", None),
             record_store=getattr(nx, "_record_store", None),
@@ -309,8 +309,8 @@ def _boot_wired_services(
         from nexus.services.workspace_rpc_service import WorkspaceRPCService
 
         workspace_rpc_service = WorkspaceRPCService(
-            workspace_manager=system_services.workspace_manager,
-            workspace_registry=system_services.workspace_registry,
+            workspace_manager=system_services.workspace.workspace_manager,
+            workspace_registry=system_services.workspace.workspace_registry,
             vfs=nx,
             default_context=_nx_default_context,
             snapshot_service=brick_services.snapshot_service,
@@ -329,8 +329,8 @@ def _boot_wired_services(
             session_factory=_nx_session_factory,
             record_store=nx._record_store,
             agent_registry=getattr(nx, "_agent_registry", None),
-            entity_registry=system_services.entity_registry,
-            rebac_manager=system_services.rebac_manager,
+            entity_registry=system_services.permission.entity_registry,
+            rebac_manager=system_services.permission.rebac_manager,
             wallet_provisioner=brick_services.wallet_provisioner,
             api_key_creator=brick_services.api_key_creator,
             key_service=getattr(nx, "_key_service", None),
@@ -385,7 +385,7 @@ def _boot_wired_services(
             session_factory=_nx_session_factory,
             backend=nx.backend,
             default_context=_nx_default_context,
-            entity_registry=system_services.entity_registry,
+            entity_registry=system_services.permission.entity_registry,
             ensure_entity_registry_fn=getattr(nx, "_ensure_entity_registry", None),
         )
         logger.debug("[BOOT:WIRED] ACERPCService created")
@@ -397,10 +397,10 @@ def _boot_wired_services(
         from nexus.services.descendant_access import DescendantAccessChecker
 
         descendant_checker = DescendantAccessChecker(
-            rebac_manager=system_services.rebac_manager,
+            rebac_manager=system_services.permission.rebac_manager,
             rebac_service=rebac_service,
-            dir_visibility_cache=system_services.dir_visibility_cache,
-            permission_enforcer=system_services.permission_enforcer,
+            dir_visibility_cache=system_services.permission.dir_visibility_cache,
+            permission_enforcer=system_services.permission.permission_enforcer,
             metadata_store=nx.metadata,
         )
         logger.debug("[BOOT:WIRED] DescendantAccessChecker created")
@@ -414,7 +414,7 @@ def _boot_wired_services(
         memory_provider = MemoryProvider(
             session_factory=_nx_session_factory,
             backend=nx.backend,
-            entity_registry=system_services.entity_registry,
+            entity_registry=system_services.permission.entity_registry,
             enable_paging=getattr(nx, "_enable_memory_paging", True),
             main_capacity=getattr(nx, "_memory_main_capacity", 100),
             recall_max_age_hours=getattr(nx, "_memory_recall_max_age_hours", 24.0),

@@ -51,6 +51,13 @@ class SchedulerService:
     Orchestrates priority computation, queue operations, credits
     integration, Astraea classification, HRRN dequeue, and fair-share
     admission for the hybrid priority system.
+
+    Supports two-phase initialization (Issue #2195):
+    1. **Construction** (sync): ``SchedulerService(db_pool=None, ...)``
+    2. **Initialization** (async): ``await scheduler.initialize(pool)``
+
+    This allows the factory to construct the service synchronously while
+    the asyncpg pool is created later during async lifespan startup.
     """
 
     def __init__(
@@ -68,10 +75,40 @@ class SchedulerService:
         self._credits = credits_service
         self._fair_share = fair_share or FairShareCounter()
         self._use_hrrn = use_hrrn
+        self._state_emitter = state_emitter
+        self._initialized = db_pool is not None
 
         # Register for agent state events if emitter is provided
         if state_emitter is not None:
             state_emitter.add_handler(self._on_agent_state_change)
+
+    @property
+    def pool(self) -> Any:
+        """Return the asyncpg connection pool.
+
+        Raises:
+            RuntimeError: If ``initialize()`` has not been called yet.
+        """
+        if self._pool is None:
+            raise RuntimeError(
+                "SchedulerService.pool accessed before initialize(). "
+                "Call `await scheduler.initialize(db_pool)` first."
+            )
+        return self._pool
+
+    async def initialize(self, db_pool: Any) -> None:
+        """Complete async initialization with a live connection pool.
+
+        Called by lifespan after ``asyncpg.create_pool()`` completes.
+        Syncs fair-share counters from the database.
+
+        Args:
+            db_pool: An asyncpg connection pool.
+        """
+        self._pool = db_pool
+        self._initialized = True
+        await self.sync_fair_share()
+        logger.info("SchedulerService initialized (pool connected, fair-share synced)")
 
     # =========================================================================
     # SchedulerProtocol — 8 methods
@@ -154,7 +191,7 @@ class SchedulerService:
         effective_tier = compute_effective_tier(submission, enqueued_at=now, now=now)
 
         # Enqueue with Astraea fields
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             task_id = await self._queue.enqueue(
                 conn,
                 agent_id=submission.agent_id,
@@ -198,7 +235,7 @@ class SchedulerService:
 
     async def get_status(self, task_id: str) -> dict[str, Any] | None:
         """Get task status by ID as a dict."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             task = await self._queue.get_task(conn, task_id)
         if task is None:
             return None
@@ -223,7 +260,7 @@ class SchedulerService:
     async def complete(self, task_id: str, *, error: str | None = None) -> None:
         """Mark a task as completed or failed, and update fair-share counter."""
         status = TASK_STATUS_FAILED if error else TASK_STATUS_COMPLETED
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             # Look up the task to get agent_id for fair-share
             task = await self._queue.get_task(conn, task_id)
             await self._queue.complete(conn, task_id, status=status, error=error)
@@ -247,7 +284,7 @@ class SchedulerService:
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         """Get scheduler metrics including queue stats and fair-share."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             queue_metrics = await self._queue.get_queue_metrics(conn, zone_id=zone_id)
 
         return {
@@ -270,7 +307,7 @@ class SchedulerService:
 
     async def cancel(self, agent_id: str) -> int:
         """Cancel all queued tasks for an agent. Returns count cancelled."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             return await self._queue.cancel_by_agent(conn, agent_id)
 
     # =========================================================================
@@ -279,7 +316,7 @@ class SchedulerService:
 
     async def cancel_by_id(self, task_id: str) -> bool:
         """Cancel a single queued task with credit release."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             task = await self._queue.get_task(conn, task_id)
             cancelled = await self._queue.cancel(conn, task_id)
 
@@ -301,7 +338,7 @@ class SchedulerService:
         Args:
             executor_id: If provided, only dequeue tasks assigned to this executor.
         """
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             if self._use_hrrn:
                 task = await self._queue.dequeue_hrrn(conn, executor_id=executor_id)
             else:
@@ -315,7 +352,7 @@ class SchedulerService:
     async def run_aging_sweep(self) -> int:
         """Run one aging sweep cycle."""
         now = datetime.now(UTC)
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             return await self._queue.aging_sweep(conn, now)
 
     # =========================================================================
@@ -330,12 +367,12 @@ class SchedulerService:
             event.previous_state,
             event.new_state,
         )
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             await self._queue.update_executor_state(conn, event.agent_id, event.new_state)
 
     async def sync_fair_share(self) -> None:
         """Initialize fair-share counters from database on startup."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             running_counts = await self._queue.count_running_by_agent(conn)
         self._fair_share.sync_from_db(running_counts)
         logger.info("Fair-share synced from DB: %d agents", len(running_counts))
@@ -345,7 +382,7 @@ class SchedulerService:
         threshold_seconds: float = STARVATION_PROMOTION_THRESHOLD_SECS,
     ) -> int:
         """Promote starved BACKGROUND tasks to BATCH."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             count = await self._queue.promote_starved(conn, threshold_seconds)
         if count > 0:
             logger.info("Starvation promotion: %d tasks promoted", count)

@@ -21,7 +21,7 @@ Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import DEFAULT_NATS_URL
@@ -146,6 +146,55 @@ class KernelServices:
 
 
 @dataclass(frozen=True)
+class PermissionSubsystem:
+    """ReBAC permission cluster — critical + degradable caching services.
+
+    Groups the ReBAC permission infrastructure that forms a cohesive subsystem.
+    Critical services (rebac_manager, audit_store, entity_registry,
+    permission_enforcer) raise BootError on failure. Caching/hierarchy
+    services degrade gracefully.
+
+    Issue #2195: Extracted from flat SystemServices for structural clarity.
+    """
+
+    # Critical (BootError on failure)
+    rebac_manager: ReBACManagerProtocol | None = None
+    audit_store: Any = None
+    entity_registry: EntityRegistryProtocol | None = None
+    permission_enforcer: PermissionEnforcerProtocol | None = None
+
+    # Degradable caching / hierarchy
+    dir_visibility_cache: Any = None
+    hierarchy_manager: Any = None
+    deferred_permission_buffer: Any = None
+    tiger_cache_manager: Any = None
+
+
+@dataclass(frozen=True)
+class WorkspaceSubsystem:
+    """Workspace management cluster — all degradable.
+
+    Issue #2195: Extracted from flat SystemServices.
+    """
+
+    workspace_registry: Any = None
+    mount_manager: Any = None
+    workspace_manager: WorkspaceManagerProtocol | None = None
+
+
+@dataclass(frozen=True)
+class AgentSubsystem:
+    """Agent lifecycle cluster — all degradable.
+
+    Issue #2195: Extracted from flat SystemServices.
+    """
+
+    agent_registry: Any = None
+    async_agent_registry: Any = None
+    eviction_manager: Any = None
+
+
+@dataclass(frozen=True)
 class SystemServices:
     """Tier 1 (SYSTEM) — critical + degradable services.
 
@@ -166,48 +215,31 @@ class SystemServices:
 
     Issue #2034: Extracted from the monolithic KernelServices.
     Issue #2193: Absorbed former Tier 0 services per Liedtke's test.
+    Issue #2195: Grouped into sub-dataclasses (permission, workspace, agent).
     """
 
     # =================================================================
-    # Former-kernel CRITICAL services (BootError on failure)
+    # Sub-system groups (Issue #2195)
     # =================================================================
 
-    # ReBAC permission subsystem — critical (Issue #2133: typed with Protocols)
-    rebac_manager: ReBACManagerProtocol | None = None
-    audit_store: Any = None
-    entity_registry: EntityRegistryProtocol | None = None
-    permission_enforcer: PermissionEnforcerProtocol | None = None
+    # ReBAC permission cluster (critical + degradable caching)
+    permission: PermissionSubsystem = field(default_factory=PermissionSubsystem)
+
+    # Workspace management cluster (all degradable)
+    workspace: WorkspaceSubsystem = field(default_factory=WorkspaceSubsystem)
+
+    # Agent lifecycle cluster (all degradable)
+    agent: AgentSubsystem = field(default_factory=AgentSubsystem)
+
+    # =================================================================
+    # Ungrouped services (diverse, no natural cohesion)
+    # =================================================================
 
     # Write sync — critical
     write_observer: WriteObserverProtocol | None = None
 
-    # =================================================================
-    # Former-kernel DEGRADABLE services (WARNING + None on failure)
-    # =================================================================
-
-    # ReBAC caching / hierarchy — degradable
-    dir_visibility_cache: Any = None
-    hierarchy_manager: Any = None
-    deferred_permission_buffer: Any = None
-
-    # Workspace subsystem — degradable
-    workspace_registry: Any = None
-    mount_manager: Any = None
-    workspace_manager: WorkspaceManagerProtocol | None = None
-
     # VFS hook pipeline (Issue #2033 Phase 5) — degradable
     hook_pipeline: Any = None
-
-    # Tiger Cache manager (Issue #2133: injected via factory)
-    tiger_cache_manager: Any = None
-
-    # =================================================================
-    # Original system services (all degradable)
-    # =================================================================
-
-    # Agent identity (Issue #1502)
-    agent_registry: Any = None
-    async_agent_registry: Any = None
 
     # Namespace visibility (Issue #1502)
     namespace_manager: NamespaceManagerProtocol | None = None
@@ -222,6 +254,9 @@ class SystemServices:
     # Brick lifecycle (Issue #1704)
     brick_lifecycle_manager: Any = None
 
+    # Brick reconciler — drift detection and self-healing (Issue #2060)
+    brick_reconciler: Any = None
+
     # Event delivery (Issue #1241)
     delivery_worker: Any = None
 
@@ -231,14 +266,18 @@ class SystemServices:
     # Resiliency policies (Issue #1366)
     resiliency_manager: Any = None
 
-    # Agent eviction under resource pressure (Issue #2170)
-    eviction_manager: Any = None
-
-    # Brick reconciler — drift detection and self-healing (Issue #2060)
-    brick_reconciler: Any = None
-
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
+
+    # =================================================================
+    # NEW: EventLog + Scheduler (Issue #2195, LEGO §2.4)
+    # =================================================================
+
+    # Event Log WAL — append-only audit trail (Issue #1397)
+    event_log: Any = None
+
+    # Scheduler service — fair-share task scheduling (Issue #1212)
+    scheduler_service: Any = None
 
 
 # ---------------------------------------------------------------------------

@@ -125,6 +125,12 @@ def create_nexus_services(
     cache_cfg = cache or _CacheConfig()
     dist = distributed or _DistributedConfig()
 
+    # Event Log WAL config (Issue #2195)
+    _wal_dir = os.environ.get("NEXUS_WAL_DIR")
+    _wal_sync_mode = os.environ.get("NEXUS_WAL_SYNC_MODE")
+    _wal_segment_size_str = os.environ.get("NEXUS_WAL_SEGMENT_SIZE")
+    _wal_segment_size = int(_wal_segment_size_str) if _wal_segment_size_str else None
+
     ctx = _BootContext(
         record_store=record_store,
         metadata_store=metadata_store,
@@ -141,6 +147,9 @@ def create_nexus_services(
         resiliency_raw=resiliency_raw,
         db_url=getattr(record_store, "database_url", ""),
         profile_tuning=_profile_tuning,
+        wal_dir=_wal_dir,
+        wal_sync_mode=_wal_sync_mode,
+        wal_segment_size=_wal_segment_size,
     )
 
     # --- Tier 0: KERNEL (validate Storage Pillars) ---
@@ -163,23 +172,34 @@ def create_nexus_services(
     # --- Assemble 3-tier containers (Issue #2034, #2193) ---
     kernel_services = _KernelServices(router=router)
 
+    from nexus.core.config import AgentSubsystem as _AgentSubsystem
+    from nexus.core.config import PermissionSubsystem as _PermissionSubsystem
+    from nexus.core.config import WorkspaceSubsystem as _WorkspaceSubsystem
+
     system_services = _SystemServices(
-        # Former-kernel critical (Issue #2193)
-        rebac_manager=system_dict["rebac_manager"],
-        audit_store=system_dict["audit_store"],
-        entity_registry=system_dict["entity_registry"],
-        permission_enforcer=system_dict["permission_enforcer"],
+        # Sub-system groups (Issue #2195)
+        permission=_PermissionSubsystem(
+            rebac_manager=system_dict["rebac_manager"],
+            audit_store=system_dict["audit_store"],
+            entity_registry=system_dict["entity_registry"],
+            permission_enforcer=system_dict["permission_enforcer"],
+            dir_visibility_cache=system_dict["dir_visibility_cache"],
+            hierarchy_manager=system_dict["hierarchy_manager"],
+            deferred_permission_buffer=system_dict["deferred_permission_buffer"],
+            tiger_cache_manager=system_dict["tiger_cache_manager"],
+        ),
+        workspace=_WorkspaceSubsystem(
+            workspace_registry=system_dict["workspace_registry"],
+            mount_manager=system_dict["mount_manager"],
+            workspace_manager=system_dict["workspace_manager"],
+        ),
+        agent=_AgentSubsystem(
+            agent_registry=system_dict["agent_registry"],
+            async_agent_registry=system_dict["async_agent_registry"],
+            eviction_manager=system_dict.get("eviction_manager"),
+        ),
+        # Ungrouped services
         write_observer=system_dict["write_observer"],
-        # Former-kernel degradable (Issue #2193)
-        dir_visibility_cache=system_dict["dir_visibility_cache"],
-        hierarchy_manager=system_dict["hierarchy_manager"],
-        deferred_permission_buffer=system_dict["deferred_permission_buffer"],
-        workspace_registry=system_dict["workspace_registry"],
-        mount_manager=system_dict["mount_manager"],
-        workspace_manager=system_dict["workspace_manager"],
-        # Original system services
-        agent_registry=system_dict["agent_registry"],
-        async_agent_registry=system_dict["async_agent_registry"],
         namespace_manager=system_dict["namespace_manager"],
         async_namespace_manager=system_dict["async_namespace_manager"],
         context_branch_service=system_dict.get("context_branch_service"),
@@ -189,8 +209,10 @@ def create_nexus_services(
         delivery_worker=system_dict["delivery_worker"],
         observability_subsystem=system_dict["observability_subsystem"],
         resiliency_manager=system_dict["resiliency_manager"],
-        eviction_manager=system_dict.get("eviction_manager"),
         zone_lifecycle=system_dict.get("zone_lifecycle"),
+        # EventLog + Scheduler (Issue #2195)
+        event_log=system_dict.get("event_log"),
+        scheduler_service=system_dict.get("scheduler_service"),
     )
 
     brick_services = _BrickServices(

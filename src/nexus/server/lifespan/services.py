@@ -451,7 +451,9 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     # Use factory-constructed EvictionManager (DRY — avoid duplicate construction)
     app.state._eviction_task = None
     app.state._checkpoint_cleanup_task = None
-    _factory_em = app.state.eviction_manager
+    _sys_svc = getattr(getattr(app.state, "nexus_fs", None), "_system_services", None)
+    _agent_sub = getattr(_sys_svc, "agent", None) if _sys_svc else None
+    _factory_em = getattr(_agent_sub, "eviction_manager", None) if _agent_sub else None
     _eviction_tuning = getattr(app.state.profile_tuning, "eviction", None)
     if _factory_em is not None and _eviction_tuning is not None:
         try:
@@ -511,21 +513,24 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
 
 
 async def _startup_scheduler(app: FastAPI) -> None:
-    """Initialize SchedulerService if PostgreSQL database is available (Issue #1212)."""
-    if not (app.state.database_url and "postgresql" in app.state.database_url):
+    """Initialize factory-created SchedulerService with async pool (Issue #2195).
+
+    Construction moved to ``factory._system._boot_system_services`` (sync,
+    db_pool=None).  Lifespan creates the asyncpg pool and calls
+    ``scheduler.initialize(pool)`` to complete the two-phase handshake.
+    """
+    _nx = getattr(app.state, "nexus_fs", None)
+    _sys = getattr(_nx, "_system_services", None) if _nx else None
+    scheduler = getattr(_sys, "scheduler_service", None) if _sys else None
+    if scheduler is None:
         return
 
     try:
         import asyncpg
 
-        from nexus.bricks.pay.credits import CreditsService
-        from nexus.services.scheduler.events import AgentStateEmitter
-        from nexus.services.scheduler.policies.fair_share import FairShareCounter
-        from nexus.services.scheduler.queue import TaskQueue
-        from nexus.services.scheduler.service import SchedulerService
+        from nexus.lib.db_utils import sqlalchemy_url_to_asyncpg_dsn
 
-        # Convert SQLAlchemy URL to asyncpg DSN
-        pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
+        pg_dsn = sqlalchemy_url_to_asyncpg_dsn(app.state.database_url)
         _pool_tuning = app.state.profile_tuning.pool
         pool = await asyncpg.create_pool(
             pg_dsn,
@@ -534,46 +539,29 @@ async def _startup_scheduler(app: FastAPI) -> None:
         )
         app.state._scheduler_pool = pool
 
-        # NOTE: scheduled_tasks table is now managed by Alembic migration
-        # (alembic/versions/add_scheduled_tasks_table.py). Run `alembic upgrade head`
-        # to create/update the schema. The runtime DDL that was previously here has
-        # been removed per Issue #698.
+        # Two-phase init: set pool + sync fair-share counters
+        await scheduler.initialize(pool)
+        app.state.scheduler_service = scheduler
 
-        # Astraea: state emitter + fair-share (Issue #1274)
-        state_emitter = AgentStateEmitter()
-        fair_share = FairShareCounter()
-
-        scheduler_service = SchedulerService(
-            queue=TaskQueue(),
-            db_pool=pool,
-            credits_service=CreditsService(enabled=False),
-            state_emitter=state_emitter,
-            fair_share=fair_share,
-            use_hrrn=True,
-        )
-        app.state.scheduler_service = scheduler_service
-
-        # Wire emitter into AsyncAgentRegistry if available
-        async_reg = app.state.async_agent_registry
-        if async_reg is not None:
-            async_reg._state_emitter = state_emitter
+        # Wire state_emitter into AsyncAgentRegistry if available
+        _state_emitter = getattr(scheduler, "_state_emitter", None)
+        async_reg = getattr(app.state, "async_agent_registry", None)
+        if async_reg is not None and _state_emitter is not None:
+            async_reg._state_emitter = _state_emitter
 
         # Wire hook cleanup handler into state emitter (Issue #1257)
-        scoped_hook_engine = app.state.scoped_hook_engine
-        if scoped_hook_engine is not None:
+        scoped_hook_engine = getattr(_sys, "scoped_hook_engine", None) if _sys else None
+        if scoped_hook_engine is not None and _state_emitter is not None:
             from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler
 
-            state_emitter.add_handler(create_agent_cleanup_handler(scoped_hook_engine))
+            _state_emitter.add_handler(create_agent_cleanup_handler(scoped_hook_engine))
             logger.debug("Hook cleanup handler registered on AgentStateEmitter")
 
-        # Initialize fair-share counters from DB
-        await scheduler_service.sync_fair_share()
-
-        logger.info("Scheduler service initialized with Astraea (PostgreSQL)")
+        logger.info("Scheduler service initialized from factory (PostgreSQL)")
     except ImportError as e:
-        logger.debug(f"Scheduler service not available: {e}")
+        logger.debug("Scheduler async init not available: %s", e)
     except Exception as e:
-        logger.warning("Failed to initialize Scheduler service: %s", e, exc_info=True)
+        logger.warning("Failed to initialize Scheduler: %s", e, exc_info=True)
 
 
 def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:

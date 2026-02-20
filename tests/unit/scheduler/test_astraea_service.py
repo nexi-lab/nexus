@@ -310,6 +310,44 @@ class TestAgentStateEvents:
 
 
 # =============================================================================
+# Two-Phase Initialization (Issue #2195)
+# =============================================================================
+
+
+class TestTwoPhaseInit:
+    """Test factory-compatible two-phase initialization."""
+
+    def test_uninitialized_pool_raises_runtime_error(self):
+        """Accessing pool before initialize() raises RuntimeError."""
+        svc = SchedulerService(queue=AsyncMock(), db_pool=None)
+        with pytest.raises(RuntimeError, match="initialize"):
+            _ = svc.pool
+
+    @pytest.mark.asyncio
+    async def test_initialize_sets_pool(self, mock_queue, mock_pool):
+        """initialize(pool) sets the pool and syncs fair-share."""
+        svc = SchedulerService(queue=mock_queue, db_pool=None)
+        assert svc._initialized is False
+
+        await svc.initialize(mock_pool)
+
+        assert svc._initialized is True
+        assert svc.pool is mock_pool
+
+    def test_pool_property_succeeds_when_initialized(self, scheduler):
+        """pool property returns the pool when initialized via constructor."""
+        assert scheduler.pool is not None
+
+    @pytest.mark.asyncio
+    async def test_initialize_calls_sync_fair_share(self, mock_queue, mock_pool):
+        """initialize() calls sync_fair_share to load counters from DB."""
+        mock_queue.count_running_by_agent = AsyncMock(return_value={"a": 2})
+        svc = SchedulerService(queue=mock_queue, db_pool=None)
+        await svc.initialize(mock_pool)
+        mock_queue.count_running_by_agent.assert_called_once()
+
+
+# =============================================================================
 # Complete with Fair-Share
 # =============================================================================
 

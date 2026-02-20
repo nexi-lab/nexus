@@ -178,27 +178,34 @@ class NexusFS(  # type: ignore[misc]
         # =====================================================================
         # Tier 1: SYSTEM services — critical + degradable (Issue #2193)
         # Moved from KernelServices to SystemServices per Liedtke's test.
+        # Issue #2195: Accessed via sub-system groups.
         # =====================================================================
-        self._rebac_manager = sys_svc.rebac_manager
-        self._dir_visibility_cache = sys_svc.dir_visibility_cache
-        self._audit_store = sys_svc.audit_store
-        self._entity_registry = sys_svc.entity_registry
-        self._permission_enforcer = sys_svc.permission_enforcer
-        self._hierarchy_manager = sys_svc.hierarchy_manager
-        self._deferred_permission_buffer = sys_svc.deferred_permission_buffer
-        self._workspace_registry = sys_svc.workspace_registry
-        self.mount_manager = sys_svc.mount_manager
-        self._workspace_manager = sys_svc.workspace_manager
+        _perm = sys_svc.permission
+        self._rebac_manager = _perm.rebac_manager
+        self._dir_visibility_cache = _perm.dir_visibility_cache
+        self._audit_store = _perm.audit_store
+        self._entity_registry = _perm.entity_registry
+        self._permission_enforcer = _perm.permission_enforcer
+        self._hierarchy_manager = _perm.hierarchy_manager
+        self._deferred_permission_buffer = _perm.deferred_permission_buffer
+
+        _ws = sys_svc.workspace
+        self._workspace_registry = _ws.workspace_registry
+        self.mount_manager = _ws.mount_manager
+        self._workspace_manager = _ws.workspace_manager
+
         self._write_observer = sys_svc.write_observer
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
 
         # =====================================================================
         # Tier 1: SYSTEM services (Issue #2034: from SystemServices)
+        # Issue #2195: Agent services accessed via sub-system group.
         # =====================================================================
-        self._agent_registry = sys_svc.agent_registry
+        _ag = sys_svc.agent
+        self._agent_registry = _ag.agent_registry
+        self._async_agent_registry = _ag.async_agent_registry
         self._namespace_manager = sys_svc.namespace_manager
-        self._async_agent_registry = sys_svc.async_agent_registry
         self._async_namespace_manager = sys_svc.async_namespace_manager
         self._context_branch_service = sys_svc.context_branch_service
         # Zone lifecycle — write gating during deprovisioning (Issue #2061)
@@ -306,7 +313,8 @@ class NexusFS(  # type: ignore[misc]
 
         # Tiger Cache (Issue #2133: injected via SystemServices, fallback for tests)
         ssvc = self._system_services
-        _injected_tcm = getattr(ssvc, "tiger_cache_manager", None) if ssvc else None
+        _perm_sub = getattr(ssvc, "permission", None) if ssvc else None
+        _injected_tcm = getattr(_perm_sub, "tiger_cache_manager", None) if _perm_sub else None
         if _injected_tcm is not None:
             self._tiger_cache_manager = _injected_tcm
         else:

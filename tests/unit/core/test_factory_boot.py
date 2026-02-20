@@ -76,6 +76,9 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "scoped_hook_engine",
         "tiger_cache_manager",
         "zone_lifecycle",
+        # EventLog + Scheduler (Issue #2195)
+        "event_log",
+        "scheduler_service",
     }
 )
 
@@ -221,6 +224,9 @@ class TestBootSystemServices:
             "tiger_cache_manager",
             "delivery_worker",
             "observability_subsystem",
+            # EventLog depends on WAL availability; Scheduler requires PostgreSQL
+            "event_log",
+            "scheduler_service",
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:
@@ -270,6 +276,58 @@ class TestBootSystemServices:
         ctx = _make_boot_context()  # enable_deferred=False by default
         result = _boot_system_services(ctx)
         assert result["deferred_permission_buffer"] is None
+
+    def test_event_log_present_in_system_keys(self) -> None:
+        """Issue #2195: event_log key is present in system service dict."""
+        ctx = _make_boot_context()
+        result = _boot_system_services(ctx)
+        assert "event_log" in result
+
+    def test_scheduler_service_present_in_system_keys(self) -> None:
+        """Issue #2195: scheduler_service key is present in system service dict."""
+        ctx = _make_boot_context()
+        result = _boot_system_services(ctx)
+        assert "scheduler_service" in result
+
+    def test_scheduler_none_without_postgresql(self) -> None:
+        """Issue #2195: scheduler_service is None when db_url is SQLite."""
+        ctx = _make_boot_context(db_url="sqlite://")
+        result = _boot_system_services(ctx)
+        assert result["scheduler_service"] is None
+
+    def test_scheduler_created_with_postgresql(self) -> None:
+        """Issue #2195: scheduler_service is non-None when db_url is PostgreSQL."""
+        ctx = _make_boot_context(db_url="postgresql://localhost/test")
+        result = _boot_system_services(ctx)
+        assert result["scheduler_service"] is not None
+
+    def test_scheduler_not_initialized_at_boot(self) -> None:
+        """Issue #2195: scheduler_service has _initialized=False at factory boot."""
+        ctx = _make_boot_context(db_url="postgresql://localhost/test")
+        result = _boot_system_services(ctx)
+        scheduler = result["scheduler_service"]
+        assert scheduler is not None
+        assert scheduler._initialized is False
+
+    def test_event_log_degradable_when_wal_unavailable(self) -> None:
+        """Issue #2195: EventLog degrades gracefully (returns None) on failure."""
+        ctx = _make_boot_context()
+        with patch(
+            "nexus.services.event_log.create_event_log",
+            side_effect=RuntimeError("WAL failed"),
+        ):
+            result = _boot_system_services(ctx)
+        assert result["event_log"] is None
+
+    def test_scheduler_degradable_on_import_error(self) -> None:
+        """Issue #2195: SchedulerService degrades gracefully on ImportError."""
+        ctx = _make_boot_context(db_url="postgresql://localhost/test")
+        with patch(
+            "nexus.services.scheduler.service.SchedulerService.__init__",
+            side_effect=ImportError("no module"),
+        ):
+            result = _boot_system_services(ctx)
+        assert result["scheduler_service"] is None
 
 
 class TestBootBrickServices:
@@ -430,10 +488,10 @@ class TestCreateNexusServices:
             enable_write_buffer=False,
         )
 
-        # Issue #2193: Former-kernel fields now on SystemServices
-        assert system.rebac_manager is not None
-        assert system.permission_enforcer is not None
-        assert system.workspace_registry is not None
+        # Issue #2193: Former-kernel fields now on SystemServices (sub-dataclasses)
+        assert system.permission.rebac_manager is not None
+        assert system.permission.permission_enforcer is not None
+        assert system.workspace.workspace_registry is not None
         assert system.write_observer is not None
         assert kernel.router is router
 

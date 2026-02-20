@@ -238,15 +238,15 @@ def _store_memory_v1(
     detect_evolution: bool = False,
     **kwargs: Any,
 ) -> dict:
-    """Store a memory via V1 API and return response data."""
+    """Store a memory via V2 API and return response data."""
     payload = {
         "content": content,
         "scope": "user",
         "detect_evolution": detect_evolution,
         **kwargs,
     }
-    resp = client.post("/api/memory/store", json=payload, headers=headers)
-    assert resp.status_code == 200, f"V1 Store failed: {resp.text}"
+    resp = client.post("/api/v2/memories", json=payload, headers=headers)
+    assert resp.status_code == 201, f"V2 Store failed: {resp.text}"
     return resp.json()
 
 
@@ -270,9 +270,9 @@ def _store_memory_v2(
 
 
 def _get_memory_v1(client: TestClient, headers: dict, memory_id: str) -> dict:
-    """Get a memory by ID via V1 API."""
-    resp = client.get(f"/api/memory/{memory_id}", headers=headers)
-    assert resp.status_code == 200, f"V1 Get failed: {resp.text}"
+    """Get a memory by ID via V2 API."""
+    resp = client.get(f"/api/v2/memories/{memory_id}", headers=headers)
+    assert resp.status_code == 200, f"V2 Get failed: {resp.text}"
     return resp.json()["memory"]
 
 
@@ -351,9 +351,9 @@ class TestEvolutionV1API:
             assert len(extends_list) >= 1
 
     def test_store_without_auth_returns_401(self, client):
-        """POST /api/memory/store without auth -> 401."""
+        """POST /api/v2/memories without auth -> 401."""
         resp = client.post(
-            "/api/memory/store",
+            "/api/v2/memories",
             json={"content": "Should fail", "scope": "user"},
         )
         assert resp.status_code == 401

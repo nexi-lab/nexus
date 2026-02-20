@@ -62,14 +62,6 @@ def build_v1_registry() -> RouterRegistry:
     except ImportError as e:
         logger.warning("Failed to import search router: %s", e)
 
-    # ---- Memory router (Issue #1023) ----
-    try:
-        from nexus.server.api.v1.routers.memory import router as memory_router
-
-        registry.add(RouterEntry(router=memory_router, name="memory", endpoint_count=4))
-    except ImportError as e:
-        logger.warning("Failed to import memory router: %s", e)
-
     # ---- Graph router (Issue #1039) ----
     try:
         from nexus.server.api.v1.routers.graph import router as graph_router

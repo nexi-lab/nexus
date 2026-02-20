@@ -68,7 +68,7 @@ class TestGraphAPI:
         """Test memory store endpoint accepts store_to_graph parameter."""
         # Store a memory (without LLM extraction - will skip graph storage)
         response = test_app.post(
-            "/api/memory/store",
+            "/api/v2/memories",
             json={
                 "content": "Alice works at TechCorp with Bob.",
                 "scope": "user",

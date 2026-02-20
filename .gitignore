@@ -19,6 +19,7 @@ eggs/
 .eggs/
 lib/
 !src/nexus/lib/
+!tests/unit/lib/
 lib64/
 parts/
 sdist/

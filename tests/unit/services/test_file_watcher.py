@@ -13,8 +13,14 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+from watchfiles import Change
 
-from nexus.services.watch.file_watcher import ChangeType, FileChange, FileWatcher
+from nexus.services.watch.file_watcher import (
+    ChangeType,
+    FileChange,
+    FileWatcher,
+    _RenameDetector,
+)
 
 # =============================================================================
 # FileWatcher Lifecycle Tests
@@ -422,6 +428,119 @@ class TestFileChangeDataclass:
         assert result["type"] == "renamed"
         assert result["path"] == "/test/new.txt"
         assert result["old_path"] == "/test/old.txt"
+
+
+# =============================================================================
+# _RenameDetector Tests
+# =============================================================================
+
+
+class TestRenameDetector:
+    """Tests for _RenameDetector rename correlation logic."""
+
+    def test_single_delete_and_add_same_dir_produces_rename(self):
+        """One delete + one add in same directory -> RENAMED."""
+        raw: set[tuple[Change, str]] = {
+            (Change.deleted, "/dir/old.txt"),
+            (Change.added, "/dir/new.txt"),
+        }
+        result = _RenameDetector.process(raw)
+
+        assert len(result) == 1
+        assert result[0].type == ChangeType.RENAMED
+        assert result[0].path == "/dir/new.txt"
+        assert result[0].old_path == "/dir/old.txt"
+
+    def test_delete_and_add_different_dirs_no_rename(self):
+        """Delete in dir_a + add in dir_b -> separate events, no rename."""
+        raw: set[tuple[Change, str]] = {
+            (Change.deleted, "/dir_a/old.txt"),
+            (Change.added, "/dir_b/new.txt"),
+        }
+        result = _RenameDetector.process(raw)
+
+        assert len(result) == 2
+        types = {r.type for r in result}
+        assert types == {ChangeType.DELETED, ChangeType.CREATED}
+
+    def test_multiple_deletes_no_rename(self):
+        """Two deletes + one add -> no rename (ambiguous)."""
+        raw: set[tuple[Change, str]] = {
+            (Change.deleted, "/dir/a.txt"),
+            (Change.deleted, "/dir/b.txt"),
+            (Change.added, "/dir/c.txt"),
+        }
+        result = _RenameDetector.process(raw)
+
+        # Should have 3 separate events, no rename
+        types = [r.type for r in result]
+        assert ChangeType.RENAMED not in types
+        assert len(result) == 3
+
+    def test_hidden_files_filtered_for_rename_detection(self):
+        """Hidden files (.DS_Store) excluded from rename pairing."""
+        raw: set[tuple[Change, str]] = {
+            (Change.deleted, "/dir/old.txt"),
+            (Change.added, "/dir/new.txt"),
+            (Change.added, "/dir/.DS_Store"),
+        }
+        result = _RenameDetector.process(raw)
+
+        # Rename detected for visible pair; hidden file emitted separately
+        rename_events = [r for r in result if r.type == ChangeType.RENAMED]
+        created_events = [r for r in result if r.type == ChangeType.CREATED]
+
+        assert len(rename_events) == 1
+        assert rename_events[0].path == "/dir/new.txt"
+        assert rename_events[0].old_path == "/dir/old.txt"
+        assert len(created_events) == 1
+        assert ".DS_Store" in created_events[0].path
+
+    def test_empty_batch_returns_empty(self):
+        """Empty raw set -> empty result."""
+        raw: set[tuple[Change, str]] = set()
+        result = _RenameDetector.process(raw)
+        assert result == []
+
+    def test_modified_events_pass_through(self):
+        """Modified events pass through unchanged."""
+        raw: set[tuple[Change, str]] = {
+            (Change.modified, "/dir/file.txt"),
+        }
+        result = _RenameDetector.process(raw)
+
+        assert len(result) == 1
+        assert result[0].type == ChangeType.MODIFIED
+        assert result[0].path == "/dir/file.txt"
+
+    def test_only_hidden_files_no_rename(self):
+        """All hidden files -> individual events, no rename."""
+        raw: set[tuple[Change, str]] = {
+            (Change.deleted, "/dir/.hidden_old"),
+            (Change.added, "/dir/.hidden_new"),
+        }
+        result = _RenameDetector.process(raw)
+
+        # No visible files -> no rename detected
+        types = [r.type for r in result]
+        assert ChangeType.RENAMED not in types
+        assert len(result) == 2
+
+    def test_mixed_events_with_rename(self):
+        """Rename pair + modify in same batch -> both emitted."""
+        raw: set[tuple[Change, str]] = {
+            (Change.deleted, "/dir/old.txt"),
+            (Change.added, "/dir/new.txt"),
+            (Change.modified, "/dir/other.txt"),
+        }
+        result = _RenameDetector.process(raw)
+
+        rename_events = [r for r in result if r.type == ChangeType.RENAMED]
+        modified_events = [r for r in result if r.type == ChangeType.MODIFIED]
+
+        assert len(rename_events) == 1
+        assert len(modified_events) == 1
+        assert modified_events[0].path == "/dir/other.txt"
 
 
 # =============================================================================

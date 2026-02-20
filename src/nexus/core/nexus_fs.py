@@ -1902,7 +1902,9 @@ class NexusFS(  # type: ignore[misc]
             return False
 
         # Check exclude patterns
-        return not (exclude_patterns and any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns))
+        return not (
+            exclude_patterns and any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns)
+        )
 
     # --- Search (list/glob/grep already have concrete impls below) ---
 

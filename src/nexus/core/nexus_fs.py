@@ -2331,7 +2331,7 @@ class NexusFS(  # type: ignore[misc]
             filter.path_prefix = prefix
 
         # Get all files matching prefix (exclude internal system entries)
-        from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+        from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
         all_files = [
             m

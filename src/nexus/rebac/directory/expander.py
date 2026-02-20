@@ -318,7 +318,7 @@ class DirectoryExpander:
                 FROM file_paths
                 WHERE virtual_path LIKE :prefix
                   AND deleted_at IS NULL
-                  AND (zone_id = :zone_id OR zone_id = 'default' OR zone_id IS NULL)
+                  AND (zone_id = :zone_id OR zone_id = 'root' OR zone_id IS NULL)
             """)
 
             with self._engine.connect() as conn:

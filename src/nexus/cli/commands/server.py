@@ -25,6 +25,7 @@ from nexus.cli.utils import (
     handle_error,
     is_standalone,
 )
+from nexus.constants import ROOT_ZONE_ID
 from nexus.lib.env import get_database_url
 from nexus.lib.sync_bridge import run_sync
 
@@ -1253,7 +1254,7 @@ def serve(
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)
-            zone_id = "default"
+            zone_id = ROOT_ZONE_ID
 
             # User might already exist, ignore errors
             try:
@@ -1319,7 +1320,7 @@ def serve(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        zone_id="default",
+                        zone_id=ROOT_ZONE_ID,
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"

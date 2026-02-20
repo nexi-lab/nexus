@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.services.event_log.replay_service import (
+from nexus.services.event_subsystem.log.replay import (
     EventReplayService,
     _decode_cursor,
     _encode_cursor,

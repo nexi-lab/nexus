@@ -400,7 +400,7 @@ def connect(
     from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     if cfg.profile == "auto":
-        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
 
         caps = detect_capabilities()
         resolved_profile = suggest_profile(caps)
@@ -414,7 +414,7 @@ def connect(
     else:
         resolved_profile = DeploymentProfile(cfg.profile)
         # Warn if explicit profile may exceed device capabilities
-        from nexus.lib.device_capabilities import (
+        from nexus.core.device_capabilities import (
             detect_capabilities,
             warn_if_profile_exceeds_device,
         )

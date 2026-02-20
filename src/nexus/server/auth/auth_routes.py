@@ -66,21 +66,6 @@ def get_nexus_instance() -> Any | None:
     return _nexus_fs_instance
 
 
-# Issue #635: User provisioning via extracted service
-_user_provisioning_service: Any = None
-
-
-def set_user_provisioning_service(svc: Any) -> None:
-    """Inject the UserProvisioningService. Called by server layer at startup."""
-    global _user_provisioning_service
-    _user_provisioning_service = svc
-
-
-def get_user_provisioning_service() -> Any | None:
-    """Return the injected UserProvisioningService, or None."""
-    return _user_provisioning_service
-
-
 async def get_authenticated_user(
     authorization: str = Header(..., description="Bearer JWT token"),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
@@ -512,11 +497,11 @@ async def setup_zone(
         try:
             from nexus.contracts.types import OperationContext
 
-            prov_svc = get_user_provisioning_service()
-            if not prov_svc:
+            nx = get_nexus_instance()
+            if not nx:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="User provisioning service not configured.",
+                    detail="NexusFS instance not configured. Cannot provision user resources.",
                 )
 
             admin_context = OperationContext(
@@ -527,7 +512,7 @@ async def setup_zone(
             )
 
             # Provision user resources with API key (90 days expiry)
-            provision_result = prov_svc.provision_user(
+            provision_result = nx.provision_user(
                 user_id=user_id,
                 email=user.email,
                 display_name=user.display_name,
@@ -1387,8 +1372,8 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         try:
             from nexus.contracts.types import OperationContext
 
-            prov_svc = get_user_provisioning_service()
-            if prov_svc:
+            nx = get_nexus_instance()
+            if nx:
                 admin_context = OperationContext(
                     user_id="system",
                     groups=[],
@@ -1397,7 +1382,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 )
 
                 # Provision user resources with OAuth-specific API key (90 days expiry)
-                provision_result = prov_svc.provision_user(
+                provision_result = nx.provision_user(
                     user_id=user_id,
                     email=user.email,
                     display_name=user.display_name,

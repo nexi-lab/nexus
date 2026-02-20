@@ -344,8 +344,6 @@ class AgentRPCService:
             raise RuntimeError("record_store is required to initialize AgentRegistry")
         from nexus.services.agents.agent_registry import AgentRegistry
 
-        if self._record_store is None:
-            raise RuntimeError("record_store is required to initialize AgentRegistry")
         self._agent_registry = AgentRegistry(
             record_store=self._record_store,
             entity_registry=self._entity_registry,

@@ -182,9 +182,6 @@ def app_with_db_auth(tmp_path, db_session_factory, api_keys):
         permissions=PermissionConfig(enforce=False),
         memory=MemoryConfig(enable_paging=True, main_capacity=10),
     )
-    from nexus.services.service_wiring import wire_services
-
-    wire_services(nx)
 
     # Match production wiring: DiscriminatingAuthProvider routes sk-* tokens
     # to DatabaseAPIKeyAuth (same as `nexus serve --auth-type database`)
@@ -348,7 +345,7 @@ class TestAdminUser:
         )
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, (dict, list))
+        assert isinstance(data, dict | list)
 
     def test_admin_delete_memory(self, client, admin_headers):
         """Admin can delete memories."""

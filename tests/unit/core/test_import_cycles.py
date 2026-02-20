@@ -39,7 +39,7 @@ def _is_inside_type_checking(node: ast.AST, tree: ast.Module) -> bool:
 def _is_inside_function(node: ast.AST, tree: ast.Module) -> bool:
     """Check if an import node is inside a function or method body."""
     for top_node in ast.walk(tree):
-        if not isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(top_node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         for child in ast.walk(top_node):
             if child is node:

@@ -18,8 +18,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.event_bus import FileEventType
 from nexus.core.metadata import FileMetadata
+from nexus.services.event_subsystem.types import FileEventType
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_syncer import RecordStoreWriteObserver
@@ -75,7 +75,7 @@ class TestTransactionalOutboxIntegration:
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Write via syncer → start worker → verify delivery."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         # Step 1: Write file via syncer (transactional)
         metadata = _make_metadata("/integration.txt", etag="ihash")
@@ -130,7 +130,7 @@ class TestTransactionalOutboxIntegration:
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Multiple writes + delete → all delivered in created_at order."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         # Create multiple operations
         m1 = _make_metadata("/a.txt", etag="h1")
@@ -191,7 +191,7 @@ class TestTransactionalOutboxIntegration:
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Simulate crash: dispatch fails → restart → events retried."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         # Write a file
         m = _make_metadata("/crash.txt", etag="crash")
@@ -229,7 +229,7 @@ class TestTransactionalOutboxIntegration:
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Worker running in background picks up events automatically."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()

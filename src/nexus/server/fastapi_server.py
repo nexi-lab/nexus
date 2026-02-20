@@ -221,7 +221,7 @@ def create_app(
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":
-        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
 
         _caps = detect_capabilities()
         _profile = suggest_profile(_caps)
@@ -239,10 +239,10 @@ def create_app(
             logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
             _profile = DeploymentProfile.FULL
         # Warn if explicit profile may exceed device capabilities
-        from nexus.lib.device_capabilities import (
+        from nexus.core.device_capabilities import (
             detect_capabilities as _detect_caps,
         )
-        from nexus.lib.device_capabilities import (
+        from nexus.core.device_capabilities import (
             warn_if_profile_exceeds_device,
         )
 
@@ -350,16 +350,6 @@ def create_app(
             _brick_sources.append(_meta_export_svc)
     except Exception as _exc:
         logger.debug("MetadataExportService unavailable: %s", _exc)
-    # Task #634: AgentService lives outside kernel — created by factory, not on NexusFS
-    try:
-        from nexus.services.agents.agent_service import create_agent_service
-
-        _agent_svc = create_agent_service(nexus_fs)
-        if _agent_svc is not None:
-            _brick_sources.append(_agent_svc)
-            app.state.agent_service = _agent_svc
-    except Exception as _exc:
-        logger.debug("AgentService unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Defaults for optional services are set by init_app_state() above (Issue #2135)

@@ -111,9 +111,6 @@ def run_benchmark(enable_deferred: bool = False):
             enable_tiger_cache=False,  # SQLite doesn't support Tiger Cache
             enable_deferred_permissions=enable_deferred,  # Issue #1071
         )
-        from nexus.services.service_wiring import wire_services
-
-        wire_services(nx)
 
         # Create user context
         ctx = OperationContext(

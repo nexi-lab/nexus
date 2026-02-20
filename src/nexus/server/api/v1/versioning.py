@@ -23,20 +23,10 @@ logger = logging.getLogger(__name__)
 def build_v1_registry() -> RouterRegistry:
     """Import all v1 routers and return a populated registry.
 
-    Each import is isolated in its own try/except so one broken
-    module doesn't prevent the rest from loading.
+    All v1 routers have been ported to v2 (#2056). This registry
+    is now empty and retained only for the app factory interface.
     """
-    registry = RouterRegistry()
-
-    # ---- Events router (Issue #1116, #1117) ----
-    try:
-        from nexus.server.api.v1.routers.events import router as events_router
-
-        registry.add(RouterEntry(router=events_router, name="events", endpoint_count=4))
-    except ImportError as e:
-        logger.warning("Failed to import events router: %s", e)
-
-    return registry
+    return RouterRegistry()
 
 
 def register_v1_routers(app: FastAPI, registry: RouterRegistry) -> None:

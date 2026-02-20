@@ -1,10 +1,12 @@
-"""Event Replay + SSE streaming API v2 endpoints (Issue #1139).
+"""Event Replay + SSE streaming + Watch API v2 endpoints (Issue #1139, #2056).
 
 Provides:
-- GET /api/v2/events/replay  — cursor-based historical event query
+- GET /api/v2/events         — v1-compat event log query (operation_id cursors)
+- GET /api/v2/events/replay  — cursor-based historical event query (seq_number cursors)
 - GET /api/v2/events/stream  — SSE real-time event streaming
+- GET /api/v2/watch          — long-polling watch for file changes
 
-Both share the EventReplayService for consistent filtering and pagination.
+Both replay and list share the EventReplayService for consistent filtering.
 """
 
 from __future__ import annotations
@@ -20,11 +22,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from nexus.server.dependencies import get_auth_result
+from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
+from nexus.server.dependencies import get_auth_result, get_operation_context
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/events", tags=["events-v2"])
+watch_router = APIRouter(prefix="/api/v2/watch", tags=["watch"])
 
 # ---- Per-zone SSE connection tracking ----------------------------------------
 
@@ -237,3 +241,125 @@ async def stream_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# =============================================================================
+# V1-compat event list endpoint (#2056 — ported from v1)
+# =============================================================================
+
+
+@router.get("", tags=["events-v2"])
+async def list_events(
+    request: Request,
+    zone_id: str | None = Query(None, description="Filter by zone ID"),
+    since: datetime | None = Query(None, description="Events after this time (ISO-8601)"),
+    until: datetime | None = Query(None, description="Events before this time (ISO-8601)"),
+    path_prefix: str | None = Query(None, description="Filter by path prefix (wildcard *)"),
+    agent_id: str | None = Query(None, description="Filter by agent ID"),
+    operation_type: str | None = Query(None, description="Filter by operation type"),
+    limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
+    cursor: str | None = Query(None, description="Cursor from previous response"),
+    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+) -> dict[str, Any]:
+    """Query the operation log / event history (#2056, ported from v1).
+
+    Delegates to ``EventReplayService.list_v1()`` for cursor-based
+    pagination, zone/agent/path/time filters.  Uses DESC ordering
+    with operation_id cursors.
+
+    For sequence_number-based replay, use ``GET /api/v2/events/replay``.
+    """
+    service = _get_replay_service(request)
+
+    # Default zone from auth
+    effective_zone = zone_id
+    if effective_zone is None and _auth_result:
+        effective_zone = _auth_result.get("zone_id")
+
+    try:
+        result = service.list_v1(
+            zone_id=effective_zone,
+            agent_id=agent_id,
+            operation_type=operation_type,
+            path_prefix=path_prefix,
+            since=since,
+            until=until,
+            limit=limit,
+            cursor=cursor,
+        )
+
+        events = [
+            {
+                "event_id": ev.event_id,
+                "type": ev.type,
+                "path": ev.path,
+                "new_path": ev.new_path,
+                "zone_id": ev.zone_id,
+                "agent_id": ev.agent_id,
+                "status": ev.status,
+                "delivered": ev.delivered,
+                "timestamp": ev.timestamp or None,
+            }
+            for ev in result.events
+        ]
+
+        return {
+            "events": events,
+            "next_cursor": result.next_cursor,
+            "has_more": result.has_more,
+        }
+
+    except Exception as e:
+        logger.error("Event log query error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to query events") from e
+
+
+# =============================================================================
+# Long-polling watch endpoint (#2056 — ported from v1)
+# =============================================================================
+
+
+def _get_nexus_fs(request: Request) -> Any:
+    """Get NexusFS from app.state, raising 503 if not initialized."""
+    fs = getattr(request.app.state, "nexus_fs", None)
+    if fs is None:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+    return fs
+
+
+@watch_router.get("", tags=["watch"])
+async def watch_for_changes(
+    request: Request,
+    path: str = Query("/**/*", description="Path or glob pattern to watch"),
+    timeout: float = Query(30.0, ge=0.1, le=300.0, description="Maximum time to wait in seconds"),
+    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+) -> dict[str, Any]:
+    """Long-polling endpoint to wait for file system changes.
+
+    Returns the first change matching *path* within *timeout* seconds,
+    or ``{"changes": [], "timeout": true}`` if no change occurs.
+    """
+    nexus_fs = _get_nexus_fs(request)
+    context = None
+    if _auth_result:
+        context = get_operation_context(_auth_result)
+
+    try:
+        change = await nexus_fs.events_service.wait_for_changes(
+            path=path, timeout=timeout, _context=context
+        )
+        if change is None:
+            return {"changes": [], "timeout": True}
+        return {"changes": [change], "timeout": False}
+    except NotImplementedError as e:
+        raise HTTPException(
+            status_code=501,
+            detail=f"Watch not available: {e}. Requires Redis event bus or same-box backend.",
+        ) from None
+    except NexusFileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Path not found: {path}") from None
+    except NexusPermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from None
+    except Exception as e:
+        logger.error("Watch error for %s: %s", path, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Watch failed") from e

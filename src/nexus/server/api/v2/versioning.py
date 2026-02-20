@@ -127,13 +127,15 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import ACE v2 routes: %s", e)
 
-    # ---- Events replay router (Issue #1139) ----
+    # ---- Events replay router (Issue #1139) + watch/list (#2056) ----
     try:
         from nexus.server.api.v2.routers.events_replay import router as events_replay_router
+        from nexus.server.api.v2.routers.events_replay import watch_router
 
         registry.add(
-            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=2)
+            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=4)
         )
+        registry.add(RouterEntry(router=watch_router, name="watch", endpoint_count=1))
     except ImportError as e:
         logger.warning("Failed to import Events replay routes: %s", e)
 

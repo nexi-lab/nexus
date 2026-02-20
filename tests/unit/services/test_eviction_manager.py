@@ -276,14 +276,16 @@ class TestEvictionManager:
     @pytest.mark.asyncio
     async def test_checkpoint_timeout_aborts_cycle(self, manager, mock_registry, mock_monitor):
         """Checkpoint timeout returns early without evicting."""
-        import time
-
         mock_monitor.check_pressure.return_value = PressureLevel.CRITICAL
         agents = [_make_agent("agent-1")]
         mock_registry.list_eviction_candidates.return_value = agents
 
         # batch_checkpoint is called via asyncio.to_thread, mock blocks
-        mock_registry.batch_checkpoint.side_effect = lambda *a, **kw: time.sleep(60)
+        # Use threading.Event so we can cancel quickly instead of sleeping 60s
+        import threading
+
+        stop = threading.Event()
+        mock_registry.batch_checkpoint.side_effect = lambda *a, **kw: stop.wait(timeout=60)
 
         # Override tuning to have very short timeout
         manager._tuning = EvictionTuning(

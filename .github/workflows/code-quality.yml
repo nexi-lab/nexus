@@ -214,6 +214,8 @@ jobs:
       - name: Run import-linter
         run: |
           lint-imports --cache-dir .import-linter-cache
+        env:
+          PYTHONPATH: src
 
       - name: Report violations
         if: failure()

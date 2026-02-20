@@ -343,7 +343,6 @@ class SegmentedPathInterner:
 # Use module-level instances for sharing across the application
 
 _global_path_interner: PathInterner | None = None
-_global_segmented_interner: SegmentedPathInterner | None = None
 _interner_lock = threading.Lock()
 
 
@@ -359,36 +358,6 @@ def get_path_interner() -> PathInterner:
             if _global_path_interner is None:
                 _global_path_interner = PathInterner()
     return _global_path_interner
-
-
-def get_segmented_interner() -> SegmentedPathInterner:
-    """Get the global SegmentedPathInterner instance (thread-safe singleton).
-
-    Returns:
-        The global SegmentedPathInterner instance
-    """
-    global _global_segmented_interner
-    if _global_segmented_interner is None:
-        with _interner_lock:
-            if _global_segmented_interner is None:
-                _global_segmented_interner = SegmentedPathInterner()
-    return _global_segmented_interner
-
-
-def reset_global_interners() -> None:
-    """Reset global interners (primarily for testing).
-
-    Warning: This should only be called in tests or during shutdown.
-    Existing path IDs will become invalid.
-    """
-    global _global_path_interner, _global_segmented_interner
-    with _interner_lock:
-        if _global_path_interner is not None:
-            _global_path_interner.clear()
-            _global_path_interner = None
-        if _global_segmented_interner is not None:
-            _global_segmented_interner.clear()
-            _global_segmented_interner = None
 
 
 @dataclass(slots=True)

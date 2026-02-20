@@ -51,6 +51,7 @@ from nexus.contracts.agent_types import (
     is_new_session,
     validate_transition,
 )
+from nexus.contracts.qos import EVICTION_ORDER, AgentQoS
 from nexus.services.agents.heartbeat_buffer import HeartbeatBuffer
 from nexus.storage.models import AgentRecordModel
 
@@ -156,6 +157,7 @@ class AgentRegistry:
         metadata: dict[str, Any] | None = None,
         capabilities: list[str] | None = None,
         context_manifest: list[dict[str, Any]] | None = None,
+        qos: AgentQoS | None = None,
     ) -> AgentRecord:
         """Register a new agent. Returns existing record if agent_id already exists.
 
@@ -172,6 +174,8 @@ class AgentRegistry:
                 (e.g. ["search", "analyze", "code"]). Stored in metadata.
             context_manifest: Optional list of context source dicts for
                 deterministic pre-execution (Issue #1341/1427).
+            qos: Optional QoS assignment (Issue #2171). Defaults to
+                standard scheduling and eviction class.
 
         Returns:
             AgentRecord snapshot of the registered agent.
@@ -188,6 +192,11 @@ class AgentRegistry:
         if capabilities:
             metadata = dict(metadata) if metadata else {}
             metadata["capabilities"] = list(capabilities)
+
+        # Store QoS in metadata (Issue #2171)
+        agent_qos = qos if qos is not None else AgentQoS()
+        metadata = dict(metadata) if metadata else {}
+        metadata["qos"] = agent_qos.to_dict()
 
         with self._get_session() as session:
             # Check for existing
@@ -208,7 +217,8 @@ class AgentRegistry:
                 state=AgentState.UNKNOWN.value,
                 generation=0,
                 last_heartbeat=None,
-                agent_metadata=json.dumps(metadata) if metadata else None,
+                agent_metadata=json.dumps(metadata),
+                eviction_priority=EVICTION_ORDER.get(agent_qos.eviction_class, 1),
                 context_manifest=json.dumps(context_manifest) if context_manifest else None,
                 created_at=now,
                 updated_at=now,
@@ -356,6 +366,10 @@ class AgentRegistry:
             metadata_dict = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
             manifest_list = _safe_json_loads(model.context_manifest, "context_manifest", agent_id)
 
+            # Deserialize QoS from metadata (Issue #2171)
+            qos_data = metadata_dict.get("qos")
+            agent_qos = AgentQoS.from_dict(qos_data) if isinstance(qos_data, dict) else AgentQoS()
+
             record = AgentRecord(
                 agent_id=model.agent_id,
                 owner_id=model.owner_id,
@@ -368,6 +382,7 @@ class AgentRegistry:
                 created_at=model.created_at,
                 updated_at=now,
                 context_manifest=tuple(manifest_list),
+                qos=agent_qos,
             )
 
         logger.debug(
@@ -636,10 +651,10 @@ class AgentRegistry:
         return records
 
     def list_eviction_candidates(self, batch_size: int = 10) -> list[AgentRecord]:
-        """Return CONNECTED agents ordered by staleness (LRU), limited to batch_size.
+        """Return CONNECTED agents ordered for eviction, limited to batch_size.
 
-        Uses last_heartbeat ASC NULLS FIRST ordering so agents that have never
-        heartbeated or have the oldest heartbeats are evicted first.
+        Orders by eviction_priority ASC (spot=0 first, premium=2 last), then
+        by last_heartbeat ASC NULLS FIRST within each QoS tier (Issue #2171).
 
         Excludes agents with recent buffer heartbeats via SQL NOT IN clause
         and applies SQL LIMIT to avoid O(N) ORM hydration.
@@ -648,7 +663,7 @@ class AgentRegistry:
             batch_size: Maximum number of candidates to return.
 
         Returns:
-            List of AgentRecord snapshots ordered by staleness.
+            List of AgentRecord snapshots ordered for eviction.
         """
         # Get all buffered agent IDs (any buffered heartbeat = recently active)
         buffered_ids = self._heartbeat_buffer.recently_heartbeated(datetime(1970, 1, 1, tzinfo=UTC))
@@ -658,8 +673,8 @@ class AgentRegistry:
                 select(AgentRecordModel)
                 .where(AgentRecordModel.state == AgentState.CONNECTED.value)
                 .order_by(
-                    AgentRecordModel.last_heartbeat.is_(None).desc(),
-                    AgentRecordModel.last_heartbeat.asc(),
+                    AgentRecordModel.eviction_priority.asc(),
+                    AgentRecordModel.last_heartbeat.asc().nullsfirst(),
                 )
             )
             # Push buffer exclusion into SQL to avoid hydrating excluded rows
@@ -1041,6 +1056,10 @@ class AgentRegistry:
         metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", model.agent_id)
         manifest_list = _safe_json_loads(model.context_manifest, "context_manifest", model.agent_id)
 
+        # Deserialize QoS from metadata (Issue #2171)
+        qos_data = metadata.get("qos")
+        agent_qos = AgentQoS.from_dict(qos_data) if isinstance(qos_data, dict) else AgentQoS()
+
         return AgentRecord(
             agent_id=model.agent_id,
             owner_id=model.owner_id,
@@ -1053,4 +1072,5 @@ class AgentRegistry:
             created_at=model.created_at,
             updated_at=model.updated_at,
             context_manifest=tuple(manifest_list),
+            qos=agent_qos,
         )

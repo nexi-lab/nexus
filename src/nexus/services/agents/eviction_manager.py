@@ -1,4 +1,4 @@
-"""Eviction manager orchestrating resource-pressure agent eviction (Issue #2170).
+"""Eviction manager orchestrating resource-pressure agent eviction (Issues #2170, #2171).
 
 Composes ResourceMonitor + EvictionPolicy + AgentRegistry to implement the
 eviction pipeline: check pressure -> select candidates -> checkpoint -> evict.
@@ -7,6 +7,11 @@ Follows Orleans watermark-based eviction pattern:
 - Start evicting above high_watermark
 - Stop evicting below low_watermark
 - Cooldown between cycles to prevent thrashing
+
+Issue #2171 additions:
+- Async signal (_urgent_event) for immediate preemption cycles.
+- EvictionContext propagation to QoS-aware policies.
+- trigger_immediate_cycle() for agent-level preemption.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.agent_types import EvictionReason
-from nexus.services.agents.resource_monitor import PressureLevel
+from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, PressureLevel, QoSClass
 
 if TYPE_CHECKING:
     from nexus.contracts.agent_types import AgentRecord
@@ -53,6 +58,9 @@ class EvictionManager:
     - EvictionPolicy: selects which agents to evict
     - AgentRegistry: manages agent state transitions and checkpoints
 
+    Issue #2171: Adds an asyncio.Event for immediate preemption cycles
+    triggered by premium agent registration when at capacity.
+
     Args:
         registry: AgentRegistry for state transitions and checkpoints.
         monitor: ResourceMonitor for pressure detection.
@@ -73,18 +81,49 @@ class EvictionManager:
         self._tuning = tuning
         self._last_eviction: float = 0.0
         self._transition_semaphore = asyncio.Semaphore(tuning.max_concurrent_transitions)
+        # Async signal for immediate preemption (Issue #2171).
+        # Uses Event + Queue: Event for wake-up, Queue for thread-safe QoS delivery.
+        self._urgent_event = asyncio.Event()
+        self._urgent_queue: asyncio.Queue[QoSClass | None] = asyncio.Queue()
 
-    async def run_cycle(self) -> EvictionResult:
+    @property
+    def urgent_event(self) -> asyncio.Event:
+        """Expose the urgent event for the background task loop."""
+        return self._urgent_event
+
+    def trigger_immediate_cycle(self, requesting_qos: QoSClass | None = None) -> None:
+        """Signal an immediate eviction cycle for preemption (Issue #2171).
+
+        Coroutine-safe (single event loop). Uses asyncio.Queue to deliver the
+        requesting QoS class, avoiding race conditions between concurrent callers.
+        NOT thread-safe — call from the event loop only.
+
+        Args:
+            requesting_qos: QoS class of the agent requesting resources.
+                Used to filter candidates (only evict lower-priority agents).
+        """
+        self._urgent_queue.put_nowait(requesting_qos)
+        self._urgent_event.set()
+        logger.info(
+            "[EVICTION] Immediate cycle triggered (requesting_qos=%s)",
+            requesting_qos,
+        )
+
+    async def run_cycle(self, context: EvictionContext | None = None) -> EvictionResult:
         """Execute one eviction cycle.
 
         Pipeline:
         1. Check resource pressure (+ agent cap as secondary trigger)
         2. Check cooldown
-        3. Get candidates from registry (LRU order)
-        4. Apply policy filter
+        3. Get candidates from registry (QoS-aware order)
+        4. Apply policy filter (with EvictionContext)
         5. Batch checkpoint state (with timeout enforcement)
         6. Transition concurrently to SUSPENDED (with CAS safety + semaphore)
         7. Re-check pressure after eviction (skipped for over_cap)
+
+        Args:
+            context: Optional EvictionContext for QoS-aware decisions.
+                If None, context is built from current pressure state.
 
         Returns:
             EvictionResult with eviction counts and reason.
@@ -94,6 +133,22 @@ class EvictionManager:
             InvalidTransitionError,
             StaleAgentError,
         )
+
+        # Consume urgent event if set, drain queue for highest-priority requester
+        requesting_qos: QoSClass | None = None
+        if self._urgent_event.is_set():
+            self._urgent_event.clear()
+            # Drain all queued requests; pick the highest-priority requester
+            while not self._urgent_queue.empty():
+                try:
+                    qos = self._urgent_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if qos is not None and (
+                    requesting_qos is None
+                    or EVICTION_ORDER.get(qos, 1) > EVICTION_ORDER.get(requesting_qos, 1)
+                ):
+                    requesting_qos = qos
 
         # 1. Check resource pressure
         pressure = await self._monitor.check_pressure()
@@ -111,12 +166,33 @@ class EvictionManager:
                     connected_count,
                     self._tuning.max_active_agents,
                 )
+            elif requesting_qos is not None:
+                # Preemption trigger: at cap, premium needs slot
+                over_cap = True
+                logger.info(
+                    "[EVICTION] Preemption triggered for %s agent at cap %d",
+                    requesting_qos,
+                    self._tuning.max_active_agents,
+                )
             else:
                 return EvictionResult(evicted=0, reason=EvictionReason.NORMAL_PRESSURE)
 
-        # 2. Check cooldown
-        if self._in_cooldown():
+        # 2. Check cooldown (skip for preemption triggers)
+        if requesting_qos is None and self._in_cooldown():
             return EvictionResult(evicted=0, reason=EvictionReason.COOLDOWN)
+
+        # Build EvictionContext if not provided
+        if context is None:
+            reason = (
+                EvictionReason.OVER_AGENT_CAP
+                if over_cap
+                else _PRESSURE_TO_REASON.get(pressure, EvictionReason.PRESSURE_WARNING)
+            )
+            context = EvictionContext(
+                pressure=pressure,
+                trigger=reason,
+                requesting_agent_qos=requesting_qos,
+            )
 
         # 3. Get candidates via to_thread (sync registry)
         candidates = await asyncio.to_thread(
@@ -126,8 +202,10 @@ class EvictionManager:
         if not candidates:
             return EvictionResult(evicted=0, reason=EvictionReason.NO_CANDIDATES)
 
-        # 4. Apply policy (may filter/reorder)
-        selected = self._policy.select_candidates(candidates, self._tuning.eviction_batch_size)
+        # 4. Apply policy (may filter/reorder based on QoS context)
+        selected = self._policy.select_candidates(
+            candidates, self._tuning.eviction_batch_size, context=context
+        )
         if not selected:
             return EvictionResult(evicted=0, reason=EvictionReason.NO_CANDIDATES)
 
@@ -190,14 +268,10 @@ class EvictionManager:
             post_pressure = await self._monitor.check_pressure()
             post_pressure_value = post_pressure.value
 
-        reason = (
-            EvictionReason.OVER_AGENT_CAP
-            if over_cap
-            else _PRESSURE_TO_REASON.get(pressure, EvictionReason.PRESSURE_WARNING)
-        )
+        assert context is not None  # Built above if not provided
         return EvictionResult(
             evicted=evicted,
-            reason=reason,
+            reason=context.trigger,
             post_pressure=post_pressure_value,
             skipped=skipped,
         )

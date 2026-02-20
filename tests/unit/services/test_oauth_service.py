@@ -618,11 +618,11 @@ class TestLazyCreation:
             assert factory is not None
             MockFactory.assert_called_once()
 
-    def test_get_token_manager_no_db_raises(self) -> None:
+    def test_get_token_manager_no_db_returns_none(self) -> None:
         service = OAuthService(token_manager=None, database_url=None)
 
-        with pytest.raises(RuntimeError, match="Database path not configured"):
-            service._get_token_manager()
+        result = service._get_token_manager()
+        assert result is None
 
     def test_get_token_manager_with_db_url(self) -> None:
         service = OAuthService(token_manager=None, database_url="sqlite:///test.db")

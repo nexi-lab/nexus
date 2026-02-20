@@ -120,6 +120,7 @@ class TestAgentEvictionTask:
         result.post_pressure = "normal"
 
         manager = AsyncMock()
+        manager.urgent_event = asyncio.Event()
         call_count = 0
 
         async def counting_cycle():
@@ -155,6 +156,7 @@ class TestAgentEvictionTask:
             return result
 
         manager = MagicMock()
+        manager.urgent_event = asyncio.Event()
         manager.run_cycle = counting_cycle
 
         with caplog.at_level(logging.INFO), pytest.raises(asyncio.CancelledError):
@@ -182,6 +184,7 @@ class TestAgentEvictionTask:
             return result
 
         manager = MagicMock()
+        manager.urgent_event = asyncio.Event()
         manager.run_cycle = exception_then_success
 
         with caplog.at_level(logging.ERROR), pytest.raises(asyncio.CancelledError):

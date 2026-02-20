@@ -2123,7 +2123,12 @@ def create_nexus_fs(
 
     # Create content cache (Issue #657)
     _content_cache = None
-    _cache_for_cc = cache or CacheConfig()
+    if cache is None:
+        from nexus.core.config import CacheConfig as _CC
+
+        _cache_for_cc = _CC()
+    else:
+        _cache_for_cc = cache
     if _cache_for_cc.enable_content_cache and backend.has_root_path is True:
         from nexus.storage.content_cache import ContentCache
 

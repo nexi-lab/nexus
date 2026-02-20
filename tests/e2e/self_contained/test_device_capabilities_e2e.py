@@ -155,13 +155,19 @@ class TestComputeFeaturesInfoAutoProfile:
 
     def test_compute_with_lite_bricks(self) -> None:
         from nexus.server.lifespan import _compute_features_info
+        from nexus.server.lifespan.services_container import LifespanServices
 
         app = FastAPI()
         app.state.deployment_profile = "lite"
         app.state.deployment_mode = "standalone"
         app.state.enabled_bricks = resolve_enabled_bricks(DeploymentProfile.LITE)
 
-        _compute_features_info(app)
+        svc = LifespanServices(
+            deployment_profile="lite",
+            deployment_mode="standalone",
+            enabled_bricks=resolve_enabled_bricks(DeploymentProfile.LITE),
+        )
+        _compute_features_info(app, svc)
 
         info: Any = app.state.features_info
         assert info.profile == "lite"

@@ -266,6 +266,8 @@ class TestBootBrickServices:
             "reputation_service",
             "version_service",
             "rebac_circuit_breaker",
+            "memory_router",
+            "memory_permission",
         }
         assert expected_keys == set(result.keys())
 

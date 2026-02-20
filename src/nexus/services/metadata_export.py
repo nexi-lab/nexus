@@ -15,13 +15,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nexus.core.export_import import (
+from nexus.core.metadata import FileMetadata
+from nexus.lib.export_import import (
     CollisionDetail,
     ExportFilter,
     ImportOptions,
     ImportResult,
 )
-from nexus.core.metadata import FileMetadata
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)

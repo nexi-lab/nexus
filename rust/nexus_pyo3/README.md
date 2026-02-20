@@ -71,7 +71,7 @@ If a pre-built wheel is not available for your platform, Nexus will automaticall
 #### Verify Installation
 
 ```python
-from nexus.core import grep_fast
+from nexus.bricks.search.primitives import grep_fast
 
 print(grep_fast.is_available())  # Should print True if Rust extension is available
 ```

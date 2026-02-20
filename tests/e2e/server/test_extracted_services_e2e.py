@@ -333,7 +333,7 @@ class TestEventsServiceE2E:
 
         # Acquire lock via REST
         resp = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={
                 "path": path,
                 "timeout": 5.0,
@@ -348,7 +348,7 @@ class TestEventsServiceE2E:
 
         # Unlock via REST (lock_id is a query parameter)
         resp2 = test_app.delete(
-            f"/api/locks/{path.lstrip('/')}",
+            f"/api/v2/locks/{path.lstrip('/')}",
             params={"lock_id": lock_id},
             headers=HEADERS,
         )
@@ -361,7 +361,7 @@ class TestEventsServiceE2E:
 
         # Acquire lock
         resp = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={
                 "path": path,
                 "timeout": 5.0,
@@ -374,7 +374,7 @@ class TestEventsServiceE2E:
 
         # Extend lock TTL via PATCH
         resp2 = test_app.patch(
-            f"/api/locks/{path.lstrip('/')}",
+            f"/api/v2/locks/{path.lstrip('/')}",
             json={
                 "lock_id": lock_id,
                 "ttl": 60.0,
@@ -385,7 +385,7 @@ class TestEventsServiceE2E:
 
         # Cleanup: release lock
         test_app.delete(
-            f"/api/locks/{path.lstrip('/')}",
+            f"/api/v2/locks/{path.lstrip('/')}",
             params={"lock_id": lock_id},
             headers=HEADERS,
         )

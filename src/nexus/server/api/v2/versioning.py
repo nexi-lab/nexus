@@ -274,6 +274,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Batch routes: %s", e)
 
+    # ---- Locks router (#2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.locks import router as locks_router
+
+        registry.add(RouterEntry(router=locks_router, name="locks", endpoint_count=5))
+    except ImportError as e:
+        logger.warning("Failed to import Locks routes: %s", e)
+
     # ---- Governance router (Issue #1359) — admin auth required ----
     try:
         from nexus.server.api.v2.routers.governance import router as governance_router

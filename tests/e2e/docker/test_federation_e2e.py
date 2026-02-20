@@ -549,7 +549,7 @@ class TestLockAPICrossZone:
         try:
             # Step 1: Acquire lock
             resp = httpx.post(
-                f"{node}/api/locks",
+                f"{node}/api/v2/locks",
                 json={"path": path},
                 headers=headers,
                 timeout=10,
@@ -566,7 +566,7 @@ class TestLockAPICrossZone:
             # Step 2: Check lock
             lock_path = path.lstrip("/")
             resp2 = httpx.get(
-                f"{node}/api/locks/{lock_path}",
+                f"{node}/api/v2/locks/{lock_path}",
                 headers=headers,
                 timeout=10,
                 trust_env=False,
@@ -575,7 +575,7 @@ class TestLockAPICrossZone:
 
             # Step 3: Release lock
             resp3 = httpx.delete(
-                f"{node}/api/locks/{lock_path}",
+                f"{node}/api/v2/locks/{lock_path}",
                 headers=headers,
                 timeout=10,
                 trust_env=False,
@@ -584,7 +584,7 @@ class TestLockAPICrossZone:
 
             # Step 4: Verify released
             resp4 = httpx.get(
-                f"{node}/api/locks/{lock_path}",
+                f"{node}/api/v2/locks/{lock_path}",
                 headers=headers,
                 timeout=10,
                 trust_env=False,

@@ -28,14 +28,6 @@ def build_v1_registry() -> RouterRegistry:
     """
     registry = RouterRegistry()
 
-    # ---- Locks router (Issue #1186) ----
-    try:
-        from nexus.server.api.v1.routers.locks import router as locks_router
-
-        registry.add(RouterEntry(router=locks_router, name="locks", endpoint_count=5))
-    except ImportError as e:
-        logger.warning("Failed to import locks router: %s", e)
-
     # ---- Subscriptions router ----
     try:
         from nexus.server.api.v1.routers.subscriptions import router as subscriptions_router

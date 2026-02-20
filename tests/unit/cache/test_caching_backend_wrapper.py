@@ -16,7 +16,7 @@ from nexus.backends.caching_backend_wrapper import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 # ---------------------------------------------------------------------------
 # Helpers

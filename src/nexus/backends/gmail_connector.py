@@ -56,7 +56,7 @@ from nexus.connectors.base import (
 )
 from nexus.connectors.gmail.errors import ERROR_REGISTRY
 from nexus.contracts.exceptions import BackendError
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.lib.response import HandlerResponse, timed_response
 
 try:
     import yaml

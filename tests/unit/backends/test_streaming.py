@@ -23,7 +23,7 @@ class TestBackendWriteStreamDefault:
 
     def test_default_write_stream_collects_chunks(self) -> None:
         """Test that default implementation collects chunks and calls write_content."""
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         class TestBackend(Backend):
             """Minimal test backend."""

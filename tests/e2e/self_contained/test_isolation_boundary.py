@@ -59,47 +59,47 @@ class SysModulesMutator:
 
     # Stubs for abstract methods (unused in boundary tests)
     def write_content(self, content, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data="hash", backend_name=self.name)
 
     def read_content(self, h, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=b"", backend_name=self.name)
 
     def delete_content(self, h, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def content_exists(self, h, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=False, backend_name=self.name)
 
     def get_content_size(self, h, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=0, backend_name=self.name)
 
     def get_ref_count(self, h, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=0, backend_name=self.name)
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def rmdir(self, path, recursive=False, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def is_directory(self, path, context=None):
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=False, backend_name=self.name)
 

@@ -25,7 +25,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import HandlerStatusResponse
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

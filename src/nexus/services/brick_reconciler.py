@@ -84,6 +84,8 @@ class BrickReconciler:
         self._last_reconcile_at: float | None = None
         # Per-brick next-eligible-retry timestamps (#3A)
         self._next_retry_after: dict[str, float] = {}
+        # Zone-aware filtering (Issue #2061)
+        self._terminating_zone_bricks: dict[str, set[str]] = {}  # zone_id → brick_names
 
     # ------------------------------------------------------------------
     # Public read-only accessors
@@ -131,6 +133,31 @@ class BrickReconciler:
         """Event trigger: schedule immediate reconciliation."""
         logger.debug("[RECONCILER] State change notification for %r", brick_name)
         self._event.set()
+
+    # ------------------------------------------------------------------
+    # Zone awareness (Issue #2061)
+    # ------------------------------------------------------------------
+
+    def mark_zone_terminating(self, zone_id: str, *, brick_names: set[str]) -> None:
+        """Mark bricks as belonging to a terminating zone.
+
+        The reconciler will skip health checks and self-healing for these bricks.
+        """
+        self._terminating_zone_bricks[zone_id] = brick_names
+        logger.info(
+            "[RECONCILER] Zone %r marked terminating (%d bricks)",
+            zone_id,
+            len(brick_names),
+        )
+
+    def mark_zone_destroyed(self, zone_id: str) -> None:
+        """Remove zone terminating marker — normal reconciliation resumes."""
+        self._terminating_zone_bricks.pop(zone_id, None)
+        logger.info("[RECONCILER] Zone %r marked destroyed", zone_id)
+
+    def _is_brick_in_terminating_zone(self, brick_name: str) -> bool:
+        """Check if a brick belongs to any terminating zone."""
+        return any(brick_name in bricks for bricks in self._terminating_zone_bricks.values())
 
     # ------------------------------------------------------------------
     # Main loop
@@ -219,6 +246,10 @@ class BrickReconciler:
 
         Uses only immutable data — no access to internal manager structures.
         """
+        # Skip bricks in terminating zones (Issue #2061)
+        if self._is_brick_in_terminating_zone(spec.name):
+            return None
+
         if spec.enabled:
             if state == BrickState.FAILED:
                 if retry_count >= self._max_retries:
@@ -438,10 +469,13 @@ class BrickReconciler:
             health_failed: set[str] = set()
 
             # Phase 1: Health check ACTIVE bricks concurrently (#13A)
+            # Skip bricks in terminating zones (Issue #2061)
             active_bricks = [
                 (name, instance)
                 for name, spec, state, _retry, instance in brick_list
-                if spec.enabled and state == BrickState.ACTIVE
+                if spec.enabled
+                and state == BrickState.ACTIVE
+                and not self._is_brick_in_terminating_zone(name)
             ]
 
             if active_bricks:

@@ -553,7 +553,9 @@ class TestFindSubjectSets:
 
     def test_excludes_expired_tuples(self, repo: TupleRepository):
         """Expired tuples should not appear in results."""
-        past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+        # Use strftime format (space separator) to match SQLAlchemy's SQLite DateTime adapter.
+        # isoformat() uses 'T' separator which breaks SQLite string comparison.
+        past = (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")
         conn = repo.get_connection()
         try:
             _insert_tuple(
@@ -867,7 +869,9 @@ class TestFindDirectTupleBySubject:
 
     def test_expired_tuple_not_found(self, repo: TupleRepository):
         """Expired tuples should not be returned."""
-        past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+        # Use strftime format (space separator) to match SQLAlchemy's SQLite DateTime adapter.
+        # isoformat() uses 'T' separator which breaks SQLite string comparison.
+        past = (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")
         conn = repo.get_connection()
         try:
             _insert_tuple(

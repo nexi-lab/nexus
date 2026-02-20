@@ -12,146 +12,156 @@ Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import StaticPool
 
 from nexus.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
+from nexus.storage.models import Base
 
 
 @pytest.fixture
 def sqlite_engine():
-    """Create an in-memory SQLite engine with version sequences table."""
-    engine = create_engine("sqlite:///:memory:")
-    with engine.connect() as conn:
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS rebac_version_sequences (
-                zone_id TEXT PRIMARY KEY,
-                current_version INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT
-            )
-        """)
-        )
-        conn.commit()
+    """Create an in-memory SQLite engine with ORM tables.
+
+    Uses StaticPool so all connections (including raw_connection) share
+    the same underlying DBAPI connection — required for SQLite :memory:.
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
     return engine
+
+
+@pytest.fixture
+def conn_helper(sqlite_engine):
+    """Create a TupleRepository as conn_helper for increment_version_token."""
+    from nexus.rebac.tuples.repository import TupleRepository
+
+    return TupleRepository(engine=sqlite_engine)
 
 
 class TestIncrementVersionToken:
     """Test increment_version_token function."""
 
-    def test_first_call_returns_v1(self, sqlite_engine):
-        token = increment_version_token(sqlite_engine, zone_id="root")
+    def test_first_call_returns_v1(self, sqlite_engine, conn_helper):
+        token = increment_version_token(sqlite_engine, conn_helper, zone_id="root")
         assert token == "v1"
 
-    def test_second_call_returns_v2(self, sqlite_engine):
-        increment_version_token(sqlite_engine, zone_id="root")
-        token = increment_version_token(sqlite_engine, zone_id="root")
+    def test_second_call_returns_v2(self, sqlite_engine, conn_helper):
+        increment_version_token(sqlite_engine, conn_helper, zone_id="root")
+        token = increment_version_token(sqlite_engine, conn_helper, zone_id="root")
         assert token == "v2"
 
-    def test_monotonic_increments(self, sqlite_engine):
+    def test_monotonic_increments(self, sqlite_engine, conn_helper):
         tokens = []
         for _ in range(5):
-            tokens.append(increment_version_token(sqlite_engine, zone_id="test_zone"))
+            tokens.append(increment_version_token(sqlite_engine, conn_helper, zone_id="test_zone"))
         assert tokens == ["v1", "v2", "v3", "v4", "v5"]
 
-    def test_different_zones_independent(self, sqlite_engine):
-        t1 = increment_version_token(sqlite_engine, zone_id="zone_a")
-        t2 = increment_version_token(sqlite_engine, zone_id="zone_b")
-        t3 = increment_version_token(sqlite_engine, zone_id="zone_a")
+    def test_different_zones_independent(self, sqlite_engine, conn_helper):
+        t1 = increment_version_token(sqlite_engine, conn_helper, zone_id="zone_a")
+        t2 = increment_version_token(sqlite_engine, conn_helper, zone_id="zone_b")
+        t3 = increment_version_token(sqlite_engine, conn_helper, zone_id="zone_a")
         assert t1 == "v1"
         assert t2 == "v1"
         assert t3 == "v2"
 
-    def test_default_zone_id(self, sqlite_engine):
-        token = increment_version_token(sqlite_engine)
+    def test_default_zone_id(self, sqlite_engine, conn_helper):
+        token = increment_version_token(sqlite_engine, conn_helper)
         assert token == "v1"
 
 
 class TestIncrementVersionTokenPostgres:
     """Test increment_version_token with PostgreSQL dialect (mocked).
 
-    The function uses engine.begin() as a context manager and then
-    conn.execute(stmt).fetchone() to get the result. We mock the
-    engine to simulate PostgreSQL behavior.
+    The function uses conn_helper.connection() as a context manager and then
+    cursor.execute(sql).fetchone() to get the result. We mock the conn_helper
+    and engine to simulate PostgreSQL behavior.
     """
 
-    def _make_pg_engine(self, fetchone_results):
-        """Create a mock engine that simulates PostgreSQL dialect.
+    def _make_pg_setup(self, fetchone_results):
+        """Create mock engine + conn_helper that simulates PostgreSQL dialect.
 
         Args:
             fetchone_results: List of return values for successive
-                              conn.execute(...).fetchone() calls.
+                              cursor.fetchone() calls.
         """
         engine = MagicMock()
         engine.dialect.name = "postgresql"
 
         mock_conn = MagicMock()
-        mock_results = []
+        mock_cursor = MagicMock()
+
+        # Build fetchone side effects
+        fetchone_values = []
         for row_data in fetchone_results:
-            mock_result = MagicMock()
             if row_data is None:
-                mock_result.fetchone.return_value = None
+                fetchone_values.append(None)
             else:
-                mock_row = MagicMock()
-                mock_row.current_version = row_data["current_version"]
-                mock_result.fetchone.return_value = mock_row
-            mock_results.append(mock_result)
+                fetchone_values.append(row_data)
 
-        mock_conn.execute.side_effect = mock_results
+        mock_cursor.fetchone.side_effect = fetchone_values
 
-        # engine.begin() returns a context manager yielding mock_conn
-        engine.begin.return_value.__enter__ = MagicMock(return_value=mock_conn)
-        engine.begin.return_value.__exit__ = MagicMock(return_value=False)
+        # Build conn_helper mock
+        conn_helper = MagicMock()
 
-        return engine, mock_conn
+        @contextmanager
+        def mock_connection():
+            yield mock_conn
+
+        conn_helper.connection = mock_connection
+        conn_helper.create_cursor.return_value = mock_cursor
+
+        return engine, conn_helper, mock_cursor
 
     def test_postgresql_first_version_returns_v1(self):
-        engine, _ = self._make_pg_engine([{"current_version": 1}])
+        engine, conn_helper, _ = self._make_pg_setup([{"current_version": 1}])
 
-        token = increment_version_token(engine, zone_id="root")
+        token = increment_version_token(engine, conn_helper, zone_id="root")
 
         assert token == "v1"
 
     def test_postgresql_returns_v1_when_fetchone_returns_none(self):
-        engine, _ = self._make_pg_engine([None])
+        engine, conn_helper, _ = self._make_pg_setup([None])
 
-        token = increment_version_token(engine, zone_id="root")
+        token = increment_version_token(engine, conn_helper, zone_id="root")
 
         assert token == "v1"
 
     def test_postgresql_increments_correctly(self):
-        # Each call to increment_version_token calls engine.begin() once,
-        # so we need separate engines for each call
-        engine1, _ = self._make_pg_engine([{"current_version": 5}])
-        engine2, _ = self._make_pg_engine([{"current_version": 6}])
+        engine1, helper1, _ = self._make_pg_setup([{"current_version": 5}])
+        engine2, helper2, _ = self._make_pg_setup([{"current_version": 6}])
 
-        t1 = increment_version_token(engine1, zone_id="zone_a")
-        t2 = increment_version_token(engine2, zone_id="zone_a")
+        t1 = increment_version_token(engine1, helper1, zone_id="zone_a")
+        t2 = increment_version_token(engine2, helper2, zone_id="zone_a")
 
         assert t1 == "v5"
         assert t2 == "v6"
 
     def test_postgresql_executes_upsert_sql(self):
-        engine, mock_conn = self._make_pg_engine([{"current_version": 42}])
+        engine, conn_helper, mock_cursor = self._make_pg_setup([{"current_version": 42}])
 
-        token = increment_version_token(engine, zone_id="org_acme")
+        token = increment_version_token(engine, conn_helper, zone_id="org_acme")
 
         assert token == "v42"
-        # Verify execute was called (the SQL is compiled by SQLAlchemy)
-        assert mock_conn.execute.call_count == 1
+        assert mock_cursor.execute.call_count == 1
 
     def test_postgresql_passes_zone_id_param(self):
-        engine, mock_conn = self._make_pg_engine([{"current_version": 1}])
+        engine, conn_helper, mock_cursor = self._make_pg_setup([{"current_version": 1}])
 
-        increment_version_token(engine, zone_id="my_zone")
+        increment_version_token(engine, conn_helper, zone_id="my_zone")
 
-        # Verify execute was called with a compiled statement
-        assert mock_conn.execute.call_count == 1
+        assert mock_cursor.execute.call_count == 1
 
 
 class TestGetZoneRevisionForGrant:

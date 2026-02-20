@@ -21,7 +21,7 @@ class TestCacheWarmupAPI:
     @pytest.mark.asyncio
     async def test_cache_stats_endpoint(self, test_app):
         """Test cache stats endpoint returns valid statistics."""
-        response = test_app.get("/api/cache/stats")
+        response = test_app.get("/api/v2/cache/stats")
 
         assert response.status_code == 200
         data = response.json()
@@ -34,7 +34,7 @@ class TestCacheWarmupAPI:
     @pytest.mark.asyncio
     async def test_cache_hot_files_endpoint(self, test_app):
         """Test hot files endpoint."""
-        response = test_app.get("/api/cache/hot-files", params={"limit": 10})
+        response = test_app.get("/api/v2/cache/hot-files", params={"limit": 10})
 
         assert response.status_code == 200
         data = response.json()
@@ -67,7 +67,7 @@ class TestCacheWarmupAPI:
 
         # Now warm up the directory
         response = test_app.post(
-            "/api/cache/warmup",
+            "/api/v2/cache/warmup",
             json={
                 "path": "/warmup-test",
                 "depth": 2,
@@ -99,7 +99,7 @@ class TestCacheWarmupAPI:
 
         # Warm up with content
         response = test_app.post(
-            "/api/cache/warmup",
+            "/api/v2/cache/warmup",
             json={
                 "path": "/warmup-content",
                 "depth": 1,
@@ -119,7 +119,7 @@ class TestCacheWarmupAPI:
     async def test_cache_warmup_requires_path_or_user(self, test_app):
         """Test warmup endpoint requires either path or user."""
         response = test_app.post(
-            "/api/cache/warmup",
+            "/api/v2/cache/warmup",
             json={
                 "depth": 2,
                 "include_content": False,
@@ -137,7 +137,7 @@ class TestCacheWarmupAPI:
         # Note: This test may not warm many files because the file access
         # tracker needs to be populated first through actual file accesses
         response = test_app.post(
-            "/api/cache/warmup",
+            "/api/v2/cache/warmup",
             json={
                 "user": "test-user",
                 "hours": 24,
@@ -157,9 +157,9 @@ class TestCacheWarmupAPI:
     async def test_cache_api_health_check(self, test_app):
         """Verify all cache endpoints respond without server errors."""
         endpoints = [
-            ("GET", "/api/cache/stats", None),
-            ("GET", "/api/cache/hot-files", {"limit": 10}),
-            ("POST", "/api/cache/warmup", {"path": "/", "max_files": 10}),
+            ("GET", "/api/v2/cache/stats", None),
+            ("GET", "/api/v2/cache/hot-files", {"limit": 10}),
+            ("POST", "/api/v2/cache/warmup", {"path": "/", "max_files": 10}),
         ]
 
         for method, endpoint, params in endpoints:
@@ -188,13 +188,13 @@ class TestCacheWarmupAPI:
             assert response.status_code == 200
 
         # Get initial stats (verify endpoint works before warmup)
-        response = test_app.get("/api/cache/stats")
+        response = test_app.get("/api/v2/cache/stats")
         assert response.status_code == 200
         _ = response.json()  # Verify JSON is valid
 
         # Warm up directory
         response = test_app.post(
-            "/api/cache/warmup",
+            "/api/v2/cache/warmup",
             json={
                 "path": "/stats-test",
                 "depth": 1,
@@ -204,7 +204,7 @@ class TestCacheWarmupAPI:
         assert response.status_code == 200
 
         # Get updated stats
-        response = test_app.get("/api/cache/stats")
+        response = test_app.get("/api/v2/cache/stats")
         assert response.status_code == 200
         updated_stats = response.json()
 
@@ -239,7 +239,7 @@ class TestCacheWarmupAPI:
 
         # Check hot files - may or may not include our file depending on
         # how the server tracks accesses
-        response = test_app.get("/api/cache/hot-files", params={"limit": 20})
+        response = test_app.get("/api/v2/cache/hot-files", params={"limit": 20})
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -253,7 +253,7 @@ class TestCacheWarmupWithPermissions:
         """Test that warmup respects zone isolation."""
         # The warmup should work within the authenticated zone context
         response = test_app.post(
-            "/api/cache/warmup",
+            "/api/v2/cache/warmup",
             json={
                 "path": "/",
                 "depth": 1,

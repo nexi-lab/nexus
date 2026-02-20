@@ -28,40 +28,6 @@ def build_v1_registry() -> RouterRegistry:
     """
     registry = RouterRegistry()
 
-    # ---- Subscriptions router ----
-    try:
-        from nexus.server.api.v1.routers.subscriptions import router as subscriptions_router
-
-        registry.add(
-            RouterEntry(router=subscriptions_router, name="subscriptions", endpoint_count=6)
-        )
-    except ImportError as e:
-        logger.warning("Failed to import subscriptions router: %s", e)
-
-    # ---- Identity router (Issue #1355) ----
-    try:
-        from nexus.server.api.v1.routers.identity import router as identity_router
-
-        registry.add(RouterEntry(router=identity_router, name="identity", endpoint_count=2))
-    except ImportError as e:
-        logger.warning("Failed to import identity router: %s", e)
-
-    # ---- Search router (Issue #951) ----
-    try:
-        from nexus.server.api.v1.routers.search import router as search_router
-
-        registry.add(RouterEntry(router=search_router, name="search", endpoint_count=5))
-    except ImportError as e:
-        logger.warning("Failed to import search router: %s", e)
-
-    # ---- Graph router (Issue #1039) ----
-    try:
-        from nexus.server.api.v1.routers.graph import router as graph_router
-
-        registry.add(RouterEntry(router=graph_router, name="graph", endpoint_count=4))
-    except ImportError as e:
-        logger.warning("Failed to import graph router: %s", e)
-
     # ---- Admin router (Issue #921) ----
     try:
         from nexus.server.api.v1.routers.admin import router as admin_router
@@ -69,14 +35,6 @@ def build_v1_registry() -> RouterRegistry:
         registry.add(RouterEntry(router=admin_router, name="admin", endpoint_count=2))
     except ImportError as e:
         logger.warning("Failed to import admin router: %s", e)
-
-    # ---- Cache router (Issue #1076) ----
-    try:
-        from nexus.server.api.v1.routers.cache import router as cache_router
-
-        registry.add(RouterEntry(router=cache_router, name="cache", endpoint_count=3))
-    except ImportError as e:
-        logger.warning("Failed to import cache router: %s", e)
 
     # ---- Events router (Issue #1116, #1117) ----
     try:

@@ -186,7 +186,7 @@ class TestFUSEEventsE2E:
 
             # 2. Create webhook subscription
             response = test_app.post(
-                "/api/subscriptions",
+                "/api/v2/subscriptions",
                 json={
                     "url": webhook_server.url,
                     "event_types": ["file_write", "file_delete"],
@@ -241,7 +241,7 @@ class TestFUSEEventsE2E:
 
             # 3. Create webhook subscription (after file exists)
             response = test_app.post(
-                "/api/subscriptions",
+                "/api/v2/subscriptions",
                 json={
                     "url": webhook_server.url,
                     "event_types": ["file_delete"],
@@ -276,7 +276,7 @@ class TestFUSEEventsE2E:
 
             # 2. Create webhook subscription
             response = test_app.post(
-                "/api/subscriptions",
+                "/api/v2/subscriptions",
                 json={
                     "url": webhook_server.url,
                     "event_types": ["dir_create"],
@@ -312,7 +312,7 @@ class TestFUSEEventsE2E:
 
             # 2. Create webhook subscription
             response = test_app.post(
-                "/api/subscriptions",
+                "/api/v2/subscriptions",
                 json={
                     "url": webhook_server.url,
                     "event_types": ["file_write"],
@@ -327,7 +327,7 @@ class TestFUSEEventsE2E:
 
             # 3. Call test endpoint
             test_response = test_app.post(
-                f"/api/subscriptions/{sub_id}/test",
+                f"/api/v2/subscriptions/{sub_id}/test",
                 headers=headers,
             )
             assert test_response.status_code == 200

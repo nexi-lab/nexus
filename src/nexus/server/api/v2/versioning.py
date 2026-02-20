@@ -282,6 +282,48 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Locks routes: %s", e)
 
+    # ---- Subscriptions router (#2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.subscriptions import router as subscriptions_router
+
+        registry.add(
+            RouterEntry(router=subscriptions_router, name="subscriptions", endpoint_count=6)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Subscriptions routes: %s", e)
+
+    # ---- Identity router (#2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.identity import router as identity_router
+
+        registry.add(RouterEntry(router=identity_router, name="identity", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Identity routes: %s", e)
+
+    # ---- Search router (#2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.search import router as search_router
+
+        registry.add(RouterEntry(router=search_router, name="search", endpoint_count=5))
+    except ImportError as e:
+        logger.warning("Failed to import Search routes: %s", e)
+
+    # ---- Graph router (#2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.graph import router as graph_router
+
+        registry.add(RouterEntry(router=graph_router, name="graph", endpoint_count=4))
+    except ImportError as e:
+        logger.warning("Failed to import Graph routes: %s", e)
+
+    # ---- Cache router (#2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.cache import router as cache_router
+
+        registry.add(RouterEntry(router=cache_router, name="cache", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import Cache routes: %s", e)
+
     # ---- Governance router (Issue #1359) — admin auth required ----
     try:
         from nexus.server.api.v2.routers.governance import router as governance_router

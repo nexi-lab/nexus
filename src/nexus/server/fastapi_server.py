@@ -345,6 +345,16 @@ def create_app(
             _brick_sources.append(_meta_export_svc)
     except Exception as _exc:
         logger.debug("MetadataExportService unavailable: %s", _exc)
+    # Task #634: AgentService lives outside kernel — created by factory, not on NexusFS
+    try:
+        from nexus.services.agents.agent_service import create_agent_service
+
+        _agent_svc = create_agent_service(nexus_fs)
+        if _agent_svc is not None:
+            _brick_sources.append(_agent_svc)
+            app.state.agent_service = _agent_svc
+    except Exception as _exc:
+        logger.debug("AgentService unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Initialize defaults for optional services (set during lifespan)

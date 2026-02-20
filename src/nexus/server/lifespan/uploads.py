@@ -12,15 +12,17 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.server.lifespan.services_container import LifespanServices
+
 logger = logging.getLogger(__name__)
 
 
-async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
+async def startup_uploads(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
     """Initialize chunked upload service and return background tasks."""
     bg_tasks: list[asyncio.Task] = []
 
     # Get the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars)
-    brk = app.state.brick_services
+    brk = svc.brick_services
     _factory_upload_svc = getattr(brk, "chunked_upload_service", None) if brk else None
 
     if _factory_upload_svc is not None:
@@ -28,7 +30,7 @@ async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
         cleanup_task = asyncio.create_task(app.state.chunked_upload_service.start_cleanup_loop())
         bg_tasks.append(cleanup_task)
         logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
-    elif app.state.nexus_fs and app.state.record_store is not None:
+    elif svc.nexus_fs and svc.record_store is not None:
         # Fallback: create from env vars when factory didn't provide the service
         try:
             from nexus.services.chunked_upload_service import (
@@ -36,8 +38,8 @@ async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
                 ChunkedUploadService,
             )
 
-            _backend = getattr(app.state.nexus_fs, "backend", None)
-            _upload_rs = app.state.record_store
+            _backend = getattr(svc.nexus_fs, "backend", None)
+            _upload_rs = svc.record_store
             if _backend and _upload_rs:
                 import os as _os
 
@@ -57,7 +59,7 @@ async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
                 app.state.chunked_upload_service = ChunkedUploadService(
                     record_store=_upload_rs,
                     backend=_backend,
-                    metadata_store=getattr(app.state.nexus_fs, "metadata", None),
+                    metadata_store=getattr(svc.nexus_fs, "metadata", None),
                     config=ChunkedUploadConfig(**_upload_kwargs),
                 )
                 cleanup_task = asyncio.create_task(

@@ -2,28 +2,27 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nexus.server.lifespan.bricks import shutdown_bricks, startup_bricks
+from nexus.server.lifespan.services_container import LifespanServices
 from nexus.services.protocols.brick_lifecycle import BrickHealthReport
 
 
-def _make_app(
+def _make_svc(
     *,
     nexus_fs: object | None = None,
     brick_lifecycle_manager: object | None = None,
     brick_reconciler: object | None = None,
-) -> MagicMock:
-    """Create a minimal FastAPI-like app stub with state."""
-    app = MagicMock()
-    app.state = SimpleNamespace()
-    app.state.nexus_fs = nexus_fs
-    app.state.brick_lifecycle_manager = brick_lifecycle_manager
-    app.state.brick_reconciler = brick_reconciler
-    return app
+) -> LifespanServices:
+    """Create a minimal LifespanServices stub with given fields."""
+    return LifespanServices(
+        nexus_fs=nexus_fs,
+        brick_lifecycle_manager=brick_lifecycle_manager,
+        brick_reconciler=brick_reconciler,
+    )
 
 
 def _make_health_report(total: int = 3, active: int = 3, failed: int = 0) -> BrickHealthReport:
@@ -39,8 +38,9 @@ class TestStartupBricks:
         manager = MagicMock()
         manager.mount_all = AsyncMock(return_value=_make_health_report())
 
-        app = _make_app(nexus_fs=MagicMock(), brick_lifecycle_manager=manager)
-        result = await startup_bricks(app)
+        app = MagicMock()
+        svc = _make_svc(nexus_fs=MagicMock(), brick_lifecycle_manager=manager)
+        result = await startup_bricks(app, svc)
 
         manager.mount_all.assert_awaited_once()
         assert result == []
@@ -48,15 +48,17 @@ class TestStartupBricks:
     @pytest.mark.asyncio
     async def test_no_nexus_fs_is_safe(self) -> None:
         """startup_bricks should no-op when nexus_fs is not set."""
-        app = _make_app()
-        result = await startup_bricks(app)
+        app = MagicMock()
+        svc = _make_svc()
+        result = await startup_bricks(app, svc)
         assert result == []
 
     @pytest.mark.asyncio
     async def test_no_manager_is_safe(self) -> None:
         """startup_bricks should no-op when lifecycle manager is None."""
-        app = _make_app(nexus_fs=MagicMock(), brick_lifecycle_manager=None)
-        result = await startup_bricks(app)
+        app = MagicMock()
+        svc = _make_svc(nexus_fs=MagicMock(), brick_lifecycle_manager=None)
+        result = await startup_bricks(app, svc)
         assert result == []
 
     @pytest.mark.asyncio
@@ -67,12 +69,13 @@ class TestStartupBricks:
         reconciler = MagicMock()
         reconciler.start = AsyncMock()
 
-        app = _make_app(
+        app = MagicMock()
+        svc = _make_svc(
             nexus_fs=MagicMock(),
             brick_lifecycle_manager=manager,
             brick_reconciler=reconciler,
         )
-        await startup_bricks(app)
+        await startup_bricks(app, svc)
         reconciler.start.assert_awaited_once()
 
 
@@ -85,22 +88,25 @@ class TestShutdownBricks:
         manager = MagicMock()
         manager.unmount_all = AsyncMock(return_value=_make_health_report(active=0))
 
-        app = _make_app(nexus_fs=MagicMock(), brick_lifecycle_manager=manager)
-        await shutdown_bricks(app)
+        app = MagicMock()
+        svc = _make_svc(nexus_fs=MagicMock(), brick_lifecycle_manager=manager)
+        await shutdown_bricks(app, svc)
 
         manager.unmount_all.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_no_nexus_fs_is_safe(self) -> None:
         """shutdown_bricks should no-op when nexus_fs is not set."""
-        app = _make_app()
-        await shutdown_bricks(app)  # Should not raise
+        app = MagicMock()
+        svc = _make_svc()
+        await shutdown_bricks(app, svc)  # Should not raise
 
     @pytest.mark.asyncio
     async def test_no_manager_is_safe(self) -> None:
         """shutdown_bricks should no-op when lifecycle manager is None."""
-        app = _make_app(nexus_fs=MagicMock(), brick_lifecycle_manager=None)
-        await shutdown_bricks(app)  # Should not raise
+        app = MagicMock()
+        svc = _make_svc(nexus_fs=MagicMock(), brick_lifecycle_manager=None)
+        await shutdown_bricks(app, svc)  # Should not raise
 
     @pytest.mark.asyncio
     async def test_stops_reconciler_before_unmount(self) -> None:
@@ -113,11 +119,12 @@ class TestShutdownBricks:
         reconciler = MagicMock()
         reconciler.stop = AsyncMock(side_effect=lambda: call_order.append("stop"))
 
-        app = _make_app(
+        app = MagicMock()
+        svc = _make_svc(
             nexus_fs=MagicMock(),
             brick_lifecycle_manager=manager,
             brick_reconciler=reconciler,
         )
-        await shutdown_bricks(app)
+        await shutdown_bricks(app, svc)
 
         assert call_order == ["stop", "unmount"]

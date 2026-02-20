@@ -225,6 +225,7 @@ They must **never** import from: `nexus.core`, `nexus.services`, `nexus.server`,
 | `EmailList`, `ISODateTimeStr` (Pydantic Annotated) | `lib/validators.py` | Annotated types with validation logic |
 | `get_database_url()` (env var resolution) | `lib/env.py` | Implementation helper |
 | `path_matches_pattern()` (glob matching) | `lib/path_utils.py` | Pure utility function |
+| `PathInterner`, `SegmentedPathInterner` (string interning) | `lib/path_interner.py` | Generic utility (like `lib/string.c` in Linux) |
 | `is_os_metadata_file()` (OS file filter) | `fuse/filters.py` | Single-layer (FUSE only) |
 
 ---

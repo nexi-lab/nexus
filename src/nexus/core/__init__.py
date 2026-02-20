@@ -23,12 +23,6 @@ from nexus.contracts.exceptions import (
     PermissionDeniedError,
     ValidationError,
 )
-from nexus.core.path_interner import (
-    CompactFileMetadata,
-    PathInterner,
-    SegmentedPathInterner,
-    get_path_interner,
-)
 
 
 def setup_uvloop() -> bool:
@@ -144,9 +138,4 @@ __all__ = [
     "PathNotMountedError",
     "PermissionDeniedError",
     "ValidationError",
-    # Path interning (Issue #912)
-    "PathInterner",
-    "SegmentedPathInterner",
-    "CompactFileMetadata",
-    "get_path_interner",
 ]

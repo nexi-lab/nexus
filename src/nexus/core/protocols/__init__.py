@@ -29,6 +29,7 @@ from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
 from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
+from nexus.core.protocols.wirable_fs import WirableFS
 from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
 
 __all__ = [
@@ -54,5 +55,6 @@ __all__ = [
     "StreamingProtocol",
     "VFSCoreProtocol",
     "VFSRouterProtocol",
+    "WirableFS",
     "WorkspaceManagerProtocol",
 ]

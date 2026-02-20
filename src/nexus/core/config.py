@@ -268,6 +268,40 @@ class BrickServices:
 
 
 # ---------------------------------------------------------------------------
+# WiredServices — Tier 2b: services needing NexusFS reference
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WiredServices:
+    """Tier 2b (WIRED) — services requiring NexusFS reference.
+
+    Created by ``nexus.factory._wired._boot_wired_services()`` and bound
+    to NexusFS via ``_bind_wired_services()``.
+
+    Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
+    """
+
+    rebac_service: Any = None
+    mount_service: Any = None
+    gateway: Any = None
+    mount_core_service: Any = None
+    sync_service: Any = None
+    sync_job_service: Any = None
+    mount_persist_service: Any = None
+    mcp_service: Any = None
+    llm_service: Any = None
+    llm_subsystem: Any = None
+    oauth_service: Any = None
+    skill_service: Any = None
+    skill_package_service: Any = None
+    search_service: Any = None
+    share_link_service: Any = None
+    events_service: Any = None
+    task_queue_service: Any = None
+
+
+# ---------------------------------------------------------------------------
 # Observability (unchanged from before)
 # ---------------------------------------------------------------------------
 

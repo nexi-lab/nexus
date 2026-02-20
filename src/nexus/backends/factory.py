@@ -1,4 +1,4 @@
-"""Centralized backend factory (Issue #1601).
+"""Centralized backend factory (Issue #1601, #2362).
 
 Replaces duplicated if/elif chains in mount_core_service, mount_service,
 and cli/utils with a single factory that uses ConnectorRegistry.
@@ -7,10 +7,19 @@ All registered connectors (including ``local``, ``passthrough``, and
 all OAuth/cloud connectors) are created through the registry's config
 mapping, which translates external config keys to constructor params.
 
+``BackendFactory.wrap()`` adds a single wrapper layer to an existing
+backend. Chain explicitly::
+
+    wrapped = BackendFactory.wrap(
+        BackendFactory.wrap(base, "encrypt", {"key": k}),
+        "compress",
+    )
+
 Usage:
     >>> from nexus.backends.factory import BackendFactory
     >>> backend = BackendFactory.create("local", {"data_dir": "/path"})
     >>> backend = BackendFactory.create("gcs_connector", config, record_store=rs)
+    >>> wrapped = BackendFactory.wrap(backend, "compress")
 """
 
 from __future__ import annotations
@@ -97,3 +106,71 @@ class BackendFactory:
             p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
         )
         return frozenset(sig.parameters.keys()) - frozenset({"self"}), accepts_var_kw
+
+    @staticmethod
+    def wrap(inner: Backend, wrapper_type: str, config: dict[str, Any] | None = None) -> Backend:
+        """Wrap a backend with a single wrapper layer.
+
+        Chain explicitly::
+
+            wrapped = BackendFactory.wrap(
+                BackendFactory.wrap(base, "encrypt", {"key": key}),
+                "compress",
+            )
+
+        Args:
+            inner: The backend to wrap.
+            wrapper_type: One of "cache", "compress", "encrypt", "logging".
+            config: Optional wrapper-specific configuration dict.
+
+        Returns:
+            A new Backend wrapping ``inner``.
+
+        Raises:
+            ValueError: If ``wrapper_type`` is not recognized.
+        """
+        cfg = config or {}
+        result: Backend
+
+        match wrapper_type:
+            case "cache" | "caching":
+                from nexus.backends.caching_backend_wrapper import (
+                    CacheWrapperConfig,
+                    CachingBackendWrapper,
+                )
+
+                cache_cfg = CacheWrapperConfig(**cfg) if cfg else None
+                result = CachingBackendWrapper(inner=inner, config=cache_cfg)
+            case "compress" | "compressed":
+                from nexus.backends.compressed_wrapper import (
+                    CompressedStorage,
+                    CompressedStorageConfig,
+                )
+
+                compress_cfg = CompressedStorageConfig(**cfg) if cfg else None
+                result = CompressedStorage(inner=inner, config=compress_cfg)
+            case "encrypt" | "encrypted":
+                from nexus.backends.encrypted_wrapper import (
+                    EncryptedStorage,
+                    EncryptedStorageConfig,
+                )
+
+                if not cfg:
+                    raise ValueError("EncryptedStorage requires config with 'key' (32 bytes)")
+                encrypt_cfg = EncryptedStorageConfig(**cfg)
+                result = EncryptedStorage(inner=inner, config=encrypt_cfg)
+            case "logging" | "log":
+                from nexus.backends.logging_wrapper import LoggingBackendWrapper
+
+                result = LoggingBackendWrapper(inner=inner)
+            case _:
+                raise ValueError(
+                    f"Unknown wrapper type: {wrapper_type!r}. "
+                    f"Known types: cache, compress, encrypt, logging"
+                )
+
+        logger.info(
+            "Wrapped backend: %s",
+            result.describe(),
+        )
+        return result

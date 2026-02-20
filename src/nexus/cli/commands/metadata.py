@@ -132,8 +132,8 @@ def export_metadata(
         nexus export zone.jsonl --zone-id acme-corp
     """
     try:
-        from nexus.core.export_import import ExportFilter
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.export_import import ExportFilter
 
         nx = get_filesystem(backend_config)
 
@@ -230,8 +230,8 @@ def import_metadata(
         nexus import metadata-backup.jsonl --conflict-mode=remap
     """
     try:
-        from nexus.core.export_import import ImportOptions
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.export_import import ImportOptions
 
         nx = get_filesystem(backend_config)
 

@@ -13,13 +13,13 @@ Memory savings:
 References:
 - JuiceFS memory optimization: 90% reduction via compact formats
 - Rust nexus_fast: Already uses string-interner for permissions (lib.rs:26-29)
+
+Tier-neutral utility — like Linux ``lib/string.c``. Zero nexus dependencies.
 """
 
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
-from datetime import UTC
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -176,8 +176,8 @@ class SegmentedPathInterner:
     which is typical in file systems with deep directory structures.
 
     Example savings for 10,000 files under `/workspace/project/src/`:
-    - Full strings: 10,000 × 30 chars = 300KB for prefix alone
-    - Segmented: 3 segments stored once (~50 bytes) + 10,000 × 12 bytes = ~120KB
+    - Full strings: 10,000 x 30 chars = 300KB for prefix alone
+    - Segmented: 3 segments stored once (~50 bytes) + 10,000 x 12 bytes = ~120KB
     - Savings: ~60% reduction
 
     Usage:
@@ -358,145 +358,3 @@ def get_path_interner() -> PathInterner:
             if _global_path_interner is None:
                 _global_path_interner = PathInterner()
     return _global_path_interner
-
-
-@dataclass(slots=True)
-class CompactFileMetadata:
-    """Memory-efficient file metadata using interned paths (Issue #912).
-
-    Uses integer path IDs instead of string paths for:
-    - 10-20x memory reduction per path reference
-    - O(1) path equality checks (integer comparison vs string)
-    - Reduced GC pressure from fewer string allocations
-
-    This class is designed to work alongside the existing FileMetadata class.
-    Use CompactFileMetadata for in-memory storage and caching, then convert
-    to FileMetadata when needed for API responses or database operations.
-
-    Attributes:
-        path_id: Interned path ID (4 bytes vs ~50-100 bytes for string)
-        backend_name: Backend identifier (kept as string, few unique values)
-        physical_path: Physical storage path/hash (unique per file, not interned)
-        size: File size in bytes
-        etag: Content hash (unique per content, not interned)
-        mime_type: MIME type string (few unique values)
-        created_at_ts: Creation timestamp as Unix epoch (float)
-        modified_at_ts: Modification timestamp as Unix epoch (float)
-        version: File version number
-        zone_id: Zone identifier (could be interned in future)
-        created_by: Creator identifier
-        is_directory: Whether this represents a directory
-    """
-
-    path_id: int
-    backend_name: str
-    physical_path: str
-    size: int
-    etag: str | None = None
-    mime_type: str | None = None
-    created_at_ts: float | None = None  # Unix timestamp instead of datetime
-    modified_at_ts: float | None = None  # Unix timestamp instead of datetime
-    version: int = 1
-    zone_id: str | None = None
-    created_by: str | None = None
-    is_directory: bool = False
-
-    def get_path(self, interner: PathInterner | None = None) -> str:
-        """Get the path string from the interned ID.
-
-        Args:
-            interner: PathInterner to use. If None, uses global interner.
-
-        Returns:
-            The original path string
-        """
-        if interner is None:
-            interner = get_path_interner()
-        return interner.get(self.path_id)
-
-    def to_file_metadata(self, interner: PathInterner | None = None) -> FileMetadata:
-        """Convert to standard FileMetadata.
-
-        Args:
-            interner: PathInterner to use. If None, uses global interner.
-
-        Returns:
-            FileMetadata instance with full path string
-        """
-        from datetime import datetime
-
-        from nexus.core.metadata import FileMetadata
-
-        if interner is None:
-            interner = get_path_interner()
-
-        created_at = None
-        if self.created_at_ts is not None:
-            created_at = datetime.fromtimestamp(self.created_at_ts, tz=UTC)
-
-        modified_at = None
-        if self.modified_at_ts is not None:
-            modified_at = datetime.fromtimestamp(self.modified_at_ts, tz=UTC)
-
-        return FileMetadata(
-            path=interner.get(self.path_id),
-            backend_name=self.backend_name,
-            physical_path=self.physical_path,
-            size=self.size,
-            etag=self.etag,
-            mime_type=self.mime_type,
-            created_at=created_at,
-            modified_at=modified_at,
-            version=self.version,
-            zone_id=self.zone_id,
-            created_by=self.created_by,
-            entry_type=1 if self.is_directory else 0,
-        )
-
-    @classmethod
-    def from_file_metadata(
-        cls,
-        metadata: FileMetadata,
-        interner: PathInterner | None = None,
-    ) -> CompactFileMetadata:
-        """Create CompactFileMetadata from standard FileMetadata.
-
-        Args:
-            metadata: Source FileMetadata instance
-            interner: PathInterner to use. If None, uses global interner.
-
-        Returns:
-            CompactFileMetadata with interned path ID
-        """
-        if interner is None:
-            interner = get_path_interner()
-
-        path_id = interner.intern(metadata.path)
-
-        created_at_ts = None
-        if metadata.created_at is not None:
-            created_at_ts = metadata.created_at.timestamp()
-
-        modified_at_ts = None
-        if metadata.modified_at is not None:
-            modified_at_ts = metadata.modified_at.timestamp()
-
-        return cls(
-            path_id=path_id,
-            backend_name=metadata.backend_name,
-            physical_path=metadata.physical_path,
-            size=metadata.size,
-            etag=metadata.etag,
-            mime_type=metadata.mime_type,
-            created_at_ts=created_at_ts,
-            modified_at_ts=modified_at_ts,
-            version=metadata.version,
-            zone_id=metadata.zone_id,
-            created_by=metadata.created_by,
-            is_directory=metadata.is_dir,
-        )
-
-
-# Import FileMetadata for type checking
-if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata

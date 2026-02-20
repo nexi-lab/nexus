@@ -112,3 +112,32 @@ class PromptContext:
             "count": self.count,
             "token_estimate": self.token_estimate,
         }
+
+
+# ── MCP boundary protocols ──────────────────────────────────────
+# Structural-subtype stubs so the skills brick never imports from
+# nexus.mcp (another brick). The real dataclasses in nexus.mcp.models
+# satisfy these protocols via duck typing.
+
+
+class MCPToolConfigLike(Protocol):
+    """Minimal view of MCPToolConfig used by skills brick."""
+
+    input_schema: dict[str, Any] | None
+
+
+class MCPMountLike(Protocol):
+    """Minimal view of MCPMount used by skills brick."""
+
+    description: str | None
+    transport: str | None
+    command: str | None
+    url: str | None
+
+
+class MCPToolDefinitionLike(Protocol):
+    """Minimal view of MCPToolDefinition used by skills brick."""
+
+    name: str
+    description: str
+    mcp_config: MCPToolConfigLike | None

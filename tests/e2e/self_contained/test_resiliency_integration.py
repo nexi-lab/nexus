@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from nexus.core.resiliency import (
+from nexus.lib.resiliency import (
     CircuitBreakerOpenError,
     CircuitBreakerPolicy,
     CircuitState,

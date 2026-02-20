@@ -360,7 +360,7 @@ def _boot_system_services(
         logger.debug("[BOOT:SYSTEM] ResiliencyManager disabled by profile")
     else:
         try:
-            from nexus.core.resiliency import (
+            from nexus.lib.resiliency import (
                 ResiliencyConfig,
                 ResiliencyManager,
                 set_default_manager,

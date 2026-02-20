@@ -8,7 +8,7 @@ Composition order (outer → inner): CircuitBreaker → Retry → Timeout
 
 Usage::
 
-    from nexus.core.resiliency import with_resiliency
+    from nexus.lib.resiliency import with_resiliency
 
     @with_resiliency(target="gcs")
     async def upload_file(data: bytes) -> str:
@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
@@ -508,7 +508,7 @@ def with_resiliency(
 
                 return await _inner()
 
-        return wrapper  # type: ignore[return-value]
+        return cast(F, wrapper)
 
     return decorator
 

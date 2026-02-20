@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.contracts.deployment_profile import DeploymentProfile
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +224,20 @@ class EvictionTuning:
     eviction_cooldown_seconds: int
     """Minimum seconds between eviction cycles."""
 
+    eviction_poll_interval_seconds: int = 300
+    """How often (seconds) the background task checks for eviction. Separate from
+    cooldown — poll interval controls check frequency, cooldown prevents thrashing."""
+
+    checkpoint_cleanup_interval_seconds: int = 3600
+    """How often (seconds) to sweep stale checkpoint data from SUSPENDED agents."""
+
+    checkpoint_max_age_seconds: int = 86400
+    """Maximum age (seconds) for checkpoint data before cleanup removes it."""
+
+    max_concurrent_transitions: int = 10
+    """Semaphore limit for concurrent state transitions during eviction.
+    Prevents connection pool exhaustion on large batch sizes."""
+
 
 @dataclass(frozen=True)
 class PoolTuning:
@@ -336,6 +350,10 @@ _EMBEDDED_TUNING = ProfileTuning(
         eviction_batch_size=5,
         checkpoint_timeout_seconds=5.0,
         eviction_cooldown_seconds=120,
+        eviction_poll_interval_seconds=600,
+        checkpoint_cleanup_interval_seconds=7200,
+        checkpoint_max_age_seconds=86400,
+        max_concurrent_transitions=5,
     ),
 )
 
@@ -400,6 +418,10 @@ _LITE_TUNING = ProfileTuning(
         eviction_batch_size=10,
         checkpoint_timeout_seconds=5.0,
         eviction_cooldown_seconds=90,
+        eviction_poll_interval_seconds=300,
+        checkpoint_cleanup_interval_seconds=3600,
+        checkpoint_max_age_seconds=86400,
+        max_concurrent_transitions=10,
     ),
 )
 
@@ -464,6 +486,10 @@ _FULL_TUNING = ProfileTuning(
         eviction_batch_size=20,
         checkpoint_timeout_seconds=10.0,
         eviction_cooldown_seconds=60,
+        eviction_poll_interval_seconds=120,
+        checkpoint_cleanup_interval_seconds=3600,
+        checkpoint_max_age_seconds=86400,
+        max_concurrent_transitions=10,
     ),
 )
 
@@ -528,13 +554,17 @@ _CLOUD_TUNING = ProfileTuning(
         eviction_batch_size=50,
         checkpoint_timeout_seconds=10.0,
         eviction_cooldown_seconds=30,
+        eviction_poll_interval_seconds=60,
+        checkpoint_cleanup_interval_seconds=1800,
+        checkpoint_max_age_seconds=43200,
+        max_concurrent_transitions=20,
     ),
 )
 
 
 def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
     """Build profile-to-tuning mapping (lazy import to avoid circular)."""
-    from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.contracts.deployment_profile import DeploymentProfile
 
     return {
         DeploymentProfile.EMBEDDED: _EMBEDDED_TUNING,

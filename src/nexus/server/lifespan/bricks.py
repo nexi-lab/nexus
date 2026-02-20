@@ -42,6 +42,15 @@ async def startup_bricks(app: FastAPI) -> list[asyncio.Task[None]]:
         )
     except Exception as exc:
         logger.error("[LIFECYCLE] mount_all failed: %s", exc)
+
+    # Start brick reconciler (Issue #2060)
+    reconciler = getattr(_sys, "brick_reconciler", None)
+    if reconciler is not None:
+        try:
+            await reconciler.start()
+        except Exception as exc:
+            logger.warning("[RECONCILER] Failed to start: %s", exc)
+
     return []
 
 
@@ -55,6 +64,15 @@ async def shutdown_bricks(app: FastAPI) -> None:
     manager = getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
     if manager is None:
         return
+
+    # Stop brick reconciler before unmounting (Issue #2060)
+    reconciler = getattr(_sys, "brick_reconciler", None)
+    if reconciler is not None:
+        try:
+            await reconciler.stop()
+            logger.info("[RECONCILER] Stopped")
+        except Exception as exc:
+            logger.warning("[RECONCILER] Failed to stop: %s", exc)
 
     try:
         report = await manager.unmount_all()

@@ -13,11 +13,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.memory.router import MemoryViewRouter
 from nexus.contracts.types import OperationContext, Permission
 from nexus.lib.zone import normalize_zone_id
 from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:

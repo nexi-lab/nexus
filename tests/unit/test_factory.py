@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.contracts.exceptions import BootError, NexusError
-from nexus.core.deployment_profile import DeploymentProfile
 
 # ---------------------------------------------------------------------------
 # TestBootError
@@ -108,7 +108,6 @@ class TestBootKernelServices:
 
         expected_keys = {
             "rebac_manager",
-            "rebac_circuit_breaker",
             "dir_visibility_cache",
             "audit_store",
             "entity_registry",
@@ -119,7 +118,6 @@ class TestBootKernelServices:
             "mount_manager",
             "workspace_manager",
             "write_observer",
-            "version_service",
         }
         assert expected_keys == set(result.keys())
 
@@ -205,6 +203,7 @@ class TestBootSystemServices:
             "resiliency_manager",
             "context_branch_service",
             "brick_lifecycle_manager",
+            "brick_reconciler",
             "scoped_hook_engine",
         }
         assert expected_keys == set(result.keys())
@@ -266,8 +265,55 @@ class TestBootBrickServices:
             "skill_package_service",
             "delegation_service",
             "reputation_service",
+            "version_service",
+            "rebac_circuit_breaker",
+            "memory_router",
+            "memory_permission",
         }
         assert expected_keys == set(result.keys())
+
+    def test_version_service_degrades_gracefully(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Issue #2034 / 10A: VersionService failure should not crash brick boot."""
+        from nexus.factory import _boot_brick_services, _boot_kernel_services
+
+        ctx = _make_mock_ctx()
+        kernel = _boot_kernel_services(ctx)
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="nexus.factory"),
+            patch(
+                "nexus.services.version_service.VersionService",
+                side_effect=RuntimeError("version db unavailable"),
+            ),
+        ):
+            result = _boot_brick_services(ctx, kernel)
+
+        # version_service key exists but is None (graceful degradation)
+        assert "version_service" in result
+        assert result["version_service"] is None
+        # Other brick services are unaffected
+        assert "wallet_provisioner" in result
+        assert any("version db unavailable" in r.message for r in caplog.records)
+
+    def test_circuit_breaker_degrades_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Issue #2034 / 14A: Circuit breaker failure logs WARNING, not fatal."""
+        from nexus.factory import _boot_brick_services, _boot_kernel_services
+
+        ctx = _make_mock_ctx()
+        kernel = _boot_kernel_services(ctx)
+
+        with (
+            caplog.at_level(logging.WARNING, logger="nexus.factory"),
+            patch(
+                "nexus.rebac.circuit_breaker.AsyncCircuitBreaker",
+                side_effect=RuntimeError("circuit breaker config error"),
+            ),
+        ):
+            result = _boot_brick_services(ctx, kernel)
+
+        assert "rebac_circuit_breaker" in result
+        assert result["rebac_circuit_breaker"] is None
+        assert any("circuit-breaking protection" in r.message for r in caplog.records)
 
     def test_failure_logged_at_debug(self, caplog: pytest.LogCaptureFixture) -> None:
         from nexus.factory import _boot_brick_services, _boot_kernel_services

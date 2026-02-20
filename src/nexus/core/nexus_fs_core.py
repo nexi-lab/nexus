@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.contracts.types import Permission
 from nexus.core.hash_fast import hash_content
@@ -29,10 +30,6 @@ from nexus.core.mutation_hooks import MutationOp
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
-
-# Kernel-reserved path prefix for internal system entries (zone revisions, etc.)
-# These entries are stored in MetastoreABC but filtered from user-visible operations.
-SYSTEM_PATH_PREFIX = "/__sys__/"
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
@@ -121,7 +118,7 @@ class NexusFSCoreMixin:
         if overlay_data is None:
             return None
 
-        from nexus.services.overlay_resolver import OverlayConfig
+        from nexus.contracts.overlay_config import OverlayConfig
 
         return OverlayConfig(
             enabled=overlay_data.get("enabled", False),
@@ -294,11 +291,11 @@ class NexusFSCoreMixin:
         """
         if self._revision_notifier is None:
             try:
-                from nexus.services.revision_notifier import RevisionNotifier
+                from nexus.lib.revision_notifier import RevisionNotifier
 
                 NexusFSCoreMixin._revision_notifier = RevisionNotifier()
             except Exception:
-                from nexus.services.revision_notifier import NullRevisionNotifier
+                from nexus.lib.revision_notifier import NullRevisionNotifier
 
                 logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
@@ -911,7 +908,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
@@ -1841,7 +1838,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._write_memory_path(path, content)
@@ -2937,7 +2934,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
@@ -3899,8 +3896,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
+        from nexus.bricks.memory.router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.services.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.SessionLocal()
@@ -3984,8 +3981,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
+        from nexus.bricks.memory.router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.services.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.SessionLocal()

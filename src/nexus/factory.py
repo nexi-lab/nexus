@@ -44,7 +44,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
@@ -208,6 +208,7 @@ _FACTORY_BRICKS: list[tuple[str, str]] = [
     ("wallet_provisioner", "WalletProtocol"),
     ("delegation_service", "DelegationProtocol"),
     ("reputation_service", "ReputationProtocol"),
+    ("version_service", "VersionProtocol"),  # Issue #2034: moved from kernel
 ]
 
 # Entries intentionally NOT registered with lifecycle manager.
@@ -226,6 +227,9 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "skill_service",  # wired later via NexusFS gateway adapters
         "skill_package_service",  # wired later via NexusFS gateway adapters
         "agent_event_log",  # event log, not a lifecycle brick
+        "rebac_circuit_breaker",  # Issue #2034: passive resilience wrapper, no lifecycle
+        "memory_router",  # singleton component for Memory brick (Issue #2177)
+        "memory_permission",  # singleton component for Memory brick (Issue #2177)
     }
 )
 
@@ -469,13 +473,16 @@ def create_record_store(
 def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
     """Boot Tier 0 (KERNEL) — mandatory services that are fatal on failure.
 
-    Creates ReBAC, permissions, workspace, syncer, and version services.
+    Creates ReBAC, permissions, workspace, and write-sync services.
     On failure: raises ``BootError`` and logs at CRITICAL.
     Does NOT call ``.start()`` on background threads — that is deferred to
     ``_start_background_services()``.
 
+    Issue #2034: version_service and rebac_circuit_breaker moved to
+    ``_boot_brick_services()`` (Tier 2) — they are optional features.
+
     Returns:
-        Dict with 13 kernel service entries.
+        Dict with 11 kernel service entries.
     """
     from nexus.contracts.exceptions import BootError
 
@@ -496,20 +503,6 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             enable_tiger_cache=ctx.perm.enable_tiger_cache,
             read_engine=ctx.read_engine,
             is_postgresql=_is_pg,
-        )
-
-        # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
-        from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
-
-        _res = ctx.profile_tuning.resiliency
-        rebac_circuit_breaker = AsyncCircuitBreaker(
-            name="rebac_db",
-            config=CircuitBreakerConfig(
-                failure_threshold=_res.circuit_breaker_failure_threshold,
-                success_threshold=3,
-                reset_timeout=_res.circuit_breaker_timeout,
-                failure_window=60.0,
-            ),
         )
 
         # --- Directory Visibility Cache ---
@@ -585,12 +578,13 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         mount_manager = MountManager(ctx.record_store)
 
         # --- Workspace Manager ---
+        from nexus.services.protocols.rebac import ReBACBrickProtocol
         from nexus.services.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager(
             metadata=ctx.metadata_store,
             backend=ctx.backend,
-            rebac_manager=rebac_manager,
+            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             session_factory=ctx.session_factory,
@@ -628,20 +622,8 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
                 strict_mode=ctx.perm.audit_strict_mode,
             )
 
-        # --- VersionService (Task #45) ---
-        from nexus.services.version_service import VersionService
-
-        version_service = VersionService(
-            metadata_store=ctx.metadata_store,
-            cas_store=ctx.backend,
-            router=ctx.router,
-            enforce_permissions=False,
-            session_factory=ctx.session_factory,
-        )
-
         result = {
             "rebac_manager": rebac_manager,
-            "rebac_circuit_breaker": rebac_circuit_breaker,
             "dir_visibility_cache": dir_visibility_cache,
             "audit_store": audit_store,
             "entity_registry": entity_registry,
@@ -652,7 +634,6 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             "mount_manager": mount_manager,
             "workspace_manager": workspace_manager,
             "write_observer": write_observer,
-            "version_service": version_service,
         }
 
         elapsed = time.perf_counter() - t0
@@ -858,6 +839,17 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
 
+    # --- Brick Reconciler (Issue #2060) ---
+    brick_reconciler: Any = None
+    if brick_lifecycle_manager is not None:
+        try:
+            from nexus.services.brick_reconciler import BrickReconciler
+
+            brick_reconciler = BrickReconciler(lifecycle_manager=brick_lifecycle_manager)
+            logger.debug("[BOOT:SYSTEM] BrickReconciler created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
+
     # TODO: EventLog, Hook, Scheduler services (not yet implemented)
 
     result = {
@@ -871,6 +863,7 @@ def _boot_system_services(
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
+        "brick_reconciler": brick_reconciler,
         "scoped_hook_engine": scoped_hook_engine,
         "eviction_manager": eviction_manager,
     }
@@ -1238,6 +1231,68 @@ def _boot_brick_services(
     except Exception as _skills_exc:
         logger.debug("[BOOT:BRICK] Skills brick not available: %s", _skills_exc)
 
+    # --- VersionService (Issue #2034: moved from kernel to brick tier) ---
+    version_service: Any = None
+    try:
+        from nexus.services.version_service import VersionService
+
+        version_service = VersionService(
+            metadata_store=ctx.metadata_store,
+            cas_store=ctx.backend,
+            router=ctx.router,
+            enforce_permissions=False,
+            session_factory=ctx.session_factory,
+        )
+        logger.debug("[BOOT:BRICK] VersionService created")
+    except Exception as _vs_exc:
+        logger.debug("[BOOT:BRICK] VersionService unavailable: %s", _vs_exc)
+
+    # --- ReBAC Circuit Breaker (Issue #2034: moved from kernel to brick tier) ---
+    rebac_circuit_breaker: Any = None
+    try:
+        from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+
+        _res = ctx.profile_tuning.resiliency
+        rebac_circuit_breaker = AsyncCircuitBreaker(
+            name="rebac_db",
+            config=CircuitBreakerConfig(
+                failure_threshold=_res.circuit_breaker_failure_threshold,
+                success_threshold=3,
+                reset_timeout=_res.circuit_breaker_timeout,
+                failure_window=60.0,
+            ),
+        )
+        logger.debug("[BOOT:BRICK] ReBAC circuit breaker created")
+    except Exception as _cb_exc:
+        logger.warning(
+            "[BOOT:BRICK] ReBAC circuit breaker unavailable: %s. "
+            "ReBAC will operate without circuit-breaking protection.",
+            _cb_exc,
+        )
+
+    # --- Memory Brick (Issue #2177) ---
+    memory_router: Any = None
+    memory_permission: Any = None
+    try:
+        from nexus.bricks.memory.router import MemoryViewRouter as _MemoryViewRouter
+
+        memory_router = _MemoryViewRouter(
+            session_factory=ctx.session_factory,
+            entity_registry=kernel["entity_registry"],
+        )
+
+        from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+
+        memory_permission = MemoryPermissionEnforcer(
+            metadata_store=ctx.metadata_store,
+            rebac_manager=kernel["rebac_manager"],
+            memory_router=memory_router,
+            entity_registry=kernel["entity_registry"],
+        )
+        logger.debug("[BOOT:BRICK] Memory brick created (router + permission)")
+    except Exception as _mem_exc:
+        logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -1258,6 +1313,10 @@ def _boot_brick_services(
         "skill_package_service": skill_package_service,
         "delegation_service": delegation_service,
         "reputation_service": reputation_service,
+        "version_service": version_service,
+        "rebac_circuit_breaker": rebac_circuit_breaker,
+        "memory_router": memory_router,
+        "memory_permission": memory_permission,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1353,20 +1412,6 @@ def _boot_wired_services(
         logger.debug("[BOOT:WIRED] ReBACService created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] ReBACService unavailable: %s", exc)
-
-    # --- MountService: Dynamic backend mounting operations ---
-    mount_service: Any = None
-    try:
-        from nexus.services.mount_service import MountService
-
-        mount_service = MountService(
-            router=kernel_services.router,
-            mount_manager=kernel_services.mount_manager,
-            nexus_fs=nx,
-        )
-        logger.debug("[BOOT:WIRED] MountService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
 
     # --- MCPService: Model Context Protocol operations ---
     mcp_service: Any = None
@@ -1472,6 +1517,26 @@ def _boot_wired_services(
         except Exception as exc:
             logger.debug("[BOOT:WIRED] MountPersistService unavailable: %s", exc)
 
+    # --- MountService: Dynamic backend mounting operations ---
+    # Moved after sub-services so DI deps are available (Issue #636).
+    mount_service: Any = None
+    try:
+        from nexus.services.mount_service import MountService
+
+        mount_service = MountService(
+            router=kernel_services.router,
+            mount_manager=kernel_services.mount_manager,
+            nexus_fs=nx,
+            sync_service=sync_service,
+            sync_job_service=sync_job_service,
+            mount_core_service=mount_core_service,
+            mount_persist_service=mount_persist_service,
+            oauth_service=oauth_service,
+        )
+        logger.debug("[BOOT:WIRED] MountService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
+
     # --- SkillService: Skill management (Issue #2035) ---
     skill_service: Any = brick_services.skill_service
     if skill_service is None and _on("skills") and gateway is not None:
@@ -1562,7 +1627,6 @@ def _boot_wired_services(
         logger.debug("[BOOT:WIRED] EventsService disabled by profile")
 
     result = {
-        "version_service": kernel_services.version_service,
         "rebac_service": rebac_service,
         "mount_service": mount_service,
         "gateway": gateway,
@@ -1642,6 +1706,8 @@ def create_nexus_services(
 
     _factory_log = _factory_logging.getLogger(__name__)
 
+    # --- Profile-based brick gating (Issue #1389) ---
+    from nexus.contracts.deployment_profile import DeploymentProfile
     from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
@@ -1649,16 +1715,13 @@ def create_nexus_services(
     from nexus.core.config import PermissionConfig as _PermissionConfig
     from nexus.core.config import SystemServices as _SystemServices
 
-    # --- Profile-based brick gating (Issue #1389) ---
-    from nexus.core.deployment_profile import DeploymentProfile
-
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
 
     def _brick_on(name: str) -> bool:
         return name in enabled_bricks
 
-    from nexus.core.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
+    from nexus.contracts.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
 
     _factory_log.info(
         "Factory: enabled_bricks=%d/%d %s",
@@ -1737,7 +1800,6 @@ def create_nexus_services(
         mount_manager=kernel_dict["mount_manager"],
         workspace_manager=kernel_dict["workspace_manager"],
         write_observer=kernel_dict["write_observer"],
-        version_service=kernel_dict["version_service"],
     )
 
     system_services = _SystemServices(
@@ -1748,6 +1810,7 @@ def create_nexus_services(
         context_branch_service=system_dict.get("context_branch_service"),
         scoped_hook_engine=system_dict.get("scoped_hook_engine"),
         brick_lifecycle_manager=system_dict.get("brick_lifecycle_manager"),
+        brick_reconciler=system_dict.get("brick_reconciler"),
         delivery_worker=system_dict["delivery_worker"],
         observability_subsystem=system_dict["observability_subsystem"],
         resiliency_manager=system_dict["resiliency_manager"],
@@ -1758,7 +1821,7 @@ def create_nexus_services(
         event_bus=brick_dict["event_bus"],
         lock_manager=brick_dict["lock_manager"],
         workflow_engine=brick_dict["workflow_engine"],
-        rebac_circuit_breaker=kernel_dict["rebac_circuit_breaker"],
+        rebac_circuit_breaker=brick_dict["rebac_circuit_breaker"],
         wallet_provisioner=brick_dict["wallet_provisioner"],
         chunked_upload_service=brick_dict["chunked_upload_service"],
         manifest_resolver=brick_dict["manifest_resolver"],
@@ -1778,6 +1841,11 @@ def create_nexus_services(
         # Delegation & Reputation Bricks (Issue #2131)
         delegation_service=brick_dict["delegation_service"],
         reputation_service=brick_dict["reputation_service"],
+        # Version Brick (Issue #2034: moved from kernel)
+        version_service=brick_dict["version_service"],
+        # Memory Brick (Issue #2177)
+        memory_router=brick_dict["memory_router"],
+        memory_permission=brick_dict["memory_permission"],
     )
 
     return kernel_services, system_services, brick_services
@@ -2089,7 +2157,7 @@ def create_nexus_fs(
 
     # --- Phase 2: Wire services needing NexusFS reference (Issue #643) ---
     # Resolve enabled_bricks for brick gating (same pattern as create_nexus_services)
-    from nexus.core.deployment_profile import DeploymentProfile as _DP
+    from nexus.contracts.deployment_profile import DeploymentProfile as _DP
 
     _resolved_bricks = enabled_bricks
     if _resolved_bricks is None:
@@ -2140,7 +2208,7 @@ def create_memory_service(nx: Any) -> Any:
             do_paging = use_paging if use_paging is not None else _paging
 
             if do_paging:
-                from nexus.services.memory.memory_with_paging import MemoryWithPaging
+                from nexus.bricks.memory.memory_with_paging import MemoryWithPaging
 
                 engine = nx.SessionLocal.kw.get("bind") if nx.SessionLocal else None
                 return MemoryWithPaging(
@@ -2157,7 +2225,7 @@ def create_memory_service(nx: Any) -> Any:
                     session_factory=nx.SessionLocal,
                 )
             else:
-                from nexus.services.memory.memory_api import Memory
+                from nexus.bricks.memory.service import Memory
 
                 return Memory(
                     session=session,

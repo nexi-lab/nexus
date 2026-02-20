@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.llm.message import Message, MessageRole
+from nexus.contracts.llm_types import Message, MessageRole
 from nexus.services.ace.affinity import (
     AffinityConfig,
     MemoryVector,

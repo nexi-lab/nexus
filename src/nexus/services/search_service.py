@@ -26,10 +26,7 @@ from cachetools import TTLCache
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
-from nexus.contracts.types import Permission
-from nexus.core import glob_fast, grep_fast, trigram_fast
-from nexus.core.rpc_decorator import rpc_expose
-from nexus.search.strategies import (
+from nexus.contracts.search_types import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
     GREP_PARALLEL_THRESHOLD,
@@ -40,6 +37,9 @@ from nexus.search.strategies import (
     GlobStrategy,
     SearchStrategy,
 )
+from nexus.contracts.types import Permission
+from nexus.core import glob_fast, grep_fast, trigram_fast
+from nexus.core.rpc_decorator import rpc_expose
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.search_semantic import SemanticSearchMixin
 
@@ -362,7 +362,7 @@ class SearchService(SemanticSearchMixin):
                 context=context,
             )
         # Phase 2 Integration (v0.4.0): Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if path and MemoryViewRouter.is_memory_path(path):
             return self._list_memory_path(path, details)
@@ -468,7 +468,7 @@ class SearchService(SemanticSearchMixin):
                             logger.debug("Skipping deleted cross-zone path: %s", ct_path)
 
         # Filter out internal system entries
-        from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+        from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
         all_files = [m for m in all_files if not m.path.startswith(SYSTEM_PATH_PREFIX)]
 
@@ -1267,7 +1267,7 @@ class SearchService(SemanticSearchMixin):
                 zone_id=list_zone_id,
             )
 
-            from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+            from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
             batch.items = [
                 item for item in batch.items if not item.path.startswith(SYSTEM_PATH_PREFIX)
@@ -1330,8 +1330,8 @@ class SearchService(SemanticSearchMixin):
             logger.warning("session_factory not provided, cannot list memory paths")
             return []
 
+        from nexus.bricks.memory.router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.services.memory.memory_router import MemoryViewRouter
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()

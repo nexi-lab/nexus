@@ -1,4 +1,4 @@
-"""E2E integration tests for brick lifecycle REST API (Issue #1704).
+"""E2E integration tests for brick lifecycle REST API (Issue #1704, #2060).
 
 Tests the full stack: FastAPI app → bricks router → real BrickLifecycleManager
 with mock brick instances. Validates:
@@ -7,6 +7,7 @@ with mock brick instances. Validates:
 - Graceful shutdown in reverse DAG order
 - Mount latency < 100ms, boot < 5s
 - Lifecycle events in log output
+- Drift detection and brick reset (Issue #2060)
 """
 
 from __future__ import annotations
@@ -19,9 +20,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.server.api.v2.routers.bricks import _get_lifecycle_manager, router
+from nexus.server.api.v2.routers.bricks import (
+    _get_lifecycle_manager,
+    _get_reconciler,
+    health_router,
+    router,
+)
+from nexus.server.dependencies import require_admin
 from nexus.services.brick_lifecycle import BrickLifecycleManager
-from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
+from nexus.services.brick_reconciler import BrickReconciler
+from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol, DriftAction
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,11 +46,19 @@ def _make_lifecycle_brick(name: str) -> MagicMock:
     return brick
 
 
-def _make_app_with_manager(manager: BrickLifecycleManager) -> tuple[FastAPI, TestClient]:
+def _make_app_with_manager(
+    manager: BrickLifecycleManager,
+    *,
+    reconciler: BrickReconciler | None = None,
+) -> tuple[FastAPI, TestClient]:
     """Create a test FastAPI app wired to a real BrickLifecycleManager."""
     app = FastAPI()
+    app.include_router(health_router)
     app.include_router(router)
     app.dependency_overrides[_get_lifecycle_manager] = lambda: manager
+    app.dependency_overrides[require_admin] = lambda: {"is_admin": True}
+    if reconciler is not None:
+        app.dependency_overrides[_get_reconciler] = lambda: reconciler
     client = TestClient(app)
     return app, client
 
@@ -306,3 +322,210 @@ class TestBricksE2EProtocolCompliance:
 
         await manager.unmount("lifecycle")
         brick.stop.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# E2E: Drift detection + reset (Issue #2060)
+# ---------------------------------------------------------------------------
+
+
+class TestBricksE2EDriftDetection:
+    """Test spec/status drift detection via REST API (Issue #2060)."""
+
+    @pytest.mark.asyncio
+    async def test_drift_report_no_drift(self) -> None:
+        """Drift endpoint returns empty report when all bricks converged."""
+        manager = BrickLifecycleManager()
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount_all()
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        _, client = _make_app_with_manager(manager, reconciler=reconciler)
+
+        resp = client.get("/api/v2/bricks/drift")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_bricks"] == 1
+        assert data["drifted"] == 0
+        assert data["actions_taken"] == 0
+        assert data["drifts"] == []
+
+    @pytest.mark.asyncio
+    async def test_drift_report_detects_failed_brick(self) -> None:
+        """Drift endpoint detects FAILED brick that should be ACTIVE."""
+        manager = BrickLifecycleManager()
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=RuntimeError("startup error"))
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount_all()
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        _, client = _make_app_with_manager(manager, reconciler=reconciler)
+
+        resp = client.get("/api/v2/bricks/drift")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["drifted"] == 1
+        assert data["drifts"][0]["brick_name"] == "search"
+        assert data["drifts"][0]["spec_state"] == "enabled"
+        assert data["drifts"][0]["actual_state"] == "failed"
+        assert data["drifts"][0]["action"] == "reset"
+
+    @pytest.mark.asyncio
+    async def test_drift_is_read_only(self) -> None:
+        """GET /drift must NOT take corrective actions."""
+        manager = BrickLifecycleManager()
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=RuntimeError("fail"))
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount_all()
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        _, client = _make_app_with_manager(manager, reconciler=reconciler)
+
+        # Drift should show failed brick
+        resp = client.get("/api/v2/bricks/drift")
+        assert resp.json()["drifted"] == 1
+
+        # Brick should STILL be failed (no auto-healing from GET)
+        status = manager.get_status("search")
+        assert status.state.value == "failed"
+
+
+class TestBricksE2EReset:
+    """Test brick reset via REST API (Issue #2060)."""
+
+    @pytest.mark.asyncio
+    async def test_reset_failed_brick(self) -> None:
+        """POST /reset transitions FAILED brick to REGISTERED."""
+        manager = BrickLifecycleManager()
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=RuntimeError("fail"))
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount_all()
+
+        assert manager.get_status("search").state.value == "failed"
+
+        _, client = _make_app_with_manager(manager)
+
+        resp = client.post("/api/v2/bricks/search/reset")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "search"
+        assert data["action"] == "reset"
+        assert data["state"] == "registered"
+
+        # Verify brick is now REGISTERED
+        assert manager.get_status("search").state.value == "registered"
+
+    @pytest.mark.asyncio
+    async def test_reset_nonexistent_returns_404(self) -> None:
+        manager = BrickLifecycleManager()
+        _, client = _make_app_with_manager(manager)
+
+        resp = client.post("/api/v2/bricks/ghost/reset")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_reset_active_brick_returns_409(self) -> None:
+        """Resetting a non-FAILED brick returns 409 Conflict."""
+        manager = BrickLifecycleManager()
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+
+        assert manager.get_status("search").state.value == "active"
+
+        _, client = _make_app_with_manager(manager)
+
+        resp = client.post("/api/v2/bricks/search/reset")
+        assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_reset_then_remount(self) -> None:
+        """Reset a FAILED brick, then successfully remount."""
+        manager = BrickLifecycleManager()
+        call_count = 0
+
+        async def _flaky_start() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("first attempt fails")
+
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=_flaky_start)
+        manager.register("search", brick, protocol_name="SearchProtocol")
+
+        # First mount fails
+        await manager.mount_all()
+        assert manager.get_status("search").state.value == "failed"
+
+        _, client = _make_app_with_manager(manager)
+
+        # Reset
+        resp = client.post("/api/v2/bricks/search/reset")
+        assert resp.status_code == 200
+
+        # Remount succeeds
+        resp = client.post("/api/v2/bricks/search/mount")
+        assert resp.status_code == 200
+        assert resp.json()["state"] == "active"
+
+
+class TestBricksE2ESelfHealing:
+    """Test reconciler self-healing via full stack (Issue #2060)."""
+
+    @pytest.mark.asyncio
+    async def test_reconciler_self_heals_failed_brick(self) -> None:
+        """Reconciler automatically resets and remounts a FAILED brick."""
+        manager = BrickLifecycleManager()
+        call_count = 0
+
+        async def _flaky_start() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("transient error")
+
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=_flaky_start)
+        manager.register("search", brick, protocol_name="SearchProtocol")
+
+        # First mount fails
+        await manager.mount_all()
+        assert manager.get_status("search").state.value == "failed"
+
+        # Reconciler heals it
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        result = await reconciler.reconcile()
+
+        assert result.drifted >= 1
+        assert result.actions_taken >= 1
+        assert manager.get_status("search").state.value == "active"
+
+    @pytest.mark.asyncio
+    async def test_reconciler_respects_max_retries(self) -> None:
+        """Reconciler stops retrying after max_retries."""
+        manager = BrickLifecycleManager()
+        brick = _make_lifecycle_brick("broken")
+        brick.start = AsyncMock(side_effect=RuntimeError("permanent failure"))
+        manager.register("broken", brick, protocol_name="BrokenP")
+
+        await manager.mount_all()
+        assert manager.get_status("broken").state.value == "failed"
+
+        reconciler = BrickReconciler(lifecycle_manager=manager, max_retries=2)
+
+        # Attempt 1 and 2 — try to heal
+        # Clear backoff between passes so retries aren't delayed by exponential backoff
+        for _ in range(2):
+            reconciler._next_retry_after.clear()
+            await reconciler.reconcile()
+
+        # Attempt 3 — should skip (max_retries=2 exceeded)
+        result = await reconciler.reconcile()
+        skip_drifts = [d for d in result.drifts if d.action is DriftAction.SKIP]
+        assert len(skip_drifts) == 1
+        assert "exceeded" in skip_drifts[0].detail.lower()

@@ -6,60 +6,31 @@ TDD: Tests written FIRST, implementation follows.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from hypothesis import settings
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule
 
-# ---------------------------------------------------------------------------
-# Import the implementation (will exist after RED phase)
-# ---------------------------------------------------------------------------
 from nexus.services.brick_lifecycle import (
     BrickLifecycleManager,
     CyclicDependencyError,
     InvalidTransitionError,
 )
 from nexus.services.protocols.brick_lifecycle import (
-    BrickLifecycleProtocol,
+    BrickSpec,
     BrickState,
 )
-
-# ---------------------------------------------------------------------------
-# Test helpers — mock bricks
-# ---------------------------------------------------------------------------
-
-
-def _make_lifecycle_brick(name: str = "test") -> MagicMock:
-    """Create a mock brick that satisfies BrickLifecycleProtocol."""
-    brick = AsyncMock(spec=BrickLifecycleProtocol)
-    brick.start = AsyncMock(return_value=None)
-    brick.stop = AsyncMock(return_value=None)
-    brick.health_check = AsyncMock(return_value=True)
-    brick.__class__.__name__ = f"{name.capitalize()}Brick"
-    return brick
-
-
-def _make_stateless_brick(name: str = "pay") -> MagicMock:
-    """Create a mock brick without lifecycle methods (stateless)."""
-    brick = MagicMock()
-    brick.__class__.__name__ = f"{name.capitalize()}Brick"
-    # Explicitly remove lifecycle methods
-    if hasattr(brick, "start"):
-        del brick.start
-    if hasattr(brick, "stop"):
-        del brick.stop
-    if hasattr(brick, "health_check"):
-        del brick.health_check
-    return brick
-
-
-def _make_failing_brick(error: Exception | None = None) -> MagicMock:
-    """Create a mock brick whose start() raises."""
-    brick = _make_lifecycle_brick("failing")
-    brick.start = AsyncMock(side_effect=error or RuntimeError("Connection refused"))
-    return brick
-
+from tests.unit.services.conftest import (
+    make_failing_brick as _make_failing_brick,
+)
+from tests.unit.services.conftest import (
+    make_lifecycle_brick as _make_lifecycle_brick,
+)
+from tests.unit.services.conftest import (
+    make_stateless_brick as _make_stateless_brick,
+)
 
 # ---------------------------------------------------------------------------
 # BrickLifecycleManager — Registration tests
@@ -125,12 +96,14 @@ class TestBrickRegistration:
 # Valid transitions: (from_state, event, expected_state)
 VALID_TRANSITIONS = [
     (BrickState.REGISTERED, "mount", BrickState.STARTING),
+    (BrickState.REGISTERED, "failed", BrickState.FAILED),  # Issue #2060: 5B
     (BrickState.STARTING, "started", BrickState.ACTIVE),
     (BrickState.STARTING, "failed", BrickState.FAILED),
     (BrickState.ACTIVE, "unmount", BrickState.STOPPING),
     (BrickState.ACTIVE, "failed", BrickState.FAILED),
     (BrickState.STOPPING, "stopped", BrickState.UNREGISTERED),
     (BrickState.STOPPING, "failed", BrickState.FAILED),
+    (BrickState.FAILED, "reset", BrickState.REGISTERED),  # Issue #2060: 7A
 ]
 
 # Invalid transitions: (from_state, event)
@@ -497,20 +470,145 @@ class TestMountAllUnmountAll:
 
 
 # ---------------------------------------------------------------------------
+# Reset, Spec, and _safe_lifecycle_op tests (Issue #2060)
+# ---------------------------------------------------------------------------
+
+
+class TestResetAndSpec:
+    """Test reset(), get_spec(), all_specs(), and _safe_lifecycle_op."""
+
+    @pytest.fixture
+    def manager(self) -> BrickLifecycleManager:
+        return BrickLifecycleManager()
+
+    @pytest.mark.asyncio
+    async def test_reset_failed_brick_then_remount(self, manager: BrickLifecycleManager) -> None:
+        """FAILED → reset → REGISTERED → mount → ACTIVE."""
+        brick = _make_lifecycle_brick("search")
+        # First start fails
+        brick.start = AsyncMock(
+            side_effect=[RuntimeError("fail"), None]  # fail first, succeed second
+        )
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        assert manager.get_status("search").state == BrickState.FAILED  # type: ignore[union-attr]
+
+        manager.reset("search")
+        assert manager.get_status("search").state == BrickState.REGISTERED  # type: ignore[union-attr]
+
+        await manager.mount("search")
+        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+
+    def test_reset_clears_error_and_timestamps(self, manager: BrickLifecycleManager) -> None:
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        # Force into FAILED with error
+        manager._force_state("search", BrickState.FAILED)
+        entry = manager._bricks["search"]
+        entry.error = "some error"
+        entry.started_at = 123.0
+        entry.stopped_at = 456.0
+        entry.retry_count = 2
+
+        manager.reset("search")
+        assert entry.error is None
+        assert entry.started_at is None
+        assert entry.stopped_at is None
+        assert entry.retry_count == 0
+
+    def test_reset_nonexistent_raises_keyerror(self, manager: BrickLifecycleManager) -> None:
+        with pytest.raises(KeyError, match="not found"):
+            manager.reset("nonexistent")
+
+    def test_reset_non_failed_raises_invalid_transition(
+        self, manager: BrickLifecycleManager
+    ) -> None:
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        with pytest.raises(InvalidTransitionError):
+            manager.reset("search")  # REGISTERED, not FAILED
+
+    def test_get_spec_returns_frozen_spec(self, manager: BrickLifecycleManager) -> None:
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol", depends_on=("llm",))
+        spec = manager.get_spec("search")
+        assert spec is not None
+        assert isinstance(spec, BrickSpec)
+        assert spec.name == "search"
+        assert spec.protocol_name == "SearchProtocol"
+        assert spec.depends_on == ("llm",)
+        assert spec.enabled is True
+
+    def test_get_spec_nonexistent_returns_none(self, manager: BrickLifecycleManager) -> None:
+        assert manager.get_spec("nonexistent") is None
+
+    def test_all_specs_returns_all(self, manager: BrickLifecycleManager) -> None:
+        manager.register("a", _make_lifecycle_brick("a"), protocol_name="AP")
+        manager.register("b", _make_lifecycle_brick("b"), protocol_name="BP")
+        specs = manager.all_specs()
+        assert len(specs) == 2
+        assert "a" in specs
+        assert "b" in specs
+        assert specs["a"].name == "a"
+        assert specs["b"].protocol_name == "BP"
+
+    @pytest.mark.asyncio
+    async def test_safe_lifecycle_op_catches_and_fails(
+        self, manager: BrickLifecycleManager
+    ) -> None:
+        """_safe_mount should catch exceptions and transition brick to FAILED."""
+        brick = _make_lifecycle_brick("test")
+        manager.register("test", brick, protocol_name="TP")
+        # The _safe_mount calls mount which on exception transitions to FAILED
+        brick.start = AsyncMock(side_effect=RuntimeError("boom"))
+        await manager._safe_mount("test", timeout=5.0)
+        assert manager.get_status("test").state == BrickState.FAILED  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_dag_failure_skips_dependent(self, manager: BrickLifecycleManager) -> None:
+        """If A fails, B (depends on A) stays REGISTERED after mount_all."""
+        brick_a = _make_failing_brick(RuntimeError("A failed"))
+        brick_b = _make_lifecycle_brick("b")
+
+        manager.register("a", brick_a, protocol_name="AP")
+        manager.register("b", brick_b, protocol_name="BP", depends_on=("a",))
+
+        await manager.mount_all()
+
+        assert manager.get_status("a").state == BrickState.FAILED  # type: ignore[union-attr]
+        # B depends on A; mount_all skips bricks whose deps aren't ACTIVE.
+        # B stays REGISTERED — the reconciler will mount it once A recovers.
+        assert manager.get_status("b").state == BrickState.REGISTERED  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
 # Hypothesis stateful test — random transition sequences
 # ---------------------------------------------------------------------------
 
 
 class BrickLifecycleStateMachine(RuleBasedStateMachine):
-    """Property-based test: random lifecycle operations should never corrupt state."""
+    """Property-based test: random lifecycle operations should never corrupt state.
+
+    Uses a single event loop per test case instead of ``asyncio.run()`` per rule
+    to avoid creating/destroying loops on every step (asyncio.Lock objects bind
+    to the running loop, so a shared loop prevents cross-loop issues).
+    """
 
     bricks = Bundle("bricks")
 
     def __init__(self) -> None:
         super().__init__()
+        self._loop = asyncio.new_event_loop()
         self.manager = BrickLifecycleManager()
         self._mounted: set[str] = set()
         self._counter = 0
+
+    def teardown(self) -> None:
+        self._loop.close()
+
+    def _run(self, coro: Any) -> Any:  # noqa: ANN401
+        """Run an async coroutine on the shared event loop."""
+        return self._loop.run_until_complete(coro)
 
     @initialize(target=bricks)
     def init_brick(self) -> str:
@@ -532,14 +630,14 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
     def mount_brick(self, name: str) -> None:
         status = self.manager.get_status(name)
         if status is not None and status.state == BrickState.REGISTERED:
-            asyncio.run(self.manager.mount(name))
+            self._run(self.manager.mount(name))
             self._mounted.add(name)
 
     @rule(name=bricks)
     def unmount_brick(self, name: str) -> None:
         status = self.manager.get_status(name)
         if status is not None and status.state == BrickState.ACTIVE:
-            asyncio.run(self.manager.unmount(name))
+            self._run(self.manager.unmount(name))
             self._mounted.discard(name)
 
     @rule()
@@ -548,7 +646,6 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
         report = self.manager.health()
         assert report.total == len(self.manager._bricks)
         assert report.active + report.failed <= report.total
-        # Every brick in report should have a valid state
         for brick_status in report.bricks:
             assert isinstance(brick_status.state, BrickState)
 

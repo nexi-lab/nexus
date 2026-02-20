@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.deployment_profile import DeploymentProfile
+from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.core.performance_tuning import ProfileTuning
 
 

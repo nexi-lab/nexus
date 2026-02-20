@@ -13,16 +13,20 @@ import builtins
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy.orm import Session
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.services.memory.temporal import parse_datetime, validate_temporal_params
+
+if TYPE_CHECKING:
+    from nexus.services.protocols.memory import (
+        EntityResolverProtocol,
+        MemoryPermissionCheckerProtocol,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +102,9 @@ class Memory:
         zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
-        entity_registry: EntityRegistry | None = None,
+        entity_registry: EntityResolverProtocol | None = None,
         llm_provider: Any = None,
+        permission_enforcer: MemoryPermissionCheckerProtocol | None = None,
     ):
         """Initialize Memory API.
 
@@ -109,8 +114,11 @@ class Memory:
             zone_id: Current zone ID.
             user_id: Current user ID.
             agent_id: Current agent ID.
-            entity_registry: Entity registry instance.
+            entity_registry: Entity resolver (Protocol). Falls back to
+                concrete EntityRegistry if not provided.
             llm_provider: Optional LLM provider for reflection/learning.
+            permission_enforcer: Permission checker (Protocol). Falls back to
+                concrete MemoryPermissionEnforcer if not provided.
         """
         self.session = session
         self.backend = backend
@@ -119,24 +127,33 @@ class Memory:
         self.agent_id = agent_id
         self.llm_provider = llm_provider
 
-        # Initialize components
-        self.entity_registry = entity_registry or EntityRegistry(session)
+        # Initialize entity registry — lazy import for backward compat (Issue #2190)
+        _concrete_entity_registry = None
+        if entity_registry is None:
+            from nexus.rebac.entity_registry import EntityRegistry
+
+            _concrete_entity_registry = EntityRegistry(session)
+            entity_registry = _concrete_entity_registry
+        self.entity_registry = entity_registry
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
 
-        # Initialize ReBAC manager for permission checks
-        from sqlalchemy import Engine
+        # Initialize permission enforcer — lazy import for backward compat (Issue #2190)
+        if permission_enforcer is None:
+            from sqlalchemy import Engine
 
-        from nexus.rebac.manager import EnhancedReBACManager
+            from nexus.rebac.manager import EnhancedReBACManager
+            from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 
-        bind = session.get_bind()
-        assert isinstance(bind, Engine), "Expected Engine, got Connection"
-        self.rebac_manager = EnhancedReBACManager(bind)
+            bind = session.get_bind()
+            assert isinstance(bind, Engine), "Expected Engine, got Connection"
+            self.rebac_manager = EnhancedReBACManager(bind)
 
-        self.permission_enforcer = MemoryPermissionEnforcer(
-            memory_router=self.memory_router,
-            entity_registry=self.entity_registry,
-            rebac_manager=self.rebac_manager,
-        )
+            permission_enforcer = MemoryPermissionEnforcer(
+                memory_router=self.memory_router,  # type: ignore[arg-type]
+                entity_registry=_concrete_entity_registry,
+                rebac_manager=self.rebac_manager,
+            )
+        self.permission_enforcer = permission_enforcer
 
         # Create operation context
         self.context = OperationContext(

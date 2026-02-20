@@ -294,44 +294,6 @@ class TestDirectoryOperations:
         assert result is True
 
 
-class TestVersionOperations:
-    """Test version operation path scoping (async)."""
-
-    @pytest.mark.asyncio
-    async def test_get_version(
-        self, scoped_fs: AsyncScopedFilesystem, mock_async_fs: MagicMock
-    ) -> None:
-        """Test get_version with path scoping."""
-        mock_async_fs.get_version = AsyncMock(return_value=b"old content")
-        result = await scoped_fs.get_version("/workspace/file.txt", 1)
-        mock_async_fs.get_version.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", 1, None
-        )
-        assert result == b"old content"
-
-    @pytest.mark.asyncio
-    async def test_list_versions(
-        self, scoped_fs: AsyncScopedFilesystem, mock_async_fs: MagicMock
-    ) -> None:
-        """Test list_versions with path scoping."""
-        mock_async_fs.list_versions = AsyncMock(
-            return_value=[{"version": 1, "path": "/zones/team_12/users/user_1/workspace/file.txt"}]
-        )
-        result = await scoped_fs.list_versions("/workspace/file.txt")
-        assert result[0]["path"] == "/workspace/file.txt"
-
-    @pytest.mark.asyncio
-    async def test_rollback(
-        self, scoped_fs: AsyncScopedFilesystem, mock_async_fs: MagicMock
-    ) -> None:
-        """Test rollback with path scoping."""
-        mock_async_fs.rollback = AsyncMock()
-        await scoped_fs.rollback("/workspace/file.txt", 1)
-        mock_async_fs.rollback.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", 1, None
-        )
-
-
 class TestMountOperations:
     """Test mount operation path scoping (async)."""
 

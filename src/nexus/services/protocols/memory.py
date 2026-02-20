@@ -204,3 +204,40 @@ class MemoryProtocol(Protocol):
         min_importance: float = 0.1,
         batch_size: int = 1000,
     ) -> dict[str, Any]: ...
+
+    # ── Path resolution (Issue #2177) ───────────────────────────────
+
+    @staticmethod
+    def is_memory_path(path: str) -> bool: ...
+
+    def resolve(self, virtual_path: str) -> Any: ...
+
+
+# ── Narrow dependency Protocols for Memory brick (Issue #2190) ─────────
+
+
+@runtime_checkable
+class MemoryPermissionCheckerProtocol(Protocol):
+    """Narrow permission checker for Memory brick (Issue #2190).
+
+    Decouples Memory from the concrete MemoryPermissionEnforcer / ReBAC
+    implementation.  Memory only needs ``check_memory()`` — not the full
+    PermissionProtocol surface.
+
+    # PERF: no isinstance() in hot path (Issue #1291)
+    """
+
+    def check_memory(self, memory: Any, permission: Any, context: Any) -> bool: ...
+
+
+@runtime_checkable
+class EntityResolverProtocol(Protocol):
+    """Narrow entity resolution for Memory brick (Issue #2190).
+
+    Decouples Memory from the concrete EntityRegistry / ReBAC
+    implementation.  Memory only calls ``extract_ids_from_path_parts``.
+
+    # PERF: no isinstance() in hot path (Issue #1291)
+    """
+
+    def extract_ids_from_path_parts(self, parts: builtins.list[str]) -> dict[str, str]: ...

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.contracts.exceptions import BootError
 from nexus.core.config import (
     BrickServices,
@@ -24,7 +25,6 @@ from nexus.core.config import (
     PermissionConfig,
     SystemServices,
 )
-from nexus.core.deployment_profile import DeploymentProfile
 from nexus.core.performance_tuning import resolve_profile_tuning
 from nexus.factory import (
     _boot_brick_services,
@@ -41,7 +41,6 @@ from nexus.factory import (
 EXPECTED_KERNEL_KEYS = frozenset(
     {
         "rebac_manager",
-        "rebac_circuit_breaker",
         "dir_visibility_cache",
         "audit_store",
         "entity_registry",
@@ -52,7 +51,6 @@ EXPECTED_KERNEL_KEYS = frozenset(
         "mount_manager",
         "workspace_manager",
         "write_observer",
-        "version_service",
     }
 )
 
@@ -115,13 +113,16 @@ class TestBootKernelServices:
     """Tests for _boot_kernel_services()."""
 
     def test_boot_kernel_services_returns_all_keys(self) -> None:
-        """_boot_kernel_services(ctx) returns dict with exactly 13 expected keys."""
+        """_boot_kernel_services(ctx) returns dict with exactly 11 expected keys.
+
+        Issue #2034: version_service and rebac_circuit_breaker moved to brick tier.
+        """
         ctx = _make_boot_context()
         result = _boot_kernel_services(ctx)
 
         assert isinstance(result, dict)
         assert set(result.keys()) == EXPECTED_KERNEL_KEYS
-        assert len(result) == 13
+        assert len(result) == 11
 
     def test_boot_error_raised_on_kernel_failure(self) -> None:
         """When kernel boot fails (e.g. bad engine), BootError is raised with tier='kernel'."""
@@ -140,7 +141,7 @@ class TestBootKernelServices:
             assert "bad engine" in str(exc_info.value)
 
     def test_kernel_services_values_are_not_none(self) -> None:
-        """All 13 kernel service values except deferred_permission_buffer are non-None.
+        """All 11 kernel service values except deferred_permission_buffer are non-None.
 
         deferred_permission_buffer is None because enable_deferred=False in the
         test context.
@@ -381,5 +382,7 @@ class TestCreateNexusServices:
         assert kernel.permission_enforcer is not None
         assert kernel.workspace_registry is not None
         assert kernel.write_observer is not None
-        assert kernel.version_service is not None
         assert kernel.router is router
+
+        # Issue #2034: version_service moved to brick tier
+        assert brick.version_service is not None

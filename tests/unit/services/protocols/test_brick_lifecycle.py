@@ -17,11 +17,17 @@ from nexus.services.protocols.brick_lifecycle import (
     POST_UNMOUNT,
     PRE_MOUNT,
     PRE_UNMOUNT,
+    RECONCILE_COMPLETED,
+    RECONCILE_STARTED,
     BrickDependency,
     BrickHealthReport,
     BrickLifecycleProtocol,
+    BrickSpec,
     BrickState,
     BrickStatus,
+    DriftAction,
+    DriftReport,
+    ReconcileResult,
 )
 
 # ---------------------------------------------------------------------------
@@ -272,3 +278,156 @@ class TestBrickLifecycleProtocol:
             async def start(self) -> None: ...
 
         assert not isinstance(PartialBrick(), BrickLifecycleProtocol)
+
+
+# ---------------------------------------------------------------------------
+# BrickSpec frozen dataclass tests (Issue #2060)
+# ---------------------------------------------------------------------------
+
+
+class TestBrickSpec:
+    """Verify BrickSpec is a proper frozen, slots dataclass."""
+
+    def test_frozen(self) -> None:
+        spec = BrickSpec(name="search", protocol_name="SearchProtocol")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            spec.name = "changed"  # type: ignore[misc]
+
+    def test_slots(self) -> None:
+        assert hasattr(BrickSpec, "__slots__")
+
+    def test_fields(self) -> None:
+        fields = {f.name for f in dataclasses.fields(BrickSpec)}
+        assert fields == {"name", "protocol_name", "depends_on", "enabled"}
+
+    def test_defaults(self) -> None:
+        spec = BrickSpec(name="pay", protocol_name="PaymentProtocol")
+        assert spec.depends_on == ()
+        assert spec.enabled is True
+
+    def test_enabled_field(self) -> None:
+        spec = BrickSpec(name="search", protocol_name="SP", enabled=False)
+        assert spec.enabled is False
+
+    def test_depends_on_is_tuple(self) -> None:
+        spec = BrickSpec(name="rag", protocol_name="RP", depends_on=("search", "llm"))
+        assert isinstance(spec.depends_on, tuple)
+        assert spec.depends_on == ("search", "llm")
+
+    def test_equality(self) -> None:
+        s1 = BrickSpec(name="a", protocol_name="AP")
+        s2 = BrickSpec(name="a", protocol_name="AP")
+        assert s1 == s2
+
+
+# ---------------------------------------------------------------------------
+# DriftReport frozen dataclass tests (Issue #2060)
+# ---------------------------------------------------------------------------
+
+
+class TestDriftReport:
+    """Verify DriftReport is a proper frozen, slots dataclass."""
+
+    def test_frozen(self) -> None:
+        report = DriftReport(
+            brick_name="search",
+            spec_state="enabled",
+            actual_state=BrickState.FAILED,
+            action=DriftAction.RESET,
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            report.action = DriftAction.SKIP  # type: ignore[misc]
+
+    def test_slots(self) -> None:
+        assert hasattr(DriftReport, "__slots__")
+
+    def test_fields(self) -> None:
+        fields = {f.name for f in dataclasses.fields(DriftReport)}
+        assert fields == {"brick_name", "spec_state", "actual_state", "action", "detail"}
+
+    def test_detail_default(self) -> None:
+        report = DriftReport(
+            brick_name="search",
+            spec_state="enabled",
+            actual_state=BrickState.FAILED,
+            action=DriftAction.RESET,
+        )
+        assert report.detail == ""
+
+    def test_with_detail(self) -> None:
+        report = DriftReport(
+            brick_name="search",
+            spec_state="enabled",
+            actual_state=BrickState.FAILED,
+            action=DriftAction.RESET,
+            detail="Brick failed, will reset and remount",
+        )
+        assert "reset and remount" in report.detail
+
+
+# ---------------------------------------------------------------------------
+# ReconcileResult frozen dataclass tests (Issue #2060)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileResult:
+    """Verify ReconcileResult is a proper frozen, slots dataclass."""
+
+    def test_frozen(self) -> None:
+        result = ReconcileResult(total_bricks=5, drifted=1, actions_taken=1, errors=0)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.drifted = 0  # type: ignore[misc]
+
+    def test_slots(self) -> None:
+        assert hasattr(ReconcileResult, "__slots__")
+
+    def test_fields(self) -> None:
+        fields = {f.name for f in dataclasses.fields(ReconcileResult)}
+        assert fields == {"total_bricks", "drifted", "actions_taken", "errors", "drifts"}
+
+    def test_drifts_default(self) -> None:
+        result = ReconcileResult(total_bricks=3, drifted=0, actions_taken=0, errors=0)
+        assert result.drifts == ()
+
+    def test_with_drifts(self) -> None:
+        d = DriftReport(
+            brick_name="search",
+            spec_state="enabled",
+            actual_state=BrickState.FAILED,
+            action=DriftAction.RESET,
+        )
+        result = ReconcileResult(total_bricks=3, drifted=1, actions_taken=1, errors=0, drifts=(d,))
+        assert len(result.drifts) == 1
+        assert result.drifts[0].brick_name == "search"
+
+
+# ---------------------------------------------------------------------------
+# Reconcile phase constants (Issue #2060)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcilePhaseConstants:
+    """Verify reconcile lifecycle phase constants."""
+
+    def test_reconcile_started_value(self) -> None:
+        assert RECONCILE_STARTED == "reconcile_started"
+
+    def test_reconcile_completed_value(self) -> None:
+        assert RECONCILE_COMPLETED == "reconcile_completed"
+
+    def test_reconcile_phases_are_strings(self) -> None:
+        assert isinstance(RECONCILE_STARTED, str)
+        assert isinstance(RECONCILE_COMPLETED, str)
+
+    def test_reconcile_phases_are_unique_from_existing(self) -> None:
+        all_phases = {
+            PRE_MOUNT,
+            POST_MOUNT,
+            PRE_UNMOUNT,
+            POST_UNMOUNT,
+            BRICK_STARTED,
+            BRICK_STOPPED,
+            RECONCILE_STARTED,
+            RECONCILE_COMPLETED,
+        }
+        assert len(all_phases) == 8

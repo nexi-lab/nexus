@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.contracts.types import SyncContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -63,7 +64,7 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend"
         backend_dir.mkdir()
-        nx_with_hierarchy.add_mount(
+        nx_with_hierarchy._mount_core_service.add_mount(
             "/mnt/test", "local", {"data_dir": str(backend_dir)}, priority=10
         )
 
@@ -78,7 +79,7 @@ class TestMountSyncOptimization:
                 import contextlib
 
                 with contextlib.suppress(Exception):
-                    nx_with_hierarchy.sync_mount("/mnt/test")
+                    nx_with_hierarchy._sync_service.sync_mount(SyncContext(mount_point="/mnt/test"))
 
                 # CRITICAL: For existing files, ensure_parent_tuples should NOT be called
                 # This is the optimization - don't recreate tuples that already exist
@@ -95,7 +96,7 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend2"
         backend_dir.mkdir()
-        nx_with_hierarchy.add_mount(
+        nx_with_hierarchy._mount_core_service.add_mount(
             "/mnt/test", "local", {"data_dir": str(backend_dir)}, priority=10
         )
 
@@ -110,7 +111,7 @@ class TestMountSyncOptimization:
                 import contextlib
 
                 with contextlib.suppress(Exception):
-                    nx_with_hierarchy.sync_mount("/mnt/test")
+                    nx_with_hierarchy._sync_service.sync_mount(SyncContext(mount_point="/mnt/test"))
 
                 # For NEW files, ensure_parent_tuples SHOULD be called
                 # This is correct behavior - new files need their parent tuples
@@ -139,7 +140,7 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend3"
         backend_dir.mkdir()
-        nx_with_hierarchy.add_mount(
+        nx_with_hierarchy._mount_core_service.add_mount(
             "/mnt/test", "local", {"data_dir": str(backend_dir)}, priority=10
         )
 
@@ -160,7 +161,7 @@ class TestMountSyncOptimization:
                 import contextlib
 
                 with contextlib.suppress(Exception):
-                    nx_with_hierarchy.sync_mount("/mnt/test")
+                    nx_with_hierarchy._sync_service.sync_mount(SyncContext(mount_point="/mnt/test"))
 
                 elapsed = time.time() - start
 
@@ -196,7 +197,9 @@ class TestMountDatabaseVsConfig:
         # Create a mount
         backend1_dir = temp_dir / "backend1"
         backend1_dir.mkdir()
-        nx.add_mount("/mnt/test", "local", {"data_dir": str(backend1_dir)}, priority=10)
+        nx._mount_core_service.add_mount(
+            "/mnt/test", "local", {"data_dir": str(backend1_dir)}, priority=10
+        )
 
         # Save to database
         if hasattr(nx, "mount_manager") and nx.mount_manager:

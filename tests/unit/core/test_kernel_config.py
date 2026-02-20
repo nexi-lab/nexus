@@ -214,9 +214,6 @@ class TestKernelServices:
         assert ks.mount_manager is None
         assert ks.workspace_manager is None
         assert ks.write_observer is None
-        assert ks.version_service is None
-        assert ks.overlay_resolver is None
-        assert ks.cache_observer is None
 
     def test_frozen(self) -> None:
         """KernelServices is frozen — attributes cannot be set after init."""
@@ -226,9 +223,9 @@ class TestKernelServices:
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
-        ks = KernelServices(version_service=sentinel, write_observer=sentinel)
-        assert ks.version_service is sentinel
+        ks = KernelServices(write_observer=sentinel, router=sentinel)
         assert ks.write_observer is sentinel
+        assert ks.router is sentinel
         assert ks.rebac_manager is None  # others still None
 
     def test_replace(self) -> None:
@@ -244,7 +241,10 @@ class TestKernelServices:
         assert dataclasses.is_dataclass(ks)
 
     def test_all_kernel_fields_present(self) -> None:
-        """Verify KernelServices has exactly the Tier 0 kernel fields."""
+        """Verify KernelServices has exactly the Tier 0 kernel fields.
+
+        Issue #2034: version_service, overlay_resolver, cache_observer removed.
+        """
         field_names = {f.name for f in dataclasses.fields(KernelServices)}
         expected_fields = {
             "router",
@@ -259,9 +259,6 @@ class TestKernelServices:
             "mount_manager",
             "workspace_manager",
             "write_observer",
-            "version_service",
-            "overlay_resolver",
-            "cache_observer",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
@@ -270,10 +267,10 @@ class TestKernelServices:
     def test_protocol_type_annotations(self) -> None:
         """Verify Protocol-typed fields have correct annotation strings."""
         annotations = KernelServices.__annotations__
-        # cache_observer should reference CacheInvalidationObserver | None
-        co_ann = str(annotations.get("cache_observer", ""))
-        assert "CacheInvalidationObserver" in co_ann
-        assert "None" in co_ann
+        # write_observer should reference WriteObserverProtocol | None
+        wo_ann = str(annotations.get("write_observer", ""))
+        assert "WriteObserverProtocol" in wo_ann
+        assert "None" in wo_ann
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +324,7 @@ class TestSystemServices:
             "context_branch_service",
             "scoped_hook_engine",
             "brick_lifecycle_manager",
+            "brick_reconciler",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
@@ -383,7 +381,10 @@ class TestBrickServices:
         assert bs.workflow_engine is None
 
     def test_all_brick_fields_present(self) -> None:
-        """Verify BrickServices has exactly the Tier 2 brick fields."""
+        """Verify BrickServices has exactly the Tier 2 brick fields.
+
+        Issue #2034: version_service moved here from KernelServices.
+        """
         field_names = {f.name for f in dataclasses.fields(BrickServices)}
         expected_fields = {
             "event_bus",
@@ -406,6 +407,9 @@ class TestBrickServices:
             "skill_package_service",
             "delegation_service",
             "reputation_service",
+            "version_service",
+            "memory_router",
+            "memory_permission",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

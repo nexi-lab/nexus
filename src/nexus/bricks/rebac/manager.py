@@ -94,6 +94,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Maps relation names to the permissions they grant.  Shared by rebac_write,
+# rebac_write_batch, rebac_delete, and boundary-cache invalidation.
+_RELATION_TO_PERMISSIONS: dict[str, list[str]] = {
+    "direct_viewer": ["read"],
+    "direct_editor": ["read", "write"],
+    "direct_owner": ["read", "write", "execute"],
+    "viewer": ["read"],
+    "editor": ["read", "write"],
+    "owner": ["read", "write", "execute"],
+    "viewer-of": ["read"],
+    "owner-of": ["read", "write", "execute"],
+    "shared-viewer": ["read"],
+    "shared-editor": ["read", "write"],
+    "shared-owner": ["read", "write", "execute"],
+    "traverser-of": ["read"],
+    "reader": ["read"],
+    "writer": ["read", "write"],
+    "parent_viewer": ["read"],
+    "parent_editor": ["read", "write"],
+    "parent_owner": ["read", "write", "execute"],
+    "group_viewer": ["read"],
+    "group_editor": ["read", "write"],
+    "group_owner": ["read", "write", "execute"],
+}
+
 
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
@@ -1089,30 +1114,7 @@ class ReBACManager:
 
         # Map relation to permission(s) for invalidation
         # This maps relation names to permissions they grant
-        relation_to_permissions: dict[str, list[str]] = {
-            "direct_viewer": ["read"],
-            "direct_editor": ["read", "write"],
-            "direct_owner": ["read", "write", "execute"],
-            "viewer": ["read"],
-            "editor": ["read", "write"],
-            "owner": ["read", "write", "execute"],
-            "viewer-of": ["read"],
-            "owner-of": ["read", "write", "execute"],
-            "shared-viewer": ["read"],
-            "shared-editor": ["read", "write"],
-            "shared-owner": ["read", "write", "execute"],
-            "traverser-of": ["read"],
-            "reader": ["read"],
-            "writer": ["read", "write"],
-            "parent_viewer": ["read"],
-            "parent_editor": ["read", "write"],
-            "parent_owner": ["read", "write", "execute"],
-            "group_viewer": ["read"],
-            "group_editor": ["read", "write"],
-            "group_owner": ["read", "write", "execute"],
-        }
-
-        permissions = relation_to_permissions.get(relation, [])
+        permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
         if not permissions:
             return
 
@@ -1326,43 +1328,8 @@ class ReBACManager:
             object_type = object[0]
             object_id = object[1]
 
-            # Map relation to permissions granted
-            # Based on namespace schema: read <- [viewer, editor, owner], write <- [editor, owner]
-            # IMPORTANT: Include BOTH direct_* relations AND computed unions
-            relation_to_permissions: dict[str, list[str]] = {
-                # Direct relations (explicit grants in database)
-                "direct_viewer": ["read"],
-                "direct_editor": ["read", "write"],
-                "direct_owner": ["read", "write", "execute"],
-                # Computed relations (unions that expand from direct_*)
-                "viewer": ["read"],
-                "editor": ["read", "write"],
-                "owner": ["read", "write", "execute"],
-                # Legacy/alternative naming
-                "viewer-of": ["read"],
-                "owner-of": ["read", "write", "execute"],
-                # Cross-zone shared relations
-                "shared-viewer": ["read"],
-                "shared-editor": ["read", "write"],
-                "shared-owner": ["read", "write", "execute"],
-                # Special relations
-                "traverser-of": ["read"],  # Directory traversal
-                "reader": ["read"],
-                "writer": ["read", "write"],
-                # Parent inheritance (grants same as their base)
-                "parent_viewer": ["read"],
-                "parent_editor": ["read", "write"],
-                "parent_owner": ["read", "write", "execute"],
-                # Group inheritance
-                "group_viewer": ["read"],
-                "group_editor": ["read", "write"],
-                "group_owner": ["read", "write", "execute"],
-            }
-
-            # Get permissions for this relation
-            # FIX: Default to empty list (no permissions) for unknown relations
-            # This is fail-closed - unknown relations grant nothing
-            permissions = relation_to_permissions.get(relation, [])
+            # Get permissions for this relation (fail-closed: unknown → [])
+            permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
 
             # Persist each permission grant immediately
             for permission in permissions:
@@ -1464,34 +1431,6 @@ class ReBACManager:
 
             # Tiger Cache: Write-through for bulk operations
             if self._tiger_cache:
-                # Relation to permissions mapping
-                # IMPORTANT: Include BOTH direct_* relations AND computed unions
-                relation_to_permissions: dict[str, list[str]] = {
-                    # Direct relations (explicit grants in database)
-                    "direct_viewer": ["read"],
-                    "direct_editor": ["read", "write"],
-                    "direct_owner": ["read", "write", "execute"],
-                    # Computed relations
-                    "viewer": ["read"],
-                    "editor": ["read", "write"],
-                    "owner": ["read", "write", "execute"],
-                    "viewer-of": ["read"],
-                    "owner-of": ["read", "write", "execute"],
-                    "shared-viewer": ["read"],
-                    "shared-editor": ["read", "write"],
-                    "shared-owner": ["read", "write", "execute"],
-                    "traverser-of": ["read"],
-                    "reader": ["read"],
-                    "writer": ["read", "write"],
-                    # Parent/group inheritance
-                    "parent_viewer": ["read"],
-                    "parent_editor": ["read", "write"],
-                    "parent_owner": ["read", "write", "execute"],
-                    "group_viewer": ["read"],
-                    "group_editor": ["read", "write"],
-                    "group_owner": ["read", "write", "execute"],
-                }
-
                 for t in tuples:
                     subject = t["subject"]
                     obj = t["object"]
@@ -1503,7 +1442,7 @@ class ReBACManager:
 
                     # Get permissions for this relation
                     # FIX: Default to empty list for unknown relations
-                    permissions = relation_to_permissions.get(relation, [])
+                    permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
 
                     # Persist each permission grant immediately
                     for permission in permissions:
@@ -1850,36 +1789,7 @@ class ReBACManager:
                 object_id = tuple_info["object_id"]
 
                 if subject_type and subject_id and object_type and object_id:
-                    # Map relation to permissions
-                    # IMPORTANT: Include BOTH direct_* relations AND computed unions
-                    relation_to_permissions: dict[str, list[str]] = {
-                        # Direct relations (explicit grants in database)
-                        "direct_viewer": ["read"],
-                        "direct_editor": ["read", "write"],
-                        "direct_owner": ["read", "write", "execute"],
-                        # Computed relations
-                        "viewer": ["read"],
-                        "editor": ["read", "write"],
-                        "owner": ["read", "write", "execute"],
-                        "viewer-of": ["read"],
-                        "owner-of": ["read", "write", "execute"],
-                        "shared-viewer": ["read"],
-                        "shared-editor": ["read", "write"],
-                        "shared-owner": ["read", "write", "execute"],
-                        "traverser-of": ["read"],
-                        "reader": ["read"],
-                        "writer": ["read", "write"],
-                        # Parent/group inheritance
-                        "parent_viewer": ["read"],
-                        "parent_editor": ["read", "write"],
-                        "parent_owner": ["read", "write", "execute"],
-                        "group_viewer": ["read"],
-                        "group_editor": ["read", "write"],
-                        "group_owner": ["read", "write", "execute"],
-                    }
-
-                    # FIX: Default to empty list for unknown relations
-                    permissions = relation_to_permissions.get(relation, [])
+                    permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
 
                     # Revoke each permission immediately
                     for permission in permissions:

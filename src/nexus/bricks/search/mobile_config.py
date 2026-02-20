@@ -447,9 +447,7 @@ def get_system_memory_gb() -> float:
     """
     from nexus.lib.device_capabilities import get_system_memory_mb
 
-        return float(psutil.virtual_memory().total) / (1024**3)
-    except Exception:  # noqa: BLE001
-        return 4.0
+    return get_system_memory_mb() / 1024
 
 
 def get_available_memory_gb() -> float:
@@ -463,9 +461,7 @@ def get_available_memory_gb() -> float:
     """
     from nexus.lib.device_capabilities import get_available_memory_mb
 
-        return float(psutil.virtual_memory().available) / (1024**3)
-    except Exception:  # noqa: BLE001
-        return 2.0
+    return get_available_memory_mb() / 1024
 
 
 def detect_device_tier(

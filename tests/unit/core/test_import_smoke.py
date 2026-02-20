@@ -15,13 +15,16 @@ _CORE_MODULES = [
     "nexus.core.nexus_fs",
     "nexus.core.async_bridge",
     "nexus.core.protocols",
-    "nexus.core.protocols.rebac_manager",
-    "nexus.core.protocols.permission_enforcer",
-    "nexus.core.protocols.entity_registry",
-    "nexus.core.protocols.workspace_manager",
-    "nexus.core.protocols.wirable_fs",
     "nexus.core.protocols.vfs_router",
     "nexus.core.protocols.vfs_core",
+    # Moved to services/protocols/ per #2359:
+    "nexus.services.protocols.rebac",
+    "nexus.services.protocols.permission_enforcer",
+    "nexus.services.protocols.entity_registry",
+    "nexus.services.protocols.workspace_manager",
+    # Moved to contracts/ per #2359:
+    "nexus.contracts.describable",
+    "nexus.contracts.wirable_fs",
     "nexus.contracts.agent_utils",
 ]
 

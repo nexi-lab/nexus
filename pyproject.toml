@@ -514,7 +514,7 @@ disable_error_code = ["no-any-return"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.services.rebac.rebac_share_mixin",
-    "nexus.rebac.share_mixin",
+    "nexus.bricks.rebac.share_mixin",
 ]
 # Mixin classes access `self.*` attributes defined on the concrete class
 # (ReBACService). Mypy cannot see across mixin boundaries.
@@ -587,6 +587,7 @@ module = [
     "nexus.mcp.provider_registry",
     "nexus.mcp.middleware",
     "nexus.mcp.oauth_mappings",
+    "nexus.mcp.profiles",
     "nexus.skills.parser",
     "nexus.server.auth.oauth_factory",
     "nexus.bricks.workflows.storage",
@@ -595,6 +596,11 @@ module = [
 ]
 # yaml/requests/cachetools stubs handled at project level
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "nexus.services.memory.memory_api"
+# EntityRegistry accepts SimpleNamespace duck-type for session_factory
+disable_error_code = ["arg-type"]
 
 [[tool.mypy.overrides]]
 module = "nexus.bricks.workflows.api"

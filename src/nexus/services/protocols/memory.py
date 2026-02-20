@@ -205,6 +205,13 @@ class MemoryProtocol(Protocol):
         batch_size: int = 1000,
     ) -> dict[str, Any]: ...
 
+    # ── Path resolution (Issue #2177) ───────────────────────────────
+
+    @staticmethod
+    def is_memory_path(path: str) -> bool: ...
+
+    def resolve(self, virtual_path: str) -> Any: ...
+
 
 # ── Narrow dependency Protocols for Memory brick (Issue #2190) ─────────
 

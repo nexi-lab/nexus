@@ -75,6 +75,8 @@ class NexusFS(  # type: ignore[misc]
     - Efficient storage
     """
 
+    _memory_api: Any
+
     def __init__(
         self,
         backend: Backend,
@@ -452,6 +454,66 @@ class NexusFS(  # type: ignore[misc]
     def semantic_search_engine(self) -> Any | None:
         """Public accessor for the semantic search engine instance."""
         return self._semantic_search
+
+    @property
+    def memory(self) -> Any:
+        """Lazy-constructed Memory API (Issue #2177: Memory Brick).
+
+        Returns a Memory (or MemoryWithPaging) instance using the factory-built
+        permission enforcer from BrickServices when available.
+        """
+        if getattr(self, "_memory_api", None) is not None:
+            return self._memory_api
+
+        self._ensure_entity_registry()
+        session = self.SessionLocal()
+        mem_cfg = self._memory_config_obj
+        do_paging = getattr(mem_cfg, "enable_paging", False) if mem_cfg else False
+
+        # Issue #2177: Inject factory-built permission enforcer when available
+        _extra: dict[str, Any] = {}
+        _brk = getattr(self, "_brick_services", None)
+        if _brk is not None and getattr(_brk, "memory_permission", None) is not None:
+            _extra["permission_enforcer"] = _brk.memory_permission
+
+        _ctx = getattr(self, "_default_context", None)
+        _zone = getattr(_ctx, "zone_id", None) if _ctx else None
+        _user = getattr(_ctx, "user_id", None) if _ctx else None
+        _agent = getattr(_ctx, "agent_id", None) if _ctx else None
+
+        if do_paging:
+            from nexus.bricks.memory.memory_with_paging import MemoryWithPaging
+
+            engine = self.SessionLocal.kw.get("bind") if self.SessionLocal else None
+            self._memory_api = MemoryWithPaging(
+                session=session,
+                backend=self.backend,
+                zone_id=_zone,
+                user_id=_user,
+                agent_id=_agent,
+                entity_registry=self._entity_registry,
+                enable_paging=True,
+                main_capacity=getattr(mem_cfg, "main_capacity", 1000) if mem_cfg else 1000,
+                recall_max_age_hours=getattr(mem_cfg, "recall_max_age_hours", 168)
+                if mem_cfg
+                else 168,
+                engine=engine,
+                session_factory=self.SessionLocal,
+            )
+        else:
+            from nexus.bricks.memory.service import Memory
+
+            self._memory_api = Memory(
+                session=session,
+                backend=self.backend,
+                zone_id=_zone,
+                user_id=_user,
+                agent_id=_agent,
+                entity_registry=self._entity_registry,
+                **_extra,
+            )
+
+        return self._memory_api
 
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.

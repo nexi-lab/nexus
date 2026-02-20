@@ -44,7 +44,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
@@ -228,6 +228,8 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "skill_package_service",  # wired later via NexusFS gateway adapters
         "agent_event_log",  # event log, not a lifecycle brick
         "rebac_circuit_breaker",  # Issue #2034: passive resilience wrapper, no lifecycle
+        "memory_router",  # singleton component for Memory brick (Issue #2177)
+        "memory_permission",  # singleton component for Memory brick (Issue #2177)
     }
 )
 
@@ -576,12 +578,13 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         mount_manager = MountManager(ctx.record_store)
 
         # --- Workspace Manager ---
+        from nexus.services.protocols.rebac import ReBACBrickProtocol
         from nexus.services.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager(
             metadata=ctx.metadata_store,
             backend=ctx.backend,
-            rebac_manager=rebac_manager,
+            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             session_factory=ctx.session_factory,
@@ -1270,6 +1273,29 @@ def _boot_brick_services(
             _cb_exc,
         )
 
+    # --- Memory Brick (Issue #2177) ---
+    memory_router: Any = None
+    memory_permission: Any = None
+    try:
+        from nexus.bricks.memory.router import MemoryViewRouter as _MemoryViewRouter
+
+        memory_router = _MemoryViewRouter(
+            session_factory=ctx.session_factory,
+            entity_registry=kernel["entity_registry"],
+        )
+
+        from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+
+        memory_permission = MemoryPermissionEnforcer(
+            metadata_store=ctx.metadata_store,
+            rebac_manager=kernel["rebac_manager"],
+            memory_router=memory_router,
+            entity_registry=kernel["entity_registry"],
+        )
+        logger.debug("[BOOT:BRICK] Memory brick created (router + permission)")
+    except Exception as _mem_exc:
+        logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
+
     result = {
         "wallet_provisioner": wallet_provisioner,
         "manifest_resolver": manifest_resolver,
@@ -1292,6 +1318,8 @@ def _boot_brick_services(
         "reputation_service": reputation_service,
         "version_service": version_service,
         "rebac_circuit_breaker": rebac_circuit_breaker,
+        "memory_router": memory_router,
+        "memory_permission": memory_permission,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1813,6 +1841,9 @@ def create_nexus_services(
         reputation_service=brick_dict["reputation_service"],
         # Version Brick (Issue #2034: moved from kernel)
         version_service=brick_dict["version_service"],
+        # Memory Brick (Issue #2177)
+        memory_router=brick_dict["memory_router"],
+        memory_permission=brick_dict["memory_permission"],
     )
 
     return kernel_services, system_services, brick_services
@@ -2175,7 +2206,7 @@ def create_memory_service(nx: Any) -> Any:
             do_paging = use_paging if use_paging is not None else _paging
 
             if do_paging:
-                from nexus.services.memory.memory_with_paging import MemoryWithPaging
+                from nexus.bricks.memory.memory_with_paging import MemoryWithPaging
 
                 engine = nx.SessionLocal.kw.get("bind") if nx.SessionLocal else None
                 return MemoryWithPaging(
@@ -2192,7 +2223,7 @@ def create_memory_service(nx: Any) -> Any:
                     session_factory=nx.SessionLocal,
                 )
             else:
-                from nexus.services.memory.memory_api import Memory
+                from nexus.bricks.memory.service import Memory
 
                 return Memory(
                     session=session,

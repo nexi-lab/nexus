@@ -149,7 +149,7 @@ class Memory:
             self.rebac_manager = EnhancedReBACManager(bind)
 
             permission_enforcer = MemoryPermissionEnforcer(
-                memory_router=self.memory_router,
+                memory_router=self.memory_router,  # type: ignore[arg-type]
                 entity_registry=_concrete_entity_registry,
                 rebac_manager=self.rebac_manager,
             )

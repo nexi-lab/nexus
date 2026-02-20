@@ -1,18 +1,15 @@
 """WriteObserverProtocol — kernel write-mutation observer interface.
 
 Defines the contract for write observers injected into NexusFS kernel.
-The kernel calls on_write()/on_delete()/on_rename()/on_write_batch()/
-on_mkdir()/on_rmdir() after Metastore mutations. Observers handle
-side-effects (audit trail, version recording, etc.) and own their
-own error policy.
+The kernel calls observer methods directly via typed Protocol dispatch.
+Observers own their error policy (#55). The kernel has a defensive
+safety net (_handle_observer_error) for any errors that escape.
 
 Current implementations:
 - RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode)
 - BufferedRecordStoreWriteObserver: async via WriteBuffer (fire-and-forget)
 
-The kernel is a pure caller — it never catches observer exceptions.
-Each implementation decides its own failure handling strategy.
-
+Migrated from getattr() dispatch in #1631.
 Tracked by: #55 (Move _audit_strict_mode from kernel to observer)
 """
 

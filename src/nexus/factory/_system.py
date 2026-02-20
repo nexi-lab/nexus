@@ -19,7 +19,10 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from nexus.contracts.write_observer import WriteObserverProtocol
 
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate
@@ -106,7 +109,7 @@ def _boot_system_services(
         # --- RecordStore Syncer (constructed, NOT started) ---
         import os
 
-        write_observer: Any = None
+        write_observer: WriteObserverProtocol | None = None
         use_buffer = ctx.enable_write_buffer
         if use_buffer is None:
             env_val = os.environ.get("NEXUS_ENABLE_WRITE_BUFFER", "").lower()

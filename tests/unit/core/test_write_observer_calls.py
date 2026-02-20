@@ -10,6 +10,7 @@ Coverage matrix (all gaps closed in Issue #625):
 - rmdir()       -> on_rmdir()       YES  (Issue #625)
 
 Phase 1.3 of #1246/#1330 consolidation plan.
+Issue #1631: Error handling tests for _handle_observer_error (strict + non-strict).
 """
 
 from __future__ import annotations
@@ -294,3 +295,98 @@ class TestPostMutationHookCoverage:
         event = hook.on_mutation.call_args.args[0]
         assert event.operation.value == "rmdir"
         assert event.path == "/mydir"
+
+
+# =========================================================================
+# Observer error handling (Issue #1631)
+# =========================================================================
+
+
+def _make_failing_observer() -> MagicMock:
+    """Create a mock observer where every method raises RuntimeError."""
+    obs = MagicMock()
+    err = RuntimeError("observer boom")
+    obs.on_write.side_effect = err
+    obs.on_write_batch.side_effect = err
+    obs.on_delete.side_effect = err
+    obs.on_rename.side_effect = err
+    obs.on_mkdir.side_effect = err
+    obs.on_rmdir.side_effect = err
+    return obs
+
+
+class TestObserverErrorHandlingStrict:
+    """audit_strict_mode=True + failing observer → AuditLogError."""
+
+    @pytest.fixture
+    def failing_observer(self) -> MagicMock:
+        return _make_failing_observer()
+
+    @pytest.fixture
+    def nx_strict(
+        self, temp_dir: Path, failing_observer: MagicMock
+    ) -> Generator[NexusFS, None, None]:
+        nx = NexusFS(
+            backend=LocalBackend(str(temp_dir / "data")),
+            metadata_store=InMemoryMetastore(),
+            permissions=PermissionConfig(enforce=False, audit_strict_mode=True),
+            parsing=ParseConfig(auto_parse=False),
+            system_services=SystemServices(write_observer=failing_observer),
+        )
+        yield nx
+        nx.close()
+
+    def test_write_raises_audit_log_error_on_observer_failure(self, nx_strict: NexusFS) -> None:
+        from nexus.contracts.exceptions import AuditLogError
+
+        with pytest.raises(AuditLogError, match="audit logging failed"):
+            nx_strict.write("/test.txt", b"hello")
+
+    def test_mkdir_raises_audit_log_error_on_observer_failure(self, nx_strict: NexusFS) -> None:
+        from nexus.contracts.exceptions import AuditLogError
+
+        with pytest.raises(AuditLogError, match="audit logging failed"):
+            nx_strict.mkdir("/testdir")
+
+    def test_rmdir_raises_audit_log_error_on_observer_failure(
+        self, nx_strict: NexusFS, failing_observer: MagicMock
+    ) -> None:
+        from nexus.contracts.exceptions import AuditLogError
+
+        # Create dir with a non-failing observer first, then switch
+        failing_observer.on_mkdir.side_effect = None
+        nx_strict.mkdir("/testdir")
+        failing_observer.on_rmdir.side_effect = RuntimeError("observer boom")
+
+        with pytest.raises(AuditLogError, match="audit logging failed"):
+            nx_strict.rmdir("/testdir")
+
+
+class TestObserverErrorHandlingNonStrict:
+    """audit_strict_mode=False + failing observer → operation succeeds."""
+
+    @pytest.fixture
+    def failing_observer(self) -> MagicMock:
+        return _make_failing_observer()
+
+    @pytest.fixture
+    def nx_nonstrict(
+        self, temp_dir: Path, failing_observer: MagicMock
+    ) -> Generator[NexusFS, None, None]:
+        nx = NexusFS(
+            backend=LocalBackend(str(temp_dir / "data")),
+            metadata_store=InMemoryMetastore(),
+            permissions=PermissionConfig(enforce=False, audit_strict_mode=False),
+            parsing=ParseConfig(auto_parse=False),
+            system_services=SystemServices(write_observer=failing_observer),
+        )
+        yield nx
+        nx.close()
+
+    def test_write_succeeds_despite_observer_failure(self, nx_nonstrict: NexusFS) -> None:
+        result = nx_nonstrict.write("/test.txt", b"hello")
+        assert result["etag"] is not None
+
+    def test_mkdir_succeeds_despite_observer_failure(self, nx_nonstrict: NexusFS) -> None:
+        # Should not raise — observer failure is logged but swallowed
+        nx_nonstrict.mkdir("/testdir")

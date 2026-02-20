@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.core.deployment_profile import (
+from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
     DeploymentProfile,
     resolve_enabled_bricks,

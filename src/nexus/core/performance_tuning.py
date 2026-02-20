@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.contracts.deployment_profile import DeploymentProfile
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +564,7 @@ _CLOUD_TUNING = ProfileTuning(
 
 def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
     """Build profile-to-tuning mapping (lazy import to avoid circular)."""
-    from nexus.core.deployment_profile import DeploymentProfile
+    from nexus.contracts.deployment_profile import DeploymentProfile
 
     return {
         DeploymentProfile.EMBEDDED: _EMBEDDED_TUNING,

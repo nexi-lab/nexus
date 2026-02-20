@@ -397,7 +397,7 @@ def connect(
     )
 
     # --- Profile resolution (Issue #1708) ---
-    from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     if cfg.profile == "auto":
         from nexus.core.device_capabilities import detect_capabilities, suggest_profile

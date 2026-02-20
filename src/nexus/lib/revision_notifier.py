@@ -4,8 +4,8 @@ Provides a thread-safe notification mechanism for zone revisions (zookies).
 Writers call notify_revision() after a successful write, and readers call
 wait_for_revision() to block until the desired revision is available.
 
-Moved from core/ to services/ per KERNEL-ARCHITECTURE.md: cross-zone
-infrastructure does not belong in core/.
+Lives in lib/ (tier-neutral utility) because it has zero nexus-specific
+dependencies — only stdlib threading + abc.
 """
 
 from __future__ import annotations

@@ -288,7 +288,8 @@ async def client(
     mock_nexus_fs._coordination_client = None
 
     # Create real app via create_app with PostgreSQL URL
-    from nexus.server.fastapi_server import _fastapi_app, create_app, get_auth_result
+    from nexus.server.dependencies import get_auth_result
+    from nexus.server.fastapi_server import _fastapi_app, create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
@@ -525,7 +526,8 @@ async def test_file_write_denied_when_no_permission(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _fastapi_app, create_app, get_auth_result
+    from nexus.server.dependencies import get_auth_result
+    from nexus.server.fastapi_server import _fastapi_app, create_app
 
     app = create_app(nexus_fs=mock_nexus_fs, database_url=TEST_SYNC_DB_URL)
     _fastapi_app.state.async_nexus_fs = async_fs
@@ -800,7 +802,8 @@ async def test_file_permission_denied_does_not_affect_pay(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _fastapi_app, create_app, get_auth_result
+    from nexus.server.dependencies import get_auth_result
+    from nexus.server.fastapi_server import _fastapi_app, create_app
 
     app = create_app(nexus_fs=mock_nexus_fs, database_url=TEST_SYNC_DB_URL)
     _fastapi_app.state.async_nexus_fs = async_fs

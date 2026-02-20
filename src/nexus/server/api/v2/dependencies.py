@@ -26,14 +26,14 @@ logger = logging.getLogger(__name__)
 
 def _get_require_auth() -> Any:
     """Get the require_auth dependency (lazy import)."""
-    from nexus.server.fastapi_server import require_auth
+    from nexus.server.dependencies import require_auth
 
     return require_auth
 
 
 def _get_operation_context(auth_result: dict[str, Any]) -> Any:
     """Get operation context from auth result (lazy import)."""
-    from nexus.server.fastapi_server import get_operation_context
+    from nexus.server.dependencies import get_operation_context
 
     return get_operation_context(auth_result)
 

@@ -28,6 +28,46 @@ async def startup_uploads(app: FastAPI) -> list[asyncio.Task]:
         cleanup_task = asyncio.create_task(app.state.chunked_upload_service.start_cleanup_loop())
         bg_tasks.append(cleanup_task)
         logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
+    elif app.state.nexus_fs and getattr(app.state.nexus_fs, "_record_store", None):
+        # Fallback: create from env vars when factory didn't provide the service
+        try:
+            from nexus.services.chunked_upload_service import (
+                ChunkedUploadConfig,
+                ChunkedUploadService,
+            )
+
+            _backend = getattr(app.state.nexus_fs, "backend", None)
+            _upload_rs = app.state.nexus_fs._record_store
+            if _backend and _upload_rs:
+                import os as _os
+
+                _upload_kwargs: dict = {}
+                for _env, _key in {
+                    "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "min_chunk_size",
+                    "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "max_chunk_size",
+                    "NEXUS_UPLOAD_MAX_CONCURRENT": "max_concurrent_uploads",
+                    "NEXUS_UPLOAD_SESSION_TTL_HOURS": "session_ttl_hours",
+                    "NEXUS_UPLOAD_CLEANUP_INTERVAL": "cleanup_interval_seconds",
+                    "NEXUS_UPLOAD_MAX_SIZE": "max_upload_size",
+                }.items():
+                    _v = _os.getenv(_env)
+                    if _v is not None:
+                        _upload_kwargs[_key] = int(_v)
+
+                app.state.chunked_upload_service = ChunkedUploadService(
+                    record_store=_upload_rs,
+                    backend=_backend,
+                    metadata_store=getattr(app.state.nexus_fs, "metadata", None),
+                    config=ChunkedUploadConfig(**_upload_kwargs),
+                )
+                cleanup_task = asyncio.create_task(
+                    app.state.chunked_upload_service.start_cleanup_loop()
+                )
+                bg_tasks.append(cleanup_task)
+                logger.info("[TUS] ChunkedUploadService initialized with background cleanup")
+        except Exception as e:
+            logger.warning(f"[TUS] Failed to initialize ChunkedUploadService: {e}")
+            app.state.chunked_upload_service = None
     else:
         app.state.chunked_upload_service = None
 

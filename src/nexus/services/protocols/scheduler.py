@@ -155,11 +155,21 @@ class InMemoryScheduler:
         self._task_map.pop(task_id, None)
 
     async def classify(self, request: AgentRequest) -> str:
-        # Inlined tier→class mapping (avoids protocol→implementation import).
-        # PriorityTier: CRITICAL=0, HIGH=1, NORMAL=2, LOW=3, BEST_EFFORT=4
-        _TIER_TO_CLASS = {0: "interactive", 1: "interactive", 2: "batch", 3: "background", 4: "background"}
-        priority = request.priority if request.priority in _TIER_TO_CLASS else 2  # default NORMAL
-        base_class = _TIER_TO_CLASS[priority]
+        from nexus.contracts.constants import PriorityTier
+
+        # Tier→class mapping (uses shared PriorityTier from contracts, not implementation).
+        _TIER_TO_CLASS = {
+            PriorityTier.CRITICAL: "interactive",
+            PriorityTier.HIGH: "interactive",
+            PriorityTier.NORMAL: "batch",
+            PriorityTier.LOW: "background",
+            PriorityTier.BEST_EFFORT: "background",
+        }
+        try:
+            tier = PriorityTier(request.priority)
+        except ValueError:
+            tier = PriorityTier.NORMAL
+        base_class = _TIER_TO_CLASS[tier]
 
         # IO promotion: BACKGROUND → BATCH if IO_WAIT
         if base_class == "background" and request.request_state == "io_wait":

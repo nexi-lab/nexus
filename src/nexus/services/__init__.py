@@ -31,6 +31,7 @@ from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
 from nexus.services.skill_service import SkillService  # backward compat shim (Issue #2035)
 from nexus.services.subsystem import Subsystem
+from nexus.services.scheduler import SchedulerService
 from nexus.services.version_service import VersionService
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "LLMService",
     "OAuthService",
     "SkillService",
+    "SchedulerService",
     "Subsystem",
     "ContextIdentity",
     "extract_context_identity",

@@ -34,6 +34,32 @@ class AuthResult:
 
 
 @dataclass(frozen=True)
+class UserInfo:
+    """Immutable user information DTO.
+
+    Decouples auth brick code from SQLAlchemy's UserModel ORM class.
+    Protocols return UserInfo instead of UserModel so the auth brick
+    has zero dependency on nexus.storage.models.
+
+    Issue #2281: Extract Auth/OAuth brick from server/auth.
+    """
+
+    user_id: str
+    email: str | None = None
+    username: str | None = None
+    display_name: str | None = None
+    avatar_url: str | None = None
+    password_hash: str | None = None
+    primary_auth_method: str | None = None
+    is_global_admin: bool = False
+    is_active: bool = True
+    email_verified: bool = False
+    zone_id: str | None = None
+    api_key: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
 class AuthConfig:
     """Configuration for the auth brick.
 

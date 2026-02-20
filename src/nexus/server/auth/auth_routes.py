@@ -438,7 +438,7 @@ async def setup_zone(
     try:
         from datetime import UTC, datetime, timedelta
 
-        from nexus.server.auth.user_helpers import get_user_by_id
+        from nexus.auth.user_queries import get_user_by_id
 
         # Get user from database
         with auth.session_factory() as session:
@@ -614,7 +614,7 @@ async def get_profile(
         401: Not authenticated
         404: User not found
     """
-    from nexus.server.auth.user_helpers import get_user_by_id
+    from nexus.auth.user_queries import get_user_by_id
 
     user_id, _email = user_info
 
@@ -658,7 +658,7 @@ async def update_profile(
         401: Not authenticated
         404: User not found
     """
-    from nexus.server.auth.user_helpers import get_user_by_id
+    from nexus.auth.user_queries import get_user_by_id
 
     user_id, _email = user_info
 
@@ -909,7 +909,7 @@ async def oauth_check(
             raise ValueError("OAuth response missing 'sub' claim (user ID)")
 
         # Check if OAuth account already exists (existing user)
-        from nexus.server.auth.user_helpers import get_user_by_email
+        from nexus.auth.user_queries import get_user_by_email
         from nexus.storage.models import UserOAuthAccountModel
 
         with oauth_provider.session_factory() as session:
@@ -1207,7 +1207,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         from datetime import UTC, datetime, timedelta
 
         from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-        from nexus.server.auth.user_helpers import get_user_by_email
+        from nexus.auth.user_queries import get_user_by_email
         from nexus.storage.models import UserModel
 
         # Check if user with this email already exists

@@ -22,9 +22,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.auth.oauth.types import OAuthCredential
 from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.contracts.exceptions import AuthenticationError
-from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.server.auth.token_manager import TokenManager, _hash_token
 
 
@@ -75,7 +75,7 @@ class TestTokenRotation:
             refresh_token="1//test_refresh_token",
             token_type="Bearer",
             expires_at=datetime.now(UTC) + timedelta(hours=1),
-            scopes=["https://www.googleapis.com/auth/drive"],
+            scopes=("https://www.googleapis.com/auth/drive",),
             provider="google",
             user_email="alice@example.com",
             client_id="test_client_id",
@@ -89,7 +89,7 @@ class TestTokenRotation:
             refresh_token="1//test_refresh_token",
             token_type="Bearer",
             expires_at=datetime.now(UTC) - timedelta(hours=1),
-            scopes=["https://www.googleapis.com/auth/drive"],
+            scopes=("https://www.googleapis.com/auth/drive",),
             provider="google",
             user_email="alice@example.com",
             client_id="test_client_id",

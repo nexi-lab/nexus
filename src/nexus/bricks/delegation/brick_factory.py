@@ -9,7 +9,7 @@ TIER = "independent"
 RESULT_KEY = "delegation_service"
 
 
-def create(ctx: Any, kernel: dict[str, Any]) -> Any:
+def create(ctx: Any, system: dict[str, Any]) -> Any:
     """Create DelegationService. Lazy imports inside."""
     if ctx.record_store is None:
         return None
@@ -17,6 +17,6 @@ def create(ctx: Any, kernel: dict[str, Any]) -> Any:
 
     return DelegationService(
         record_store=ctx.record_store,
-        rebac_manager=kernel["rebac_manager"],
-        entity_registry=kernel.get("entity_registry"),
+        rebac_manager=system["rebac_manager"],
+        entity_registry=system.get("entity_registry"),
     )

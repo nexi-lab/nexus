@@ -47,6 +47,7 @@ from nexus.factory._bricks import _boot_independent_bricks as _boot_brick_servic
 from nexus.factory._helpers import (
     _FACTORY_BRICKS,
     _FACTORY_SKIP,
+    _make_gate,
     _register_factory_bricks,
     _safe_create,
 )

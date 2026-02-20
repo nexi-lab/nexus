@@ -14,6 +14,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    is_standalone,
 )
 
 
@@ -53,9 +54,6 @@ def list_files(
         # Time-travel: List files at historical operation point
         nexus ls /workspace --at-operation op_abc123
     """
-    # Import at function level - needed for both time-travel and regular long listing
-    from nexus.core.nexus_fs import NexusFS
-
     try:
         nx = get_filesystem(backend_config)
 
@@ -68,7 +66,7 @@ def list_files(
                 nx.close()
                 return
 
-            if not isinstance(nx, NexusFS):
+            if not is_standalone(nx):
                 console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
                 nx.close()
                 return
@@ -166,7 +164,7 @@ def list_files(
             table.add_column("Modified", style="yellow")
 
             # Get metadata with permissions
-            if isinstance(nx, NexusFS):
+            if is_standalone(nx):
                 for file in files:
                     # Use is_directory from metadata if available, otherwise check via API
                     is_dir = file.get("is_directory", False)

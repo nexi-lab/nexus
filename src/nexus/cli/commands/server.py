@@ -23,6 +23,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    is_standalone,
 )
 from nexus.lib.env import get_database_url
 from nexus.lib.sync_bridge import run_sync
@@ -821,16 +822,15 @@ def serve(
 
             from nexus.cli.utils import create_backend_from_config
             from nexus.config import load_config
-            from nexus.core.nexus_fs import NexusFS
 
             try:
                 cfg = load_config(PathlibPath(backend_config.config_path))
                 # Store config on NexusFS for OAuth factory and other components
-                if isinstance(nx, NexusFS):
+                if is_standalone(nx):
                     nx._config = cfg
                 if cfg.backends:
                     # Type check: backends can only be mounted on NexusFS, not RemoteNexusFS
-                    if not isinstance(nx, NexusFS):
+                    if not is_standalone(nx):
                         console.print(
                             "[yellow]⚠️  Warning: Multi-backend configuration is only supported for local NexusFS instances[/yellow]"
                         )

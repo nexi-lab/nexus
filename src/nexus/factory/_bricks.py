@@ -131,17 +131,30 @@ def _boot_independent_bricks(
         except ImportError:
             logger.debug("[BOOT:BRICK] Search brick manifest not available")
 
-        # Wire zoekt callbacks into backends (Issue #1520)
+        # Wire zoekt callbacks into backends (Issue #1520, #2188: DI via factory)
         try:
-            from nexus.bricks.search.zoekt_client import (
-                notify_zoekt_sync_complete,
-                notify_zoekt_write,
-            )
+            from nexus.bricks.search.config import search_config_from_env
+            from nexus.bricks.search.zoekt_client import ZoektIndexManager
 
-            if hasattr(ctx.backend, "on_write_callback") and ctx.backend.on_write_callback is None:
-                ctx.backend.on_write_callback = notify_zoekt_write
-            if hasattr(ctx.backend, "on_sync_callback") and ctx.backend.on_sync_callback is None:
-                ctx.backend.on_sync_callback = notify_zoekt_sync_complete
+            _search_cfg = search_config_from_env()
+            if _search_cfg.zoekt_enabled:
+                _zoekt_index_mgr = ZoektIndexManager(
+                    index_dir=_search_cfg.zoekt_index_dir,
+                    data_dir=_search_cfg.zoekt_data_dir,
+                    debounce_seconds=_search_cfg.zoekt_debounce_seconds,
+                    enabled=True,
+                    index_binary=_search_cfg.zoekt_index_binary,
+                )
+                if (
+                    hasattr(ctx.backend, "on_write_callback")
+                    and ctx.backend.on_write_callback is None
+                ):
+                    ctx.backend.on_write_callback = _zoekt_index_mgr.notify_write
+                if (
+                    hasattr(ctx.backend, "on_sync_callback")
+                    and ctx.backend.on_sync_callback is None
+                ):
+                    ctx.backend.on_sync_callback = _zoekt_index_mgr.notify_sync_complete
         except ImportError:
             logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
     else:

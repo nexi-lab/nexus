@@ -9,9 +9,13 @@ before the vector_db split refactoring.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from nexus.bricks.search.vector_db import VectorDatabase
 
 # =============================================================================
 # VectorDatabase construction and init
@@ -222,26 +226,39 @@ class TestResultDictShape:
 
 
 class TestRunSync:
-    """Test the _run_sync() helper for sync/async bridging."""
+    """Test the _run_sync() instance method for sync/async bridging."""
+
+    @staticmethod
+    def _make_vdb() -> VectorDatabase:
+        """Create a minimal VectorDatabase with a mock engine."""
+        from unittest.mock import MagicMock
+
+        from nexus.bricks.search.vector_db import VectorDatabase as _VDB
+
+        engine = MagicMock()
+        engine.dialect.name = "sqlite"
+        return _VDB(engine)
 
     def test_run_sync_outside_event_loop(self) -> None:
         """_run_sync should work when no event loop is running."""
-        from nexus.bricks.search.vector_db import _run_sync
+        vdb = self._make_vdb()
 
         async def async_add(a: int, b: int) -> int:
             return a + b
 
-        result = _run_sync(async_add(1, 2))
+        result = vdb._run_sync(async_add(1, 2))
         assert result == 3
+        vdb.close()
 
     def test_run_sync_returns_value(self) -> None:
-        from nexus.bricks.search.vector_db import _run_sync
+        vdb = self._make_vdb()
 
         async def async_identity(x: str) -> str:
             return x
 
-        result = _run_sync(async_identity("hello"))
+        result = vdb._run_sync(async_identity("hello"))
         assert result == "hello"
+        vdb.close()
 
 
 # =============================================================================

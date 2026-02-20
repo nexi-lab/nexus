@@ -15,8 +15,7 @@ from enum import StrEnum
 
 from nexus.contracts.constants import TIER_ALIASES, PriorityTier
 
-# Re-export so existing ``from nexus.bricks.scheduler.constants import PriorityTier``
-# continues to work until all callers are migrated.
+# Re-exported from contracts for convenience (canonical location: nexus.contracts.constants).
 __all__ = ["PriorityTier", "TIER_ALIASES"]
 
 # =============================================================================

@@ -491,8 +491,8 @@ class TestAgentLifecycleCleanup:
     @pytest.mark.asyncio
     async def test_state_event_handler_triggers_cleanup(self) -> None:
         """Integration: AgentStateEvent for IDLE triggers cleanup."""
-        from nexus.bricks.scheduler.events import AgentStateEmitter, AgentStateEvent
         from nexus.services.hook_engine import create_agent_cleanup_handler
+        from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
         engine = _make_engine()
         emitter = AgentStateEmitter()
@@ -519,8 +519,8 @@ class TestAgentLifecycleCleanup:
     @pytest.mark.asyncio
     async def test_state_event_handler_ignores_connected(self) -> None:
         """Cleanup handler ignores transitions TO CONNECTED."""
-        from nexus.bricks.scheduler.events import AgentStateEmitter, AgentStateEvent
         from nexus.services.hook_engine import create_agent_cleanup_handler
+        from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
         engine = _make_engine()
         emitter = AgentStateEmitter()

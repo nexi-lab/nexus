@@ -67,10 +67,10 @@ jobs:
           # macOS only on push to main/develop, not on every PR
           - os: macos-latest
             python-version: "3.13"
-            main-only: true
+            main_only: true
 
     # Skip macOS on PRs (only run on push to main/develop)
-    if: ${{ !matrix.main-only || github.event_name != 'pull_request' }}
+    if: ${{ !matrix.main_only || github.event_name != 'pull_request' }}
 
     steps:
       - name: Checkout code

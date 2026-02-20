@@ -16,13 +16,13 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.scheduler.constants import (
+from nexus.services.scheduler.constants import (
     AGING_INTERVAL_SECONDS,
     STARVATION_PROMOTION_THRESHOLD_SECS,
 )
 
 if TYPE_CHECKING:
-    from nexus.bricks.scheduler.service import SchedulerService
+    from nexus.services.scheduler.service import SchedulerService
 
 logger = logging.getLogger(__name__)
 

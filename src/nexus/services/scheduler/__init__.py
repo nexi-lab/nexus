@@ -15,11 +15,11 @@ Astraea extensions (Issue #1274):
 Related: Issue #1212, #1274
 """
 
-from nexus.bricks.scheduler.constants import PriorityClass, PriorityTier, RequestState
-from nexus.bricks.scheduler.dispatcher import TaskDispatcher
-from nexus.bricks.scheduler.events import AgentStateEmitter, AgentStateEvent
-from nexus.bricks.scheduler.models import ScheduledTask, TaskSubmission
-from nexus.bricks.scheduler.service import SchedulerService
+from nexus.services.scheduler.constants import PriorityClass, PriorityTier, RequestState
+from nexus.services.scheduler.dispatcher import TaskDispatcher
+from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.services.scheduler.models import ScheduledTask, TaskSubmission
+from nexus.services.scheduler.service import SchedulerService
 
 __all__ = [
     "AgentStateEmitter",

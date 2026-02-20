@@ -24,9 +24,9 @@ from nexus.contracts.agent_types import AgentState
 from nexus.services.protocols.agent_registry import AgentInfo
 
 if TYPE_CHECKING:
-    from nexus.bricks.scheduler.events import AgentStateEmitter
     from nexus.contracts.agent_types import AgentRecord, AgentSpec, AgentStatus
     from nexus.services.agents.agent_registry import AgentRegistry
+    from nexus.services.scheduler.events import AgentStateEmitter
 
 
 def _to_agent_info(record: AgentRecord) -> AgentInfo:
@@ -124,7 +124,7 @@ class AsyncAgentRegistry:
 
         # Emit state change event if emitter is configured
         if self._state_emitter is not None and previous_state is not None:
-            from nexus.bricks.scheduler.events import AgentStateEvent
+            from nexus.services.scheduler.events import AgentStateEvent
 
             event = AgentStateEvent(
                 agent_id=agent_id,

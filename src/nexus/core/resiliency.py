@@ -147,9 +147,7 @@ class ResiliencyConfig:
                         min_wait=float(val.get("min_wait", 1.0)),
                     )
 
-            circuit_breakers: dict[str, CircuitBreakerPolicy] = {
-                "default": CircuitBreakerPolicy()
-            }
+            circuit_breakers: dict[str, CircuitBreakerPolicy] = {"default": CircuitBreakerPolicy()}
             for name, val in raw.get("circuit_breakers", {}).items():
                 if isinstance(val, dict):
                     circuit_breakers[name] = CircuitBreakerPolicy(

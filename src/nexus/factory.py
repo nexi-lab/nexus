@@ -2123,10 +2123,11 @@ def create_nexus_fs(
 
     # Create content cache (Issue #657)
     _content_cache = None
-    if cache is not None and cache.enable_content_cache and backend.has_root_path is True:
+    _cache_for_cc = cache or CacheConfig()
+    if _cache_for_cc.enable_content_cache and backend.has_root_path is True:
         from nexus.storage.content_cache import ContentCache
 
-        _content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
+        _content_cache = ContentCache(max_size_mb=_cache_for_cc.content_cache_size_mb)
 
     # Create VFS lock manager (Issue #657)
     from nexus.core.lock_fast import create_vfs_lock_manager

@@ -28,14 +28,6 @@ def build_v1_registry() -> RouterRegistry:
     """
     registry = RouterRegistry()
 
-    # ---- Admin router (Issue #921) ----
-    try:
-        from nexus.server.api.v1.routers.admin import router as admin_router
-
-        registry.add(RouterEntry(router=admin_router, name="admin", endpoint_count=2))
-    except ImportError as e:
-        logger.warning("Failed to import admin router: %s", e)
-
     # ---- Events router (Issue #1116, #1117) ----
     try:
         from nexus.server.api.v1.routers.events import router as events_router

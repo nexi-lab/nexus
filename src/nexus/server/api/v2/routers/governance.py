@@ -497,3 +497,66 @@ async def decide_appeal(
             "decided_by": record.decided_by,
         }
     )
+
+
+# =============================================================================
+# Hotspot Detection Endpoints (#2056 — ported from v1 admin)
+# =============================================================================
+
+
+def _get_nexus_fs(request: Request) -> Any:
+    """Get NexusFS instance from app.state."""
+    fs = getattr(request.app.state, "nexus_fs", None)
+    if fs is None:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+    return fs
+
+
+@router.get("/hotspot-stats")
+async def get_hotspot_stats(
+    request: Request,
+    _auth_result: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    """Get hotspot detection statistics (Issue #921)."""
+    nexus_fs = _get_nexus_fs(request)
+    permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
+    if not permission_enforcer:
+        raise HTTPException(status_code=503, detail="Permission enforcer not available")
+
+    hotspot_detector = getattr(permission_enforcer, "_hotspot_detector", None)
+    if not hotspot_detector:
+        return {"enabled": False, "message": "Hotspot tracking not enabled"}
+
+    stats: dict[str, Any] = hotspot_detector.get_stats()
+    return stats
+
+
+@router.get("/hot-entries")
+async def get_hot_entries(
+    request: Request,
+    limit: int = Query(10, description="Maximum number of entries", ge=1, le=100),
+    _auth_result: dict = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    """Get current hot permission entries (Issue #921)."""
+    nexus_fs = _get_nexus_fs(request)
+    permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
+    if not permission_enforcer:
+        raise HTTPException(status_code=503, detail="Permission enforcer not available")
+
+    hotspot_detector = getattr(permission_enforcer, "_hotspot_detector", None)
+    if not hotspot_detector:
+        return []
+
+    entries = hotspot_detector.get_hot_entries(limit=limit)
+    return [
+        {
+            "subject_type": e.subject_type,
+            "subject_id": e.subject_id,
+            "resource_type": e.resource_type,
+            "permission": e.permission,
+            "zone_id": e.zone_id,
+            "access_count": e.access_count,
+            "last_access": e.last_access,
+        }
+        for e in entries
+    ]

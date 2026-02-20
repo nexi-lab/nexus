@@ -47,27 +47,20 @@ class AuthService:
         return self._cache
 
     async def authenticate(self, token: str) -> AuthResult:
-        """Authenticate a token (cache-aware).
+        """Authenticate a token (cache-aware, singleflight).
 
         Checks the cache first; on miss, delegates to the provider
-        and caches the result.
+        and caches the result.  Concurrent calls for the same token
+        are coalesced via singleflight (Issue #15).
         """
         if not token:
             return AuthResult(authenticated=False)
 
-        # Check cache
-        cached = self._cache.get(token)
-        if cached is not None:
-            return AuthResult(
-                **{k: v for k, v in cached.items() if k in AuthResult.__dataclass_fields__}
-            )
-
-        # Cache miss — call provider
-        result = await self._provider.authenticate(token)
-
-        if result.authenticated:
-            # Cache without per-request fields
-            cache_entry = {
+        async def _fetch() -> dict[str, Any] | None:
+            result = await self._provider.authenticate(token)
+            if not result.authenticated:
+                return None
+            return {
                 "authenticated": result.authenticated,
                 "subject_type": result.subject_type,
                 "subject_id": result.subject_id,
@@ -77,9 +70,13 @@ class AuthService:
                 "agent_generation": result.agent_generation,
                 "inherit_permissions": result.inherit_permissions,
             }
-            self._cache.set(token, cache_entry)
 
-        return result
+        cached = await self._cache.get_or_fetch(token, _fetch)
+        if cached is None:
+            return AuthResult(authenticated=False)
+        return AuthResult(
+            **{k: v for k, v in cached.items() if k in AuthResult.__dataclass_fields__}
+        )
 
     async def validate_token(self, token: str) -> bool:
         """Quick token validation."""

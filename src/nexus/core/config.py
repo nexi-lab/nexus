@@ -57,6 +57,9 @@ class CacheConfig:
     ttl_seconds: int | None = 300
     enable_content_cache: bool = True
     content_cache_size_mb: int = 256
+    enable_watch_cache: bool = True
+    watch_poll_interval_ms: int = 10
+    watch_buffer_size: int = 4096
 
 
 @dataclass(frozen=True)

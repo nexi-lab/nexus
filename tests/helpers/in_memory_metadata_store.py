@@ -11,28 +11,56 @@ from collections.abc import Sequence
 from typing import Any
 
 from nexus.core.metadata import FileMetadata
+from nexus.core.metadata_change import MetadataChange
 from nexus.core.metastore import MetastoreABC
 
 
 class InMemoryMetastore(MetastoreABC):
     """In-memory Metastore pillar implementation for tests that don't need Rust Raft extension."""
 
-    def __init__(self) -> None:
+    def __init__(self, zone_id: str = "root") -> None:
         self._store: dict[str, FileMetadata] = {}
         self._file_metadata: dict[str, dict[str, Any]] = {}  # path -> {key: value}
+        self._changes: list[MetadataChange] = []
+        self._revision: int = 0
+        self._zone_id = zone_id
 
     def get(self, path: str) -> FileMetadata | None:
         return self._store.get(path)
 
     def put(self, metadata: FileMetadata) -> None:
         self._store[metadata.path] = metadata
+        self._revision += 1
+        self._changes.append(
+            MetadataChange(
+                revision=self._revision,
+                path=metadata.path,
+                operation="put",
+                zone_id=self._zone_id,
+            )
+        )
 
     def delete(self, path: str) -> dict[str, Any] | None:
         if path in self._store:
             del self._store[path]
             self._file_metadata.pop(path, None)
+            self._revision += 1
+            self._changes.append(
+                MetadataChange(
+                    revision=self._revision,
+                    path=path,
+                    operation="delete",
+                    zone_id=self._zone_id,
+                )
+            )
             return {"deleted": path}
         return None
+
+    def drain_changes(self, since_revision: int = 0) -> list[MetadataChange]:
+        """Return and clear buffered changes since the given revision."""
+        result = [c for c in self._changes if c.revision > since_revision]
+        self._changes = [c for c in self._changes if c.revision <= since_revision]
+        return result
 
     def exists(self, path: str) -> bool:
         return path in self._store

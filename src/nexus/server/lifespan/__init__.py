@@ -182,6 +182,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
     _wire_query_observer(app)
 
+    # Start WatchCacheManager if available (Issue #2065)
+    _nexus_fs = getattr(app.state, "nexus_fs", None)
+    if _nexus_fs is not None and hasattr(_nexus_fs, "start_watch_cache"):
+        await _nexus_fs.start_watch_cache()
+
     yield
 
     # --- Shutdown (reverse order) ---
@@ -201,6 +206,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await shutdown_bricks(app)
     await shutdown_services(app)
     await shutdown_realtime(app)
+
+    # Stop WatchCacheManager before closing kernel (Issue #2065)
+    _nexus_fs_shutdown = getattr(app.state, "nexus_fs", None)
+    if _nexus_fs_shutdown is not None and hasattr(_nexus_fs_shutdown, "stop_watch_cache"):
+        await _nexus_fs_shutdown.stop_watch_cache()
 
     # Close NexusFS kernel
     if app.state.nexus_fs:

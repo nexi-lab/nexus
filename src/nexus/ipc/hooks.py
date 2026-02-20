@@ -10,7 +10,7 @@ automatically triggers message delivery.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.services.protocols.hook_engine import (
     POST_WRITE,
@@ -79,7 +79,7 @@ async def inbox_write_hook(
 
 
 async def register_ipc_hooks(
-    hook_engine: any,
+    hook_engine: Any,
     processor_registry: MessageProcessorRegistry,
 ) -> None:
     """Register IPC hooks with the HookEngine.

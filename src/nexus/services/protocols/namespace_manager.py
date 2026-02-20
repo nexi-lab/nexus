@@ -1,7 +1,7 @@
 """Namespace manager service protocol (Issue #1383).
 
 Defines the contract for per-subject namespace visibility.
-Existing implementation: ``nexus.rebac.namespace_manager.NamespaceManager`` (sync).
+Existing implementation: ``nexus.bricks.rebac.namespace_manager.NamespaceManager`` (sync).
 
 No ``mount()`` / ``unmount()`` — the existing implementation rebuilds from
 ReBAC grants, not explicit mount calls (pragmatic 5A decision).
@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.rebac.namespace_manager import NamespaceMount
+    from nexus.bricks.rebac.namespace_manager import NamespaceMount
 
 
 @runtime_checkable

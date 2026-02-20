@@ -544,7 +544,7 @@ class TestBridgeReliability:
 
     def test_bridge_success(self, record_store):
         """Bridge registers in entity_registry on successful register()."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
@@ -574,7 +574,7 @@ class TestBridgeReliability:
 
     def test_unregister_bridge_failure_raises(self, record_store):
         """Unregister bridge failure raises exception."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
@@ -635,7 +635,7 @@ class TestRegistrationWithBridge:
 
     def test_entity_registry_creation(self, record_store):
         """Registration creates entity in EntityRegistry via bridge."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
@@ -652,7 +652,7 @@ class TestRegistrationWithBridge:
 
     def test_multi_agent_same_user(self, record_store):
         """Multiple agents for same user are all tracked."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
@@ -668,7 +668,7 @@ class TestRegistrationWithBridge:
 
     def test_unregister_preserves_others(self, record_store):
         """Unregistering one agent doesn't affect others."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")

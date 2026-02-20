@@ -1,10 +1,10 @@
 """Tiger Cache Facade — Unified API for Tiger Cache operations.
 
-Extracts the 8 tiger_* delegation methods from EnhancedReBACManager
+Extracts the 8 tiger_* delegation methods from ReBACManager
 into a standalone facade that coordinates TigerCache and TigerCacheUpdater.
 
 External callers (background_tasks, nexus_fs, nexus_fs_rebac) access
-Tiger via EnhancedReBACManager's thin delegation methods, which now
+Tiger via ReBACManager's thin delegation methods, which now
 route through this facade.
 
 Related: Issue #1459 Phase 12, Issue #682 (Tiger Cache)

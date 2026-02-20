@@ -132,7 +132,7 @@ class Memory:
         if entity_registry is None:
             from types import SimpleNamespace
 
-            from nexus.rebac.entity_registry import EntityRegistry
+            from nexus.bricks.rebac.entity_registry import EntityRegistry
 
             _concrete_entity_registry = EntityRegistry(
                 SimpleNamespace(session_factory=lambda: session)
@@ -145,12 +145,12 @@ class Memory:
         if permission_enforcer is None:
             from sqlalchemy import Engine
 
-            from nexus.rebac.manager import EnhancedReBACManager
-            from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+            from nexus.bricks.rebac.manager import ReBACManager
+            from nexus.bricks.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 
             bind = session.get_bind()
             assert isinstance(bind, Engine), "Expected Engine, got Connection"
-            self.rebac_manager = EnhancedReBACManager(bind)
+            self.rebac_manager = ReBACManager(bind)
 
             permission_enforcer = MemoryPermissionEnforcer(
                 memory_router=self.memory_router,

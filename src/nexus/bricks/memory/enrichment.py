@@ -216,7 +216,10 @@ class EnrichmentPipeline:
     def _enrich_entities(self, text: str, result: EnrichmentResult) -> None:
         """Extract named entities (#1025)."""
         try:
-            from nexus.rebac.entity_extractor import EntityExtractor
+            import importlib
+
+            _mod = importlib.import_module("nexus.bricks.rebac.entity_extractor")
+            EntityExtractor: Any = _mod.EntityExtractor
 
             extractor = EntityExtractor(use_spacy=False)
             entities = extractor.extract(text)

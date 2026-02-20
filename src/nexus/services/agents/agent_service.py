@@ -143,7 +143,7 @@ class AgentService:
         if self._record_store is None:
             raise RuntimeError("EntityRegistry requires record_store")
 
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         self._entity_registry = EntityRegistry(self._record_store)
 

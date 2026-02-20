@@ -1,7 +1,7 @@
 """Bulk Permission Evaluator — In-memory graph traversal for batch checks.
 
 Extracts the pure-function graph traversal logic from
-EnhancedReBACManager._compute_permission_bulk_helper and its helpers
+ReBACManager._compute_permission_bulk_helper and its helpers
 into standalone functions that operate on pre-fetched tuple graphs.
 
 These functions are DB-free: they only need the tuples graph, namespace

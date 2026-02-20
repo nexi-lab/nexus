@@ -1,6 +1,6 @@
 """Bulk Permission Checker — Multi-phase batch permission evaluation.
 
-Extracts the rebac_check_bulk method from EnhancedReBACManager into a
+Extracts the rebac_check_bulk method from ReBACManager into a
 focused class that orchestrates the multi-phase bulk checking pipeline:
 
 Phase 0:   L1 in-memory cache lookup

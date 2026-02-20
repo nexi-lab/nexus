@@ -11,8 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.contracts.types import OperationContext
-from nexus.rebac.filter_chain import (
+from nexus.bricks.rebac.filter_chain import (
     BulkReBACStrategy,
     FilterContext,
     FilterResult,
@@ -22,6 +21,7 @@ from nexus.rebac.filter_chain import (
     ZonePreFilterStrategy,
     run_filter_chain,
 )
+from nexus.contracts.types import OperationContext
 
 # ---------------------------------------------------------------------------
 # Fixtures

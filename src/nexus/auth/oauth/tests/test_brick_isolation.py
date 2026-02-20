@@ -1,4 +1,4 @@
-"""Tests that the OAuth brick has zero imports from nexus.server, nexus.core, nexus.rebac."""
+"""Tests that the OAuth brick has zero imports from nexus.server, nexus.core, nexus.bricks.rebac."""
 
 from __future__ import annotations
 

@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 if TYPE_CHECKING:
-    from nexus.rebac.circuit_breaker import AsyncCircuitBreaker
-    from nexus.rebac.manager import ReBACManager
+    from nexus.bricks.rebac.circuit_breaker import AsyncCircuitBreaker
+    from nexus.bricks.rebac.manager import ReBACManager
 
 
 class ReBACService(ReBACShareMixin):
@@ -149,7 +149,7 @@ class ReBACService(ReBACShareMixin):
 
         # Issue #702: Propagate OTel context to worker thread so spans are
         # children of the async caller's span.
-        from nexus.rebac.rebac_tracing import propagate_otel_context
+        from nexus.bricks.rebac.rebac_tracing import propagate_otel_context
 
         fn_with_ctx = propagate_otel_context(fn)
 
@@ -355,7 +355,7 @@ class ReBACService(ReBACShareMixin):
                 conditions=conditions,
             )
 
-            # NOTE: Tiger Cache queue update is handled in EnhancedReBACManager.rebac_write()
+            # NOTE: Tiger Cache queue update is handled in ReBACManager.rebac_write()
 
             if self._enable_audit_logging:
                 logger.info(
@@ -461,7 +461,7 @@ class ReBACService(ReBACShareMixin):
             # Issue #1081: Build consistency requirement from API params
             consistency = None
             if consistency_mode or min_revision is not None:
-                from nexus.rebac.types import (
+                from nexus.bricks.rebac.types import (
                     ConsistencyMode,
                     ConsistencyRequirement,
                 )
@@ -700,7 +700,7 @@ class ReBACService(ReBACShareMixin):
         # Issue #702: Wrap batch check in a summary span
         import time as _time
 
-        from nexus.rebac.rebac_tracing import (
+        from nexus.bricks.rebac.rebac_tracing import (
             record_batch_result,
             start_batch_check_span,
         )
@@ -973,7 +973,7 @@ class ReBACService(ReBACShareMixin):
         # Import dependencies
         import uuid
 
-        from nexus.rebac.domain import NamespaceConfig
+        from nexus.bricks.rebac.domain import NamespaceConfig
 
         # Create NamespaceConfig object
         ns = NamespaceConfig(
@@ -2125,7 +2125,7 @@ class ReBACService(ReBACShareMixin):
 
         import uuid
 
-        from nexus.rebac.domain import NamespaceConfig
+        from nexus.bricks.rebac.domain import NamespaceConfig
 
         ns = NamespaceConfig(
             namespace_id=str(uuid.uuid4()),

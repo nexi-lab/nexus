@@ -112,6 +112,14 @@ from typing import Union
 from nexus.backends.backend import Backend
 from nexus.backends.gcs import GCSBackend
 from nexus.backends.local import LocalBackend
+from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.rebac.manager import (
+    CheckResult,
+    ConsistencyLevel,
+    GraphLimitExceeded,
+    ReBACManager,
+)
 from nexus.config import NexusConfig as Config
 from nexus.config import load_config
 from nexus.contracts.exceptions import (
@@ -131,16 +139,6 @@ from nexus.contracts.types import OperationContext
 from nexus.core.filesystem import NexusFilesystem as Filesystem
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import NamespaceConfig
-from nexus.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
-from nexus.rebac.enforcer import PermissionEnforcer
-from nexus.rebac.manager import (
-    CheckResult,
-    ConsistencyLevel,
-    GraphLimitExceeded,
-)
-from nexus.rebac.manager import (
-    EnhancedReBACManager as ReBACManager,
-)
 from nexus.remote import RemoteNexusFS
 from nexus.skills import (
     Skill,

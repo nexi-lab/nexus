@@ -28,7 +28,7 @@ from nexus.bricks.rebac._path_utils import get_ancestors, get_parent, get_parent
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.bricks.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import ReBACManager
 
 
 class HierarchyManager:
@@ -47,7 +47,7 @@ class HierarchyManager:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: ReBACManager,
         enable_inheritance: bool = True,
     ):
         """Initialize hierarchy manager.
@@ -169,7 +169,7 @@ class HierarchyManager:
             zone_id: Zone ID
         """
         # Check if rebac_manager supports zone_id parameter
-        # (EnhancedReBACManager does, basic ReBACManager doesn't)
+        # (ReBACManager does, basic ReBACManager doesn't)
         if hasattr(self.rebac_manager, "rebac_write") and zone_id:
             try:
                 # Try zone-aware write

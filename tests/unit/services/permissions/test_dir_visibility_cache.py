@@ -16,7 +16,7 @@ import time
 from threading import Thread
 from unittest.mock import MagicMock
 
-from nexus.rebac.cache.visibility import (
+from nexus.bricks.rebac.cache.visibility import (
     DirectoryVisibilityCache,
 )
 

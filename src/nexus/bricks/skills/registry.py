@@ -19,7 +19,7 @@ from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.skills.types import SkillOperationContext as OperationContext
-    from nexus.rebac.manager import ReBACManager
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,9 @@ class SkillRegistry:
         return paths
 
     def __init__(
-        self, filesystem: NexusFilesystem | None = None, rebac_manager: ReBACManager | None = None
+        self,
+        filesystem: NexusFilesystem | None = None,
+        rebac_manager: ReBACBrickProtocol | None = None,
     ):
         """Initialize skill registry.
 

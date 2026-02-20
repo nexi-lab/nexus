@@ -2800,7 +2800,7 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If memory doesn't exist.
         """
         from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         # Get memory via router
         session = self.SessionLocal()
@@ -2885,7 +2885,7 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If memory doesn't exist.
         """
         from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         # Get memory via router
         session = self.SessionLocal()

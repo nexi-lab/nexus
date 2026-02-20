@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 from sqlalchemy.exc import OperationalError
 
-from nexus.rebac.deferred_permission_buffer import (
+from nexus.bricks.rebac.deferred_permission_buffer import (
     DeferredPermissionBuffer,
     get_default_buffer,
     set_default_buffer,

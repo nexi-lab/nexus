@@ -2,11 +2,11 @@
 
 import pytest
 
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.contracts.types import (
     OperationContext,
     Permission,
 )
-from nexus.rebac.enforcer import PermissionEnforcer
 
 
 class TestOperationContext:

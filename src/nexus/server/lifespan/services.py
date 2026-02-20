@@ -338,7 +338,7 @@ def _startup_sandbox_auth(app: FastAPI, svc: LifespanServices) -> None:
         sync_rebac = svc.rebac_manager
         if sync_rebac:
             try:
-                from nexus.rebac.namespace_factory import (
+                from nexus.bricks.rebac.namespace_factory import (
                     create_namespace_manager,
                 )
 

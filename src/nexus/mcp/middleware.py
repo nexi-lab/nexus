@@ -42,7 +42,7 @@ from nexus.mcp.tool_utils import tool_error
 if TYPE_CHECKING:
     import mcp.types as mt
 
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class ToolNamespaceMiddleware(Middleware):
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: ReBACManager,
         zone_id: str | None = None,
         cache_maxsize: int = 10_000,
         cache_ttl: int = 300,

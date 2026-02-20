@@ -22,8 +22,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE, DEFAULT_GROUP_NAMESPACE
-from nexus.rebac.manager import ReBACManager
+from nexus.bricks.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE, DEFAULT_GROUP_NAMESPACE
+from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 ZONE_ID = "bench_zone"
@@ -459,7 +459,7 @@ class TestConsistencyLevelImpact:
 
     def test_eventual_consistency_latency(self, benchmark, seeded_manager):
         """EVENTUAL (cache-friendly) should be the fastest path."""
-        from nexus.rebac.types import ConsistencyLevel
+        from nexus.bricks.rebac.types import ConsistencyLevel
 
         m = seeded_manager
 
@@ -483,7 +483,7 @@ class TestConsistencyLevelImpact:
 
     def test_strong_consistency_latency(self, benchmark, seeded_manager):
         """STRONG (cache-bypass) — measures raw graph traversal cost."""
-        from nexus.rebac.types import ConsistencyLevel
+        from nexus.bricks.rebac.types import ConsistencyLevel
 
         m = seeded_manager
 

@@ -38,7 +38,7 @@ class MemoryViewRouter:
         else:
             from types import SimpleNamespace
 
-            from nexus.rebac.entity_registry import EntityRegistry
+            from nexus.bricks.rebac.entity_registry import EntityRegistry
 
             self.entity_registry = EntityRegistry(SimpleNamespace(session_factory=lambda: session))
 
@@ -561,11 +561,11 @@ class MemoryViewRouter:
             if owner_id:
                 from sqlalchemy import Engine
 
-                from nexus.rebac.manager import EnhancedReBACManager
+                from nexus.bricks.rebac.manager import ReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
-                rebac = EnhancedReBACManager(bind)
+                rebac = ReBACManager(bind)
 
                 rebac.rebac_write(
                     subject=("user", owner_id),
@@ -633,11 +633,11 @@ class MemoryViewRouter:
             if user_id:
                 from sqlalchemy import Engine
 
-                from nexus.rebac.manager import EnhancedReBACManager
+                from nexus.bricks.rebac.manager import ReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
-                rebac = EnhancedReBACManager(bind)
+                rebac = ReBACManager(bind)
 
                 # Grant owner permission to the memory
                 rebac.rebac_write(

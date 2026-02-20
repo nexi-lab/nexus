@@ -78,7 +78,7 @@ class TestReadReplicaE2E:
 
     def test_rebac_check_uses_replica(self, record_store):
         """ReBAC TupleRepository read methods should use the read engine."""
-        from nexus.rebac.tuples.repository import TupleRepository
+        from nexus.bricks.rebac.tuples.repository import TupleRepository
 
         repo = TupleRepository(
             engine=record_store.engine,

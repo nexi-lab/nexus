@@ -2,11 +2,9 @@
 
 These functions manage zone group naming conventions and zone membership checks
 using the ReBAC (Relationship-Based Access Control) primitives. They have NO
-server-layer dependencies — only rebac_manager (a core primitive).
+kernel-layer dependencies — only rebac_manager (passed as ``Any``).
 
-Extracted from server/auth/user_helpers.py (Issue #1519, 3A) to eliminate
-kernel→server import violations. server/auth/user_helpers.py re-exports
-these for backward compatibility.
+Tier-neutral utility — belongs in ``lib/`` (zero kernel deps).
 """
 
 from __future__ import annotations

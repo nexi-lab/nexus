@@ -15,7 +15,7 @@ from nexus import LocalBackend, NexusFS
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.server.auth.user_helpers import add_user_to_zone
+from nexus.lib.zone_helpers import add_user_to_zone
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

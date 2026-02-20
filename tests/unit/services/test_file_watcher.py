@@ -4,15 +4,12 @@ Tests cover:
 - Callback registration and invocation
 - start/stop lifecycle
 - add_watch/remove_watch operations
-- Cross-platform behavior (Linux inotify / Windows ReadDirectoryChangesW)
+- Cross-platform behavior via watchfiles (Rust-backed)
 
 Related: Issue #1106 Block 2
 """
 
-from __future__ import annotations
-
 import asyncio
-import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,23 +24,13 @@ from nexus.services.watch.file_watcher import ChangeType, FileChange, FileWatche
 class TestFileWatcherLifecycle:
     """Tests for FileWatcher start/stop lifecycle."""
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     def test_initial_state(self):
         """Test FileWatcher initial state."""
         watcher = FileWatcher()
         assert watcher._started is False
-        # _watches only exists on supported platforms
-        if hasattr(watcher, "_watches"):
-            assert watcher._watches == {}
+        assert watcher._watches == {}
         watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_start_sets_started_flag(self):
         """Test that start() sets _started flag."""
@@ -56,10 +43,6 @@ class TestFileWatcherLifecycle:
             watcher.stop()
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_stop_clears_started_flag(self):
         """Test that stop() clears _started flag."""
@@ -73,10 +56,6 @@ class TestFileWatcherLifecycle:
         finally:
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_double_start_is_safe(self):
         """Test that calling start() twice is safe."""
@@ -90,10 +69,6 @@ class TestFileWatcherLifecycle:
             watcher.stop()
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_double_stop_is_safe(self):
         """Test that calling stop() twice is safe."""
@@ -116,10 +91,6 @@ class TestFileWatcherLifecycle:
 class TestCallbackRegistration:
     """Tests for add_watch/remove_watch callback registration."""
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_add_watch_registers_callback(self, tmp_path):
         """Test that add_watch() registers a callback."""
@@ -131,21 +102,11 @@ class TestCallbackRegistration:
             watcher.start(loop)
             watcher.add_watch(tmp_path, callback)
 
-            # Callback should be registered (different storage on different platforms)
-            if sys.platform == "linux":
-                # Linux uses _wd_to_info with watch descriptor as key
-                assert len(watcher._wd_to_info) > 0
-            elif sys.platform == "win32":
-                # Windows uses _watches with path as key
-                assert str(tmp_path) in watcher._watches or tmp_path in watcher._watches
+            assert str(tmp_path) in watcher._watches
         finally:
             watcher.stop()
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     def test_add_watch_requires_started(self, tmp_path):
         """Test that add_watch() requires watcher to be started."""
         watcher = FileWatcher()
@@ -158,10 +119,6 @@ class TestCallbackRegistration:
         finally:
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_remove_watch_unregisters_callback(self, tmp_path):
         """Test that remove_watch() unregisters a callback."""
@@ -174,21 +131,11 @@ class TestCallbackRegistration:
             watcher.add_watch(tmp_path, callback)
             watcher.remove_watch(tmp_path)
 
-            # Callback should be unregistered (different storage on different platforms)
-            if sys.platform == "linux":
-                # Linux: _wd_to_info should be empty after removal
-                assert len(watcher._wd_to_info) == 0
-            elif sys.platform == "win32":
-                # Windows uses _watches with path as key
-                assert str(tmp_path) not in watcher._watches
+            assert str(tmp_path) not in watcher._watches
         finally:
             watcher.stop()
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_remove_watch_nonexistent_is_safe(self, tmp_path):
         """Test that remove_watch() on non-watched path is safe."""
@@ -212,17 +159,13 @@ class TestCallbackRegistration:
 class TestCallbackInvocation:
     """Tests for callback invocation on file changes."""
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_callback_invoked_on_file_create(self, tmp_path):
         """Test that callback is invoked when file is created."""
         watcher = FileWatcher()
-        received_changes = []
+        received_changes: list[FileChange] = []
 
-        def callback(change: FileChange):
+        def callback(change: FileChange) -> None:
             received_changes.append(change)
 
         try:
@@ -247,17 +190,13 @@ class TestCallbackInvocation:
             watcher.stop()
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_callback_invoked_on_file_modify(self, tmp_path):
         """Test that callback is invoked when file is modified."""
         watcher = FileWatcher()
-        received_changes = []
+        received_changes: list[FileChange] = []
 
-        def callback(change: FileChange):
+        def callback(change: FileChange) -> None:
             received_changes.append(change)
 
         try:
@@ -282,17 +221,13 @@ class TestCallbackInvocation:
             watcher.stop()
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_callback_invoked_on_file_delete(self, tmp_path):
         """Test that callback is invoked when file is deleted."""
         watcher = FileWatcher()
-        received_changes = []
+        received_changes: list[FileChange] = []
 
-        def callback(change: FileChange):
+        def callback(change: FileChange) -> None:
             received_changes.append(change)
 
         try:
@@ -313,24 +248,21 @@ class TestCallbackInvocation:
 
             # Should have received deletion
             assert len(received_changes) >= 1
-            # At least one should be DELETE type
+            # At least one should be DELETE or RENAMED type
+            # (watchfiles may batch file creation and deletion into a rename)
             types = [c.type for c in received_changes]
-            assert ChangeType.DELETED in types
+            assert ChangeType.DELETED in types or ChangeType.RENAMED in types
         finally:
             watcher.stop()
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_callback_receives_filechange_object(self, tmp_path):
         """Test that callback receives FileChange objects."""
         watcher = FileWatcher()
-        received_changes = []
+        received_changes: list[FileChange] = []
 
-        def callback(change: FileChange):
+        def callback(change: FileChange) -> None:
             received_changes.append(change)
 
         try:
@@ -366,17 +298,13 @@ class TestCallbackInvocation:
 class TestRecursiveWatching:
     """Tests for recursive directory watching."""
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_recursive_watch_detects_nested_changes(self, tmp_path):
         """Test that recursive watch detects changes in subdirectories."""
         watcher = FileWatcher()
-        received_changes = []
+        received_changes: list[FileChange] = []
 
-        def callback(change: FileChange):
+        def callback(change: FileChange) -> None:
             received_changes.append(change)
 
         try:
@@ -413,10 +341,6 @@ class TestRecursiveWatching:
 class TestBackwardCompatibility:
     """Tests for backward compatibility with wait_for_change()."""
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_wait_for_change_still_works(self, tmp_path):
         """Test that wait_for_change() still works alongside callback mode."""
@@ -424,7 +348,7 @@ class TestBackwardCompatibility:
 
         try:
 
-            async def create_file():
+            async def create_file() -> None:
                 await asyncio.sleep(0.2)
                 (tmp_path / "wait_test.txt").write_text("content")
 
@@ -439,10 +363,6 @@ class TestBackwardCompatibility:
         finally:
             watcher.close()
 
-    @pytest.mark.skipif(
-        sys.platform not in ("linux", "win32"),
-        reason="File watching only supported on Linux and Windows",
-    )
     @pytest.mark.asyncio
     async def test_wait_for_change_timeout(self, tmp_path):
         """Test that wait_for_change() returns None on timeout."""

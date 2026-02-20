@@ -46,6 +46,10 @@ POST_MOUNT: str = "post_mount"
 PRE_UNMOUNT: str = "pre_unmount"
 POST_UNMOUNT: str = "post_unmount"
 
+# Artifact lifecycle phases (Issue #1861)
+POST_ARTIFACT_CREATE: str = "post_artifact_create"
+POST_ARTIFACT_UPDATE: str = "post_artifact_update"
+
 
 # ---------------------------------------------------------------------------
 # Enums (Issue #2064)

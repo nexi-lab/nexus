@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from nexus.bricks.a2a.stream_registry import StreamRegistry
     from nexus.bricks.a2a.task_store import TaskStoreProtocol
+    from nexus.services.protocols.hook_engine import HookEngineProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class TaskManager:
         self,
         store: TaskStoreProtocol | None = None,
         stream_registry: StreamRegistry | None = None,
+        hook_engine: HookEngineProtocol | None = None,
     ) -> None:
         if store is not None:
             self._store: TaskStoreProtocol = store
@@ -72,6 +74,8 @@ class TaskManager:
             from nexus.bricks.a2a.stream_registry import StreamRegistry as _SR
 
             self._stream_registry = _SR()
+
+        self._hook_engine = hook_engine
 
     @property
     def stream_registry(self) -> StreamRegistry:
@@ -243,7 +247,9 @@ class TaskManager:
     ) -> Task:
         """Add an artifact to a task.
 
-        Pushes an artifact update event to any active SSE streams.
+        Pushes an artifact update event to any active SSE streams,
+        then fires ``post_artifact_create`` / ``post_artifact_update``
+        hooks for downstream indexing (Issue #1861).
         """
         task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
@@ -259,6 +265,28 @@ class TaskManager:
             append=append,
         )
         self._stream_registry.push_event(task_id, {"artifactUpdate": event.model_dump(mode="json")})
+
+        # Fire artifact indexing hooks (Issue #1861)
+        if self._hook_engine is not None:
+            from nexus.services.protocols.hook_engine import (
+                POST_ARTIFACT_CREATE,
+                POST_ARTIFACT_UPDATE,
+                HookContext,
+            )
+
+            phase = POST_ARTIFACT_CREATE if append else POST_ARTIFACT_UPDATE
+            hook_ctx = HookContext(
+                phase=phase,
+                path=None,
+                zone_id=zone_id,
+                agent_id=None,
+                payload={
+                    "artifact": artifact,
+                    "task_id": task_id,
+                    "zone_id": zone_id,
+                },
+            )
+            await self._hook_engine.fire(phase, hook_ctx)
 
         return task
 

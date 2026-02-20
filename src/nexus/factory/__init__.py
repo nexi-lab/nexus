@@ -43,6 +43,7 @@ from nexus.factory._background import _start_background_services
 
 # Re-exports for backward compatibility (Issue #2180)
 from nexus.factory._boot_context import _BootContext
+from nexus.factory._bricks import _boot_dependent_bricks
 from nexus.factory._bricks import _boot_independent_bricks as _boot_brick_services
 from nexus.factory._helpers import (
     _FACTORY_BRICKS,

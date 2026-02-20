@@ -10,21 +10,17 @@ Provides REST access to the IPC subsystem:
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.ipc.conventions import validate_agent_id
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/ipc", tags=["ipc"])
-
-# Agent ID validation: alphanumeric, colons, hyphens, underscores, dots.
-# Rejects slashes and other path-traversal characters at the REST boundary.
-_AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9:_\-\.]+$")
 
 
 # ---------------------------------------------------------------------------
@@ -98,9 +94,10 @@ class ProvisionResponse(BaseModel):
 
 def _validate_agent_id(agent_id: str) -> str:
     """Validate agent_id at the REST boundary — rejects path traversal."""
-    if not _AGENT_ID_RE.match(agent_id):
-        raise HTTPException(status_code=400, detail=f"Invalid agent_id: {agent_id!r}")
-    return agent_id
+    try:
+        return validate_agent_id(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _check_agent_access(auth_result: dict[str, Any], agent_id: str) -> None:

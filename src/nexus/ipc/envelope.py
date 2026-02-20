@@ -18,6 +18,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from nexus.ipc.conventions import validate_agent_id
+
 
 class MessageType(StrEnum):
     """Types of inter-agent messages."""
@@ -73,9 +75,7 @@ class MessageEnvelope(BaseModel):
     @field_validator("sender", "recipient")
     @classmethod
     def _validate_agent_ref(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Agent reference must be non-empty")
-        return v.strip()
+        return validate_agent_id(v)
 
     @field_validator("ttl_seconds")
     @classmethod

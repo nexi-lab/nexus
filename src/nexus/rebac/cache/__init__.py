@@ -13,6 +13,7 @@ Related: Issue #1459 (decomposition)
 
 from nexus.rebac.cache.boundary import PermissionBoundaryCache
 from nexus.rebac.cache.coordinator import CacheCoordinator
+from nexus.rebac.cache.enforcer_cache import PermissionCacheCoordinator
 from nexus.rebac.cache.iterator import (
     CachedResult,
     CursorExpiredError,
@@ -43,6 +44,8 @@ __all__ = [
     "PermissionBoundaryCache",
     # Coordinator
     "CacheCoordinator",
+    # Enforcer cache
+    "PermissionCacheCoordinator",
     # Visibility cache
     "DirectoryVisibilityCache",
     "VisibilityEntry",

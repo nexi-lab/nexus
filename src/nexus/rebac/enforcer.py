@@ -117,7 +117,7 @@ class PermissionEnforcer:
         self.admin_bypass_paths = admin_bypass_paths or []
 
         # Issue #899: Centralized cache coordinator for all permission caches
-        from nexus.services.permissions.permission_cache import PermissionCacheCoordinator
+        from nexus.rebac.cache.enforcer_cache import PermissionCacheCoordinator
 
         self._cache = PermissionCacheCoordinator(
             rebac_manager=rebac_manager,
@@ -479,7 +479,7 @@ class PermissionEnforcer:
                     check_write=False,
                 )
                 # Use ObjectTypeMapper for ReBAC object type resolution
-                from nexus.services.permissions.object_type_mapper import ObjectTypeMapper
+                from nexus.rebac.object_type_mapper import ObjectTypeMapper
 
                 mapper = ObjectTypeMapper()
                 object_type = mapper.get_object_type(route.backend, route.backend_path)
@@ -958,7 +958,7 @@ class PermissionEnforcer:
                 f"subject={subject}, zone={zone_id}"
             )
 
-            from nexus.services.permissions.permission_filter_chain import (
+            from nexus.rebac.filter_chain import (
                 FilterContext,
                 run_filter_chain,
             )

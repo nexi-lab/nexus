@@ -33,6 +33,7 @@ from nexus.factory import (
     _boot_kernel_services,
     _boot_system_services,
     _BootContext,
+    create_nexus_fs,
     create_nexus_services,
 )
 
@@ -415,3 +416,97 @@ class TestCreateNexusServices:
 
         # Issue #2034: version_service moved to brick tier
         assert brick.version_service is not None
+
+
+class TestBrickServicesFieldCompleteness:
+    """Issue #2134: Factory-created bricks are packed into BrickServices container."""
+
+    def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
+        """create_nexus_fs() packs parse_fn, content_cache, registries, lock manager
+        into BrickServices rather than passing as flat NexusFS params (Issue #2134).
+        """
+        record_store = MagicMock()
+        record_store.engine = MagicMock()
+        record_store.read_engine = MagicMock()
+        record_store.session_factory = MagicMock()
+        record_store.has_read_replica = False
+        record_store.database_url = "sqlite://"
+        record_store.async_session_factory = MagicMock()
+
+        metadata_store = MagicMock()
+
+        backend = MagicMock()
+        backend.root_path = "/tmp/test"
+        backend.has_root_path = True
+        backend.on_write_callback = None
+        backend.on_sync_callback = None
+
+        nx = create_nexus_fs(
+            backend=backend,
+            metadata_store=metadata_store,
+            record_store=record_store,
+            permissions=PermissionConfig(
+                enforce=False,
+                enable_deferred=False,
+                enable_tiger_cache=False,
+            ),
+            distributed=DistributedConfig(
+                enable_events=False,
+                enable_locks=False,
+                enable_workflows=False,
+            ),
+            enable_write_buffer=False,
+        )
+
+        brk = nx._brick_services
+
+        # Issue #2134: These fields now live in BrickServices, not as flat params
+        assert brk.parse_fn is not None, "parse_fn should be packed into BrickServices"
+        assert brk.parser_registry is not None, "parser_registry should be in BrickServices"
+        assert brk.provider_registry is not None, "provider_registry should be in BrickServices"
+        assert brk.vfs_lock_manager is not None, "vfs_lock_manager should be in BrickServices"
+        # backend.has_root_path=True + CacheConfig.enable_content_cache=True (default)
+        assert brk.content_cache is not None, (
+            "content_cache should be non-None when backend.has_root_path=True "
+            "and CacheConfig.enable_content_cache=True (defaults)"
+        )
+
+    def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
+        """workflow_engine param is packed into BrickServices (Issue #2134)."""
+        record_store = MagicMock()
+        record_store.engine = MagicMock()
+        record_store.read_engine = MagicMock()
+        record_store.session_factory = MagicMock()
+        record_store.has_read_replica = False
+        record_store.database_url = "sqlite://"
+        record_store.async_session_factory = MagicMock()
+
+        metadata_store = MagicMock()
+
+        backend = MagicMock()
+        backend.root_path = "/tmp/test"
+        backend.has_root_path = True
+        backend.on_write_callback = None
+        backend.on_sync_callback = None
+
+        sentinel_engine = MagicMock()
+
+        nx = create_nexus_fs(
+            backend=backend,
+            metadata_store=metadata_store,
+            record_store=record_store,
+            permissions=PermissionConfig(
+                enforce=False,
+                enable_deferred=False,
+                enable_tiger_cache=False,
+            ),
+            distributed=DistributedConfig(
+                enable_events=False,
+                enable_locks=False,
+                enable_workflows=False,
+            ),
+            enable_write_buffer=False,
+            workflow_engine=sentinel_engine,
+        )
+
+        assert nx._brick_services.workflow_engine is sentinel_engine

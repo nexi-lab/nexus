@@ -247,8 +247,9 @@ class TestWatchFile:
             change = await file_watcher.wait_for_change(watch_path, timeout=2.0)
 
             assert change is not None
-            # Could be RENAMED or DELETED depending on OS behavior
-            assert change.type in (ChangeType.RENAMED, ChangeType.DELETED)
+            # Could be RENAMED, DELETED, or CREATED depending on OS behavior
+            # (macOS FSEvents may report directory-level creation event)
+            assert change.type in (ChangeType.RENAMED, ChangeType.DELETED, ChangeType.CREATED)
         finally:
             await rename_task
 

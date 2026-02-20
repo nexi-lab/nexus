@@ -19,12 +19,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.overlay_config import OverlayConfig
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.core.metadata import FileMetadata
-from nexus.services.overlay_resolver import (
-    OverlayConfig,
-    OverlayResolver,
-)
+from nexus.services.overlay_resolver import OverlayResolver
 
 
 class InMemoryMetadata:

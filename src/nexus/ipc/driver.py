@@ -1,11 +1,10 @@
-"""VFS Backend driver for the /agents/ mount point.
+"""VFS driver for the /agents/ mount point.
 
-IPCVFSDriver bridges the CAS-oriented ``Backend`` ABC with path-oriented
-IPC storage. When mounted at ``/agents`` via the PathRouter, it intercepts
-all file operations on agent IPC paths and delegates to an
-``IPCStorageDriver`` instance.
+IPCVFSDriver satisfies ``ConnectorProtocol`` structurally (duck typing)
+and is mounted at ``/agents`` via the PathRouter. It intercepts all file
+operations on agent IPC paths and delegates to an ``IPCStorageDriver``.
 
-This is a **virtual filesystem backend** (``has_virtual_filesystem = True``):
+This is a **virtual filesystem driver** (``has_virtual_filesystem = True``):
 - ``read_content`` / ``write_content`` operate on paths, not content hashes
 - ``list_dir`` returns agent names, subdirectories, or message files
 - ``mkdir`` / ``rmdir`` / ``is_directory`` manage the IPC directory tree
@@ -13,7 +12,7 @@ This is a **virtual filesystem backend** (``has_virtual_filesystem = True``):
 The driver itself is intentionally thin — delivery logic (backpressure,
 dedup, TTL, EventBus) lives in ``MessageSender`` and ``MessageProcessor``.
 
-Issue: #1243
+Issue: #1243, #370
 Architecture: KERNEL-ARCHITECTURE.md
 """
 
@@ -25,7 +24,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
-from nexus.backends.backend import Backend, HandlerStatusResponse
+from nexus.backends.backend import HandlerStatusResponse
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
@@ -35,8 +34,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class IPCVFSDriver(Backend):
-    """VFS backend for the ``/agents/`` mount point.
+class IPCVFSDriver:
+    """VFS driver for the ``/agents/`` mount point.
+
+    Satisfies ``ConnectorProtocol`` structurally (duck-typed) so it can
+    be mounted via ``PathRouter.add_mount()`` without inheriting from the
+    ``Backend`` ABC in the backends layer — avoiding a cross-tier import.
 
     Intercepts file operations on agent IPC paths and delegates storage
     to an ``IPCStorageDriver`` instance. When mounted in the PathRouter,
@@ -64,7 +67,7 @@ class IPCVFSDriver(Backend):
         self._max_inbox_size = max_inbox_size
         self._timeout = timeout
         # Eagerly create sync-to-async bridge — immutable after init.
-        # The Backend ABC is sync, but IPCStorageDriver is async.
+        # ConnectorProtocol is sync, but IPCStorageDriver is async.
         # A single background loop avoids per-call ThreadPoolExecutor overhead
         # and keeps event-loop-bound resources (e.g., asyncpg pools) working.
         self._bg_loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
@@ -105,9 +108,35 @@ class IPCVFSDriver(Backend):
     def supports_rename(self) -> bool:
         return True
 
+    @property
+    def user_scoped(self) -> bool:
+        return False
+
+    @property
+    def is_connected(self) -> bool:
+        return True
+
+    @property
+    def is_passthrough(self) -> bool:
+        return False
+
+    @property
+    def has_root_path(self) -> bool:
+        return False
+
+    @property
+    def has_token_manager(self) -> bool:
+        return False
+
     # === Connection (no-op for IPC) ===
 
     def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
+        return HandlerStatusResponse(success=True, details={"backend": "ipc"})
+
+    def disconnect(self, context: OperationContext | None = None) -> None:
+        self.close()
+
+    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
         return HandlerStatusResponse(success=True, details={"backend": "ipc"})
 
     # === Content Operations (path-oriented virtual FS) ===
@@ -293,9 +322,9 @@ class IPCVFSDriver(Backend):
     # === Internal Helpers ===
 
     def _run_async(self, coro: Any) -> Any:
-        """Run an async coroutine from sync Backend methods.
+        """Run an async coroutine from sync ConnectorProtocol methods.
 
-        The Backend ABC uses sync methods, but IPCStorageDriver is async.
+        ConnectorProtocol is sync, but IPCStorageDriver is async.
         Dispatches to the background event loop created at construction
         time (immutable after init).
         """

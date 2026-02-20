@@ -27,7 +27,7 @@ class TestIPCBrickWiring:
 
     def test_brick_ipc_in_deployment_profiles(self) -> None:
         """BRICK_IPC is registered and included in LITE+ profiles."""
-        from nexus.core.deployment_profile import (
+        from nexus.contracts.deployment_profile import (
             ALL_BRICK_NAMES,
             BRICK_IPC,
             DeploymentProfile,

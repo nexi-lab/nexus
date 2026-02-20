@@ -117,7 +117,7 @@ class OperationLogModel(Base):
     def validate(self) -> None:
         """Validate operation log model before database operations."""
         from nexus.contracts.exceptions import ValidationError
-        from nexus.core.operation_types import OperationType
+        from nexus.contracts.operation_types import OperationType
 
         valid_types = [t.value for t in OperationType]
         if self.operation_type not in valid_types:

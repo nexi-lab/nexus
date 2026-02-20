@@ -167,15 +167,15 @@ class TestServicesDoNotImportServer:
 class TestRPCTypesInCore:
     """Verify RPC types are importable from core (Issue #1519, 1A)."""
 
-    def test_rpc_types_importable_from_core(self):
-        from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
+    def test_rpc_types_importable_from_contracts(self):
+        from nexus.contracts.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
 
         assert RPCErrorCode.PARSE_ERROR.value == -32700
         assert RPCRequest().jsonrpc == "2.0"
         assert RPCResponse.success(1, "ok").result == "ok"
 
     def test_rpc_types_re_exported_from_server_protocol(self):
-        from nexus.core.rpc_types import RPCErrorCode as CoreCode
+        from nexus.contracts.rpc_types import RPCErrorCode as CoreCode
         from nexus.server.protocol import RPCErrorCode as ServerCode
 
         assert CoreCode is ServerCode

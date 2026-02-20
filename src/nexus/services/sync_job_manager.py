@@ -34,7 +34,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import desc, select
 
@@ -355,7 +355,7 @@ class SyncJobManager:
             # Run sync in thread to not block event loop
             # (sync_mount is synchronous)
             result = await asyncio.to_thread(
-                nexus_fs.sync_mount,
+                cast(Any, nexus_fs).sync_mount,
                 mount_point=mount_point,
                 path=sync_params.get("path"),
                 recursive=sync_params.get("recursive", True),

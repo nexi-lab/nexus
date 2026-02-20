@@ -31,6 +31,7 @@ from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
+from nexus.services.protocols.entity_registry import EntityRegistryProtocol
 from nexus.services.protocols.file_reader import FileReaderProtocol
 from nexus.services.protocols.filesystem import NexusFilesystem
 from nexus.services.protocols.hook_engine import (
@@ -70,6 +71,7 @@ from nexus.services.protocols.operation_log import OperationLogProtocol
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
+from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.rpc import rpc_expose
 from nexus.services.protocols.sandbox import SandboxProtocol
@@ -90,6 +92,7 @@ from nexus.services.protocols.workflow import (
     NexusOperationsProtocol,
 )
 from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
+from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 from nexus.services.protocols.write_back import WriteBackProtocol
 
 __all__ = [
@@ -99,6 +102,7 @@ __all__ = [
     "AgentRegistryProtocol",
     "AgentRequest",
     "ChunkedUploadProtocol",
+    "EntityRegistryProtocol",
     "EventLogConfig",
     "FileReaderProtocol",
     "EventLogProtocol",
@@ -137,6 +141,7 @@ __all__ = [
     "PRE_WRITE",
     "ParseProtocol",
     "PaymentProtocol",
+    "PermissionEnforcerProtocol",
     "PermissionProtocol",
     "ProgressCallback",
     "ReBACBrickProtocol",
@@ -161,5 +166,6 @@ __all__ = [
     "VersionProtocol",
     "WatchProtocol",
     "WorkflowDispatchProtocol",
+    "WorkspaceManagerProtocol",
     "WriteBackProtocol",
 ]

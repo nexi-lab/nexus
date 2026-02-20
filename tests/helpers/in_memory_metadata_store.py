@@ -21,20 +21,20 @@ class InMemoryMetastore(MetastoreABC):
         self._store: dict[str, FileMetadata] = {}
         self._file_metadata: dict[str, dict[str, Any]] = {}  # path -> {key: value}
 
-    def get(self, path: str) -> FileMetadata | None:
+    def get(self, path: str, **kwargs: Any) -> FileMetadata | None:
         return self._store.get(path)
 
-    def put(self, metadata: FileMetadata) -> None:
+    def put(self, metadata: FileMetadata, **kwargs: Any) -> None:
         self._store[metadata.path] = metadata
 
-    def delete(self, path: str) -> dict[str, Any] | None:
+    def delete(self, path: str, **kwargs: Any) -> dict[str, Any] | None:
         if path in self._store:
             del self._store[path]
             self._file_metadata.pop(path, None)
             return {"deleted": path}
         return None
 
-    def exists(self, path: str) -> bool:
+    def exists(self, path: str, **kwargs: Any) -> bool:
         return path in self._store
 
     def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
@@ -45,12 +45,12 @@ class InMemoryMetastore(MetastoreABC):
             results = [m for m in results if m.path.rstrip("/").count("/") == depth]
         return results
 
-    def delete_batch(self, paths: Sequence[str]) -> None:
+    def delete_batch(self, paths: Sequence[str], **kwargs: Any) -> None:
         for path in paths:
             self._store.pop(path, None)
             self._file_metadata.pop(path, None)
 
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def put_batch(self, metadata_list: Sequence[FileMetadata], **kwargs: Any) -> None:
         for metadata in metadata_list:
             self._store[metadata.path] = metadata
 

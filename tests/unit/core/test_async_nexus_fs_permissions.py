@@ -22,17 +22,15 @@ from nexus.contracts.exceptions import NexusPermissionError
 from nexus.contracts.types import OperationContext
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.rebac.async_permissions import AsyncPermissionEnforcer
-from nexus.storage.raft_metadata_store import RaftMetadataStore
+from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 # === Fixtures ===
 
 
 @pytest.fixture
-def metadata_store(tmp_path: Path) -> RaftMetadataStore:
-    """Create a local RaftMetadataStore for isolated tests."""
-    store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
-    yield store
-    store.close()
+def metadata_store(tmp_path: Path) -> InMemoryMetastore:
+    """Create an InMemoryMetastore for isolated tests."""
+    return InMemoryMetastore()
 
 
 @pytest_asyncio.fixture
@@ -54,7 +52,7 @@ async def permission_enforcer(mock_rebac_manager: AsyncMock) -> AsyncPermissionE
 @pytest_asyncio.fixture
 async def async_fs_with_permissions(
     tmp_path: Path,
-    metadata_store: RaftMetadataStore,
+    metadata_store: InMemoryMetastore,
     permission_enforcer: AsyncPermissionEnforcer,
 ) -> AsyncGenerator[AsyncNexusFS, None]:
     """Create AsyncNexusFS instance with permission enforcement enabled."""
@@ -73,7 +71,7 @@ async def async_fs_with_permissions(
 @pytest_asyncio.fixture
 async def async_fs_no_permissions(
     tmp_path: Path,
-    metadata_store: RaftMetadataStore,
+    metadata_store: InMemoryMetastore,
 ) -> AsyncGenerator[AsyncNexusFS, None]:
     """Create AsyncNexusFS instance with permission enforcement disabled."""
     fs = AsyncNexusFS(
@@ -789,7 +787,7 @@ async def test_selective_permission_enforcement(
 @pytest.mark.asyncio
 async def test_permission_enforcer_none_is_permissive(
     tmp_path: Path,
-    metadata_store: RaftMetadataStore,
+    metadata_store: InMemoryMetastore,
 ) -> None:
     """Test that when permission_enforcer is None but enforce_permissions=True, it's permissive."""
     fs = AsyncNexusFS(

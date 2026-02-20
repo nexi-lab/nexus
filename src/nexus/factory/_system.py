@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.contracts.write_observer import WriteObserverProtocol
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate
@@ -228,13 +229,12 @@ def _boot_system_services(
     # --- Workspace Manager ---
     workspace_manager: Any = None
     try:
-        from nexus.services.protocols.rebac import ReBACBrickProtocol
         from nexus.system_services.workspace.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager(
             metadata=ctx.metadata_store,
             backend=ctx.backend,
-            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
+            rebac_manager=cast("ReBACBrickProtocol", rebac_manager),
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             record_store=ctx.record_store,
@@ -378,13 +378,12 @@ def _boot_system_services(
     # --- Context Branch Service (Issue #1315) ---
     context_branch_service: Any = None
     try:
-        from nexus.services.protocols.rebac import ReBACBrickProtocol
         from nexus.system_services.workspace.context_branch import ContextBranchService
 
         context_branch_service = ContextBranchService(
             workspace_manager=workspace_manager,
             record_store=ctx.record_store,
-            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
+            rebac_manager=cast("ReBACBrickProtocol", rebac_manager),
             default_zone_id=ctx.zone_id,
             default_agent_id=ctx.agent_id,
         )

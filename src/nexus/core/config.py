@@ -29,11 +29,11 @@ from nexus.constants import DEFAULT_NATS_URL
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
-    from nexus.core.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
-    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
-    from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
+    from nexus.services.protocols.entity_registry import EntityRegistryProtocol
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+    from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -173,7 +173,7 @@ class SystemServices:
     # =================================================================
 
     # ReBAC permission subsystem — critical (Issue #2133: typed with Protocols)
-    rebac_manager: ReBACManagerProtocol | None = None
+    rebac_manager: ReBACBrickProtocol | None = None
     audit_store: Any = None
     entity_registry: EntityRegistryProtocol | None = None
     permission_enforcer: PermissionEnforcerProtocol | None = None

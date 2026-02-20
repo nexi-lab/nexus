@@ -291,6 +291,25 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.bricks.pay.protocol.X402PaymentProtocol",
         True,
     ),
+    # ── Former kernel protocols (Issue #2359: moved to services/protocols/) ──
+    (
+        "PermissionEnforcerProtocol",
+        "nexus.services.protocols.permission_enforcer",
+        "nexus.rebac.enforcer.PermissionEnforcer",
+        True,
+    ),
+    (
+        "EntityRegistryProtocol",
+        "nexus.services.protocols.entity_registry",
+        "nexus.rebac.entity_registry.EntityRegistry",
+        True,
+    ),
+    (
+        "WorkspaceManagerProtocol",
+        "nexus.services.protocols.workspace_manager",
+        "nexus.services.workspace_manager.WorkspaceManager",
+        True,
+    ),
 ]
 
 
@@ -334,6 +353,39 @@ def test_service_protocol_compliance(
     assert_protocol_compliance(impl_cls, protocol_cls)
 
 
+def test_rebac_manager_satisfies_manager_methods() -> None:
+    """ReBACManager satisfies the manager-API subset of ReBACBrickProtocol.
+
+    ReBACBrickProtocol includes brick lifecycle methods (initialize, shutdown,
+    verify_imports) that are only implemented by the brick wrapper, not by the
+    underlying ReBACManager. This test verifies manager-level compliance.
+    """
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
+
+    impl_cls = _try_import("nexus.rebac.manager", "ReBACManager")
+    if impl_cls is None:
+        pytest.skip("Cannot import ReBACManager")
+
+    manager_methods = {
+        "rebac_check",
+        "rebac_write",
+        "rebac_delete",
+        "rebac_expand",
+        "rebac_check_bulk",
+        "rebac_list_objects",
+        "get_zone_revision",
+        "invalidate_zone_graph_cache",
+        "close",
+    }
+
+    proto_methods = _get_protocol_methods(ReBACBrickProtocol)
+    for method_name in manager_methods:
+        assert method_name in proto_methods, f"Protocol missing {method_name}"
+        impl_attr = getattr(impl_cls, method_name, None)
+        assert impl_attr is not None, f"ReBACManager missing {method_name}"
+        assert callable(impl_attr), f"ReBACManager.{method_name} not callable"
+
+
 # =========================================================================
 # Protocol file import cleanliness (Issue #1291)
 # =========================================================================
@@ -372,15 +424,13 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("caching", "nexus/core/protocols/caching.py"),
     ("connector", "nexus/core/protocols/connector.py"),
-    ("content_service", "nexus/core/protocols/content_service.py"),
-    ("describable", "nexus/core/protocols/describable.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
-    # Issue #2133: New kernel protocol files
-    ("rebac_manager", "nexus/core/protocols/rebac_manager.py"),
-    ("permission_enforcer", "nexus/core/protocols/permission_enforcer.py"),
-    ("entity_registry", "nexus/core/protocols/entity_registry.py"),
-    ("workspace_manager", "nexus/core/protocols/workspace_manager.py"),
-    ("wirable_fs", "nexus/core/protocols/wirable_fs.py"),
+    # Issue #2359: Moved protocols to their correct tier locations
+    ("describable", "nexus/contracts/describable.py"),
+    ("wirable_fs", "nexus/contracts/wirable_fs.py"),
+    ("permission_enforcer", "nexus/services/protocols/permission_enforcer.py"),
+    ("entity_registry", "nexus/services/protocols/entity_registry.py"),
+    ("workspace_manager", "nexus/services/protocols/workspace_manager.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

@@ -13,7 +13,7 @@ import pytest_asyncio
 
 from nexus.contracts.exceptions import ConflictError, NexusFileNotFoundError
 from nexus.core.async_nexus_fs import AsyncNexusFS
-from nexus.storage.raft_metadata_store import RaftMetadataStore
+from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 pytestmark = [
     pytest.mark.xdist_group("async_nexus_fs"),
@@ -24,16 +24,14 @@ pytestmark = [
 
 
 @pytest.fixture
-def metadata_store(tmp_path: Path) -> RaftMetadataStore:
-    """Create a local RaftMetadataStore backed by sled."""
-    store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
-    yield store
-    store.close()
+def metadata_store(tmp_path: Path) -> InMemoryMetastore:
+    """Create an InMemoryMetastore for isolated tests."""
+    return InMemoryMetastore()
 
 
 @pytest_asyncio.fixture
 async def async_fs(
-    tmp_path: Path, metadata_store: RaftMetadataStore
+    tmp_path: Path, metadata_store: InMemoryMetastore
 ) -> AsyncGenerator[AsyncNexusFS, None]:
     """Create AsyncNexusFS instance for testing."""
     fs = AsyncNexusFS(
@@ -50,7 +48,7 @@ async def async_fs(
 
 
 @pytest.mark.asyncio
-async def test_initialization(tmp_path: Path, metadata_store: RaftMetadataStore) -> None:
+async def test_initialization(tmp_path: Path, metadata_store: InMemoryMetastore) -> None:
     """Test AsyncNexusFS initialization."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",

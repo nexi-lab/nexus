@@ -18,13 +18,6 @@ class TestCacheStoreABCIdentity:
 
         assert canonical is legacy
 
-    def test_core_protocols_reexport(self) -> None:
-        """core.protocols re-exports CacheStoreABC via core.cache_store chain."""
-        from nexus.bricks.cache.cache_store import CacheStoreABC as canonical
-        from nexus.core.protocols import CacheStoreABC as via_protocols
-
-        assert canonical is via_protocols
-
 
 class TestNullCacheStoreIdentity:
     """NullCacheStore must be the same object regardless of import path."""
@@ -34,12 +27,6 @@ class TestNullCacheStoreIdentity:
         from nexus.core.cache_store import NullCacheStore as legacy
 
         assert canonical is legacy
-
-    def test_core_protocols_reexport(self) -> None:
-        from nexus.bricks.cache.cache_store import NullCacheStore as canonical
-        from nexus.core.protocols import NullCacheStore as via_protocols
-
-        assert canonical is via_protocols
 
 
 class TestPersistentViewStoreShim:

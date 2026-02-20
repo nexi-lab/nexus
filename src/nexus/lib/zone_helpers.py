@@ -2,21 +2,21 @@
 
 These functions manage zone group naming conventions and zone membership checks
 using the ReBAC (Relationship-Based Access Control) primitives. They have NO
-kernel-layer dependencies — only ``ReBACManagerProtocol`` (passed via DI).
+kernel-layer dependencies — callers pass a ``rebac_manager`` (duck-typed to
+``ReBACManagerProtocol`` from ``nexus.core``) via dependency injection.
 
 All functions use Protocol methods exclusively — no private attribute access.
 
 Tier-neutral utility — belongs in ``lib/`` (zero kernel deps).
+``rebac_manager: Any`` params accept any object satisfying
+``nexus.core.protocols.rebac_manager.ReBACManagerProtocol``.
 """
 
 from __future__ import annotations
 
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def is_zone_group(group_id: str) -> bool:
 
 
 def is_zone_owner(
-    rebac_manager: ReBACManagerProtocol,
+    rebac_manager: Any,
     user_id: str,
     zone_id: str,
 ) -> bool:
@@ -101,7 +101,7 @@ def is_zone_owner(
 
 
 def is_zone_admin(
-    rebac_manager: ReBACManagerProtocol,
+    rebac_manager: Any,
     user_id: str,
     zone_id: str,
 ) -> bool:
@@ -136,7 +136,7 @@ def is_zone_admin(
 
 
 def can_invite_to_zone(
-    rebac_manager: ReBACManagerProtocol,
+    rebac_manager: Any,
     user_id: str,
     zone_id: str,
 ) -> bool:
@@ -158,7 +158,7 @@ def can_invite_to_zone(
 
 
 def add_user_to_zone(
-    rebac_manager: ReBACManagerProtocol,
+    rebac_manager: Any,
     user_id: str,
     zone_id: str,
     role: str = "member",
@@ -208,7 +208,7 @@ def add_user_to_zone(
 
 
 def remove_user_from_zone(
-    rebac_manager: ReBACManagerProtocol,
+    rebac_manager: Any,
     user_id: str,
     zone_id: str,
     role: str | None = None,
@@ -248,7 +248,7 @@ def remove_user_from_zone(
             rebac_manager.rebac_delete(tid)
 
 
-def get_user_zones(rebac_manager: ReBACManagerProtocol, user_id: str) -> list[str]:
+def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
     """Get list of zone IDs that user belongs to.
 
     Uses ``rebac_list_tuples`` to find all tuples where the user is the
@@ -279,7 +279,7 @@ def get_user_zones(rebac_manager: ReBACManagerProtocol, user_id: str) -> list[st
     return zone_ids
 
 
-def user_belongs_to_zone(rebac_manager: ReBACManagerProtocol, user_id: str, zone_id: str) -> bool:
+def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool:
     """Check if user belongs to zone (any role).
 
     Uses ``rebac_check`` for each possible group (member, admin, owner)

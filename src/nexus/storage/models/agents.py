@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Index, Integer, String, Text
+from sqlalchemy import DateTime, Index, Integer, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base
@@ -32,6 +32,7 @@ class AgentRecordModel(Base):
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     agent_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
+    eviction_priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
     context_manifest: Mapped[str | None] = mapped_column(Text, nullable=True, default="[]")
     agent_spec: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
@@ -45,6 +46,11 @@ class AgentRecordModel(Base):
         Index("idx_agent_records_zone_state", "zone_id", "state"),
         Index("idx_agent_records_state_heartbeat", "state", "last_heartbeat"),
         Index("idx_agent_records_owner", "owner_id"),
+        Index(
+            "idx_agent_records_eviction_heartbeat",
+            "eviction_priority",
+            "last_heartbeat",
+        ),
     )
 
     def __repr__(self) -> str:

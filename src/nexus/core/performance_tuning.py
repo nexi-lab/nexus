@@ -2,7 +2,7 @@
 
 Migrates scattered hardcoded performance thresholds to deployment profiles.
 Each DeploymentProfile maps to a ProfileTuning frozen dataclass composed
-of 10 domain-specific tuning slices.
+of 11 domain-specific tuning slices.
 
 Pattern follows IOProfile (Issue #1413): frozen dataclasses, profile-selected,
 wired via DI in factory.py.
@@ -18,6 +18,7 @@ Domain configs:
 - ConnectorTuning: blob operation / upload timeouts, max workers
 - PoolTuning: asyncpg, httpx, remote pool sizing
 - EvictionTuning: agent eviction watermarks, batch sizes (Issue #2170)
+- QoSTuning: agent QoS class configs for scheduling/eviction (Issue #2171)
 
 Profile hierarchy matches DeploymentProfile:
     kernel ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
@@ -28,6 +29,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from nexus.contracts.qos import QoSClassConfig, QoSTuning
 
 if TYPE_CHECKING:
     from nexus.contracts.deployment_profile import DeploymentProfile
@@ -269,7 +272,7 @@ class PoolTuning:
 class ProfileTuning:
     """Composite performance tuning for a deployment profile.
 
-    Composed of 10 domain-specific slices.  Each brick receives only
+    Composed of 11 domain-specific slices.  Each brick receives only
     the slice it needs via constructor injection in factory.py.
     """
 
@@ -283,6 +286,7 @@ class ProfileTuning:
     connector: ConnectorTuning
     pool: PoolTuning
     eviction: EvictionTuning
+    qos: QoSTuning
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +427,17 @@ _EMBEDDED_TUNING = ProfileTuning(
         checkpoint_max_age_seconds=86400,
         max_concurrent_transitions=5,
     ),
+    qos=QoSTuning(
+        premium=QoSClassConfig(
+            max_concurrent_tasks=5, scheduling_weight=3, eviction_priority=2, preemptible=False
+        ),
+        standard=QoSClassConfig(
+            max_concurrent_tasks=3, scheduling_weight=1, eviction_priority=1, preemptible=False
+        ),
+        spot=QoSClassConfig(
+            max_concurrent_tasks=1, scheduling_weight=1, eviction_priority=0, preemptible=True
+        ),
+    ),
 )
 
 _LITE_TUNING = ProfileTuning(
@@ -490,6 +505,17 @@ _LITE_TUNING = ProfileTuning(
         checkpoint_cleanup_interval_seconds=3600,
         checkpoint_max_age_seconds=86400,
         max_concurrent_transitions=10,
+    ),
+    qos=QoSTuning(
+        premium=QoSClassConfig(
+            max_concurrent_tasks=10, scheduling_weight=3, eviction_priority=2, preemptible=False
+        ),
+        standard=QoSClassConfig(
+            max_concurrent_tasks=5, scheduling_weight=1, eviction_priority=1, preemptible=False
+        ),
+        spot=QoSClassConfig(
+            max_concurrent_tasks=2, scheduling_weight=1, eviction_priority=0, preemptible=True
+        ),
     ),
 )
 
@@ -559,6 +585,17 @@ _FULL_TUNING = ProfileTuning(
         checkpoint_max_age_seconds=86400,
         max_concurrent_transitions=10,
     ),
+    qos=QoSTuning(
+        premium=QoSClassConfig(
+            max_concurrent_tasks=20, scheduling_weight=3, eviction_priority=2, preemptible=False
+        ),
+        standard=QoSClassConfig(
+            max_concurrent_tasks=10, scheduling_weight=1, eviction_priority=1, preemptible=False
+        ),
+        spot=QoSClassConfig(
+            max_concurrent_tasks=5, scheduling_weight=1, eviction_priority=0, preemptible=True
+        ),
+    ),
 )
 
 _CLOUD_TUNING = ProfileTuning(
@@ -627,6 +664,17 @@ _CLOUD_TUNING = ProfileTuning(
         checkpoint_max_age_seconds=43200,
         max_concurrent_transitions=20,
     ),
+    qos=QoSTuning(
+        premium=QoSClassConfig(
+            max_concurrent_tasks=50, scheduling_weight=3, eviction_priority=2, preemptible=False
+        ),
+        standard=QoSClassConfig(
+            max_concurrent_tasks=20, scheduling_weight=1, eviction_priority=1, preemptible=False
+        ),
+        spot=QoSClassConfig(
+            max_concurrent_tasks=10, scheduling_weight=1, eviction_priority=0, preemptible=True
+        ),
+    ),
 )
 
 
@@ -650,7 +698,7 @@ def resolve_profile_tuning(profile: DeploymentProfile) -> ProfileTuning:
         profile: The deployment profile.
 
     Returns:
-        Frozen ProfileTuning with all 10 domain slices.
+        Frozen ProfileTuning with all 11 domain slices.
     """
     mapping = _get_profile_tuning_map()
     tuning = mapping.get(profile)

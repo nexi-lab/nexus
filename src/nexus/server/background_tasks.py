@@ -4,6 +4,7 @@ Provides background cleanup tasks for session management and expired resources.
 """
 
 import asyncio
+import contextlib
 import logging
 from datetime import timedelta
 from typing import Any
@@ -344,14 +345,24 @@ async def agent_eviction_task(
     eviction_manager: Any,
     interval_seconds: int = 300,
 ) -> None:
-    """Periodically run eviction cycle under resource pressure (Issue #2170).
+    """Periodically run eviction cycle under resource pressure (Issues #2170, #2171).
+
+    Uses event-driven wakeup: sleeps for interval_seconds OR wakes immediately
+    when eviction_manager.trigger_immediate_cycle() is called (e.g. for
+    premium agent preemption). Matches BrickReconciler pattern.
 
     Args:
-        eviction_manager: EvictionManager instance with run_cycle() method
+        eviction_manager: EvictionManager instance with run_cycle() + urgent_event
         interval_seconds: How often to check for eviction (default: 300)
     """
     while True:
-        await asyncio.sleep(interval_seconds)
+        # Wait for interval OR immediate trigger (Issue #2171)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(
+                eviction_manager.urgent_event.wait(),
+                timeout=interval_seconds,
+            )
+
         try:
             result = await eviction_manager.run_cycle()
             if result.evicted > 0:

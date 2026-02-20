@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from nexus.core.distributed_lock import RedisLockManager
+    from nexus.lib.distributed_lock import RedisLockManager
     from nexus.services.event_bus.redis import RedisEventBus
 
 # Skip entire module if Redis is not available
@@ -77,7 +77,7 @@ async def event_bus(redis_client):
 @pytest.fixture
 async def lock_manager(redis_client):
     """Create a RedisLockManager for testing."""
-    from nexus.core.distributed_lock import RedisLockManager
+    from nexus.lib.distributed_lock import RedisLockManager
 
     manager = RedisLockManager(redis_client)
 

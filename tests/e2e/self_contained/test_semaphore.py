@@ -91,7 +91,7 @@ class TestSemaphoreBasic:
     async def test_semaphore_allows_multiple_holders(self):
         """Test that semaphore allows up to max_holders concurrent acquisitions."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -150,7 +150,7 @@ class TestSemaphoreBasic:
     async def test_semaphore_ssot_mismatch(self):
         """Test that max_holders mismatch raises ValueError (SSOT enforcement)."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -190,7 +190,7 @@ class TestSemaphoreBasic:
     async def test_semaphore_config_cleanup_after_all_release(self):
         """Test that config is cleaned up when all holders release."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -240,7 +240,7 @@ class TestSemaphoreBasic:
     async def test_semaphore_ttl_expiry(self):
         """Test that expired semaphore slots are automatically cleaned."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -301,7 +301,7 @@ class TestSemaphoreBasic:
     async def test_semaphore_extend(self):
         """Test extending semaphore slot TTL."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -367,7 +367,7 @@ class TestSemaphoreConcurrent:
         At any time, at most 5 participants should be in the room.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         zone_id = "test-zone"
         path = "/boardroom/room-01"
@@ -440,7 +440,7 @@ class TestSemaphoreConcurrent:
         Uses a shared counter to track concurrent holders.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         zone_id = "test-zone"
         path = "/boardroom/verify-max"
@@ -529,7 +529,7 @@ class TestSemaphoreCrossPlatform:
         Windows acquires 2 seats, Linux should only get 1.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         zone_id = "test-zone"
         path = "/boardroom/cross-platform"
@@ -563,7 +563,7 @@ import asyncio
 import sys
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def try_acquire():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -621,7 +621,7 @@ asyncio.run(try_acquire())
         Linux tries to acquire with max_holders=3 (should fail).
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         zone_id = "test-zone"
         path = "/boardroom/ssot-cross"
@@ -647,7 +647,7 @@ import asyncio
 import sys
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def try_mismatch():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -702,7 +702,7 @@ asyncio.run(try_mismatch())
         4. Linux should immediately acquire it
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         zone_id = "test-zone"
         path = "/boardroom/relay"
@@ -733,7 +733,7 @@ import sys
 import time
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def wait_for_slot():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -804,7 +804,7 @@ class TestSemaphoreEdgeCases:
     async def test_release_nonexistent_slot(self):
         """Test releasing a slot that doesn't exist."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -825,7 +825,7 @@ class TestSemaphoreEdgeCases:
     async def test_extend_nonexistent_slot(self):
         """Test extending a slot that doesn't exist."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -847,7 +847,7 @@ class TestSemaphoreEdgeCases:
     async def test_semaphore_with_max_holders_one_behaves_like_mutex(self):
         """Test that max_holders=1 semaphore behaves like mutex."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -886,7 +886,7 @@ class TestSemaphoreEdgeCases:
     async def test_zero_timeout_immediate_fail(self):
         """Test that timeout=0 fails immediately if no slot available."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -951,7 +951,7 @@ class TestNetworkPartitionRecovery:
         4. Network recovers - A tries to release → should return False
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client_a = DragonflyClient(url=get_redis_url())
         client_b = DragonflyClient(url=get_redis_url())
@@ -1008,7 +1008,7 @@ class TestNetworkPartitionRecovery:
         This is critical for detecting "I lost my slot" condition.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client_a = DragonflyClient(url=get_redis_url())
         await client_a.connect()
@@ -1053,7 +1053,7 @@ class TestNetworkPartitionRecovery:
         Uses short TTL and waits for natural expiry.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client_a = DragonflyClient(url=get_redis_url())
         client_b = DragonflyClient(url=get_redis_url())
@@ -1130,7 +1130,7 @@ class TestRedisRestart:
     async def test_redis_clear_loses_all_slots(self):
         """Test that clearing Redis (simulating restart) loses all slots."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -1183,7 +1183,7 @@ class TestRedisRestart:
     async def test_fresh_config_after_full_clear(self):
         """Test that config can be set fresh after Redis clear."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -1240,7 +1240,7 @@ class TestSemaphorePerformance:
         Boardroom scenario: 100 seats, 200 participants trying to join.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         zone_id = "test-zone"
         path = "/boardroom/large-100"
@@ -1312,7 +1312,7 @@ class TestSemaphorePerformance:
     async def test_rapid_acquire_release_cycles(self):
         """Test rapid acquire/release cycles for single slot."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -1357,7 +1357,7 @@ class TestHeartbeatAndExtendFailure:
     async def test_heartbeat_keeps_slot_alive(self):
         """Test that regular heartbeats keep slot alive past original TTL."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client = DragonflyClient(url=get_redis_url())
         await client.connect()
@@ -1410,7 +1410,7 @@ class TestHeartbeatAndExtendFailure:
         3. If extend returns False → STOP WORK, slot was lost
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client_a = DragonflyClient(url=get_redis_url())
         client_admin = DragonflyClient(url=get_redis_url())
@@ -1471,7 +1471,7 @@ class TestHeartbeatAndExtendFailure:
     async def test_extend_failure_does_not_affect_other_holders(self):
         """Test that one holder's extend failure doesn't affect others."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         client_a = DragonflyClient(url=get_redis_url())
         client_b = DragonflyClient(url=get_redis_url())

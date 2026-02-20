@@ -40,6 +40,8 @@ from nexus.services.protocols.brick_lifecycle import (
     BrickSpec,
     BrickState,
     BrickStatus,
+    ZoneDeprovisionReport,
+    ZoneState,
 )
 from nexus.services.protocols.hook_engine import (
     HookContext,
@@ -200,6 +202,7 @@ class BrickLifecycleManager:
     ) -> None:
         self._bricks: dict[str, _BrickEntry] = {}
         self._hook_engine = hook_engine
+        self._zone_states: dict[str, ZoneState] = {}
 
     # ------------------------------------------------------------------
     # Registration (synchronous, boot-time)
@@ -481,6 +484,218 @@ class BrickLifecycleManager:
             raise KeyError(f"Brick {name!r} not found")
         self._transition(name, "failed")
         entry.error = error
+
+    # ------------------------------------------------------------------
+    # Zone state tracking (Issue #2061)
+    # ------------------------------------------------------------------
+
+    def get_zone_state(self, zone_id: str) -> ZoneState:
+        """Return the current state of a zone. Defaults to ACTIVE if unknown."""
+        return self._zone_states.get(zone_id, ZoneState.ACTIVE)
+
+    # ------------------------------------------------------------------
+    # Zone deprovision (Issue #2061)
+    # ------------------------------------------------------------------
+
+    async def deprovision_zone(
+        self,
+        zone_id: str,
+        *,
+        grace_period: float = 30.0,
+        max_concurrent_drain: int = 5,
+    ) -> ZoneDeprovisionReport:
+        """Orchestrate zone teardown: TERMINATING → drain → finalize → DESTROYED.
+
+        Two-phase shutdown:
+        1. **Drain**: Call ``drain(zone_id)`` on all zone-aware bricks in parallel,
+           bounded by ``max_concurrent_drain`` semaphore.
+        2. **Finalize**: Call ``finalize(zone_id)`` on all zone-aware bricks in
+           reverse-DAG order (dependents before dependencies).
+
+        On timeout at any phase: log warning, set ``forced=True``, proceed.
+        Idempotent: returns a no-op report if the zone is already DESTROYED.
+
+        Args:
+            zone_id: Identifier of the zone to deprovision.
+            grace_period: Max seconds for the entire operation.
+            max_concurrent_drain: Max concurrent drain() calls.
+
+        Returns:
+            ZoneDeprovisionReport summarizing the operation.
+        """
+        # Idempotency guard
+        current = self._zone_states.get(zone_id, ZoneState.ACTIVE)
+        if current == ZoneState.DESTROYED:
+            return ZoneDeprovisionReport(
+                zone_id=zone_id,
+                zone_state=ZoneState.DESTROYED,
+                bricks_drained=0,
+                bricks_finalized=0,
+                drain_errors=0,
+                finalize_errors=0,
+                elapsed_seconds=0.0,
+                forced=False,
+            )
+
+        t0 = time.monotonic()
+        self._zone_states[zone_id] = ZoneState.TERMINATING
+        forced = False
+
+        # Find all zone-aware bricks (O(N) scan — optimize later)
+        drainable: list[tuple[str, _BrickEntry]] = []
+        finalizable: list[tuple[str, _BrickEntry]] = []
+        for name, entry in self._bricks.items():
+            if hasattr(entry.instance, "drain") and callable(entry.instance.drain):
+                drainable.append((name, entry))
+            if hasattr(entry.instance, "finalize") and callable(entry.instance.finalize):
+                finalizable.append((name, entry))
+
+        # Phase 1: Drain (parallel, semaphore-bounded)
+        bricks_drained = 0
+        drain_errors = 0
+        half_grace = grace_period / 2
+
+        if drainable:
+            sem = asyncio.Semaphore(max_concurrent_drain)
+
+            async def _drain_one(name: str, entry: _BrickEntry) -> bool:
+                async with sem:
+                    try:
+                        await entry.instance.drain(zone_id)
+                        return True
+                    except Exception as exc:
+                        logger.warning(
+                            "[LIFECYCLE] drain(%r) failed for brick %r: %s",
+                            zone_id,
+                            name,
+                            exc,
+                        )
+                        return False
+
+            # Use asyncio.wait to preserve partial results on timeout
+            tasks = {asyncio.create_task(_drain_one(n, e), name=f"drain-{n}") for n, e in drainable}
+            done, pending = await asyncio.wait(tasks, timeout=half_grace)
+
+            if pending:
+                logger.warning(
+                    "[LIFECYCLE] Drain phase timed out for zone %r after %.1fs (%d/%d completed)",
+                    zone_id,
+                    half_grace,
+                    len(done),
+                    len(tasks),
+                )
+                forced = True
+                for t in pending:
+                    t.cancel()
+
+            for t in done:
+                exc = t.exception()
+                if exc is not None:
+                    drain_errors += 1
+                elif t.result() is True:
+                    bricks_drained += 1
+                else:
+                    drain_errors += 1
+
+        # Phase 2: Finalize (reverse-DAG order)
+        bricks_finalized = 0
+        finalize_errors = 0
+        finalizable_names = {n for n, _ in finalizable}
+
+        if finalizable:
+            shutdown_levels = self.compute_shutdown_order()
+
+            async def _finalize_one(name: str) -> bool:
+                entry = self._bricks.get(name)
+                if entry is None:
+                    logger.warning(
+                        "[LIFECYCLE] Brick %r disappeared during zone %r finalize",
+                        name,
+                        zone_id,
+                    )
+                    return False
+                try:
+                    await entry.instance.finalize(zone_id)
+                    return True
+                except Exception as exc:
+                    logger.warning(
+                        "[LIFECYCLE] finalize(%r) failed for brick %r: %s",
+                        zone_id,
+                        name,
+                        exc,
+                    )
+                    return False
+
+            remaining_grace = max(0.0, grace_period - (time.monotonic() - t0))
+
+            async def _run_finalize_levels() -> tuple[int, int]:
+                ok, err = 0, 0
+                for level in shutdown_levels:
+                    to_finalize = [n for n in level if n in finalizable_names]
+                    if not to_finalize:
+                        continue
+                    results = await asyncio.gather(
+                        *(_finalize_one(n) for n in to_finalize),
+                        return_exceptions=True,
+                    )
+                    for r in results:
+                        if isinstance(r, BaseException):
+                            err += 1
+                        elif r is True:
+                            ok += 1
+                        else:
+                            err += 1
+                return ok, err
+
+            try:
+                ok, err = await asyncio.wait_for(
+                    _run_finalize_levels(),
+                    timeout=remaining_grace,
+                )
+                bricks_finalized = ok
+                finalize_errors = err
+            except TimeoutError:
+                logger.warning(
+                    "[LIFECYCLE] Finalize phase timed out for zone %r",
+                    zone_id,
+                )
+                forced = True
+            except Exception as exc:
+                logger.warning(
+                    "[LIFECYCLE] Finalize phase error for zone %r: %s",
+                    zone_id,
+                    exc,
+                )
+                forced = True
+
+        # Mark zone as DESTROYED
+        self._zone_states[zone_id] = ZoneState.DESTROYED
+        elapsed = time.monotonic() - t0
+
+        report = ZoneDeprovisionReport(
+            zone_id=zone_id,
+            zone_state=ZoneState.DESTROYED,
+            bricks_drained=bricks_drained,
+            bricks_finalized=bricks_finalized,
+            drain_errors=drain_errors,
+            finalize_errors=finalize_errors,
+            elapsed_seconds=elapsed,
+            forced=forced,
+        )
+
+        logger.info(
+            "[LIFECYCLE] Zone %r deprovisioned: drained=%d, finalized=%d, "
+            "drain_errors=%d, finalize_errors=%d, forced=%s (%.3fs)",
+            zone_id,
+            bricks_drained,
+            bricks_finalized,
+            drain_errors,
+            finalize_errors,
+            forced,
+            elapsed,
+        )
+
+        return report
 
     # ------------------------------------------------------------------
     # DAG ordering

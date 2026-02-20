@@ -612,6 +612,10 @@ module = [
     "nexus.core.reputation_service",
     "nexus.rebac.namespace_manager",
     "nexus.rebac.cache.enforcer_cache",
+    "nexus.rebac.cache.result_cache",
+    "nexus.rebac.cache.iterator",
+    "nexus.rebac.cache.boundary",
+    "nexus.rebac.manager",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]

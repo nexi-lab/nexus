@@ -42,23 +42,19 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
             _search_tuning.search.search_max_concurrency if _search_tuning else None
         )
 
-        _daemon_kwargs: dict = dict(
-            database_url=app.state.database_url,
-            bm25s_index_dir=os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
-            db_pool_min_size=int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
-            db_pool_max_size=int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
-            refresh_enabled=os.getenv("NEXUS_SEARCH_REFRESH", "true").lower()
-            in (
-                "true",
-                "1",
-                "yes",
-            ),
-            # Issue #1024: Entropy-aware filtering for redundant content
-            entropy_filtering=os.getenv("NEXUS_ENTROPY_FILTERING", "false").lower()
+        _daemon_kwargs: dict = {
+            "database_url": app.state.database_url,
+            "bm25s_index_dir": os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
+            "db_pool_min_size": int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
+            "db_pool_max_size": int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
+            "refresh_enabled": os.getenv("NEXUS_SEARCH_REFRESH", "true").lower()
             in ("true", "1", "yes"),
-            entropy_threshold=float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
-            entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
-        )
+            # Issue #1024: Entropy-aware filtering for redundant content
+            "entropy_filtering": os.getenv("NEXUS_ENTROPY_FILTERING", "false").lower()
+            in ("true", "1", "yes"),
+            "entropy_threshold": float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
+            "entropy_alpha": float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
+        }
         if _max_indexing is not None:
             _daemon_kwargs["max_indexing_concurrency"] = _max_indexing
 

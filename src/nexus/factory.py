@@ -1276,7 +1276,7 @@ def _boot_brick_services(
         from nexus.bricks.memory.router import MemoryViewRouter as _MemoryViewRouter
 
         memory_router = _MemoryViewRouter(
-            session_factory=ctx.session_factory,
+            session_factory=ctx.record_store.session_factory,
             entity_registry=kernel["entity_registry"],
         )
 

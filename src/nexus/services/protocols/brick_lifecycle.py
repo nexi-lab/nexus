@@ -35,10 +35,32 @@ BRICK_STOPPED: str = "brick_stopped"
 RECONCILE_STARTED: str = "reconcile_started"
 RECONCILE_COMPLETED: str = "reconcile_completed"
 
+# Zone lifecycle phases (Issue #2061)
+PRE_ZONE_DRAIN: str = "pre_zone_drain"
+POST_ZONE_DRAIN: str = "post_zone_drain"
+PRE_ZONE_FINALIZE: str = "pre_zone_finalize"
+POST_ZONE_FINALIZE: str = "post_zone_finalize"
+
 
 # ---------------------------------------------------------------------------
 # State enum
 # ---------------------------------------------------------------------------
+
+
+class ZoneState(Enum):
+    """Lifecycle states for a zone (Kubernetes-style).
+
+    Transition diagram::
+
+        ACTIVE ──► TERMINATING ──► DESTROYED
+
+    ``TERMINATING`` is a transient state during zone deprovision.
+    ``DESTROYED`` is the terminal state after cleanup completes.
+    """
+
+    ACTIVE = "active"
+    TERMINATING = "terminating"
+    DESTROYED = "destroyed"
 
 
 class BrickState(Enum):
@@ -197,6 +219,31 @@ class ReconcileResult:
     drifts: tuple[DriftReport, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ZoneDeprovisionReport:
+    """Summary of a zone deprovision operation (Issue #2061).
+
+    Attributes:
+        zone_id: Identifier of the zone being deprovisioned.
+        zone_state: Final zone state after deprovision.
+        bricks_drained: Number of bricks successfully drained.
+        bricks_finalized: Number of bricks successfully finalized.
+        drain_errors: Number of errors during drain phase.
+        finalize_errors: Number of errors during finalize phase.
+        elapsed_seconds: Total wall-clock time for the operation.
+        forced: True if grace period expired and teardown was forced.
+    """
+
+    zone_id: str
+    zone_state: ZoneState
+    bricks_drained: int
+    bricks_finalized: int
+    drain_errors: int
+    finalize_errors: int
+    elapsed_seconds: float
+    forced: bool
+
+
 # ---------------------------------------------------------------------------
 # Protocol — opt-in via structural subtyping
 # ---------------------------------------------------------------------------
@@ -236,4 +283,39 @@ class BrickLifecycleProtocol(Protocol):
 
     async def health_check(self) -> bool:
         """Return True if the brick is healthy and ready to serve."""
+        ...
+
+
+class ZoneAwareBrickProtocol(Protocol):
+    """Contract for bricks with zone-specific cleanup (Issue #2061).
+
+    Opt-in, separate from ``BrickLifecycleProtocol``. Bricks that hold
+    zone-specific resources (cached embeddings, open connections, event
+    subscriptions) implement ``drain()`` and/or ``finalize()`` for ordered
+    zone teardown.
+
+    Both methods are independently optional — a brick may implement only
+    ``drain()`` (e.g., stop accepting work) or only ``finalize()``
+    (e.g., flush caches). Detection uses ``hasattr``/``callable`` duck
+    typing rather than ``isinstance`` to support partial implementations.
+
+    Not ``@runtime_checkable`` because partial implementation (drain-only
+    or finalize-only) is the expected usage pattern.
+
+    Example::
+
+        class SearchBrick:
+            async def drain(self, zone_id: str) -> None:
+                self._stop_indexing(zone_id)
+
+            async def finalize(self, zone_id: str) -> None:
+                await self._flush_cache(zone_id)
+    """
+
+    async def drain(self, zone_id: str) -> None:
+        """Stop accepting new work for this zone. Idempotent."""
+        ...
+
+    async def finalize(self, zone_id: str) -> None:
+        """Clean up zone-specific resources. Called after drain."""
         ...

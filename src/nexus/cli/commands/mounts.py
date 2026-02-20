@@ -26,7 +26,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.sync_bridge import run_sync
+from nexus.lib.sync_bridge import run_sync
 
 
 @click.group(name="mounts")

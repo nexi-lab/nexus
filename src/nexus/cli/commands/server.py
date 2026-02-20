@@ -24,8 +24,8 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.sync_bridge import run_sync
 from nexus.lib.env import get_database_url
+from nexus.lib.sync_bridge import run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
         """Background thread worker that performs the actual sync."""
         import time
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         time.sleep(2)  # Wait for server to be fully ready
         console.print("[cyan]🔄 Starting background sync for connector mounts...[/cyan]")

@@ -230,7 +230,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             )
 
         # Get valid access token from TokenManager
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             # Default to 'root' zone if not specified

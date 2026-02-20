@@ -455,7 +455,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             finally:
                 await self._close_client()
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         content = run_sync(_fetch())
 
@@ -768,7 +768,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
             await self._close_client()
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         run_sync(_sync_feeds())
         return result

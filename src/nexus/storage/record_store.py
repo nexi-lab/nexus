@@ -1,7 +1,8 @@
 """RecordStore: The "Truth" pillar of the Nexus Quartet.
 
 Provides relational data storage for entities, relationships, logs, and vectors.
-One of the Four Pillars (Metastore, RecordStore, ObjectStore, CacheStore).
+Provides relational data storage for entities, relationships, logs, and vectors.
+This is one of the Four Pillars (Metastore, RecordStore, ObjectStore, CacheStore).
 
 OS Analogy: Windows Registry / Systemd state DB (but more structured).
 Backing Tech: PostgreSQL (production) / SQLite (development).

@@ -229,27 +229,28 @@ def _boot_wired_services(
         except Exception:
             logger.warning("[BOOT:WIRED] SkillPackageService unavailable (optional)")
 
-    # --- SearchService: Search operations ---
+    # --- SearchService: list/glob/grep are kernel-level VFS operations (Issue #2194) ---
+    # Always create SearchService regardless of "search" brick — basic directory
+    # listing, glob matching, and grep must work even in KERNEL-only mode.
+    # The "search" brick gates advanced features (semantic search, indexing),
+    # not core filesystem enumeration.
     search_service: Any = None
-    if _on("search"):
-        try:
-            from nexus.services.search.search_service import SearchService
+    try:
+        from nexus.services.search.search_service import SearchService
 
-            search_service = SearchService(
-                metadata_store=nx.metadata,
-                permission_enforcer=nx._permission_enforcer,
-                router=kernel_services.router,
-                rebac_manager=system_services.rebac_manager,
-                enforce_permissions=nx._enforce_permissions,
-                default_context=nx._default_context,
-                record_store=nx._record_store,
-                gateway=gateway,
-            )
-            logger.debug("[BOOT:WIRED] SearchService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] SearchService unavailable: %s", exc)
-    else:
-        logger.debug("[BOOT:WIRED] SearchService disabled by profile")
+        search_service = SearchService(
+            metadata_store=nx.metadata,
+            permission_enforcer=getattr(nx, "_permission_enforcer", None),
+            router=kernel_services.router,
+            rebac_manager=system_services.rebac_manager,
+            enforce_permissions=getattr(nx, "_enforce_permissions", True),
+            default_context=getattr(nx, "_default_context", None),
+            record_store=getattr(nx, "_record_store", None),
+            gateway=gateway,
+        )
+        logger.debug("[BOOT:WIRED] SearchService created (kernel-level)")
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] SearchService unavailable: %s", exc)
 
     # --- ShareLinkService: Share link operations ---
     share_link_service: Any = None

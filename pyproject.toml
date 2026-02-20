@@ -188,6 +188,7 @@ dev = [
     "ruff>=0.14.0",
     "mypy>=1.8.0",
     "pre-commit>=3.6.0",
+    "import-linter>=2.0",  # Architecture boundary enforcement (Issue #2286)
 
     # Documentation
     "mkdocs>=1.5.3",
@@ -766,6 +767,175 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+# =============================================================================
+# Import Linter — Architecture boundary enforcement (Issue #2286)
+# Reference: docs/design/NEXUS-LEGO-ARCHITECTURE.md §1.2, §3.3
+# =============================================================================
+
+[tool.importlinter]
+root_packages = ["nexus"]
+# TYPE_CHECKING imports are violations too (strict mode)
+include_external_packages = false
+
+# Contract 1: Bricks are independent — zero cross-brick imports
+[[tool.importlinter.contracts]]
+id = "brick-independence"
+name = "Bricks must not import from each other (LEGO Principle 3)"
+type = "independence"
+modules = [
+    "nexus.bricks.a2a",
+    "nexus.bricks.cache",
+    "nexus.bricks.context_manifest",
+    "nexus.bricks.delegation",
+    "nexus.bricks.discovery",
+    "nexus.bricks.governance",
+    "nexus.bricks.memory",
+    "nexus.bricks.pay",
+    "nexus.bricks.reputation",
+    "nexus.bricks.sandbox",
+    "nexus.bricks.search",
+    "nexus.bricks.skills",
+    "nexus.bricks.snapshot",
+    "nexus.bricks.workflows",
+]
+# Known violations — ratchet baseline. Remove entries as fixes land.
+ignore_imports = [
+    # memory -> search: direct lazy imports (TODO: fix via DI refactoring)
+    "nexus.bricks.memory.enrichment -> nexus.bricks.search.embeddings",
+    "nexus.bricks.memory.memory_with_paging -> nexus.bricks.search.vector_db",
+    "nexus.bricks.memory.service -> nexus.bricks.search.graph_store",
+    "nexus.bricks.memory.service -> nexus.bricks.search.embeddings",
+    # nexus.cache shim re-exports nexus.bricks.cache (deprecated, Issue #1524)
+    "nexus.cache -> nexus.bricks.cache",
+    "nexus.cache.base -> nexus.bricks.cache.base",
+    "nexus.cache.domain -> nexus.bricks.cache.domain",
+    "nexus.cache.dragonfly -> nexus.bricks.cache.dragonfly",
+    "nexus.cache.inmemory -> nexus.bricks.cache.inmemory",
+    # skills -> search: transitive via nexus.backends (TODO: fix backends)
+    "nexus.backends.sync_pipeline -> nexus.bricks.search.zoekt_client",
+]
+unmatched_ignore_imports_alerting = "warn"
+
+# Contract 2: Four-tier layered architecture
+# tier-neutral (lib, contracts) < kernel (core) < services < bricks
+[[tool.importlinter.contracts]]
+id = "four-tier-layers"
+name = "Four-tier architecture: tier-neutral < kernel < services < bricks"
+type = "layers"
+layers = [
+    "nexus.bricks",
+    "nexus.services",
+    "nexus.core",
+    "nexus.contracts | nexus.lib",
+]
+# Ratchet baseline — 94 known violations. Remove entries as fixes land.
+# Run: lint-imports --contract four-tier-layers to check.
+ignore_imports = [
+    # --- tier-neutral (contracts/lib) importing upward ---
+    "nexus.contracts -> nexus.lib.validators",
+    "nexus.contracts.deployment_profile -> nexus.core.performance_tuning",
+    "nexus.contracts.types -> nexus.core.read_set",
+    "nexus.contracts.write_observer -> nexus.core.metadata",
+    "nexus.lib.context_utils -> nexus.contracts.types",
+    "nexus.lib.response -> nexus.contracts.exceptions",
+    # --- kernel (core) importing services ---
+    "nexus.core.config -> nexus.services.protocols.namespace_manager",
+    "nexus.core.nexus_fs -> nexus.services.agents.agent_rpc_service",
+    "nexus.core.nexus_fs -> nexus.services.memory.memory_api",
+    "nexus.core.nexus_fs -> nexus.services.tiger_cache_manager",
+    "nexus.core.service_wiring -> nexus.services.ace_rpc_service",
+    "nexus.core.service_wiring -> nexus.services.agents.agent_rpc_service",
+    "nexus.core.service_wiring -> nexus.services.descendant_access",
+    "nexus.core.service_wiring -> nexus.services.events_service",
+    "nexus.core.service_wiring -> nexus.services.gateway",
+    "nexus.core.service_wiring -> nexus.services.llm_service",
+    "nexus.core.service_wiring -> nexus.services.mcp_service",
+    "nexus.core.service_wiring -> nexus.services.memory_provider",
+    "nexus.core.service_wiring -> nexus.services.mount_core_service",
+    "nexus.core.service_wiring -> nexus.services.mount_persist_service",
+    "nexus.core.service_wiring -> nexus.services.mount_service",
+    "nexus.core.service_wiring -> nexus.services.oauth_service",
+    "nexus.core.service_wiring -> nexus.services.rebac_service",
+    "nexus.core.service_wiring -> nexus.services.search_service",
+    "nexus.core.service_wiring -> nexus.services.share_link_service",
+    "nexus.core.service_wiring -> nexus.services.skill_service",
+    "nexus.core.service_wiring -> nexus.services.subsystems.llm_subsystem",
+    "nexus.core.service_wiring -> nexus.services.sync_job_service",
+    "nexus.core.service_wiring -> nexus.services.sync_service",
+    "nexus.core.service_wiring -> nexus.services.user_provisioning",
+    "nexus.core.service_wiring -> nexus.services.workspace_rpc_service",
+    # --- kernel (core) importing bricks ---
+    "nexus.core.config -> nexus.bricks.workflows.protocol",
+    "nexus.core.nexus_fs_core -> nexus.bricks.memory.router",
+    # --- kernel (core) importing non-layer modules (rebac) ---
+    "nexus.core.async_bridge -> nexus.rebac.manager",
+    "nexus.core.async_nexus_fs -> nexus.rebac.async_permissions",
+    "nexus.core.nexus_fs_core -> nexus.rebac.enforcer",
+    # --- services importing bricks ---
+    "nexus.services.ace.consolidation -> nexus.bricks.search.embeddings",
+    "nexus.services.delegation -> nexus.bricks.delegation.derivation",
+    "nexus.services.delegation -> nexus.bricks.delegation.errors",
+    "nexus.services.delegation -> nexus.bricks.delegation.models",
+    "nexus.services.delegation -> nexus.bricks.delegation.service",
+    "nexus.services.governance -> nexus.bricks.governance",
+    "nexus.services.governance.anomaly_math -> nexus.bricks.governance.anomaly_math",
+    "nexus.services.governance.anomaly_service -> nexus.bricks.governance.anomaly_service",
+    "nexus.services.governance.approval -> nexus.bricks.governance.approval",
+    "nexus.services.governance.approval.state_machine -> nexus.bricks.governance.approval.state_machine",
+    "nexus.services.governance.approval.types -> nexus.bricks.governance.approval.types",
+    "nexus.services.governance.approval.workflow -> nexus.bricks.governance.approval.workflow",
+    "nexus.services.governance.collusion_service -> nexus.bricks.governance.collusion_service",
+    "nexus.services.governance.db_models -> nexus.bricks.governance.db_models",
+    "nexus.services.governance.governance_graph_service -> nexus.bricks.governance.governance_graph_service",
+    "nexus.services.governance.governance_wrapper -> nexus.bricks.governance.governance_wrapper",
+    "nexus.services.governance.models -> nexus.bricks.governance.models",
+    "nexus.services.governance.protocols -> nexus.bricks.governance.protocols",
+    "nexus.services.governance.response_service -> nexus.bricks.governance.response_service",
+    "nexus.services.governance.trust_math -> nexus.bricks.governance.trust_math",
+    "nexus.services.graph_search_service -> nexus.bricks.search.graph_retrieval",
+    "nexus.services.graph_search_service -> nexus.bricks.search.graph_store",
+    "nexus.services.graph_search_service -> nexus.bricks.search.results",
+    "nexus.services.llm_document_reader -> nexus.bricks.search.protocols",
+    "nexus.services.memory -> nexus.bricks.memory",
+    "nexus.services.memory.enrichment -> nexus.bricks.search.embeddings",
+    "nexus.services.memory.memory_api -> nexus.bricks.search.embeddings",
+    "nexus.services.memory.memory_api -> nexus.bricks.search.graph_store",
+    "nexus.services.memory.memory_with_paging -> nexus.bricks.search.vector_db",
+    "nexus.services.memory_service -> nexus.bricks.search.embeddings",
+    "nexus.services.protocols -> nexus.bricks.governance.protocols",
+    "nexus.services.protocols.governance -> nexus.bricks.governance.models",
+    "nexus.services.protocols.sandbox -> nexus.bricks.sandbox.sandbox_provider",
+    "nexus.services.scheduler.service -> nexus.bricks.pay.credits",
+    "nexus.services.search_grep_mixin -> nexus.bricks.search.zoekt_client",
+    "nexus.services.search_listing_mixin -> nexus.bricks.memory.router",
+    "nexus.services.search_semantic -> nexus.bricks.search.chunking",
+    "nexus.services.search_semantic -> nexus.bricks.search.embeddings",
+    "nexus.services.search_semantic -> nexus.bricks.search.indexing",
+    "nexus.services.search_semantic -> nexus.bricks.search.indexing_service",
+    "nexus.services.search_semantic -> nexus.bricks.search.query_service",
+    "nexus.services.search_semantic -> nexus.bricks.search.vector_db",
+    "nexus.services.search_service -> nexus.bricks.memory.router",
+    "nexus.services.search_service -> nexus.bricks.search.zoekt_client",
+    "nexus.services.skill_service -> nexus.bricks.skills.package_service",
+    # --- services importing non-layer modules ---
+    "nexus.services.memory.memory_api -> nexus.rebac.memory_permission_enforcer",
+    "nexus.services.permissions.cache.tiger.bitmap_cache -> nexus.cache.base",
+    "nexus.services.search_semantic -> nexus.factory",
+    "nexus.services.sync_service -> nexus.backends.cache_mixin",
+    # --- non-layer module chain hops ---
+    "nexus.backends.cache_mixin -> nexus.backends.sync_pipeline",
+    "nexus.backends.sync_pipeline -> nexus.bricks.search.zoekt_client",
+    "nexus.cache.base -> nexus.bricks.cache.base",
+    "nexus.factory -> nexus.factory.orchestrator",
+    "nexus.factory.orchestrator -> nexus.bricks.cache.brick",
+    "nexus.rebac.async_permissions -> nexus.rebac.enforcer",
+    "nexus.rebac.cache.tiger -> nexus.services.permissions.cache.tiger.bitmap_cache",
+    "nexus.rebac.enforcer -> nexus.services.permissions.namespace_manager",
+    "nexus.rebac.manager -> nexus.rebac.consistency.zone_manager",
+    "nexus.rebac.memory_permission_enforcer -> nexus.bricks.memory.router",
+]
+unmatched_ignore_imports_alerting = "warn"
 
 [dependency-groups]
 dev = [

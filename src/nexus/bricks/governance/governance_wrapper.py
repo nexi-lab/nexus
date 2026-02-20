@@ -18,8 +18,11 @@ from nexus.utils.async_helpers import fire_and_forget
 
 if TYPE_CHECKING:
     from nexus.bricks.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
-    from nexus.bricks.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
-    from nexus.services.protocols.payment import PaymentProtocol
+    from nexus.services.protocols.payment import (
+        PaymentProtocol,
+        ProtocolTransferRequest,
+        ProtocolTransferResult,
+    )
 
 logger = logging.getLogger(__name__)
 

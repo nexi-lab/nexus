@@ -263,36 +263,32 @@ def _startup_reputation_delegation_from_bricks(app: FastAPI) -> None:
 
 
 def _startup_governance(app: FastAPI) -> None:
-    """Initialize governance brick services (Issue #2129)."""
-    session_factory = getattr(app.state, "async_session_factory", None)
-    if session_factory is None:
-        logger.info("[GOV] No async_session_factory — governance services skipped")
+    """Expose governance brick services from factory BrickServices (Issue #2129).
+
+    Governance services are created in ``factory._boot_brick_services()`` and
+    stored in ``BrickServices``. This function wires them onto ``app.state``
+    for backward-compatible access by the governance router.
+    """
+    nx = app.state.nexus_fs
+    if nx is None:
         return
 
-    try:
-        from nexus.bricks.governance.anomaly_service import AnomalyService
-        from nexus.bricks.governance.collusion_service import CollusionService
-        from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
-        from nexus.bricks.governance.response_service import ResponseService
+    brk = getattr(nx, "_brick_services", None)
+    app.state.governance_anomaly_service = (
+        getattr(brk, "governance_anomaly_service", None) if brk else None
+    )
+    app.state.governance_collusion_service = (
+        getattr(brk, "governance_collusion_service", None) if brk else None
+    )
+    app.state.governance_graph_service = (
+        getattr(brk, "governance_graph_service", None) if brk else None
+    )
+    app.state.governance_response_service = (
+        getattr(brk, "governance_response_service", None) if brk else None
+    )
 
-        anomaly = AnomalyService(session_factory)
-        collusion = CollusionService(session_factory)
-        graph = GovernanceGraphService(session_factory)
-        response = ResponseService(
-            session_factory=session_factory,
-            anomaly_service=anomaly,
-            collusion_service=collusion,
-            graph_service=graph,
-        )
-
-        app.state.governance_anomaly_service = anomaly
-        app.state.governance_collusion_service = collusion
-        app.state.governance_graph_service = graph
-        app.state.governance_response_service = response
-
-        logger.info("[GOV] Governance services initialized")
-    except Exception as e:
-        logger.warning("[GOV] Failed to initialize governance services: %s", e)
+    if app.state.governance_response_service is not None:
+        logger.info("[GOV] Governance services wired from brick_dict")
 
 
 def _startup_sandbox_auth(app: FastAPI) -> None:

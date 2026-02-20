@@ -34,10 +34,11 @@ def nx_with_db(tmp_path):
     nx = make_test_nexus(tmp_path)
     nx.SessionLocal = session_factory
 
-    # Mock entity registry
+    # Mock entity registry + bypass _memory_provider
     mock_registry = MagicMock()
     mock_registry.get_entity.return_value = None
     nx._entity_registry = mock_registry
+    nx._ensure_entity_registry = lambda: mock_registry
 
     # Mock API key creator
     mock_key_creator = MagicMock()
@@ -248,6 +249,7 @@ class TestProvisionUserPartialFailure:
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = None
         nx._entity_registry = mock_registry
+        nx._ensure_entity_registry = lambda: mock_registry
         # Issue #2133: explicitly create service with session_factory=None
         nx._user_provisioning_service = UserProvisioningService(nx=nx)
         # Don't set SessionLocal — it defaults to None

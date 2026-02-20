@@ -61,16 +61,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.13"]
-        include:
-          # macOS only on push to main/develop, not on every PR
-          - os: macos-latest
-            python-version: "3.13"
-            main_only: true
-
-    # Skip macOS on PRs (only run on push to main/develop)
-    if: ${{ !matrix.main_only || github.event_name != 'pull_request' }}
 
     steps:
       - name: Checkout code

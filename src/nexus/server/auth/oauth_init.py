@@ -77,21 +77,11 @@ def initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
             ],
             provider_name="google-auth",
         )
-        # Issue #2281: inject UserProvisionerProtocol to break circular dep
-        user_provisioner = None
-        try:
-            from nexus.auth.stores.nexusfs_provisioner import NexusFSUserProvisioner
-
-            user_provisioner = NexusFSUserProvisioner(nexus_fs)
-        except Exception:
-            logger.debug("NexusFSUserProvisioner unavailable; OAuth user provisioning disabled")
-
         oauth_provider = OAuthUserAuth(
             session_factory=session_factory,
             providers={"google": google_provider},
             jwt_secret=jwt_secret,
             oauth_crypto=oauth_crypto,
-            user_provisioner=user_provisioner,
         )
 
         set_oauth_provider(oauth_provider)

@@ -103,7 +103,8 @@ class MemoryWithPaging(Memory):
             try:
                 from nexus.bricks.search.vector_db import VectorDatabase
 
-                vector_db = VectorDatabase(engine)
+                _is_pg = not str(engine.url).startswith("sqlite")
+                vector_db = VectorDatabase(engine, is_postgresql=_is_pg)
                 vector_db.initialize()
             except Exception as e:
                 logger.warning(f"Failed to initialize VectorDatabase: {e}")

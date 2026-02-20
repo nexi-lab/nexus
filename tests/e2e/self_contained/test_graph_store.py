@@ -25,7 +25,7 @@ import logging
 
 import pytest
 
-from nexus.search.graph_store import GraphStore
+from nexus.bricks.search.graph_store import GraphStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Configure logging

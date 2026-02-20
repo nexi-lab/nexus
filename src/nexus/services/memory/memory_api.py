@@ -542,10 +542,9 @@ class Memory:
         """
         import json
 
-        # Get database URL from session's engine
+        from nexus.bricks.search.graph_store import GraphStore
         from nexus.lib.env import get_database_url
         from nexus.lib.sync_bridge import run_sync
-        from nexus.search.graph_store import GraphStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         db_url = get_database_url() or ""
@@ -951,7 +950,7 @@ class Memory:
         if embedding_provider is None:
             # Try to use a default embedding provider if available
             try:
-                from nexus.search.embeddings import create_embedding_provider
+                from nexus.bricks.search.embeddings import create_embedding_provider
 
                 # Try to create an embedding provider (checks for API keys in env)
                 try:
@@ -2033,7 +2032,7 @@ class Memory:
         # Try to get embedding provider
         if embedding_provider is None:
             try:
-                from nexus.search.embeddings import create_embedding_provider
+                from nexus.bricks.search.embeddings import create_embedding_provider
 
                 embedding_provider = create_embedding_provider(provider="openrouter")
             except Exception as e:

@@ -587,7 +587,7 @@ class TestHybridSearchFusionBenchmarks:
 
     def test_rrf_fusion_100_results(self, benchmark, small_result_sets):
         """Benchmark RRF fusion with 100 results from each source."""
-        from nexus.search.fusion import rrf_fusion
+        from nexus.bricks.search.fusion import rrf_fusion
 
         keyword_results, vector_results = small_result_sets
 
@@ -600,7 +600,7 @@ class TestHybridSearchFusionBenchmarks:
     @pytest.mark.benchmark_ci
     def test_rrf_fusion_1k_results(self, benchmark, large_result_sets):
         """Benchmark RRF fusion with 1K results from each source."""
-        from nexus.search.fusion import rrf_fusion
+        from nexus.bricks.search.fusion import rrf_fusion
 
         keyword_results, vector_results = large_result_sets
 
@@ -612,7 +612,7 @@ class TestHybridSearchFusionBenchmarks:
 
     def test_weighted_fusion_100_results(self, benchmark, small_result_sets):
         """Benchmark weighted fusion with 100 results from each source."""
-        from nexus.search.fusion import weighted_fusion
+        from nexus.bricks.search.fusion import weighted_fusion
 
         keyword_results, vector_results = small_result_sets
 
@@ -626,7 +626,7 @@ class TestHybridSearchFusionBenchmarks:
 
     def test_weighted_fusion_1k_results(self, benchmark, large_result_sets):
         """Benchmark weighted fusion with 1K results from each source."""
-        from nexus.search.fusion import weighted_fusion
+        from nexus.bricks.search.fusion import weighted_fusion
 
         keyword_results, vector_results = large_result_sets
 
@@ -640,7 +640,7 @@ class TestHybridSearchFusionBenchmarks:
 
     def test_rrf_weighted_fusion_1k_results(self, benchmark, large_result_sets):
         """Benchmark RRF weighted fusion with 1K results from each source."""
-        from nexus.search.fusion import rrf_weighted_fusion
+        from nexus.bricks.search.fusion import rrf_weighted_fusion
 
         keyword_results, vector_results = large_result_sets
 
@@ -652,7 +652,7 @@ class TestHybridSearchFusionBenchmarks:
 
     def test_normalization_overhead(self, benchmark, large_result_sets):
         """Benchmark min-max normalization overhead."""
-        from nexus.search.fusion import normalize_scores_minmax
+        from nexus.bricks.search.fusion import normalize_scores_minmax
 
         scores = [r["score"] for r in large_result_sets[0]]
 
@@ -664,7 +664,7 @@ class TestHybridSearchFusionBenchmarks:
 
     def test_fuse_results_dispatcher(self, benchmark, large_result_sets):
         """Benchmark fuse_results dispatcher overhead."""
-        from nexus.search.fusion import FusionConfig, FusionMethod, fuse_results
+        from nexus.bricks.search.fusion import FusionConfig, FusionMethod, fuse_results
 
         keyword_results, vector_results = large_result_sets
         config = FusionConfig(method=FusionMethod.RRF, rrf_k=60)

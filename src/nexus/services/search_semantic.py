@@ -22,8 +22,8 @@ from nexus.lib.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.search.indexing_service import IndexingService
-    from nexus.search.query_service import QueryService
+    from nexus.bricks.search.indexing_service import IndexingService
+    from nexus.bricks.search.query_service import QueryService
 
 
 class SemanticSearchMixin:
@@ -108,17 +108,17 @@ class SemanticSearchMixin:
             embedding_cache_ttl: Cache TTL in seconds (default: 3 days)
         """
 
-        from nexus.search.chunking import ChunkStrategy, DocumentChunker
-        from nexus.search.indexing import IndexingPipeline
-        from nexus.search.indexing_service import IndexingService
-        from nexus.search.query_service import QueryService
-        from nexus.search.vector_db import VectorDatabase
+        from nexus.bricks.search.chunking import ChunkStrategy, DocumentChunker
+        from nexus.bricks.search.indexing import IndexingPipeline
+        from nexus.bricks.search.indexing_service import IndexingService
+        from nexus.bricks.search.query_service import QueryService
+        from nexus.bricks.search.vector_db import VectorDatabase
 
         # --- Embedding provider ---
         emb_provider = None
         if embedding_provider:
+            from nexus.bricks.search.embeddings import create_cached_embedding_provider
             from nexus.lib.env import get_dragonfly_url
-            from nexus.search.embeddings import create_cached_embedding_provider
 
             effective_cache_url = cache_url or get_dragonfly_url()
             emb_provider = await create_cached_embedding_provider(
@@ -163,11 +163,22 @@ class SemanticSearchMixin:
         self._indexing_pipeline = pipeline
 
         # --- QueryService ---
+        # Issue #2036: Inject ContextBuilder as AdaptiveKProtocol provider
+        _context_builder = None
+        with contextlib.suppress(Exception):
+            from nexus.services.llm_context_builder import (
+                AdaptiveRetrievalConfig,
+                ContextBuilder,
+            )
+
+            _context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
+
         if _sync_sf is not None:
             self._query_service = QueryService(
                 vector_db=vector_db,
                 session_factory=_sync_sf,
                 embedding_provider=emb_provider,
+                context_builder=_context_builder,
             )
         else:
             self._query_service = None
@@ -347,15 +358,15 @@ class SemanticSearchMixin:
         IndexingPipeline directly.
         """
 
-        from nexus.search.chunking import ChunkStrategy, DocumentChunker
-        from nexus.search.indexing import IndexingPipeline
-        from nexus.search.query_service import QueryService
-        from nexus.search.vector_db import VectorDatabase
+        from nexus.bricks.search.chunking import ChunkStrategy, DocumentChunker
+        from nexus.bricks.search.indexing import IndexingPipeline
+        from nexus.bricks.search.query_service import QueryService
+        from nexus.bricks.search.vector_db import VectorDatabase
 
         emb_provider = None
         if embedding_provider:
+            from nexus.bricks.search.embeddings import create_cached_embedding_provider
             from nexus.lib.env import get_dragonfly_url
-            from nexus.search.embeddings import create_cached_embedding_provider
 
             effective_cache_url = cache_url or get_dragonfly_url()
             emb_provider = await create_cached_embedding_provider(
@@ -405,10 +416,21 @@ class SemanticSearchMixin:
             cross_doc_batching=True,
         )
 
+        # Issue #2036: Inject ContextBuilder as AdaptiveKProtocol provider
+        _rpc_context_builder = None
+        with contextlib.suppress(Exception):
+            from nexus.services.llm_context_builder import (
+                AdaptiveRetrievalConfig,
+                ContextBuilder,
+            )
+
+            _rpc_context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
+
         self._query_service = QueryService(
             vector_db=vector_db,
             session_factory=_sync_sf,
             embedding_provider=emb_provider,
+            context_builder=_rpc_context_builder,
         )
 
         # No file_reader available in RPC path — IndexingService not created.

@@ -20,6 +20,7 @@ Current bricks:
   - reputation       — Agent reputation & dispute resolution (Bayesian Beta)
   - sandbox          — Sandboxed code execution (Docker / E2B / Monty)
   - scheduler        — Fair-share priority scheduler (Astraea)
+  - search           — Hot search daemon (semantic, BM25, Zoekt, hybrid fusion)
   - snapshot         — Transactional filesystem snapshots (begin/commit/rollback)
   - workflows        — Event-driven workflow engine
 """

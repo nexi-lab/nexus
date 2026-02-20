@@ -164,6 +164,8 @@ class SearchService(SemanticSearchMixin):
         """
         self.metadata = metadata_store
         self._record_store = record_store
+        # Injected file cache (Issue #690 — replaces global singleton)
+        self._file_cache = file_cache
         self._permission_enforcer = permission_enforcer
         self.router = router
         self._rebac_manager = rebac_manager
@@ -172,9 +174,6 @@ class SearchService(SemanticSearchMixin):
 
         # Gateway for NexusFS operations (Issue #1287)
         self._gw = gateway
-
-        # Injected file cache (Issue #690 — replaces global singleton)
-        self._file_cache = file_cache
 
         # Semantic search (initialized later, types declared in SemanticSearchMixin)
         self._semantic_search = None
@@ -1862,7 +1861,7 @@ class SearchService(SemanticSearchMixin):
     ) -> builtins.list[dict[str, Any]] | None:
         """Try Zoekt for accelerated grep. Returns None if not available."""
         try:
-            from nexus.search.zoekt_client import get_zoekt_client
+            from nexus.bricks.search.zoekt_client import get_zoekt_client
         except ImportError:
             return None
 
@@ -2154,7 +2153,7 @@ class SearchService(SemanticSearchMixin):
     def _is_zoekt_available(self) -> bool:
         """Check if Zoekt indexing service is available."""
         try:
-            from nexus.search.zoekt_client import get_zoekt_client
+            from nexus.bricks.search.zoekt_client import get_zoekt_client
 
             client = get_zoekt_client()
             try:

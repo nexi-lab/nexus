@@ -148,7 +148,7 @@ class SyncPipelineService:
 
         # Notify Zoekt to reindex if files were synced
         if result.files_synced > 0:
-            from nexus.search.zoekt_client import notify_zoekt_sync_complete
+            from nexus.bricks.search.zoekt_client import notify_zoekt_sync_complete
 
             notify_zoekt_sync_complete(result.files_synced)
 

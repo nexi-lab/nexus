@@ -193,7 +193,7 @@ class EventsService:
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():
             logger.debug(f"Using same-box file watcher for {path}")
-            from nexus.core.event_bus import FileEvent
+            from nexus.services.event_subsystem.types import FileEvent
 
             assert isinstance(self._backend, PassthroughProtocol), (
                 "Backend must implement PassthroughProtocol for this operation"
@@ -478,7 +478,7 @@ class EventsService:
         self, event_type: Any, path: str, old_path: str | None
     ) -> None:
         """Handle cache invalidation for any event source."""
-        from nexus.core.event_bus import FileEventType
+        from nexus.services.event_subsystem.types import FileEventType
 
         if isinstance(event_type, str):
             try:
@@ -501,7 +501,7 @@ class EventsService:
 
     def _on_file_change(self, change: Any) -> None:
         """Callback for Layer 1 (FileWatcher) file change events."""
-        from nexus.core.event_bus import FileEvent
+        from nexus.services.event_subsystem.types import FileEvent
 
         event = FileEvent.from_file_change(change)
         self._handle_cache_invalidation_event(event.type, change.path, change.old_path)

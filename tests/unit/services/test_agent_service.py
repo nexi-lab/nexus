@@ -1,11 +1,10 @@
-"""Unit tests for NexusFS agent management methods.
+"""Unit tests for AgentService agent management methods.
 
 Tests cover:
-- Helper methods extracted from register_agent
-- delete_agent cleanup logic
-- Context extraction methods
-- Agent config data creation
-- API key expiration determination
+- Standalone context extraction functions (_extract_zone_id, _extract_user_id)
+- AgentService._create_agent_config_data helper
+- AgentService._determine_agent_key_expiration helper
+- AgentService.delete_agent cleanup logic
 """
 
 from __future__ import annotations
@@ -22,6 +21,12 @@ from nexus import LocalBackend, NexusFS
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
+from nexus.services.agents.agent_service import (
+    AgentService,
+    _extract_user_id,
+    _extract_zone_id,
+    create_agent_service,
+)
 from nexus.storage.models import APIKeyModel
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -56,91 +61,99 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
     nx.close()
 
 
-class TestExtractZoneId:
-    """Tests for _extract_zone_id helper method."""
+@pytest.fixture
+def agent_service(nx: NexusFS) -> AgentService:
+    """Create an AgentService instance from NexusFS."""
+    svc = create_agent_service(nx)
+    assert svc is not None
+    return svc
 
-    def test_extract_zone_id_from_none(self, nx: NexusFS) -> None:
+
+class TestExtractZoneId:
+    """Tests for _extract_zone_id standalone helper function."""
+
+    def test_extract_zone_id_from_none(self) -> None:
         """Test extracting zone_id from None context."""
-        result = nx._extract_zone_id(None)
+        result = _extract_zone_id(None)
         assert result is None
 
-    def test_extract_zone_id_from_dict(self, nx: NexusFS) -> None:
+    def test_extract_zone_id_from_dict(self) -> None:
         """Test extracting zone_id from dict context."""
         context = {"zone_id": "acme"}
-        result = nx._extract_zone_id(context)
+        result = _extract_zone_id(context)
         assert result == "acme"
 
-    def test_extract_zone_id_from_dict_missing(self, nx: NexusFS) -> None:
+    def test_extract_zone_id_from_dict_missing(self) -> None:
         """Test extracting zone_id from dict without zone_id."""
         context = {"user_id": "alice"}
-        result = nx._extract_zone_id(context)
+        result = _extract_zone_id(context)
         assert result is None
 
-    def test_extract_zone_id_from_operation_context(self, nx: NexusFS) -> None:
+    def test_extract_zone_id_from_operation_context(self) -> None:
         """Test extracting zone_id from OperationContext."""
         context = OperationContext(
             user_id="alice",
             groups=[],
             zone_id="acme",
         )
-        result = nx._extract_zone_id(context)
+        result = _extract_zone_id(context)
         assert result == "acme"
 
-    def test_extract_zone_id_from_operation_context_missing(self, nx: NexusFS) -> None:
+    def test_extract_zone_id_from_operation_context_missing(self) -> None:
         """Test extracting zone_id from OperationContext without zone_id."""
         context = OperationContext(user_id="alice", groups=[])
-        result = nx._extract_zone_id(context)
+        result = _extract_zone_id(context)
         assert result is None
 
 
 class TestExtractUserId:
-    """Tests for _extract_user_id helper method."""
+    """Tests for _extract_user_id standalone helper function."""
 
-    def test_extract_user_id_from_none(self, nx: NexusFS) -> None:
+    def test_extract_user_id_from_none(self) -> None:
         """Test extracting user_id from None context."""
-        result = nx._extract_user_id(None)
+        result = _extract_user_id(None)
         assert result is None
 
-    def test_extract_user_id_from_dict_with_user_id(self, nx: NexusFS) -> None:
+    def test_extract_user_id_from_dict_with_user_id(self) -> None:
         """Test extracting user_id from dict with user_id key."""
         context = {"user_id": "alice"}
-        result = nx._extract_user_id(context)
+        result = _extract_user_id(context)
         assert result == "alice"
 
-    def test_extract_user_id_from_dict_with_user_id_key(self, nx: NexusFS) -> None:
+    def test_extract_user_id_from_dict_with_user_id_key(self) -> None:
         """Test extracting user_id from dict with user_id key."""
         context = {"user_id": "bob"}
-        result = nx._extract_user_id(context)
+        result = _extract_user_id(context)
         assert result == "bob"
 
-    def test_extract_user_id_from_dict_prefers_user_id(self, nx: NexusFS) -> None:
+    def test_extract_user_id_from_dict_prefers_user_id(self) -> None:
         """Test that user_id is preferred over user key."""
         context = {"user_id": "alice", "user": "bob"}
-        result = nx._extract_user_id(context)
+        result = _extract_user_id(context)
         assert result == "alice"
 
-    def test_extract_user_id_from_operation_context(self, nx: NexusFS) -> None:
+    def test_extract_user_id_from_operation_context(self) -> None:
         """Test extracting user_id from OperationContext."""
         context = OperationContext(
             user_id="alice",
             groups=[],
         )
-        result = nx._extract_user_id(context)
+        result = _extract_user_id(context)
         assert result == "alice"
 
-    def test_extract_user_id_from_operation_context_fallback(self, nx: NexusFS) -> None:
+    def test_extract_user_id_from_operation_context_fallback(self) -> None:
         """Test extracting user_id from OperationContext falls back to user."""
         context = OperationContext(user_id="bob", groups=[])
-        result = nx._extract_user_id(context)
+        result = _extract_user_id(context)
         assert result == "bob"
 
 
 class TestCreateAgentConfigData:
-    """Tests for _create_agent_config_data helper method."""
+    """Tests for AgentService._create_agent_config_data helper method."""
 
-    def test_create_agent_config_data_minimal(self, nx: NexusFS) -> None:
+    def test_create_agent_config_data_minimal(self, agent_service: AgentService) -> None:
         """Test creating minimal agent config data."""
-        config = nx._create_agent_config_data(
+        config = agent_service._create_agent_config_data(
             agent_id="admin,test_agent",
             name="Test Agent",
             user_id="admin",
@@ -154,9 +167,9 @@ class TestCreateAgentConfigData:
         assert config["description"] is None
         assert config["created_at"] is None
 
-    def test_create_agent_config_data_with_description(self, nx: NexusFS) -> None:
+    def test_create_agent_config_data_with_description(self, agent_service: AgentService) -> None:
         """Test creating agent config data with description."""
-        config = nx._create_agent_config_data(
+        config = agent_service._create_agent_config_data(
             agent_id="admin,test_agent",
             name="Test Agent",
             user_id="admin",
@@ -167,14 +180,14 @@ class TestCreateAgentConfigData:
         assert config["description"] == "A test agent"
         assert config["created_at"] == "2024-01-01T00:00:00Z"
 
-    def test_create_agent_config_data_with_metadata(self, nx: NexusFS) -> None:
+    def test_create_agent_config_data_with_metadata(self, agent_service: AgentService) -> None:
         """Test creating agent config data with metadata."""
         metadata = {
             "platform": "langgraph",
             "endpoint_url": "http://localhost:2024",
             "agent_id": "agent",
         }
-        config = nx._create_agent_config_data(
+        config = agent_service._create_agent_config_data(
             agent_id="admin,test_agent",
             name="Test Agent",
             user_id="admin",
@@ -186,9 +199,9 @@ class TestCreateAgentConfigData:
         assert config["metadata"] == metadata
         assert config["metadata"]["platform"] == "langgraph"
 
-    def test_create_agent_config_data_with_api_key(self, nx: NexusFS) -> None:
+    def test_create_agent_config_data_with_api_key(self, agent_service: AgentService) -> None:
         """Test creating agent config data with API key."""
-        config = nx._create_agent_config_data(
+        config = agent_service._create_agent_config_data(
             agent_id="admin,test_agent",
             name="Test Agent",
             user_id="admin",
@@ -199,10 +212,10 @@ class TestCreateAgentConfigData:
 
         assert config["api_key"] == "sk-test-key"
 
-    def test_create_agent_config_data_with_all_options(self, nx: NexusFS) -> None:
+    def test_create_agent_config_data_with_all_options(self, agent_service: AgentService) -> None:
         """Test creating agent config data with all options."""
         metadata = {"platform": "langgraph"}
-        config = nx._create_agent_config_data(
+        config = agent_service._create_agent_config_data(
             agent_id="admin,test_agent",
             name="Test Agent",
             user_id="admin",
@@ -222,10 +235,10 @@ class TestCreateAgentConfigData:
 
 
 class TestDetermineAgentKeyExpiration:
-    """Tests for _determine_agent_key_expiration helper method."""
+    """Tests for AgentService._determine_agent_key_expiration helper method."""
 
     def test_determine_expiration_with_owner_key_expires(
-        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+        self, agent_service: AgentService, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test expiration when owner has key with expiration."""
         session = record_store.session_factory()
@@ -244,14 +257,14 @@ class TestDetermineAgentKeyExpiration:
             session.add(owner_key)
             session.commit()
 
-            expires_at = nx._determine_agent_key_expiration("alice", session)
+            expires_at = agent_service._determine_agent_key_expiration("alice", session)
 
             assert expires_at == owner_key.expires_at
         finally:
             session.close()
 
     def test_determine_expiration_with_owner_key_no_expiration(
-        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+        self, agent_service: AgentService, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test expiration when owner has key without expiration (defaults to 365 days)."""
         session = record_store.session_factory()
@@ -270,7 +283,7 @@ class TestDetermineAgentKeyExpiration:
             session.add(owner_key)
             session.commit()
 
-            expires_at = nx._determine_agent_key_expiration("alice", session)
+            expires_at = agent_service._determine_agent_key_expiration("alice", session)
 
             # Should default to 365 days from now
             expected = datetime.now(UTC) + timedelta(days=365)
@@ -280,12 +293,12 @@ class TestDetermineAgentKeyExpiration:
             session.close()
 
     def test_determine_expiration_no_owner_key(
-        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+        self, agent_service: AgentService, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test expiration when owner has no key (defaults to 365 days)."""
         session = record_store.session_factory()
         try:
-            expires_at = nx._determine_agent_key_expiration("alice", session)
+            expires_at = agent_service._determine_agent_key_expiration("alice", session)
 
             # Should default to 365 days from now
             expected = datetime.now(UTC) + timedelta(days=365)
@@ -295,7 +308,7 @@ class TestDetermineAgentKeyExpiration:
             session.close()
 
     def test_determine_expiration_owner_key_expired(
-        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+        self, agent_service: AgentService, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test that expired owner key raises ValueError."""
         session = record_store.session_factory()
@@ -315,12 +328,12 @@ class TestDetermineAgentKeyExpiration:
             session.commit()
 
             with pytest.raises(ValueError, match="Cannot generate API key for agent.*expired"):
-                nx._determine_agent_key_expiration("alice", session)
+                agent_service._determine_agent_key_expiration("alice", session)
         finally:
             session.close()
 
     def test_determine_expiration_ignores_agent_keys(
-        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+        self, agent_service: AgentService, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test that agent keys are ignored when finding owner's key."""
         session = record_store.session_factory()
@@ -352,7 +365,7 @@ class TestDetermineAgentKeyExpiration:
             session.add(user_key)
             session.commit()
 
-            expires_at = nx._determine_agent_key_expiration("alice", session)
+            expires_at = agent_service._determine_agent_key_expiration("alice", session)
 
             # Should use user key, not agent key
             assert expires_at == user_key.expires_at
@@ -360,7 +373,7 @@ class TestDetermineAgentKeyExpiration:
             session.close()
 
     def test_determine_expiration_ignores_revoked_keys(
-        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+        self, agent_service: AgentService, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test that revoked keys are ignored."""
         session = record_store.session_factory()
@@ -379,7 +392,7 @@ class TestDetermineAgentKeyExpiration:
             session.add(revoked_key)
             session.commit()
 
-            expires_at = nx._determine_agent_key_expiration("alice", session)
+            expires_at = agent_service._determine_agent_key_expiration("alice", session)
 
             # Should default to 365 days since revoked key is ignored
             expected = datetime.now(UTC) + timedelta(days=365)
@@ -389,22 +402,22 @@ class TestDetermineAgentKeyExpiration:
 
 
 class TestDeleteAgentCleanup:
-    """Tests for delete_agent cleanup logic."""
+    """Tests for AgentService.delete_agent cleanup logic."""
 
     def test_delete_agent_revokes_api_keys(
-        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+        self, agent_service: AgentService, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test that delete_agent revokes all API keys for the agent."""
         # Register agent first
         context = {"user_id": "alice", "zone_id": "root"}
-        nx.register_agent(
+        agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             generate_api_key=True,
             context=context,
         )
 
-        # Create additional API key for the agent using NexusFS's session
+        # Create additional API key for the agent using record_store's session
         session = record_store.session_factory()
         try:
             agent_key = APIKeyModel(
@@ -434,7 +447,7 @@ class TestDeleteAgentCleanup:
             session.close()
 
         # Delete agent
-        result = nx.delete_agent("alice,test_agent", _context=context)
+        result = agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
         # Verify all keys are revoked using new session
@@ -465,16 +478,16 @@ class TestDeleteAgentCleanup:
         finally:
             session.close()
 
-    def test_delete_agent_removes_directory(self, nx: NexusFS) -> None:
+    def test_delete_agent_removes_directory(self, agent_service: AgentService, nx: NexusFS) -> None:
         """Test that delete_agent removes agent directory."""
         context = {"user_id": "alice", "zone_id": "root"}
-        nx.register_agent(
+        agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             context=context,
         )
 
-        agent_dir = "/agent/alice/test_agent"
+        agent_dir = "/zone/root/user/alice/agent/test_agent"
         # Parse context to OperationContext for exists check
         ctx = nx._parse_context(context)
         # Directory may or may not exist depending on test environment
@@ -482,18 +495,16 @@ class TestDeleteAgentCleanup:
         directory_existed = nx.exists(agent_dir, context=ctx)
 
         # Delete agent
-        result = nx.delete_agent("alice,test_agent", _context=context)
+        result = agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
         # Verify directory is removed (if it existed)
         if directory_existed:
             assert not nx.exists(agent_dir, context=ctx)
 
-    def test_delete_agent_removes_rebac_tuples(self, nx: NexusFS) -> None:
+    def test_delete_agent_removes_rebac_tuples(self, agent_service: AgentService) -> None:
         """Test that delete_agent removes ReBAC tuples for the agent."""
-        # Mock rebac functions on the AgentRPCService (Issue #2033: methods
-        # were extracted from NexusFS to AgentRPCService, so mocks must target
-        # the service's injected function references, not NexusFS attributes).
+        # Mock rebac_manager on the agent_service
         mock_tuples = [
             {
                 "tuple_id": "test-tuple-id-1",
@@ -504,46 +515,46 @@ class TestDeleteAgentCleanup:
                 "object_id": "/workspace/alice/test",
             }
         ]
-        svc = nx._agent_rpc_service
-        original_list_fn = svc._rebac_list_tuples_fn
-        original_delete_fn = svc._rebac_delete_fn
-        svc._rebac_list_tuples_fn = MagicMock(return_value=mock_tuples)
-        svc._rebac_delete_fn = MagicMock(return_value=True)
+        original_rebac_manager = agent_service._rebac_manager
+        mock_rebac_manager = MagicMock()
+        mock_rebac_manager.rebac_list_tuples = MagicMock(return_value=mock_tuples)
+        mock_rebac_manager.rebac_delete = MagicMock(return_value=True)
+        agent_service._rebac_manager = mock_rebac_manager
 
         context = {"user_id": "alice", "zone_id": "root"}
-        nx.register_agent(
+        agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             context=context,
         )
 
         # Delete agent
-        result = nx.delete_agent("alice,test_agent", _context=context)
+        result = agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
-        # Verify rebac functions were called via the service
-        assert svc._rebac_list_tuples_fn.call_count >= 1
-        assert svc._rebac_delete_fn.call_count >= 1
+        # Verify rebac_list_tuples was called (at least once for agent tuples, possibly for user tuples too)
+        assert mock_rebac_manager.rebac_list_tuples.call_count >= 1
+        # Verify rebac_delete was called for the tuple
+        assert mock_rebac_manager.rebac_delete.call_count >= 1
 
-        # Restore original functions
-        svc._rebac_list_tuples_fn = original_list_fn
-        svc._rebac_delete_fn = original_delete_fn
+        # Restore original manager
+        agent_service._rebac_manager = original_rebac_manager
 
-    def test_delete_agent_handles_missing_directory(self, nx: NexusFS) -> None:
+    def test_delete_agent_handles_missing_directory(
+        self, agent_service: AgentService, nx: NexusFS
+    ) -> None:
         """Test that delete_agent handles missing directory gracefully."""
         context = {"user_id": "alice", "zone_id": "root"}
 
         # Register agent
-        nx.register_agent(
+        agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             context=context,
         )
 
         # Manually remove directory - use admin context to bypass permission checks
-        agent_dir = "/agent/alice/test_agent"
-        from nexus.contracts.types import OperationContext
-
+        agent_dir = "/zone/root/user/alice/agent/test_agent"
         ctx = nx._parse_context(context)
         # Create admin context to bypass permission checks
         admin_ctx = OperationContext(
@@ -563,25 +574,25 @@ class TestDeleteAgentCleanup:
             nx._enforce_permissions = original_enforce
 
         # Delete agent should still succeed
-        result = nx.delete_agent("alice,test_agent", _context=context)
+        result = agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
-    def test_delete_agent_handles_missing_rebac_manager(self, nx: NexusFS) -> None:
+    def test_delete_agent_handles_missing_rebac_manager(self, agent_service: AgentService) -> None:
         """Test that delete_agent handles missing ReBAC manager gracefully."""
         # Store original manager to restore later
-        original_rebac_manager = nx._rebac_manager
-        nx._rebac_manager = None
+        original_rebac_manager = agent_service._rebac_manager
+        agent_service._rebac_manager = None
 
         context = {"user_id": "alice", "zone_id": "root"}
-        nx.register_agent(
+        agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             context=context,
         )
 
         # Delete agent should still succeed
-        result = nx.delete_agent("alice,test_agent", _context=context)
+        result = agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
         # Restore original manager to prevent teardown errors
-        nx._rebac_manager = original_rebac_manager
+        agent_service._rebac_manager = original_rebac_manager

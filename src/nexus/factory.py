@@ -586,7 +586,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
-            record_store=ctx.record_store,
+            session_factory=ctx.record_store.session_factory,
         )
 
         # --- RecordStore Syncer (constructed, NOT started) ---

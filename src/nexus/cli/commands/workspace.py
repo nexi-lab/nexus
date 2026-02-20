@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -89,7 +90,7 @@ def register_cmd(
         if ttl:
             ttl_delta = _parse_ttl(ttl)
 
-        result = nx.register_workspace(
+        result = cast(Any, nx).register_workspace(
             path=path,
             name=name,
             description=description,
@@ -130,7 +131,7 @@ def list_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        workspaces = nx.list_workspaces()
+        workspaces = cast(Any, nx).list_workspaces()
 
         if not workspaces:
             console.print("[yellow]No workspaces registered[/yellow]")
@@ -182,7 +183,7 @@ def unregister_cmd(
         nx = get_filesystem(backend_config)
 
         # Get workspace info first
-        info = nx.get_workspace_info(path)
+        info = cast(Any, nx).get_workspace_info(path)
         if not info:
             console.print(f"[red]✗[/red] Workspace not registered: {path}")
             nx.close()
@@ -205,7 +206,7 @@ def unregister_cmd(
                 return
 
         # Unregister
-        result = nx.unregister_workspace(path)
+        result = cast(Any, nx).unregister_workspace(path)
 
         if result:
             console.print(f"[green]✓[/green] Unregistered workspace: {path}")
@@ -233,7 +234,7 @@ def info_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        info = nx.get_workspace_info(path)
+        info = cast(Any, nx).get_workspace_info(path)
 
         if not info:
             console.print(f"[red]✗[/red] Workspace not registered: {path}")
@@ -280,7 +281,7 @@ def snapshot_cmd(
         tags = list(tag) if tag else None
 
         with console.status(f"[bold cyan]Creating snapshot for workspace '{path}'..."):
-            result = nx.workspace_snapshot(
+            result = cast(Any, nx).workspace_snapshot(
                 workspace_path=path,
                 description=description,
                 tags=tags,
@@ -323,7 +324,7 @@ def log_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        snapshots = nx.workspace_log(workspace_path=path, limit=limit)
+        snapshots = cast(Any, nx).workspace_log(workspace_path=path, limit=limit)
 
         if not snapshots:
             console.print(f"[yellow]No snapshots found for workspace '{path}'[/yellow]")
@@ -384,7 +385,7 @@ def restore_cmd(
         nx = get_filesystem(backend_config)
 
         # Get snapshot info
-        snapshots = nx.workspace_log(workspace_path=path, limit=1000)
+        snapshots = cast(Any, nx).workspace_log(workspace_path=path, limit=1000)
         snap_info = None
         for s in snapshots:
             if s["snapshot_number"] == snapshot:
@@ -412,7 +413,7 @@ def restore_cmd(
 
         # Perform restore
         with console.status(f"[bold cyan]Restoring snapshot #{snapshot}..."):
-            result = nx.workspace_restore(snapshot_number=snapshot, workspace_path=path)
+            result = cast(Any, nx).workspace_restore(snapshot_number=snapshot, workspace_path=path)
 
         console.print(
             f"[green]✓[/green] Restored snapshot #{snapshot} "
@@ -448,7 +449,7 @@ def diff_cmd(
         nx = get_filesystem(backend_config)
 
         with console.status("[bold cyan]Computing diff between snapshots..."):
-            diff = nx.workspace_diff(
+            diff = cast(Any, nx).workspace_diff(
                 snapshot_1=snapshot1, snapshot_2=snapshot2, workspace_path=path
             )
 

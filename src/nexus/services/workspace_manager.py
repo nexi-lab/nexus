@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
     from nexus.services.protocols.rebac import ReBACBrickProtocol
     from nexus.services.workspace.workspace_registry import WorkspaceRegistry
-    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 

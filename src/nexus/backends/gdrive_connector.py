@@ -226,7 +226,7 @@ class GoogleDriveConnectorBackend(Backend):
                     name=self.provider,
                 )
                 # Register with TokenManager using the provider name from config
-                self.token_manager.register_provider(self.provider, provider_instance)  # type: ignore[arg-type]
+                self.token_manager.register_provider(self.provider, provider_instance)
                 logger.info(
                     f"✓ Registered OAuth provider '{self.provider}' for Google Drive backend"
                 )

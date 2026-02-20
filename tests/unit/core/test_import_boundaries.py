@@ -275,12 +275,11 @@ class TestConfigDoesNotImportServer:
         assert OAuthConfig is not None
         assert OAuthProviderConfig is not None
 
-    def test_auth_config_re_exported_from_server(self):
-        """Backward-compat: server.auth.oauth_config re-exports from nexus.auth_config."""
-        from nexus.auth_config import OAuthConfig as PkgConfig
-        from nexus.server.auth.oauth_config import OAuthConfig as ServerConfig
+    def test_auth_config_canonical_import(self):
+        """OAuthConfig canonical path is nexus.auth_config (Issue #2281: shim removed)."""
+        from nexus.auth_config import OAuthConfig
 
-        assert PkgConfig is ServerConfig
+        assert OAuthConfig is not None
 
 
 class TestZoneHelpersInCore:

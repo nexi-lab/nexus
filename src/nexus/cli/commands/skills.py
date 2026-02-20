@@ -1669,7 +1669,7 @@ def skills_mcp_mount(
                             ],
                             provider_name="google",
                         )
-                        token_manager.register_provider("google", provider_instance)  # type: ignore[arg-type]
+                        token_manager.register_provider("google", provider_instance)
 
                 # First check if credential exists
                 async def check_credential() -> bool:
@@ -1783,7 +1783,7 @@ def skills_mcp_mount(
                         await token_manager.store_credential(
                             provider=oauth_provider if oauth_provider != "x" else "twitter",
                             user_email=oauth_user,
-                            credential=credential,  # type: ignore[arg-type]
+                            credential=credential,
                             zone_id=ROOT_ZONE_ID,
                             created_by=oauth_user,
                         )

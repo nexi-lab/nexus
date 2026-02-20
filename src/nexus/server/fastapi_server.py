@@ -1284,7 +1284,7 @@ def create_app(
     app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
     # Deployment profile (Issue #1389, #1708): resolve enabled bricks from NEXUS_PROFILE env
-    from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":

@@ -24,7 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.deployment_profile import DeploymentProfile
+from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.core.device_capabilities import (
     BRICK_REQUIREMENTS,
     BrickRequirement,
@@ -299,7 +299,7 @@ class TestBrickRequirement:
         assert req.requires_network is False
 
     def test_all_bricks_have_entries(self) -> None:
-        from nexus.core.deployment_profile import ALL_BRICK_NAMES
+        from nexus.contracts.deployment_profile import ALL_BRICK_NAMES
 
         for brick_name in ALL_BRICK_NAMES:
             assert brick_name in BRICK_REQUIREMENTS, f"Missing requirement for {brick_name}"

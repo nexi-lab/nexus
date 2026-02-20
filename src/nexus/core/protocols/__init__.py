@@ -24,8 +24,12 @@ from nexus.core.protocols.connector import (
 )
 from nexus.core.protocols.content_service import ContentServiceProtocol
 from nexus.core.protocols.describable import Describable
+from nexus.core.protocols.entity_registry import EntityRegistryProtocol
+from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
+from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
+from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
 
 __all__ = [
     "BatchContentProtocol",
@@ -35,7 +39,9 @@ __all__ = [
     "ContentServiceProtocol",
     "ContentStoreProtocol",
     "Describable",
+    "EntityRegistryProtocol",
     "NullCacheStore",
+    "PermissionEnforcerProtocol",
     "PersistentView",
     "PersistentViewStore",
     "DirectoryListingProtocol",
@@ -43,8 +49,10 @@ __all__ = [
     "MountInfo",
     "OAuthCapableProtocol",
     "PassthroughProtocol",
+    "ReBACManagerProtocol",
     "ResolvedPath",
     "StreamingProtocol",
     "VFSCoreProtocol",
     "VFSRouterProtocol",
+    "WorkspaceManagerProtocol",
 ]

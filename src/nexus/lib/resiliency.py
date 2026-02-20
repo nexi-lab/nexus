@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import enum
 import logging
 import re
 import time
@@ -29,6 +28,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, TypeVar, cast
+
+from nexus.lib.circuit_breaker import CircuitState
 
 logger = logging.getLogger(__name__)
 
@@ -179,12 +180,6 @@ class ResiliencyConfig:
 # ---------------------------------------------------------------------------
 # 1C: CircuitBreakerOpenError
 # ---------------------------------------------------------------------------
-
-
-class CircuitState(enum.Enum):
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
 
 
 class CircuitBreakerOpenError(Exception):

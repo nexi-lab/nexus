@@ -87,7 +87,7 @@ class TestCrossPlatformLocking:
         4. Linux can now acquire the lock
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -119,7 +119,7 @@ import asyncio
 import sys
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def try_acquire():
     # Inside Docker, use the internal network address
@@ -164,7 +164,7 @@ import asyncio
 import sys
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def acquire_and_release():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -212,7 +212,7 @@ asyncio.run(acquire_and_release())
         4. Windows can now acquire the lock
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -229,7 +229,7 @@ import sys
 import time
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def hold_lock():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -321,7 +321,7 @@ asyncio.run(hold_lock())
         Only one should succeed, the other should wait and then acquire.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -339,7 +339,7 @@ import sys
 import time
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def compete():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -443,7 +443,7 @@ asyncio.run(compete())
         Final count should be exactly 10 (no lost updates).
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -472,7 +472,7 @@ import asyncio
 import sys
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def increment():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -573,7 +573,7 @@ asyncio.run(increment())
         This tests the distributed system's resilience to node failures.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -609,7 +609,7 @@ import sys
 import time
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def acquire_after_crash():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -682,7 +682,7 @@ asyncio.run(acquire_after_crash())
         This tests that extend() properly keeps locks alive.
         """
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -730,7 +730,7 @@ import sys
 import time
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def try_acquire():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")
@@ -807,7 +807,7 @@ class TestHighContention:
         import threading
 
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -897,7 +897,7 @@ class TestHighContention:
         import threading
 
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -956,7 +956,7 @@ import asyncio
 import sys
 sys.path.insert(0, "/app/src")
 from nexus.cache.dragonfly import DragonflyClient
-from nexus.core.distributed_lock import RedisLockManager
+from nexus.lib.distributed_lock import RedisLockManager
 
 async def work():
     client = DragonflyClient(url="redis://dragonfly-coordination:6379")

@@ -146,8 +146,8 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
             health["components"]["reactive_subscriptions"] = {
                 "status": "healthy",
                 "total_subscriptions": reactive_stats["total_subscriptions"],
-                "read_set_subscriptions": reactive_stats["read_set_subscriptions"],
-                "pattern_subscriptions": reactive_stats["pattern_subscriptions"],
+                "connections_tracked": reactive_stats["connections_tracked"],
+                "lookup_count": reactive_stats["lookup_count"],
                 "avg_lookup_ms": reactive_stats["avg_lookup_ms"],
                 "registry": reactive_stats["registry"],
             }

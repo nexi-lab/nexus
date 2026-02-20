@@ -314,7 +314,13 @@ class WebSocketManager:
             # Update subscription filters
             if "event_types" in data:
                 conn_info.event_types = data["event_types"]
-            await self._send_to_connection(conn_info, {"type": "subscribed"})
+            # Echo back patterns and event_types for client confirmation
+            response: dict[str, Any] = {"type": "subscribed"}
+            if "patterns" in data:
+                response["patterns"] = data["patterns"]
+            if "event_types" in data:
+                response["event_types"] = data["event_types"]
+            await self._send_to_connection(conn_info, response)
         else:
             logger.debug(f"Unknown message type from {connection_id}: {msg_type}")
 

@@ -285,7 +285,14 @@ def connect(
         data_dir = str(Path(nexus_root) / "data")
     else:
         data_dir = cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
-        nexus_root = str(Path(data_dir).parent)
+        # nexus_root hosts sibling state directories (metastore, record_store).
+        # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE
+        # data_dir itself as nexus_root so metastore goes inside it — this avoids
+        # polluting the parent directory (which could be /tmp or /) and ensures
+        # each data_dir is fully self-contained.  When data_dir is the default
+        # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
+        # for backward compatibility.
+        nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
         backend = LocalBackend(root_path=Path(data_dir).resolve())
 
     # Resolve paths — new fields take precedence, db_path is legacy fallback
@@ -348,14 +355,19 @@ def connect(
     enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
     enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
 
-    # RecordStore (Four Pillars) — optional; only created when record_store_path
-    # is set.  Passing None gives a bare kernel (storage-only) where all
-    # service-layer features (audit log, versioning, ReBAC, etc.) are skipped.
-    # The factory handles record_store=None gracefully.
+    # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
+    # NEXUS_DATABASE_URL.  Passing None gives a bare kernel (storage-only)
+    # where all service-layer features (audit log, versioning, ReBAC, Memory
+    # API, etc.) are skipped.  The factory handles record_store=None gracefully.
+    _database_url = os.environ.get("NEXUS_DATABASE_URL")
     if record_store_path:
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         record_store = SQLAlchemyRecordStore(db_path=record_store_path)
+    elif _database_url:
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        record_store = SQLAlchemyRecordStore(db_url=_database_url)
     else:
         record_store = None
 

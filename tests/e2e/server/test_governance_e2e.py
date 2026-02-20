@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker as AsyncSessionMaker
 
 from nexus.bricks.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
 from nexus.bricks.governance.collusion_service import CollusionService
+from nexus.bricks.governance.db_models import *  # noqa: F401,F403 — register ORM models before create_all
 from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
 from nexus.bricks.governance.models import AgentBaseline
 from nexus.bricks.governance.response_service import ResponseService
@@ -197,7 +198,7 @@ class TestConstraintCRUD:
         assert resp.status_code == 201
 
         # List
-        resp = await client.get("/api/v2/governance/constraints?zone_id=default")
+        resp = await client.get("/api/v2/governance/constraints?zone_id=root")
         assert resp.status_code == 200
         data = resp.json()
         assert data["count"] >= 1
@@ -206,7 +207,7 @@ class TestConstraintCRUD:
 
     @pytest.mark.asyncio
     async def test_check_no_constraint_allows(self, client: AsyncClient) -> None:
-        resp = await client.get("/api/v2/governance/check/agent-m/agent-n?zone_id=default")
+        resp = await client.get("/api/v2/governance/check/agent-m/agent-n?zone_id=root")
         assert resp.status_code == 200
         data = resp.json()
         assert data["allowed"] is True
@@ -228,7 +229,7 @@ class TestConstraintCRUD:
         assert add_resp.status_code == 201
 
         # Check it
-        check_resp = await client.get("/api/v2/governance/check/agent-p/agent-q?zone_id=default")
+        check_resp = await client.get("/api/v2/governance/check/agent-p/agent-q?zone_id=root")
         assert check_resp.status_code == 200
         data = check_resp.json()
         assert data["allowed"] is False
@@ -250,7 +251,7 @@ class TestConstraintCRUD:
         edge_id = add_resp.json()["edge_id"]
 
         # Check blocked
-        check = await client.get("/api/v2/governance/check/agent-del1/agent-del2?zone_id=default")
+        check = await client.get("/api/v2/governance/check/agent-del1/agent-del2?zone_id=root")
         assert check.json()["allowed"] is False
 
         # Remove
@@ -259,7 +260,7 @@ class TestConstraintCRUD:
         assert del_resp.json()["removed"] is True
 
         # Check allowed again
-        check2 = await client.get("/api/v2/governance/check/agent-del1/agent-del2?zone_id=default")
+        check2 = await client.get("/api/v2/governance/check/agent-del1/agent-del2?zone_id=root")
         assert check2.json()["allowed"] is True
 
     @pytest.mark.asyncio
@@ -291,7 +292,7 @@ class TestAlerts:
 
     @pytest.mark.asyncio
     async def test_list_alerts_empty(self, client: AsyncClient) -> None:
-        resp = await client.get("/api/v2/governance/alerts?zone_id=default")
+        resp = await client.get("/api/v2/governance/alerts?zone_id=root")
         assert resp.status_code == 200
         data = resp.json()
         assert data["count"] == 0
@@ -315,7 +316,7 @@ class TestAlerts:
         assert len(alerts) >= 1
 
         # Query alerts via HTTP
-        resp = await client.get("/api/v2/governance/alerts?zone_id=default")
+        resp = await client.get("/api/v2/governance/alerts?zone_id=root")
         assert resp.status_code == 200
         data = resp.json()
         assert data["count"] >= 1
@@ -390,7 +391,7 @@ class TestSuspensionLifecycle:
             },
         )
 
-        resp = await client.get("/api/v2/governance/suspensions?zone_id=default")
+        resp = await client.get("/api/v2/governance/suspensions?zone_id=root")
         assert resp.status_code == 200
         data = resp.json()
         assert data["count"] >= 1
@@ -514,7 +515,7 @@ class TestFraudScores:
 
     @pytest.mark.asyncio
     async def test_fraud_score_not_found(self, client: AsyncClient) -> None:
-        resp = await client.get("/api/v2/governance/fraud-scores/nonexistent-agent?zone_id=default")
+        resp = await client.get("/api/v2/governance/fraud-scores/nonexistent-agent?zone_id=root")
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
@@ -567,12 +568,12 @@ class TestPerformance:
     async def test_constraint_check_latency(self, client: AsyncClient) -> None:
         """Constraint check should be < 5ms (cached or uncached)."""
         # Warm up
-        await client.get("/api/v2/governance/check/perf-a/perf-b?zone_id=default")
+        await client.get("/api/v2/governance/check/perf-a/perf-b?zone_id=root")
 
         # Measure
         start = time.monotonic()
         for _ in range(10):
-            resp = await client.get("/api/v2/governance/check/perf-a/perf-b?zone_id=default")
+            resp = await client.get("/api/v2/governance/check/perf-a/perf-b?zone_id=root")
             assert resp.status_code == 200
         elapsed = time.monotonic() - start
         avg_ms = (elapsed / 10) * 1000
@@ -584,7 +585,7 @@ class TestPerformance:
         """Alert listing should be < 50ms."""
         start = time.monotonic()
         for _ in range(10):
-            resp = await client.get("/api/v2/governance/alerts?zone_id=default")
+            resp = await client.get("/api/v2/governance/alerts?zone_id=root")
             assert resp.status_code == 200
         elapsed = time.monotonic() - start
         avg_ms = (elapsed / 10) * 1000
@@ -610,7 +611,7 @@ class TestPerformance:
         )
 
         # Immediately check — should see the constraint (cache invalidated)
-        resp = await client.get("/api/v2/governance/check/cache-a/cache-b?zone_id=default")
+        resp = await client.get("/api/v2/governance/check/cache-a/cache-b?zone_id=root")
         assert resp.json()["allowed"] is False
 
 
@@ -641,7 +642,7 @@ class TestCrossServiceIntegration:
 
         # Check constraint graph — should have BLOCK from 'blocked-agent' to '*'
         constraints_resp = await client.get(
-            "/api/v2/governance/constraints?zone_id=default&agent_id=blocked-agent"
+            "/api/v2/governance/constraints?zone_id=root&agent_id=blocked-agent"
         )
         assert constraints_resp.status_code == 200
         data = constraints_resp.json()
@@ -669,7 +670,7 @@ class TestCrossServiceIntegration:
 
         # Verify BLOCK exists
         constraints = await client.get(
-            "/api/v2/governance/constraints?zone_id=default&agent_id=unblock-agent"
+            "/api/v2/governance/constraints?zone_id=root&agent_id=unblock-agent"
         )
         assert constraints.json()["count"] >= 1
 
@@ -685,7 +686,7 @@ class TestCrossServiceIntegration:
 
         # Verify BLOCK removed
         constraints2 = await client.get(
-            "/api/v2/governance/constraints?zone_id=default&agent_id=unblock-agent"
+            "/api/v2/governance/constraints?zone_id=root&agent_id=unblock-agent"
         )
         unblock_constraints = [
             c for c in constraints2.json()["constraints"] if c["from_node"] == "unblock-agent"
@@ -714,7 +715,7 @@ class TestCrossServiceIntegration:
         assert len(alerts_anomalous) >= 1
 
         # Verify via HTTP
-        resp = await client.get("/api/v2/governance/alerts?zone_id=default")
+        resp = await client.get("/api/v2/governance/alerts?zone_id=root")
         assert resp.status_code == 200
         assert resp.json()["count"] >= 1
 

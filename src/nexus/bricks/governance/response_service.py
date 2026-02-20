@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -105,8 +106,8 @@ class ResponseService:
             max_tx_per_hour=max(1, int(10 * (1 - fraud_score.score))),
             max_amount_per_day=max(1.0, 100.0 * (1 - fraud_score.score)),
             reason=f"Auto-throttled: fraud score {fraud_score.score:.2f}",
-            applied_at=datetime.now(UTC),
-            expires_at=datetime.now(UTC) + timedelta(hours=24),
+            applied_at=(now := datetime.now(UTC)),
+            expires_at=now + timedelta(hours=24),
         )
 
         # Persist throttle
@@ -209,14 +210,8 @@ class ResponseService:
         )
 
         # Update suspension record
-        updated = SuspensionRecord(
-            suspension_id=record.suspension_id,
-            agent_id=record.agent_id,
-            zone_id=record.zone_id,
-            reason=record.reason,
-            severity=record.severity,
-            suspended_at=record.suspended_at,
-            expires_at=record.expires_at,
+        updated = replace(
+            record,
             appeal_status=ApprovalStatus.PENDING,
             appeal_reason=reason,
             appealed_at=datetime.now(UTC),
@@ -245,7 +240,6 @@ class ResponseService:
             msg = f"No pending appeal for suspension {suspension_id!r}"
             raise ValueError(msg)
 
-        now = datetime.now(UTC)
         new_status = ApprovalStatus.APPROVED if approved else ApprovalStatus.REJECTED
 
         # Update approval workflow
@@ -255,19 +249,11 @@ class ResponseService:
             self._appeal_workflow.reject(suspension_id, decided_by)
 
         # Update suspension
-        updated = SuspensionRecord(
-            suspension_id=record.suspension_id,
-            agent_id=record.agent_id,
-            zone_id=record.zone_id,
-            reason=record.reason,
-            severity=record.severity,
-            suspended_at=record.suspended_at,
-            expires_at=record.expires_at,
+        updated = replace(
+            record,
             appeal_status=new_status,
-            appeal_reason=record.appeal_reason,
-            appealed_at=record.appealed_at,
             decided_by=decided_by,
-            decided_at=now,
+            decided_at=datetime.now(UTC),
         )
 
         await self._update_suspension(updated)

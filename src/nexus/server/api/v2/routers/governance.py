@@ -178,9 +178,41 @@ async def list_fraud_scores(
     request: Request,
     zone_id: str = Query(default="root"),
 ) -> JSONResponse:
-    """List fraud scores for all agents in a zone."""
+    """List stored fraud scores for all agents in a zone.
+
+    Returns pre-computed scores from the database.
+    Use POST /fraud-scores/compute to trigger recomputation.
+    """
     service = _get_collusion_service(request)
-    scores = await service.compute_fraud_scores(zone_id=zone_id)
+    scores = await service.list_fraud_scores(zone_id=zone_id)
+
+    return JSONResponse(
+        content={
+            "scores": [
+                {
+                    "agent_id": s.agent_id,
+                    "zone_id": s.zone_id,
+                    "score": s.score,
+                    "components": s.components,
+                    "computed_at": s.computed_at.isoformat() if s.computed_at else None,
+                }
+                for s in scores
+            ],
+            "count": len(scores),
+        }
+    )
+
+
+@router.post("/fraud-scores/compute")
+async def compute_fraud_scores(
+    request: Request,
+    zone_id: str = Query(default="root"),
+    auth_result: dict = Depends(require_admin),
+) -> JSONResponse:
+    """Recompute and persist fraud scores for all agents in a zone."""
+    logger.info("compute_fraud_scores by subject=%s", auth_result.get("subject_id"))
+    service = _get_collusion_service(request)
+    scores = await service.compute_and_persist_fraud_scores(zone_id=zone_id)
 
     return JSONResponse(
         content={

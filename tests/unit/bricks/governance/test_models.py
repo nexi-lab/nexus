@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.services.governance.models import (
+from nexus.bricks.governance.models import (
     AgentBaseline,
     AnomalyAlert,
     AnomalyDetectionConfig,
@@ -71,50 +71,46 @@ class TestEnums:
 class TestImmutability:
     """Tests that frozen dataclasses cannot be mutated."""
 
+    def _assert_frozen(self, obj: object, attr: str, value: object) -> None:
+        """Assert that setting *attr* on a frozen dataclass raises."""
+        with pytest.raises(AttributeError):
+            setattr(obj, attr, value)
+
     def test_transaction_summary_frozen(self) -> None:
         ts = TransactionSummary("a1", "z1", 100.0, "cp1", datetime.now(UTC))
-        with pytest.raises(AttributeError):
-            ts.amount = 999.0  # type: ignore[misc]
+        self._assert_frozen(ts, "amount", 999.0)
 
     def test_agent_baseline_frozen(self) -> None:
         bl = AgentBaseline("a1", "z1", 100.0, 10.0, 5.0, 3, datetime.now(UTC), 50)
-        with pytest.raises(AttributeError):
-            bl.mean_amount = 999.0  # type: ignore[misc]
+        self._assert_frozen(bl, "mean_amount", 999.0)
 
     def test_anomaly_alert_frozen(self) -> None:
         alert = AnomalyAlert("id1", "a1", "z1", AnomalySeverity.HIGH, "amount")
-        with pytest.raises(AttributeError):
-            alert.severity = AnomalySeverity.LOW  # type: ignore[misc]
+        self._assert_frozen(alert, "severity", AnomalySeverity.LOW)
 
     def test_governance_edge_frozen(self) -> None:
         edge = GovernanceEdge("e1", "a", "b", "z1")
-        with pytest.raises(AttributeError):
-            edge.weight = 99.0  # type: ignore[misc]
+        self._assert_frozen(edge, "weight", 99.0)
 
     def test_fraud_ring_frozen(self) -> None:
         ring = FraudRing("r1", "z1", ["a", "b", "c"])
-        with pytest.raises(AttributeError):
-            ring.confidence = 0.99  # type: ignore[misc]
+        self._assert_frozen(ring, "confidence", 0.99)
 
     def test_fraud_score_frozen(self) -> None:
         score = FraudScore("a1", "z1", 0.5)
-        with pytest.raises(AttributeError):
-            score.score = 0.99  # type: ignore[misc]
+        self._assert_frozen(score, "score", 0.99)
 
     def test_constraint_check_result_frozen(self) -> None:
         result = ConstraintCheckResult(allowed=True)
-        with pytest.raises(AttributeError):
-            result.allowed = False  # type: ignore[misc]
+        self._assert_frozen(result, "allowed", False)
 
     def test_suspension_record_frozen(self) -> None:
         sr = SuspensionRecord("s1", "a1", "z1", "test")
-        with pytest.raises(AttributeError):
-            sr.reason = "modified"  # type: ignore[misc]
+        self._assert_frozen(sr, "reason", "modified")
 
     def test_throttle_config_frozen(self) -> None:
         tc = ThrottleConfig("a1", "z1", 10, 100.0)
-        with pytest.raises(AttributeError):
-            tc.max_tx_per_hour = 999  # type: ignore[misc]
+        self._assert_frozen(tc, "max_tx_per_hour", 999)
 
 
 # ---------------------------------------------------------------------------

@@ -179,9 +179,11 @@ class GovernanceGraphService:
         # DB lookup
         result = await self._lookup_constraint(from_agent, to_agent, zone_id)
 
-        # Cache result
-        if len(self._cache) < self._CACHE_MAX_SIZE:
-            self._cache[cache_key] = (result, now + self._CACHE_TTL)
+        # Cache result (LRU eviction when full — Issue #2129 §14A)
+        if len(self._cache) >= self._CACHE_MAX_SIZE:
+            oldest_key = min(self._cache, key=lambda k: self._cache[k][1])
+            self._cache.pop(oldest_key, None)
+        self._cache[cache_key] = (result, now + self._CACHE_TTL)
 
         return result
 

@@ -25,7 +25,6 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from nexus.bricks.governance.protocols import AnomalyDetectorProtocol
 from nexus.rebac.namespace_manager import NamespaceMount
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
@@ -97,7 +96,6 @@ __all__ = [
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
-    "AnomalyDetectorProtocol",
     "ChunkedUploadProtocol",
     "EventLogConfig",
     "FileReaderProtocol",

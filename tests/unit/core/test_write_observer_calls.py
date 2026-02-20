@@ -355,6 +355,17 @@ class TestObserverErrorHandlingStrict:
             parsing=ParseConfig(auto_parse=False),
             system_services=SystemServices(write_observer=failing_observer),
         )
+
+        # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
+        from nexus.services.permissions.checker import PermissionChecker
+
+        nx._permission_checker = PermissionChecker(
+            permission_enforcer=nx._permission_enforcer,
+            metadata_store=nx.metadata,
+            default_context=nx._default_context,
+            enforce_permissions=nx._enforce_permissions,
+        )
+
         yield nx
         nx.close()
 
@@ -402,6 +413,17 @@ class TestObserverErrorHandlingNonStrict:
             parsing=ParseConfig(auto_parse=False),
             system_services=SystemServices(write_observer=failing_observer),
         )
+
+        # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
+        from nexus.services.permissions.checker import PermissionChecker
+
+        nx._permission_checker = PermissionChecker(
+            permission_enforcer=nx._permission_enforcer,
+            metadata_store=nx.metadata,
+            default_context=nx._default_context,
+            enforce_permissions=nx._enforce_permissions,
+        )
+
         yield nx
         nx.close()
 

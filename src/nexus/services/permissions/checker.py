@@ -1,13 +1,15 @@
-"""Standalone permission checker extracted from NexusFS._check_permission.
+"""PermissionChecker — service-layer permission checking pipeline.
 
-Provides a dependency-injected PermissionChecker class that encapsulates
-the full permission-checking pipeline:
+Dependency-injected checker encapsulating the full pipeline:
   1. Enforce-permissions gate
   2. Zone boundary security (P0-4, Issue #819)
   3. Admin / system bypass
   4. Virtual-view path resolution (Fix #332)
   5. Owner fast-path (Issue #920)
   6. ReBAC graph traversal via PermissionEnforcer
+
+Lives in services/permissions/ because it depends on rebac (a brick)
+at runtime. Wired into NexusFS via factory/orchestrator.py DI.
 """
 
 from __future__ import annotations

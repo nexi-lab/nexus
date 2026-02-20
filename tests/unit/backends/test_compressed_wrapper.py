@@ -28,7 +28,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus.core.protocols.describable import Describable
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
 
 # ---------------------------------------------------------------------------

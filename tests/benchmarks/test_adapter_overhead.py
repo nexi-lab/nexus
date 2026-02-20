@@ -14,7 +14,7 @@ import pytest
 
 from nexus.backends.backend import Backend
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.lib.response import HandlerResponse, timed_response
 
 
 class _BenchBackend(Backend):

@@ -23,7 +23,7 @@ import pytest
 
 from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.delegating import DelegatingBackend
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from nexus.core.config import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
+from nexus.core.nexus_fs_bulk import NexusFSBulkMixin
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 class NexusFS(  # type: ignore[misc]
+    NexusFSBulkMixin,
     NexusFSCoreMixin,
     NexusFilesystem,
 ):

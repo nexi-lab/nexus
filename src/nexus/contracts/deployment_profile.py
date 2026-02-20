@@ -20,7 +20,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.performance_tuning import ProfileTuning
+    from nexus.lib.performance_tuning import ProfileTuning
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ class DeploymentProfile(StrEnum):
 
         Issue #2071: Per-profile performance thresholds.
         """
-        from nexus.core.performance_tuning import resolve_profile_tuning
+        from nexus.lib.performance_tuning import resolve_profile_tuning
 
         return resolve_profile_tuning(self)
 

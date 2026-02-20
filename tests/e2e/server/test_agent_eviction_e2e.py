@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.contracts.agent_types import AgentState, EvictionReason
-from nexus.core.performance_tuning import EvictionTuning
+from nexus.lib.performance_tuning import EvictionTuning
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.agents.eviction_manager import EvictionManager
 from nexus.services.agents.eviction_policy import LRUEvictionPolicy

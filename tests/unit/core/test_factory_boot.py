@@ -27,7 +27,6 @@ from nexus.core.config import (
     PermissionConfig,
     SystemServices,
 )
-from nexus.core.performance_tuning import resolve_profile_tuning
 from nexus.factory import (
     _boot_brick_services,
     _boot_kernel_services,
@@ -36,6 +35,7 @@ from nexus.factory import (
     create_nexus_fs,
     create_nexus_services,
 )
+from nexus.lib.performance_tuning import resolve_profile_tuning
 
 # ---------------------------------------------------------------------------
 # Helpers

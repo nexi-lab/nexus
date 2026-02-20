@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from nexus.contracts.qos import PressureLevel
 
 if TYPE_CHECKING:
-    from nexus.core.performance_tuning import EvictionTuning
+    from nexus.lib.performance_tuning import EvictionTuning
 
 logger = logging.getLogger(__name__)
 

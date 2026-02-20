@@ -27,7 +27,7 @@ from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, PressureLevel, 
 
 if TYPE_CHECKING:
     from nexus.contracts.agent_types import AgentRecord
-    from nexus.core.performance_tuning import EvictionTuning
+    from nexus.lib.performance_tuning import EvictionTuning
     from nexus.services.agents.agent_registry import AgentRegistry
     from nexus.services.agents.eviction_policy import EvictionPolicy
     from nexus.services.agents.resource_monitor import ResourceMonitor

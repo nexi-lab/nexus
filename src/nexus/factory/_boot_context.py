@@ -9,8 +9,8 @@ if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.config import DistributedConfig, PermissionConfig
     from nexus.core.metastore import MetastoreABC
-    from nexus.core.performance_tuning import ProfileTuning
     from nexus.core.router import PathRouter
+    from nexus.lib.performance_tuning import ProfileTuning
     from nexus.storage.record_store import RecordStoreABC
 
 

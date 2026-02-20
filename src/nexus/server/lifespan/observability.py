@@ -17,8 +17,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_registry: ObservabilityRegistry | None = None
-
 
 def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
     """Create and populate the observability registry.
@@ -130,12 +128,10 @@ def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
 
 async def startup_observability(app: FastAPI) -> None:
     """Initialize all observability subsystems via the registry."""
-    global _registry
-
     write_observer = app.state.write_observer
-    _registry = create_registry(write_observer=write_observer)
-    statuses = await _registry.start_all()
-    app.state.observability_registry = _registry
+    registry = create_registry(write_observer=write_observer)
+    statuses = await registry.start_all()
+    app.state.observability_registry = registry
 
     # Log startup summary
     started = [s.name for s in statuses if s.started]
@@ -149,12 +145,12 @@ async def startup_observability(app: FastAPI) -> None:
     _startup_thread_pool(app)
 
 
-async def shutdown_observability() -> None:
+async def shutdown_observability(app: FastAPI) -> None:
     """Shutdown all observability components via the registry."""
-    global _registry
-    if _registry:
-        await _registry.shutdown_all()
-        _registry = None
+    registry = app.state.observability_registry
+    if registry:
+        await registry.shutdown_all()
+        app.state.observability_registry = None
 
 
 def _startup_thread_pool(app: FastAPI) -> None:

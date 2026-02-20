@@ -439,11 +439,13 @@ TIER_PRESETS: dict[DeviceTier, MobileSearchConfig] = {
 def get_system_memory_gb() -> float:
     """Get total system memory in gigabytes.
 
+    Delegates to ``nexus.lib.device_capabilities.get_system_memory_mb()``
+    (Issue #1708: DRY extraction).
+
     Returns:
         Total RAM in GB, or 4.0 as fallback if detection fails
     """
-    try:
-        import psutil
+    from nexus.lib.device_capabilities import get_system_memory_mb
 
         return float(psutil.virtual_memory().total) / (1024**3)
     except Exception:  # noqa: BLE001
@@ -453,11 +455,13 @@ def get_system_memory_gb() -> float:
 def get_available_memory_gb() -> float:
     """Get available (free) system memory in gigabytes.
 
+    Delegates to ``nexus.lib.device_capabilities.get_available_memory_mb()``
+    (Issue #1708: DRY extraction).
+
     Returns:
         Available RAM in GB, or 2.0 as fallback if detection fails
     """
-    try:
-        import psutil
+    from nexus.lib.device_capabilities import get_available_memory_mb
 
         return float(psutil.virtual_memory().available) / (1024**3)
     except Exception:  # noqa: BLE001

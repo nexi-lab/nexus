@@ -359,6 +359,17 @@ _KERNEL_TUNING = ProfileTuning(
         checkpoint_max_age_seconds=86400,
         max_concurrent_transitions=2,
     ),
+    qos=QoSTuning(
+        premium=QoSClassConfig(
+            max_concurrent_tasks=3, scheduling_weight=3, eviction_priority=2, preemptible=False
+        ),
+        standard=QoSClassConfig(
+            max_concurrent_tasks=1, scheduling_weight=1, eviction_priority=1, preemptible=False
+        ),
+        spot=QoSClassConfig(
+            max_concurrent_tasks=1, scheduling_weight=1, eviction_priority=0, preemptible=True
+        ),
+    ),
 )
 
 _EMBEDDED_TUNING = ProfileTuning(

@@ -94,8 +94,9 @@ class EvictionManager:
     def trigger_immediate_cycle(self, requesting_qos: QoSClass | None = None) -> None:
         """Signal an immediate eviction cycle for preemption (Issue #2171).
 
-        Thread-safe: uses asyncio.Queue to deliver the requesting QoS class,
-        avoiding race conditions between concurrent callers.
+        Coroutine-safe (single event loop). Uses asyncio.Queue to deliver the
+        requesting QoS class, avoiding race conditions between concurrent callers.
+        NOT thread-safe — call from the event loop only.
 
         Args:
             requesting_qos: QoS class of the agent requesting resources.

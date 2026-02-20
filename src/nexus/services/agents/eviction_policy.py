@@ -110,7 +110,9 @@ class QoSEvictionPolicy:
                 if EVICTION_ORDER.get(a.qos.eviction_class, 1) < requester_priority
             ]
         else:
-            candidates = list(agents)
+            # Input is typically pre-sorted by DB query, but re-sort for safety
+            # when called from non-DB contexts (e.g., unit tests with unsorted input).
+            candidates = agents  # no copy needed — input is a fresh list from the registry
 
         # Sort by (eviction_priority ASC, last_heartbeat ASC with None first)
         candidates.sort(

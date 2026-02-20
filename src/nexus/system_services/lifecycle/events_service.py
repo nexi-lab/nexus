@@ -19,7 +19,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
@@ -188,7 +188,7 @@ class EventsService:
             )
             if event is None:
                 return None
-            return event.to_dict()
+            return cast(dict[str, Any], event.to_dict())
 
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():

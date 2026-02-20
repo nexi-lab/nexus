@@ -330,4 +330,3 @@ class TestSearchServiceDelegation:
         mock_fs.search_service.semantic_search_index = AsyncMock(return_value=stats)
         result = asyncio.run(mock_fs.asemantic_search_index(path="/data", recursive=False))
         assert result == stats
-

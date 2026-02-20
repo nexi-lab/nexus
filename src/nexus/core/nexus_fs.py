@@ -8999,7 +8999,6 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "llm_service") and self._semantic_search is not None:
             self.llm_service._semantic_search_engine = self._semantic_search
 
-
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop DeferredPermissionBuffer first to flush pending permissions

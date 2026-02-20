@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar, cast
 
 if TYPE_CHECKING:
     pass  # Exceptions imported at runtime to avoid circular imports
@@ -289,7 +289,7 @@ class HandlerResponse(Generic[T]):
             BackendError: For other error types
         """
         if self.success:
-            return self.data  # type: ignore[return-value]
+            return cast(T, self.data)
 
         # Import here to avoid circular imports
         from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
@@ -323,7 +323,7 @@ class HandlerResponse(Generic[T]):
             The response data if successful, otherwise the default value
         """
         if self.success:
-            return self.data  # type: ignore[return-value]
+            return cast(T, self.data)
         return default
 
     def to_dict(self) -> dict[str, Any]:

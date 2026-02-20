@@ -27,7 +27,7 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
 )
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel

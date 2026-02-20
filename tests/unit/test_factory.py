@@ -66,7 +66,6 @@ def _make_mock_ctx(**overrides: Any) -> Any:
         "router": MagicMock(),
         "engine": mock_engine,
         "read_engine": mock_engine,
-        "session_factory": MagicMock(),
         "perm": MagicMock(
             enforce_zone_isolation=True,
             enable_tiger_cache=True,
@@ -269,7 +268,6 @@ class TestBootBrickServices:
             "rebac_circuit_breaker",
             "memory_router",
             "memory_permission",
-            "cache_brick",
         }
         assert expected_keys == set(result.keys())
 

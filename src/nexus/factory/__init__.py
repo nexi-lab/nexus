@@ -9,6 +9,11 @@
     (``/usr/lib/systemd/``). Systemd knows which services to start and how to
     wire them together, but it is not part of the kernel.
 
+    **Why it exists**: The NexusFS kernel (``nexus.core.nexus_fs.NexusFS``)
+    accepts pre-built services via dependency injection and never auto-creates
+    them. This factory provides the default wiring so that callers don't have
+    to manually construct 10 services every time.
+
 Usage::
 
     # Quick: single call creates kernel + services
@@ -33,31 +38,30 @@ Usage::
     nx = NexusFS(backend=backend, metadata_store=metadata_store, services=services)
 """
 
-from nexus.factory.adapters import _NexusFSFileReader
-from nexus.factory.boot_context import _BootContext
-from nexus.factory.bricks import (
+# Public API
+from nexus.factory._background import _start_background_services
+
+# Re-exports for backward compatibility (Issue #2180)
+from nexus.factory._boot_context import _BootContext
+from nexus.factory._bricks import _boot_independent_bricks as _boot_brick_services
+from nexus.factory._helpers import (
     _FACTORY_BRICKS,
     _FACTORY_SKIP,
-    _boot_brick_services,
     _register_factory_bricks,
-    _WorkflowLifecycleAdapter,
+    _safe_create,
 )
-from nexus.factory.compose import create_nexus_fs, create_nexus_services, create_record_store
-from nexus.factory.kernel import _boot_kernel_services
-from nexus.factory.system import _boot_system_services, _start_background_services
+from nexus.factory._kernel import _boot_kernel_services
+from nexus.factory._memory import create_memory_service
+from nexus.factory._record_store import create_record_store
+from nexus.factory._system import _boot_system_services
+from nexus.factory._wired import _boot_wired_services
+from nexus.factory.adapters import _NexusFSFileReader, _WorkflowLifecycleAdapter
+from nexus.factory.orchestrator import create_nexus_fs, create_nexus_services
+from nexus.factory.wallet import WalletProvisioner
 
 __all__ = [
-    "_BootContext",
-    "_FACTORY_BRICKS",
-    "_FACTORY_SKIP",
-    "_NexusFSFileReader",
-    "_WorkflowLifecycleAdapter",
-    "_boot_brick_services",
-    "_boot_kernel_services",
-    "_boot_system_services",
-    "_register_factory_bricks",
-    "_start_background_services",
     "create_nexus_fs",
     "create_nexus_services",
     "create_record_store",
+    "create_memory_service",
 ]

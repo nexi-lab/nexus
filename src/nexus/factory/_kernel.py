@@ -1,12 +1,12 @@
-"""Tier 0 (KERNEL) boot — mandatory services, fatal on failure."""
+"""Boot Tier 0 (KERNEL) — mandatory services that are fatal on failure."""
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
-from nexus.factory.boot_context import _BootContext
+from nexus.factory._boot_context import _BootContext
 
 logger = logging.getLogger(__name__)
 
@@ -14,18 +14,24 @@ logger = logging.getLogger(__name__)
 def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
     """Boot Tier 0 (KERNEL) — mandatory services that are fatal on failure.
 
-    Creates ReBAC, permissions, workspace, syncer, and version services.
+    Creates ReBAC, permissions, workspace, and write-sync services.
     On failure: raises ``BootError`` and logs at CRITICAL.
     Does NOT call ``.start()`` on background threads — that is deferred to
     ``_start_background_services()``.
 
+    Issue #2034: version_service and rebac_circuit_breaker moved to
+    ``_boot_brick_services()`` (Tier 2) — they are optional features.
+
     Returns:
-        Dict with 13 kernel service entries.
+        Dict with 11 kernel service entries.
     """
     from nexus.contracts.exceptions import BootError
 
     t0 = time.perf_counter()
     try:
+        # Config-time dialect flag (KERNEL-ARCHITECTURE §7)
+        _is_pg = not ctx.db_url.startswith("sqlite")
+
         # --- ReBAC Manager ---
         from nexus.rebac.manager import EnhancedReBACManager
 
@@ -37,6 +43,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             enable_graph_limits=True,
             enable_tiger_cache=ctx.perm.enable_tiger_cache,
             read_engine=ctx.read_engine,
+            is_postgresql=_is_pg,
         )
 
         # --- Directory Visibility Cache ---
@@ -57,7 +64,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         # --- Audit Store ---
         from nexus.rebac.permissions_enhanced import AuditStore
 
-        audit_store = AuditStore(engine=ctx.engine)
+        audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
 
         # --- Entity Registry ---
         from nexus.rebac.entity_registry import EntityRegistry
@@ -112,12 +119,13 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         mount_manager = MountManager(ctx.record_store)
 
         # --- Workspace Manager ---
+        from nexus.services.protocols.rebac import ReBACBrickProtocol
         from nexus.services.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager(
             metadata=ctx.metadata_store,
             backend=ctx.backend,
-            rebac_manager=rebac_manager,
+            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             record_store=ctx.record_store,
@@ -143,13 +151,17 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             _st = ctx.profile_tuning.storage
             write_observer = BufferedRecordStoreWriteObserver(
                 ctx.record_store,
+                strict_mode=ctx.perm.audit_strict_mode,
                 flush_interval_ms=_st.write_buffer_flush_ms,
                 max_buffer_size=_st.write_buffer_max_size,
             )
         else:
             from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
-            write_observer = RecordStoreWriteObserver(ctx.record_store)
+            write_observer = RecordStoreWriteObserver(
+                ctx.record_store,
+                strict_mode=ctx.perm.audit_strict_mode,
+            )
 
         result = {
             "rebac_manager": rebac_manager,

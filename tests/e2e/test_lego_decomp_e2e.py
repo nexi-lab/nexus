@@ -76,11 +76,11 @@ def _create_factory_nexus_fs(
 ) -> Any:
     """Create a factory-wired NexusFS with PostgreSQL record store.
 
-    Uses create_nexus_fs() from nexus.factory.compose — the recommended entry
+    Uses create_nexus_fs() from nexus.factory — the recommended entry
     point that wires ALL services (ReBAC, Permissions, VersionService, etc.).
     """
     from nexus.backends.local import LocalBackend
-    from nexus.factory.compose import create_nexus_fs, create_record_store
+    from nexus.factory import create_nexus_fs, create_record_store
     from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
     data_dir = tmp_path / "data"

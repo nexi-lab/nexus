@@ -618,17 +618,6 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
                 strict_mode=ctx.perm.audit_strict_mode,
             )
 
-        # --- VersionService (Task #45) ---
-        from nexus.services.version_service import VersionService
-
-        version_service = VersionService(
-            metadata_store=ctx.metadata_store,
-            cas_store=ctx.backend,
-            router=ctx.router,
-            enforce_permissions=False,
-            record_store=ctx.record_store,
-        )
-
         result = {
             "rebac_manager": rebac_manager,
             "dir_visibility_cache": dir_visibility_cache,
@@ -641,7 +630,6 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             "mount_manager": mount_manager,
             "workspace_manager": workspace_manager,
             "write_observer": write_observer,
-            "version_service": version_service,
         }
 
         elapsed = time.perf_counter() - t0

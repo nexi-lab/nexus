@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.server.observability.registry import ObservabilityRegistry
 
@@ -20,27 +20,109 @@ logger = logging.getLogger(__name__)
 _registry: ObservabilityRegistry | None = None
 
 
-def create_registry() -> ObservabilityRegistry:
+def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
     """Create and populate the observability registry.
 
     Registration order = startup order (dependencies first).
+
+    Args:
+        write_observer: Optional WriteBuffer instance for WriteBufferComponent.
     """
-    from nexus.server.observability.components import (
-        LoggingComponent,
-        OTelTracingComponent,
-        PrometheusComponent,
-        PyroscopeComponent,
-        SentryComponent,
-    )
+    from nexus.server.observability.components import FunctionPairComponent, WriteBufferComponent
 
     registry = ObservabilityRegistry()
 
+    # Logging — lazy import start/stop functions
     env = os.environ.get("NEXUS_ENV", "dev")
-    registry.register("logging", LoggingComponent(env=env), required=False)
-    registry.register("otel-tracing", OTelTracingComponent(), required=False)
-    registry.register("sentry", SentryComponent(), required=False)
-    registry.register("pyroscope", PyroscopeComponent(), required=False)
-    registry.register("prometheus", PrometheusComponent(), required=False)
+
+    def _start_logging() -> None:
+        from nexus.server.logging_config import configure_logging
+
+        configure_logging(env=env)
+
+    def _stop_logging() -> None:
+        from nexus.server.logging_config import shutdown_logging
+
+        shutdown_logging()
+
+    registry.register(
+        "logging",
+        FunctionPairComponent("logging", start_fn=_start_logging, stop_fn=_stop_logging),
+        required=False,
+    )
+
+    # OTel Tracing
+    def _start_otel() -> None:
+        from nexus.server.telemetry import setup_telemetry
+
+        setup_telemetry()
+
+    def _stop_otel() -> None:
+        from nexus.server.telemetry import shutdown_telemetry
+
+        shutdown_telemetry()
+
+    registry.register(
+        "otel-tracing",
+        FunctionPairComponent("otel-tracing", start_fn=_start_otel, stop_fn=_stop_otel),
+        required=False,
+    )
+
+    # Sentry
+    def _start_sentry() -> None:
+        from nexus.server.sentry import setup_sentry
+
+        setup_sentry()
+
+    def _stop_sentry() -> None:
+        from nexus.server.sentry import shutdown_sentry
+
+        shutdown_sentry()
+
+    registry.register(
+        "sentry",
+        FunctionPairComponent("sentry", start_fn=_start_sentry, stop_fn=_stop_sentry),
+        required=False,
+    )
+
+    # Pyroscope
+    def _start_pyroscope() -> None:
+        from nexus.server.profiling import setup_profiling
+
+        setup_profiling()
+
+    def _stop_pyroscope() -> None:
+        from nexus.server.profiling import shutdown_profiling
+
+        shutdown_profiling()
+
+    registry.register(
+        "pyroscope",
+        FunctionPairComponent("pyroscope", start_fn=_start_pyroscope, stop_fn=_stop_pyroscope),
+        required=False,
+    )
+
+    # Prometheus
+    def _start_prometheus() -> None:
+        from nexus.server.metrics import setup_prometheus
+
+        setup_prometheus()
+
+    def _stop_prometheus() -> None:
+        from nexus.server.metrics import shutdown_prometheus
+
+        shutdown_prometheus()
+
+    registry.register(
+        "prometheus",
+        FunctionPairComponent("prometheus", start_fn=_start_prometheus, stop_fn=_stop_prometheus),
+        required=False,
+    )
+
+    # WriteBuffer (Issue #1370) — managed shutdown, started by factory
+    if write_observer is not None:
+        registry.register("write-buffer", WriteBufferComponent(write_observer), required=False)
+
     # QueryObserver registered later after factory creates the subsystem
 
     return registry
@@ -49,7 +131,9 @@ def create_registry() -> ObservabilityRegistry:
 async def startup_observability(app: FastAPI) -> None:
     """Initialize all observability subsystems via the registry."""
     global _registry
-    _registry = create_registry()
+
+    write_observer = app.state.write_observer
+    _registry = create_registry(write_observer=write_observer)
     statuses = await _registry.start_all()
     app.state.observability_registry = _registry
 

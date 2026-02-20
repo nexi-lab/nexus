@@ -146,6 +146,18 @@ class HeartbeatBuffer:
         with self._lock:
             return {aid for aid, ts in self._buffer.items() if ts >= cutoff}
 
+    def get_latest(self, agent_id: str) -> datetime | None:
+        """Return the latest buffered heartbeat for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            The buffered heartbeat timestamp, or None if not in buffer.
+        """
+        with self._lock:
+            return self._buffer.get(agent_id)
+
     def stats(self) -> dict[str, Any]:
         """Return buffer statistics for observability.
 

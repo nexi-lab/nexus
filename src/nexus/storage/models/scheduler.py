@@ -3,7 +3,7 @@
 Replaces runtime DDL in server/lifespan/services.py and raw asyncpg SQL
 in scheduler/queue.py with a proper ORM model.
 
-Related: Issue #1212
+Related: Issue #1212, #1274
 """
 
 from __future__ import annotations
@@ -11,8 +11,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Index, Numeric, SmallInteger, String, Text
+from sqlalchemy import DateTime, Float, Index, Numeric, SmallInteger, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import JSON
 
 from nexus.storage.models._base import Base, uuid_pk
 
@@ -26,7 +28,12 @@ class ScheduledTaskModel(Base):
     agent_id: Mapped[str] = mapped_column(Text, nullable=False)
     executor_id: Mapped[str] = mapped_column(Text, nullable=False)
     task_type: Mapped[str] = mapped_column(Text, nullable=False)
-    payload: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    payload: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
     priority_tier: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
     effective_tier: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
     enqueued_at: Mapped[datetime] = mapped_column(
@@ -45,10 +52,30 @@ class ScheduledTaskModel(Base):
     zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Astraea columns (Issue #1274)
+    request_state: Mapped[str] = mapped_column(
+        Text, nullable=False, default="pending", server_default="pending"
+    )
+    priority_class: Mapped[str] = mapped_column(
+        Text, nullable=False, default="batch", server_default="batch"
+    )
+    executor_state: Mapped[str] = mapped_column(
+        Text, nullable=False, default="UNKNOWN", server_default="UNKNOWN"
+    )
+    estimated_service_time: Mapped[float] = mapped_column(
+        Float, nullable=False, default=30.0, server_default="30.0"
+    )
+
     __table_args__ = (
         Index(
             "idx_scheduled_tasks_dequeue",
             "effective_tier",
+            "enqueued_at",
+            postgresql_where="status = 'queued'",
+        ),
+        Index(
+            "idx_sched_astraea_dequeue",
+            "priority_class",
             "enqueued_at",
             postgresql_where="status = 'queued'",
         ),

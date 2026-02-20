@@ -71,6 +71,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Module-level limiter instance; initialized in create_app().
+limiter: Limiter
 
 # Lock API Models — re-exported for backward compatibility with tests/consumers.
 # Canonical location: api/v1/models/locks.py (Issue #1288).

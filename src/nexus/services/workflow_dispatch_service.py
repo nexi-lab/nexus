@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.core.mutation_hooks import MutationEvent
     from nexus.core.pipe_manager import PipeManager
+    from nexus.lib.mutation_hooks import MutationEvent
     from nexus.workflows.protocol import WorkflowProtocol
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ class WorkflowDispatchService:
 
     def on_mutation(self, event: MutationEvent) -> None:
         """Translate kernel MutationEvent into workflow fire + webhook broadcast."""
-        from nexus.core.mutation_hooks import MutationOp
+        from nexus.lib.mutation_hooks import MutationOp
 
         trigger_type = f"file_{event.operation.value}"
 

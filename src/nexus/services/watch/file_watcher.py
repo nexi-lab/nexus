@@ -202,7 +202,7 @@ class FileWatcher:
         if self._started:
             return
 
-        self._loop = loop or asyncio.get_event_loop()
+        self._loop = loop or asyncio.get_running_loop()
         self._stop_event.clear()
         self._started = True
         logger.info("FileWatcher started")
@@ -258,9 +258,9 @@ class FileWatcher:
         # Determine the actual path to watch with watchfiles
         watch_path = path if path.is_dir() else path.parent
 
-        info.task = asyncio.ensure_future(
+        assert self._loop is not None  # guaranteed by _started check above
+        info.task = self._loop.create_task(
             self._watch_loop(watch_path, callback, recursive),
-            loop=self._loop,
         )
         self._watches[key] = info
         logger.debug("Added watch: %s (recursive=%s)", path, recursive)
@@ -352,7 +352,11 @@ class FileWatcher:
                     try:
                         callback(fc)
                     except Exception:
-                        logger.exception("Error in file change callback")
+                        logger.exception(
+                            "Error in file change callback for %s (type=%s)",
+                            fc.path,
+                            fc.type.value,
+                        )
         except asyncio.CancelledError:
             pass  # normal shutdown
         except Exception:

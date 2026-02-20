@@ -291,18 +291,18 @@ class TestKernelDeviceCapabilities:
     """Kernel appears in device capability profile index."""
 
     def test_kernel_in_profile_index(self) -> None:
-        from nexus.core.device_capabilities import _PROFILE_INDEX
+        from nexus.lib.device_capabilities import _PROFILE_INDEX
 
         assert "kernel" in _PROFILE_INDEX
 
     def test_kernel_index_below_embedded(self) -> None:
-        from nexus.core.device_capabilities import _PROFILE_INDEX
+        from nexus.lib.device_capabilities import _PROFILE_INDEX
 
         assert _PROFILE_INDEX["kernel"] < _PROFILE_INDEX["embedded"]
 
     def test_kernel_never_auto_suggested(self) -> None:
         """suggest_profile() never returns KERNEL — it must be explicit."""
-        from nexus.core.device_capabilities import DeviceCapabilities, suggest_profile
+        from nexus.lib.device_capabilities import DeviceCapabilities, suggest_profile
 
         # Even with very low memory, suggest_profile returns EMBEDDED, not KERNEL
         tiny = DeviceCapabilities(memory_mb=16, cpu_cores=1)

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from cachetools import LRUCache
 
+from nexus.contracts.overlay_config import OverlayConfig
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 
 if TYPE_CHECKING:
@@ -32,23 +33,6 @@ logger = logging.getLogger(__name__)
 
 # Sentinel hash value for whiteout markers (deletions in overlay)
 WHITEOUT_HASH = "whiteout:deleted"
-
-
-@dataclass(slots=True)
-class OverlayConfig:
-    """Configuration for an overlay workspace.
-
-    Attributes:
-        enabled: Whether overlay resolution is active
-        base_manifest_hash: CAS hash of the base workspace snapshot manifest
-        workspace_path: Root path of the workspace (e.g., "/my-workspace")
-        agent_id: Agent ID owning this overlay (for multi-agent isolation)
-    """
-
-    enabled: bool = False
-    base_manifest_hash: str | None = None
-    workspace_path: str = ""
-    agent_id: str | None = None
 
 
 @dataclass(slots=True)

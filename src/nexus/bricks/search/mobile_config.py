@@ -445,7 +445,7 @@ def get_system_memory_gb() -> float:
     try:
         import psutil
 
-        return psutil.virtual_memory().total / (1024**3)
+        return float(psutil.virtual_memory().total) / (1024**3)
     except Exception:  # noqa: BLE001
         return 4.0
 
@@ -459,7 +459,7 @@ def get_available_memory_gb() -> float:
     try:
         import psutil
 
-        return psutil.virtual_memory().available / (1024**3)
+        return float(psutil.virtual_memory().available) / (1024**3)
     except Exception:  # noqa: BLE001
         return 2.0
 

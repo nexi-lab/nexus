@@ -184,6 +184,7 @@ class TestBootSystemServices:
             "brick_reconciler",
             "scoped_hook_engine",
             "tiger_cache_manager",
+            "zone_lifecycle",
         }
         assert expected_keys == set(result.keys())
 
@@ -291,7 +292,7 @@ class TestBootBrickServices:
         with (
             caplog.at_level(logging.DEBUG, logger="nexus.factory"),
             patch(
-                "nexus.services.version_service.VersionService",
+                "nexus.services.versioning.version_service.VersionService",
                 side_effect=RuntimeError("version db unavailable"),
             ),
         ):
@@ -460,6 +461,27 @@ class TestStartBackgroundServices:
         system = {"deferred_permission_buffer": None, "write_observer": wo, "delivery_worker": None}
         _start_background_services(system)
         wo.start.assert_called_once()
+
+    def test_zone_lifecycle_loads_terminating_zones(self) -> None:
+        """Issue #2061: load_terminating_zones called on startup."""
+        from nexus.factory import _start_background_services
+
+        session_mock = MagicMock()
+        sf = MagicMock()
+        sf.__enter__ = MagicMock(return_value=session_mock)
+        sf.__exit__ = MagicMock(return_value=False)
+
+        zl = MagicMock()
+        zl._session_factory = MagicMock(return_value=sf)
+
+        system = {
+            "deferred_permission_buffer": None,
+            "write_observer": None,
+            "delivery_worker": None,
+            "zone_lifecycle": zl,
+        }
+        _start_background_services(system)
+        zl.load_terminating_zones.assert_called_once_with(session_mock)
 
 
 # ---------------------------------------------------------------------------

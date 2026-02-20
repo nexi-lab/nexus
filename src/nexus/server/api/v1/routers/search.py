@@ -166,7 +166,7 @@ async def search_query(
     try:
         # Use graph-enhanced search if effective_graph_mode is not "none" (Issue #1040)
         if effective_graph_mode != "none":
-            from nexus.services.graph_search_service import graph_enhanced_search
+            from nexus.services.search.graph_search_service import graph_enhanced_search
 
             results = await graph_enhanced_search(
                 query=q,

@@ -262,6 +262,9 @@ class SystemServices:
     # Brick reconciler — drift detection and self-healing (Issue #2060)
     brick_reconciler: Any = None
 
+    # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
+    zone_lifecycle: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure

@@ -18,7 +18,7 @@ from nexus.contracts.types import OperationContext, parse_operation_context
 if TYPE_CHECKING:
     from nexus.contracts.types import VFSOperations
     from nexus.services.workspace.workspace_registry import WorkspaceRegistry
-    from nexus.services.workspace_manager import WorkspaceManager
+    from nexus.system_services.workspace.workspace_manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 

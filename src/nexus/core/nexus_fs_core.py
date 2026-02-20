@@ -1687,6 +1687,7 @@ class NexusFSCoreMixin:
             >>> result = nx.write_stream("/workspace/large.bin", file_chunks("/tmp/large.bin"))
         """
         path = self._validate_path(path)
+        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route to backend with write access check
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -1834,6 +1835,7 @@ class NexusFSCoreMixin:
             content = content.encode("utf-8")
 
         path = self._validate_path(path)
+        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Phase 2 Integration: Intercept memory paths
         from nexus.bricks.memory.router import MemoryViewRouter
@@ -2627,6 +2629,8 @@ class NexusFSCoreMixin:
         if not files:
             return []
 
+        self._check_zone_writable(context)  # Issue #2061: write-gating
+
         # Validate all paths first
         validated_files: list[tuple[str, bytes]] = []
         for path, content in files:
@@ -2993,6 +2997,7 @@ class NexusFSCoreMixin:
             PermissionError: If path is read-only or user doesn't have write permission
         """
         path = self._validate_path(path)
+        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Phase 2 Integration: Intercept memory paths
         from nexus.bricks.memory.router import MemoryViewRouter
@@ -3167,6 +3172,7 @@ class NexusFSCoreMixin:
         """
         old_path = self._validate_path(old_path)
         new_path = self._validate_path(new_path)
+        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route both paths
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -4218,6 +4224,7 @@ class NexusFSCoreMixin:
             ...     else:
             ...         print(f"Failed {path}: {result['error']}")
         """
+        self._check_zone_writable(context)  # Issue #2061: write-gating
         results = {}
         for path in paths:
             try:

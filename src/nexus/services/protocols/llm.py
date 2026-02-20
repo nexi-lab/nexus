@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.llm.provider import LLMProvider
-    from nexus.services.llm_citation import DocumentReadResult
+    from nexus.services.llm.llm_citation import DocumentReadResult
 
 
 @runtime_checkable

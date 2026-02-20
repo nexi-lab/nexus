@@ -17,14 +17,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from nexus.bricks.scheduler.constants import (
+from nexus.services.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     DEFAULT_EST_SERVICE_TIME_SECS,
     MAX_WAIT_SECONDS,
     TASK_STATUS_COMPLETED,
     PriorityTier,
 )
-from nexus.bricks.scheduler.models import ScheduledTask
+from nexus.services.scheduler.models import ScheduledTask
 from nexus.constants import ROOT_ZONE_ID
 
 # =============================================================================

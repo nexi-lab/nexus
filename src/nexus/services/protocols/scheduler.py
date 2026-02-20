@@ -155,23 +155,15 @@ class InMemoryScheduler:
         self._task_map.pop(task_id, None)
 
     async def classify(self, request: AgentRequest) -> str:
-        from nexus.bricks.scheduler.constants import (
-            TIER_TO_CLASS,
-            PriorityClass,
-            PriorityTier,
-            RequestState,
-        )
-
-        # Map integer priority to PriorityTier, default NORMAL
-        try:
-            tier = PriorityTier(request.priority)
-        except ValueError:
-            tier = PriorityTier.NORMAL
-        base_class = TIER_TO_CLASS.get(tier, PriorityClass.BATCH)
+        # Inlined tier→class mapping (avoids protocol→implementation import).
+        # PriorityTier: CRITICAL=0, HIGH=1, NORMAL=2, LOW=3, BEST_EFFORT=4
+        _TIER_TO_CLASS = {0: "interactive", 1: "interactive", 2: "batch", 3: "background", 4: "background"}
+        priority = request.priority if request.priority in _TIER_TO_CLASS else 2  # default NORMAL
+        base_class = _TIER_TO_CLASS[priority]
 
         # IO promotion: BACKGROUND → BATCH if IO_WAIT
-        if base_class == PriorityClass.BACKGROUND and request.request_state == RequestState.IO_WAIT:
-            return PriorityClass.BATCH
+        if base_class == "background" and request.request_state == "io_wait":
+            return "batch"
         return base_class
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:

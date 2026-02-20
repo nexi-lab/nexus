@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-from nexus.bricks.scheduler.constants import PriorityTier, RequestState
-from nexus.bricks.scheduler.policies.classifier import classify_request
-from nexus.bricks.scheduler.policies.hrrn import compute_hrrn_score, rank_by_hrrn
+from nexus.services.scheduler.constants import PriorityTier, RequestState
+from nexus.services.scheduler.policies.classifier import classify_request
+from nexus.services.scheduler.policies.hrrn import compute_hrrn_score, rank_by_hrrn
 
 
 @pytest.mark.benchmark

@@ -12,6 +12,7 @@ Services:
 - LLMService: LLM-powered document reading with citations
 - OAuthService: OAuth credential management and provider integration
 - SkillService: Skill lifecycle management and governance
+- SchedulerService: Fair-share priority scheduler (Astraea) — System Service, not a Brick
 
 Subsystem ABC (Issue #1287):
 - Subsystem: ABC for service lifecycle wrappers (health_check, cleanup)

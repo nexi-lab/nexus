@@ -12,7 +12,7 @@ Classification rules:
 
 from __future__ import annotations
 
-from nexus.bricks.scheduler.constants import (
+from nexus.services.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TIER_TO_CLASS,
     PriorityClass,

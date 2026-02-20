@@ -11,7 +11,7 @@ No I/O, no side effects — suitable for Hypothesis property-based testing.
 
 from __future__ import annotations
 
-from nexus.bricks.scheduler.constants import DEFAULT_EST_SERVICE_TIME_SECS
+from nexus.services.scheduler.constants import DEFAULT_EST_SERVICE_TIME_SECS
 
 
 def compute_hrrn_score(

@@ -962,8 +962,8 @@ async def lifespan(_app: FastAPI) -> Any:
             import asyncpg
 
             from nexus.bricks.pay.credits import CreditsService
-            from nexus.bricks.scheduler.queue import TaskQueue
-            from nexus.bricks.scheduler.service import SchedulerService
+            from nexus.services.scheduler.queue import TaskQueue
+            from nexus.services.scheduler.service import SchedulerService
 
             # Convert SQLAlchemy URL to asyncpg DSN
             pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")

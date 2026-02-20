@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.scheduler.constants import (
+from nexus.services.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
@@ -27,19 +27,19 @@ from nexus.bricks.scheduler.constants import (
     PriorityTier,
     RequestState,
 )
-from nexus.bricks.scheduler.models import ScheduledTask, TaskSubmission
-from nexus.bricks.scheduler.policies.classifier import classify_request
-from nexus.bricks.scheduler.policies.fair_share import FairShareCounter
-from nexus.bricks.scheduler.priority import (
+from nexus.services.scheduler.models import ScheduledTask, TaskSubmission
+from nexus.services.scheduler.policies.classifier import classify_request
+from nexus.services.scheduler.policies.fair_share import FairShareCounter
+from nexus.services.scheduler.priority import (
     compute_boost_tiers,
     compute_effective_tier,
     validate_submission,
 )
-from nexus.bricks.scheduler.queue import TaskQueue
+from nexus.services.scheduler.queue import TaskQueue
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.credits import CreditsService
-    from nexus.bricks.scheduler.events import AgentStateEmitter, AgentStateEvent
+    from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
     from nexus.services.protocols.scheduler import AgentRequest
 
 logger = logging.getLogger(__name__)

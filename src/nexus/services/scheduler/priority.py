@@ -17,14 +17,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from nexus.bricks.scheduler.constants import (
+from nexus.services.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     BOOST_COST_PER_TIER,
     MAX_BOOST_TIERS,
     MAX_WAIT_SECONDS,
     PriorityTier,
 )
-from nexus.bricks.scheduler.models import TaskSubmission
+from nexus.services.scheduler.models import TaskSubmission
 
 
 def compute_boost_tiers(boost_amount: Decimal) -> int:

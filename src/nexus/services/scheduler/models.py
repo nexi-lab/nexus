@@ -13,7 +13,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from nexus.bricks.scheduler.constants import (
+from nexus.services.scheduler.constants import (
     DEFAULT_EST_SERVICE_TIME_SECS,
     TASK_STATUS_QUEUED,
     PriorityClass,

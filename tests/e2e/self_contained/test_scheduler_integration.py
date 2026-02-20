@@ -22,16 +22,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.bricks.pay.credits import CreditsService
-from nexus.bricks.scheduler.constants import (
+from nexus.services.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     BOOST_COST_PER_TIER,
     TASK_STATUS_QUEUED,
     TASK_STATUS_RUNNING,
     PriorityTier,
 )
-from nexus.bricks.scheduler.models import ScheduledTask, TaskSubmission
-from nexus.bricks.scheduler.priority import compute_effective_tier
-from nexus.bricks.scheduler.service import SchedulerService
+from nexus.services.scheduler.models import ScheduledTask, TaskSubmission
+from nexus.services.scheduler.priority import compute_effective_tier
+from nexus.services.scheduler.service import SchedulerService
 from nexus.services.protocols.scheduler import AgentRequest
 
 # =============================================================================

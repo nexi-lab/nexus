@@ -1,0 +1,518 @@
+"""Boot Tier 2 (BRICK) — optional, silent on failure.
+
+Includes brick auto-discovery via ``brick_factory.py`` convention.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from nexus.factory._boot_context import _BootContext
+from nexus.factory._helpers import _resolve_tasks_db_path, _safe_create
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Brick auto-discovery (Issue #2180)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BrickFactoryDescriptor:
+    """Descriptor for a discoverable brick factory."""
+
+    name: str | None  # Profile gate name (None = always enabled)
+    result_key: str
+    create_fn: Callable[..., Any]
+
+
+def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDescriptor]:
+    """Scan ``nexus/bricks/*/brick_factory.py`` for factory functions.
+
+    Each discoverable brick provides a ``brick_factory.py`` module with:
+    - ``BRICK_NAME``: Maps to deployment profile gate name (None = always on)
+    - ``TIER``: ``"independent"`` or ``"dependent"``
+    - ``RESULT_KEY``: Key in the result dict
+    - ``create(ctx, kernel) -> Any``: Factory function
+    """
+    import importlib
+    import pkgutil
+
+    factories: list[BrickFactoryDescriptor] = []
+    try:
+        bricks_pkg = importlib.import_module("nexus.bricks")
+    except ImportError:
+        return factories
+
+    for _, name, is_pkg in pkgutil.iter_modules(bricks_pkg.__path__):
+        if not is_pkg:
+            continue
+        factory_module_name = f"nexus.bricks.{name}.brick_factory"
+        try:
+            mod = importlib.import_module(factory_module_name)
+        except ImportError:
+            continue  # Brick has no factory — skip
+
+        if getattr(mod, "TIER", "independent") != tier:
+            continue
+
+        factories.append(
+            BrickFactoryDescriptor(
+                name=getattr(mod, "BRICK_NAME", name),
+                result_key=mod.RESULT_KEY,
+                create_fn=mod.create,
+            )
+        )
+
+    return factories
+
+
+# ---------------------------------------------------------------------------
+# Brick boot function
+# ---------------------------------------------------------------------------
+
+
+def _boot_independent_bricks(
+    ctx: _BootContext,
+    kernel: dict[str, Any],
+    brick_on: Callable[[str], bool] | None = None,
+) -> dict[str, Any]:
+    """Boot Tier 2 (BRICK) — optional, silent on failure.
+
+    Creates Search/Zoekt wiring, Wallet, Manifest, ToolNamespace,
+    ChunkedUpload, Distributed infra, Workflow engine, API key creator.
+    On failure: logs DEBUG, sets that service to None.
+
+    Args:
+        ctx: Boot context with shared dependencies.
+        kernel: Kernel services dict from Tier 0.
+        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+            When None, all bricks are enabled (backward-compatible default).
+
+    Returns:
+        Dict with brick service entries (some may be None).
+    """
+    t0 = time.perf_counter()
+
+    def _on(name: str) -> bool:
+        if brick_on is None:
+            return True
+        return brick_on(name)
+
+    # === Auto-discovered bricks ===
+    auto_results: dict[str, Any] = {}
+    for desc in _discover_brick_factories("independent"):
+        if desc.name is None:
+            # No profile gate — always create
+            auto_results[desc.result_key] = _safe_create(
+                desc.result_key,
+                lambda d=desc: d.create_fn(ctx, kernel),  # type: ignore[misc]
+                lambda _name: True,  # always enabled
+            )
+        else:
+            assert desc.name is not None
+            auto_results[desc.result_key] = _safe_create(
+                desc.name,
+                lambda d=desc: d.create_fn(ctx, kernel),  # type: ignore[misc]
+                _on,
+            )
+
+    # === Manually-wired bricks (complex conditional logic) ===
+
+    # --- Search Brick Import Validation (Issue #1520) ---
+    if _on("search"):
+        try:
+            from nexus.bricks.search.manifest import verify_imports as _verify_search
+
+            _search_status = _verify_search()
+            logger.debug("[BOOT:BRICK] Search brick imports: %s", _search_status)
+        except ImportError:
+            logger.debug("[BOOT:BRICK] Search brick manifest not available")
+
+        # Wire zoekt callbacks into backends (Issue #1520)
+        try:
+            from nexus.bricks.search.zoekt_client import (
+                notify_zoekt_sync_complete,
+                notify_zoekt_write,
+            )
+
+            if hasattr(ctx.backend, "on_write_callback") and ctx.backend.on_write_callback is None:
+                ctx.backend.on_write_callback = notify_zoekt_write
+            if hasattr(ctx.backend, "on_sync_callback") and ctx.backend.on_sync_callback is None:
+                ctx.backend.on_sync_callback = notify_zoekt_sync_complete
+        except ImportError:
+            logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
+    else:
+        logger.debug("[BOOT:BRICK] Search brick disabled by profile")
+
+    # --- Wallet Provisioner (Issue #1210) ---
+    wallet_provisioner: Any = None
+    if _on("pay"):
+        from nexus.factory.wallet import create_wallet_provisioner
+
+        wallet_provisioner = create_wallet_provisioner()
+    else:
+        logger.debug("[BOOT:BRICK] Pay brick disabled by profile")
+
+    # --- Manifest Resolver (Issue #1427, #1428) ---
+    manifest_resolver: Any = None
+    manifest_metrics: Any = None
+    if _on("skills"):
+        try:
+            from nexus.bricks.context_manifest import ManifestResolver
+            from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
+            from nexus.bricks.context_manifest.metrics import (
+                ManifestMetricsConfig,
+                ManifestMetricsObserver,
+            )
+
+            executors: dict[str, Any] = {}
+            root_path = getattr(ctx.backend, "root_path", None)
+            if root_path is not None:
+                from pathlib import Path
+
+                try:
+                    executors["file_glob"] = FileGlobExecutor(workspace_root=Path(root_path))
+                except TypeError:
+                    logger.debug("Cannot create FileGlobExecutor: root_path=%r", root_path)
+
+            # WorkspaceSnapshotExecutor (Issue #1428)
+            try:
+                from nexus.bricks.context_manifest.executors.snapshot_lookup_db import (
+                    CASManifestReader,
+                )
+                from nexus.bricks.context_manifest.executors.workspace_snapshot import (
+                    WorkspaceSnapshotExecutor,
+                )
+                from nexus.storage.repositories.snapshot_lookup import DatabaseSnapshotLookup
+
+                snapshot_lookup = DatabaseSnapshotLookup(record_store=ctx.record_store)
+                cas_reader = CASManifestReader(backend=ctx.backend)
+                executors["workspace_snapshot"] = WorkspaceSnapshotExecutor(
+                    snapshot_lookup=snapshot_lookup,
+                    manifest_reader=cas_reader,
+                )
+            except ImportError as _snap_e:
+                logger.debug("WorkspaceSnapshotExecutor unavailable: %s", _snap_e)
+
+            import importlib.util
+
+            if importlib.util.find_spec("nexus.bricks.context_manifest.executors.memory_query"):
+                logger.debug("MemoryQueryExecutor available for per-agent wiring")
+            else:
+                logger.debug("MemoryQueryExecutor module not found")
+
+            manifest_metrics = ManifestMetricsObserver(ManifestMetricsConfig())
+
+            manifest_resolver = ManifestResolver(
+                executors=executors,
+                max_resolve_seconds=5.0,
+                metrics_observer=manifest_metrics,
+            )
+            logger.debug("[BOOT:BRICK] ManifestResolver created with %d executors", len(executors))
+        except ImportError as _e:
+            logger.debug("[BOOT:BRICK] ManifestResolver unavailable: %s", _e)
+    else:
+        logger.debug("[BOOT:BRICK] MCP/Manifest brick disabled by profile")
+
+    # --- Tool Namespace Middleware (Issue #1272) ---
+    tool_namespace_middleware = None
+    if _on("mcp"):
+        try:
+            from nexus.mcp.middleware import ToolNamespaceMiddleware
+
+            tool_namespace_middleware = ToolNamespaceMiddleware(
+                rebac_manager=kernel["rebac_manager"],
+                zone_id=ctx.zone_id,
+                cache_ttl=ctx.cache_ttl_seconds or 300,
+            )
+            logger.debug("[BOOT:BRICK] ToolNamespaceMiddleware created (zone_id=%s)", ctx.zone_id)
+        except ImportError as _e:
+            logger.debug("[BOOT:BRICK] ToolNamespaceMiddleware unavailable: %s", _e)
+
+    # --- Chunked Upload Service (Issue #788) ---
+    chunked_upload_service: Any = None
+    if _on("uploads"):
+        try:
+            import os as _os
+
+            from nexus.services.chunked_upload_service import (
+                ChunkedUploadConfig,
+                ChunkedUploadService,
+            )
+
+            _upload_config_kwargs: dict[str, Any] = {}
+            _upload_env_mapping = {
+                "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "min_chunk_size",
+                "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "max_chunk_size",
+                "NEXUS_UPLOAD_DEFAULT_CHUNK_SIZE": "default_chunk_size",
+                "NEXUS_UPLOAD_MAX_CONCURRENT": "max_concurrent_uploads",
+                "NEXUS_UPLOAD_SESSION_TTL_HOURS": "session_ttl_hours",
+                "NEXUS_UPLOAD_CLEANUP_INTERVAL": "cleanup_interval_seconds",
+                "NEXUS_UPLOAD_MAX_SIZE": "max_upload_size",
+            }
+            for _env_var, _config_key in _upload_env_mapping.items():
+                _val = _os.getenv(_env_var)
+                if _val is not None:
+                    _upload_config_kwargs[_config_key] = int(_val)
+
+            chunked_upload_service = ChunkedUploadService(
+                record_store=ctx.record_store,
+                backend=ctx.backend,
+                metadata_store=ctx.metadata_store,
+                config=ChunkedUploadConfig(**_upload_config_kwargs),
+            )
+        except Exception as exc:
+            logger.debug("[BOOT:BRICK] ChunkedUploadService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:BRICK] Uploads brick disabled by profile")
+
+    # --- Infrastructure: event bus + lock manager ---
+    event_bus: Any = None
+    lock_manager: Any = None
+    if not _on("ipc"):
+        logger.debug("[BOOT:BRICK] IPC/EventBus brick disabled by profile")
+    elif ctx.dist.enable_locks or ctx.dist.enable_events:
+        from nexus.factory._distributed import _create_distributed_infra
+
+        event_bus, lock_manager = _create_distributed_infra(
+            ctx.dist,
+            ctx.metadata_store,
+            ctx.record_store,
+            ctx.dist.coordination_url,
+        )
+
+    # --- Workflow engine ---
+    workflow_engine: Any = None
+    if _on("workflows") and ctx.dist.enable_workflows:
+        # Try to get Rust glob_match for performance (falls back to fnmatch)
+        _glob_match_fn: Any = None
+        try:
+            from nexus.core import glob_fast
+
+            _glob_match_fn = glob_fast.glob_match
+        except ImportError:
+            pass
+
+        from nexus.factory._distributed import _create_workflow_engine
+
+        workflow_engine = _create_workflow_engine(ctx.record_store, _glob_match_fn)
+    elif not _on("workflows"):
+        logger.debug("[BOOT:BRICK] Workflows brick disabled by profile")
+
+    # --- API key creator (Issue #1519, 3A: inject server auth into kernel) ---
+    api_key_creator: Any = None
+    try:
+        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+
+        api_key_creator = DatabaseAPIKeyAuth
+    except ImportError:
+        pass  # Server auth not available (e.g. embedded mode)
+
+    # --- TransactionalSnapshotService (Issue #1752) ---
+    snapshot_service: Any = auto_results.pop("snapshot_service", None)
+    if snapshot_service is None:
+        try:
+            from nexus.bricks.snapshot.service import TransactionalSnapshotService
+            from nexus.core.metadata import FileMetadata
+
+            snapshot_service = TransactionalSnapshotService(
+                record_store=ctx.record_store,
+                cas_store=ctx.backend,
+                metadata_store=ctx.metadata_store,
+                metadata_factory=FileMetadata,
+            )
+        except ImportError as _snap_exc:
+            logger.debug("[BOOT:BRICK] TransactionalSnapshotService unavailable: %s", _snap_exc)
+
+    # --- ReputationService (Issue #2131: extracted to bricks) ---
+    reputation_service: Any = auto_results.pop("reputation_service", None)
+    if reputation_service is None and ctx.record_store is not None:
+        try:
+            from nexus.bricks.reputation.reputation_service import ReputationService
+
+            reputation_service = ReputationService(
+                record_store=ctx.record_store,
+            )
+            logger.debug("[BOOT:BRICK] ReputationService created")
+        except Exception as _rep_exc:
+            logger.debug("[BOOT:BRICK] ReputationService unavailable: %s", _rep_exc)
+
+    # --- DelegationService (Issue #2131: extracted to bricks) ---
+    delegation_service: Any = auto_results.pop("delegation_service", None)
+    if delegation_service is None and ctx.record_store is not None:
+        try:
+            from nexus.bricks.delegation.service import DelegationService
+
+            delegation_service = DelegationService(
+                record_store=ctx.record_store,
+                rebac_manager=kernel["rebac_manager"],
+                entity_registry=kernel.get("entity_registry"),
+                reputation_service=reputation_service,
+            )
+            logger.debug("[BOOT:BRICK] DelegationService created")
+        except Exception as _del_exc:
+            logger.debug("[BOOT:BRICK] DelegationService unavailable: %s", _del_exc)
+
+    # --- TaskQueueService (Issue #655) ---
+    task_queue_service: Any = None
+    if not _on("scheduler"):
+        logger.debug("[BOOT:BRICK] Scheduler/TaskQueue brick disabled by profile")
+    else:
+        try:
+            from nexus.services.task_queue_service import TaskQueueService
+
+            task_queue_service = TaskQueueService(
+                db_path=_resolve_tasks_db_path(ctx.backend),
+            )
+        except Exception as _tq_exc:
+            logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
+
+    # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
+    ipc_storage_driver: Any = None
+    ipc_vfs_driver: Any = None
+    ipc_provisioner: Any = None
+    if not _on("ipc"):
+        logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
+    elif ctx.record_store is not None:
+        try:
+            from nexus.ipc.driver import IPCVFSDriver
+            from nexus.ipc.provisioning import AgentProvisioner
+            from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+
+            ipc_storage_driver = RecordStoreStorageDriver(
+                record_store=ctx.record_store,
+            )
+
+            _ipc_zone = ctx.zone_id or "root"
+            ipc_vfs_driver = IPCVFSDriver(
+                storage=ipc_storage_driver,
+                zone_id=_ipc_zone,
+            )
+
+            # Mount at /agents in the PathRouter (higher priority than default /)
+            ctx.router.add_mount("/agents", ipc_vfs_driver, priority=10)
+
+            ipc_provisioner = AgentProvisioner(
+                storage=ipc_storage_driver,
+                zone_id=_ipc_zone,
+            )
+            logger.debug(
+                "[BOOT:BRICK] IPC brick created (zone=%s, storage=RecordStoreStorageDriver)",
+                _ipc_zone,
+            )
+        except Exception as _ipc_exc:
+            logger.warning("[BOOT:BRICK] IPC brick unavailable: %s", _ipc_exc)
+
+    # --- Sandbox Brick: AgentEventLog (Issue #1307) ---
+    agent_event_log: Any = None
+    if ctx.record_store is not None:
+        try:
+            from nexus.bricks.sandbox.events import AgentEventLog
+
+            agent_event_log = AgentEventLog(record_store=ctx.record_store)
+            logger.debug("[BOOT:BRICK] AgentEventLog created")
+        except Exception as _ael_exc:
+            logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
+
+    # --- Skills Brick (Issue #2035) ---
+    skill_service: Any = None
+    skill_package_service: Any = None
+
+    # --- VersionService (Issue #2034: moved from kernel to brick tier) ---
+    version_service: Any = None
+    try:
+        from nexus.services.version_service import VersionService
+
+        version_service = VersionService(
+            metadata_store=ctx.metadata_store,
+            cas_store=ctx.backend,
+            router=ctx.router,
+            enforce_permissions=False,
+            record_store=ctx.record_store,
+        )
+        logger.debug("[BOOT:BRICK] VersionService created")
+    except Exception as _vs_exc:
+        logger.debug("[BOOT:BRICK] VersionService unavailable: %s", _vs_exc)
+
+    # --- Memory Brick (Issue #2177) ---
+    memory_router: Any = None
+    memory_permission: Any = None
+    try:
+        from nexus.bricks.memory.router import MemoryViewRouter as _MemoryViewRouter
+
+        memory_router = _MemoryViewRouter(
+            session_factory=ctx.record_store.session_factory,
+            entity_registry=kernel["entity_registry"],
+        )
+
+        from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+
+        memory_permission = MemoryPermissionEnforcer(
+            metadata_store=ctx.metadata_store,
+            rebac_manager=kernel["rebac_manager"],
+            memory_router=memory_router,
+            entity_registry=kernel["entity_registry"],
+        )
+        logger.debug("[BOOT:BRICK] Memory brick created (router + permission)")
+    except Exception as _mem_exc:
+        logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
+
+    # --- ReBAC Circuit Breaker (Issue #2034: moved from kernel to brick tier) ---
+    rebac_circuit_breaker: Any = None
+    try:
+        from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+
+        _res = ctx.profile_tuning.resiliency
+        rebac_circuit_breaker = AsyncCircuitBreaker(
+            name="rebac_db",
+            config=CircuitBreakerConfig(
+                failure_threshold=_res.circuit_breaker_failure_threshold,
+                success_threshold=3,
+                reset_timeout=_res.circuit_breaker_timeout,
+                failure_window=60.0,
+            ),
+        )
+        logger.debug("[BOOT:BRICK] ReBAC circuit breaker created")
+    except Exception as _cb_exc:
+        logger.warning(
+            "[BOOT:BRICK] ReBAC circuit breaker unavailable: %s. "
+            "ReBAC will operate without circuit-breaking protection.",
+            _cb_exc,
+        )
+
+    result = {
+        "wallet_provisioner": wallet_provisioner,
+        "manifest_resolver": manifest_resolver,
+        "manifest_metrics": manifest_metrics,
+        "tool_namespace_middleware": tool_namespace_middleware,
+        "chunked_upload_service": chunked_upload_service,
+        "event_bus": event_bus,
+        "lock_manager": lock_manager,
+        "workflow_engine": workflow_engine,
+        "api_key_creator": api_key_creator,
+        "snapshot_service": snapshot_service,
+        "task_queue_service": task_queue_service,
+        "ipc_storage_driver": ipc_storage_driver,
+        "ipc_vfs_driver": ipc_vfs_driver,
+        "ipc_provisioner": ipc_provisioner,
+        "agent_event_log": agent_event_log,
+        "skill_service": skill_service,
+        "skill_package_service": skill_package_service,
+        "delegation_service": delegation_service,
+        "reputation_service": reputation_service,
+        "version_service": version_service,
+        "rebac_circuit_breaker": rebac_circuit_breaker,
+        "memory_router": memory_router,
+        "memory_permission": memory_permission,
+    }
+
+    elapsed = time.perf_counter() - t0
+    active = sum(1 for v in result.values() if v is not None)
+    logger.info("[BOOT:BRICK] %d/%d services ready (%.3fs)", active, len(result), elapsed)
+    return result

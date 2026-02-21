@@ -49,7 +49,11 @@ class BackendIOService:
             Returns (None, None, None) if parsing fails or not supported
         """
         try:
-            from nexus.bricks.parsers.markitdown_parser import MarkItDownParser
+            import importlib as _il
+
+            MarkItDownParser = _il.import_module(
+                "nexus.bricks.parsers.markitdown_parser"
+            ).MarkItDownParser
         except ImportError:
             return None, None, None
 

@@ -9,7 +9,7 @@ document formats. The system is built around:
 4. ParsersBrick: Facade that owns both registries (recommended entry point)
 
 Example usage:
-    >>> from nexus.parsers.brick import ParsersBrick
+    >>> from nexus.bricks.parsers.brick import ParsersBrick
     >>> brick = ParsersBrick()
     >>> parse_fn = brick.create_parse_fn()
 """
@@ -18,17 +18,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from nexus.parsers.base import Parser
-from nexus.parsers.detection import (
+from nexus.bricks.parsers.base import Parser
+from nexus.bricks.parsers.detection import (
     decompress_content,
     detect_encoding,
     detect_mime_type,
     is_compressed,
     prepare_content_for_parsing,
 )
-from nexus.parsers.markitdown_parser import MarkItDownParser
-from nexus.parsers.registry import ParserRegistry
-from nexus.parsers.types import ImageData, ParseResult, TextChunk
+from nexus.bricks.parsers.markitdown_parser import MarkItDownParser
+from nexus.bricks.parsers.registry import ParserRegistry
+from nexus.bricks.parsers.types import ImageData, ParseResult, TextChunk
 
 
 def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
@@ -40,7 +40,7 @@ def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
     .. deprecated::
         Prefer ``ParsersBrick().create_parse_fn()`` which shares registries.
     """
-    from nexus.parsers.brick import ParsersBrick
+    from nexus.bricks.parsers.brick import ParsersBrick
 
     return ParsersBrick().create_parse_fn()
 

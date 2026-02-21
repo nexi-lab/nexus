@@ -269,7 +269,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "ParseProtocol",
         "nexus.services.protocols.parse",
-        "nexus.parsers.registry.ParserRegistry",
+        "nexus.bricks.parsers.registry.ParserRegistry",
         True,
     ),
     (

@@ -34,9 +34,9 @@ SYSTEM_PATH_PREFIX = "/__sys__/"
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.bricks.parsers.registry import ParserRegistry
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
-    from nexus.parsers.registry import ParserRegistry
 
 
 class NexusFSCoreMixin:

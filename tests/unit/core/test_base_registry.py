@@ -148,11 +148,11 @@ class TestProtocolValidation:
 
 class TestDiscoverFromPackage:
     def test_discover_parsers(self) -> None:
-        from nexus.parsers.base import Parser
+        from nexus.bricks.parsers.base import Parser
 
         reg: BaseRegistry[Parser] = BaseRegistry("test_parsers")
         count = reg.discover_from_package(
-            "nexus.parsers",
+            "nexus.bricks.parsers",
             Parser,
             key_fn=lambda cls: cls.__name__,
         )

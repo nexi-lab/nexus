@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from nexus.parsers.types import ImageData, ParseResult, TextChunk
+from nexus.bricks.parsers.types import ImageData, ParseResult, TextChunk
 
 
 class TestTextChunk:
@@ -59,7 +61,8 @@ class TestParseResult:
 
     def test_invalid_text_type_raises(self) -> None:
         with pytest.raises(ValueError, match="text must be a string"):
-            ParseResult(text=123)  # type: ignore[arg-type]
+            bad_text: Any = 123
+            ParseResult(text=bad_text)
 
     def test_metadata_default_empty(self) -> None:
         result = ParseResult(text="x")

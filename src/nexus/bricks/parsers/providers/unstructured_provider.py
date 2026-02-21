@@ -3,9 +3,9 @@
 import logging
 from typing import Any
 
+from nexus.bricks.parsers.providers.base import ParseProvider, ProviderConfig
+from nexus.bricks.parsers.types import ParseResult, TextChunk
 from nexus.contracts.exceptions import ParserError
-from nexus.parsers.providers.base import ParseProvider, ProviderConfig
-from nexus.parsers.types import ParseResult, TextChunk
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class UnstructuredProvider(ParseProvider):
         - Optional: UNSTRUCTURED_WORKFLOW_ENDPOINT for custom endpoint
 
     Example:
-        >>> from nexus.parsers.providers import ProviderConfig
+        >>> from nexus.bricks.parsers.providers import ProviderConfig
         >>> config = ProviderConfig(
         ...     name="unstructured",
         ...     api_key="your-api-key",

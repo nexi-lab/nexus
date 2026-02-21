@@ -8,14 +8,14 @@ from __future__ import annotations
 
 class TestParsersBrickConstruction:
     def test_construct_default(self) -> None:
-        from nexus.parsers.brick import ParsersBrick
+        from nexus.bricks.parsers.brick import ParsersBrick
 
         brick = ParsersBrick()
         assert brick.parser_registry is not None
         assert brick.provider_registry is not None
 
     def test_parser_registry_has_markitdown(self) -> None:
-        from nexus.parsers.brick import ParsersBrick
+        from nexus.bricks.parsers.brick import ParsersBrick
 
         brick = ParsersBrick()
         parsers = brick.parser_registry.get_parsers()
@@ -25,7 +25,7 @@ class TestParsersBrickConstruction:
 
 class TestCreateParseFn:
     def test_create_parse_fn_returns_callable(self) -> None:
-        from nexus.parsers.brick import ParsersBrick
+        from nexus.bricks.parsers.brick import ParsersBrick
 
         brick = ParsersBrick()
         fn = brick.create_parse_fn()
@@ -34,7 +34,7 @@ class TestCreateParseFn:
 
 class TestSharedRegistry:
     def test_registries_are_stable_references(self) -> None:
-        from nexus.parsers.brick import ParsersBrick
+        from nexus.bricks.parsers.brick import ParsersBrick
 
         brick = ParsersBrick()
         r1 = brick.parser_registry
@@ -42,7 +42,7 @@ class TestSharedRegistry:
         assert r1 is r2
 
     def test_provider_registry_stable(self) -> None:
-        from nexus.parsers.brick import ParsersBrick
+        from nexus.bricks.parsers.brick import ParsersBrick
 
         brick = ParsersBrick()
         r1 = brick.provider_registry

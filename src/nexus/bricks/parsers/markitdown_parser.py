@@ -5,9 +5,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from nexus.bricks.parsers.base import Parser
+from nexus.bricks.parsers.types import ParseResult, TextChunk
 from nexus.contracts.exceptions import ParserError
-from nexus.parsers.base import Parser
-from nexus.parsers.types import ParseResult, TextChunk
 
 logger = logging.getLogger(__name__)
 

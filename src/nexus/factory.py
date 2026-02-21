@@ -1316,8 +1316,8 @@ def _create_workflow_engine(
 
 def _create_provider_registry(parsing: Any) -> Any:
     """Create ProviderRegistry with auto-discovered providers (Issue #657)."""
-    from nexus.parsers.providers import ProviderRegistry
-    from nexus.parsers.providers.base import ProviderConfig
+    from nexus.bricks.parsers.providers import ProviderRegistry
+    from nexus.bricks.parsers.providers.base import ProviderConfig
 
     registry = ProviderRegistry()
     if parsing is None:
@@ -1465,7 +1465,7 @@ def create_nexus_fs(
         brick_services = _dc_replace(brick_services, workflow_engine=workflow_engine)
 
     # Create ParsersBrick — owns both registries (Issue #1523)
-    from nexus.parsers.brick import ParsersBrick
+    from nexus.bricks.parsers.brick import ParsersBrick
 
     parsers_brick = ParsersBrick(parsing_config=parsing)
     _parse_fn = parsers_brick.create_parse_fn()

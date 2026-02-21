@@ -5,9 +5,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from nexus.bricks.parsers.providers.base import ParseProvider, ProviderConfig
+from nexus.bricks.parsers.types import ParseResult, TextChunk
 from nexus.contracts.exceptions import ParserError
-from nexus.parsers.providers.base import ParseProvider, ProviderConfig
-from nexus.parsers.types import ParseResult, TextChunk
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class MarkItDownProvider(ParseProvider):
         - markitdown package: pip install markitdown[all]
 
     Example:
-        >>> from nexus.parsers.providers import ProviderConfig
+        >>> from nexus.bricks.parsers.providers import ProviderConfig
         >>> config = ProviderConfig(
         ...     name="markitdown",
         ...     priority=10,  # Low priority (fallback)

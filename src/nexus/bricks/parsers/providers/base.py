@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from nexus.parsers.types import ParseResult
+from nexus.bricks.parsers.types import ParseResult
 
 
 @dataclass

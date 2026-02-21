@@ -1,7 +1,7 @@
 """Parse service protocol (Issue #988: Extract domain services).
 
 Defines the contract for document parsing operations.
-Existing implementation: ``nexus.parsers.registry.ParserRegistry``.
+Existing implementation: ``nexus.bricks.parsers.registry.ParserRegistry``.
 
 Storage Affinity: **ObjectStore** — parsed content derives from stored files.
 

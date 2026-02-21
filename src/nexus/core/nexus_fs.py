@@ -46,8 +46,8 @@ from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
-    from nexus.parsers.registry import ParserRegistry
-    from nexus.parsers.types import ParseResult
+    from nexus.bricks.parsers.registry import ParserRegistry
+    from nexus.bricks.parsers.types import ParseResult
 
 # Phase 2: Service imports moved to _wire_services() as lazy imports (Issue #1519)
 # NexusFSReBACMixin import removed (Issue #1387)
@@ -225,8 +225,8 @@ class NexusFS(  # type: ignore[misc]
             self.parser_registry = parser_registry
         else:
             # Fallback: create default registry for direct construction (tests, etc.)
-            from nexus.parsers.markitdown_parser import MarkItDownParser as _MkD
-            from nexus.parsers.registry import ParserRegistry as _PR
+            from nexus.bricks.parsers.markitdown_parser import MarkItDownParser as _MkD
+            from nexus.bricks.parsers.registry import ParserRegistry as _PR
 
             self.parser_registry = _PR()
             self.parser_registry.register(_MkD())
@@ -234,7 +234,7 @@ class NexusFS(  # type: ignore[misc]
         if provider_registry is not None:
             self.provider_registry = provider_registry
         else:
-            from nexus.parsers.providers.registry import ProviderRegistry as _PvR
+            from nexus.bricks.parsers.providers.registry import ProviderRegistry as _PvR
 
             self.provider_registry = _PvR()
             self.provider_registry.auto_discover()

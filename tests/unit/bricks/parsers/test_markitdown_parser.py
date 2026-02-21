@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.parsers.markitdown_parser import MarkItDownParser
+from nexus.bricks.parsers.markitdown_parser import MarkItDownParser
 
 
 class TestCanParse:

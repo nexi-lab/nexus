@@ -587,6 +587,7 @@ module = [
     "nexus.bricks.rlm.tools",
     "nexus.bricks.scheduler.policies.fair_share",
     "nexus.validation.config",
+    "nexus.fuse.ops._shared",
 ]
 # yaml/requests/cachetools stubs handled at project level
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -692,8 +693,19 @@ module = [
     "nexus.core.distributed_lock",
 ]
 # Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
-disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
+disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc", "import-untyped", "import-not-found"]
 warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.bricks.parsers.registry",
+    "nexus.bricks.parsers.providers.registry",
+]
+disable_error_code = ["override"]
+
+[[tool.mypy.overrides]]
+module = "nexus.bricks.parsers.detection"
+disable_error_code = ["import-not-found"]
 
 [[tool.mypy.overrides]]
 module = "nexus.search.semantic"

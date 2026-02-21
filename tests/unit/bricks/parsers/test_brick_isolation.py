@@ -55,7 +55,7 @@ class TestParsersZeroCoreImports:
 
     def _get_parsers_files(self) -> list[Path]:
         """Get all .py files under nexus/parsers/."""
-        pkg = importlib.import_module("nexus.parsers")
+        pkg = importlib.import_module("nexus.bricks.parsers")
         pkg_dir = Path(pkg.__file__).parent
         return sorted(pkg_dir.rglob("*.py"))
 

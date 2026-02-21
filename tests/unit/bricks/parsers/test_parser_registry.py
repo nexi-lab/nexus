@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.bricks.parsers.base import Parser
+from nexus.bricks.parsers.registry import ParserRegistry
 from nexus.contracts.exceptions import ParserError
-from nexus.parsers.base import Parser
-from nexus.parsers.registry import ParserRegistry
 
 
 def _make_parser(
@@ -48,7 +49,8 @@ class TestRegister:
     def test_register_non_parser_raises(self) -> None:
         reg = ParserRegistry()
         with pytest.raises(ValueError, match="must be an instance of Parser"):
-            reg.register("not a parser")  # type: ignore[arg-type]
+            not_a_parser: Any = "not a parser"
+            reg.register(not_a_parser)
 
 
 class TestGetParser:

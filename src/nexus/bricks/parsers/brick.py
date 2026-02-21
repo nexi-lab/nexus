@@ -14,11 +14,11 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from nexus.parsers.detection import prepare_content_for_parsing
-from nexus.parsers.markitdown_parser import MarkItDownParser
-from nexus.parsers.providers.base import ProviderConfig
-from nexus.parsers.providers.registry import ProviderRegistry
-from nexus.parsers.registry import ParserRegistry
+from nexus.bricks.parsers.detection import prepare_content_for_parsing
+from nexus.bricks.parsers.markitdown_parser import MarkItDownParser
+from nexus.bricks.parsers.providers.base import ProviderConfig
+from nexus.bricks.parsers.providers.registry import ProviderRegistry
+from nexus.bricks.parsers.registry import ParserRegistry
 
 logger = logging.getLogger(__name__)
 

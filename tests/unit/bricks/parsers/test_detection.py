@@ -6,7 +6,7 @@ import gzip
 
 import pytest
 
-from nexus.parsers.detection import (
+from nexus.bricks.parsers.detection import (
     decompress_content,
     detect_encoding,
     detect_mime_type,

@@ -4,10 +4,10 @@ import logging
 import os
 from typing import Any
 
+from nexus.bricks.parsers.providers.base import ParseProvider, ProviderConfig
+from nexus.bricks.parsers.types import ParseResult
 from nexus.contracts.exceptions import ParserError
 from nexus.contracts.registry import BaseRegistry
-from nexus.parsers.providers.base import ParseProvider, ProviderConfig
-from nexus.parsers.types import ParseResult
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
         super().__init__(name="parse_providers")
         self._ordered: tuple[ParseProvider, ...] = ()
 
-    def register(self, provider: ParseProvider, **_kw: object) -> None:  # type: ignore[override]
+    def register(self, provider: ParseProvider, **_kw: object) -> None:
         """Register a parse provider.
 
         Args:
@@ -197,7 +197,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
 
         # Try to register Unstructured provider
         try:
-            from nexus.parsers.providers.unstructured_provider import UnstructuredProvider
+            from nexus.bricks.parsers.providers.unstructured_provider import UnstructuredProvider
 
             config = config_map.get("unstructured")
             if not config:
@@ -225,7 +225,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
 
         # Try to register LlamaParse provider
         try:
-            from nexus.parsers.providers.llamaparse_provider import LlamaParseProvider
+            from nexus.bricks.parsers.providers.llamaparse_provider import LlamaParseProvider
 
             config = config_map.get("llamaparse")
             if not config:
@@ -248,7 +248,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
 
         # Always register MarkItDown as fallback
         try:
-            from nexus.parsers.providers.markitdown_provider import MarkItDownProvider
+            from nexus.bricks.parsers.providers.markitdown_provider import MarkItDownProvider
 
             config = config_map.get("markitdown", ProviderConfig(name="markitdown", priority=10))
             markitdown_provider = MarkItDownProvider(config)

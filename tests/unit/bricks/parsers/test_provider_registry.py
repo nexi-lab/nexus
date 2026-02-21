@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.bricks.parsers.providers.base import ParseProvider
+from nexus.bricks.parsers.providers.registry import ProviderRegistry
+from nexus.bricks.parsers.types import ParseResult
 from nexus.contracts.exceptions import ParserError
-from nexus.parsers.providers.base import ParseProvider
-from nexus.parsers.providers.registry import ProviderRegistry
-from nexus.parsers.types import ParseResult
 
 
 def _make_provider(
@@ -59,7 +60,8 @@ class TestRegister:
     def test_register_non_provider_raises(self) -> None:
         reg = ProviderRegistry()
         with pytest.raises(ValueError, match="must be a ParseProvider"):
-            reg.register("not a provider")  # type: ignore[arg-type]
+            not_a_provider: Any = "not a provider"
+            reg.register(not_a_provider)
 
 
 class TestPriorityOrdering:

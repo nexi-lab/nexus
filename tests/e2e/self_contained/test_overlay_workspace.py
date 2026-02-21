@@ -1,6 +1,6 @@
 """Integration tests for overlay workspace (ComposeFS-style overlays).
 
-Issue #1264: End-to-end tests for the overlay workspace lifecycle:
+Issue #1264 / #1526: End-to-end tests for the overlay workspace lifecycle:
 - Create overlay workspace from snapshot
 - Read files from base layer
 - Write files (upper layer modification)
@@ -13,6 +13,7 @@ These tests use real WorkspaceManifest serialization and OverlayResolver,
 with mocked metadata store and backend for isolation.
 """
 
+import builtins
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,10 +52,10 @@ class InMemoryMetadata:
 
     def list(
         self, prefix: str = "", recursive: bool = True, **kwargs: object
-    ) -> list[FileMetadata]:
+    ) -> builtins.list["FileMetadata"]:
         return [meta for path, meta in self._store.items() if path.startswith(prefix)]
 
-    def delete_batch(self, paths: list[str] | tuple[str, ...]) -> None:
+    def delete_batch(self, paths: builtins.list[str] | tuple[str, ...]) -> None:
         for path in paths:
             self._store.pop(path, None)
 

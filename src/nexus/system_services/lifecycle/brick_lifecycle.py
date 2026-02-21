@@ -7,7 +7,7 @@ Lives at the System Service tier (not kernel) per Liedtke's test:
 lifecycle orchestration CAN run outside the kernel.
 
 Architecture decisions:
-    - 5-state machine: REGISTERED→STARTING→ACTIVE→STOPPING→UNREGISTERED + FAILED
+    - 7-state machine: REGISTERED→STARTING→ACTIVE→STOPPING→UNMOUNTED→UNREGISTERED + FAILED
     - Composes existing BrickRegistry + BrickContainer (no replacement)
     - Explicit DAG via ``graphlib.TopologicalSorter`` for startup/shutdown order
     - Fail-forward: one brick failure doesn't block others
@@ -31,10 +31,19 @@ from typing import Any
 
 from nexus.services._tracing import lazy_tracer, record_span_result
 from nexus.services.protocols.brick_lifecycle import (
+    EVENT_FAILED,
+    EVENT_MOUNT,
+    EVENT_RESET,
+    EVENT_STARTED,
+    EVENT_STOPPED,
+    EVENT_UNMOUNT,
+    EVENT_UNREGISTER,
     POST_MOUNT,
     POST_UNMOUNT,
+    POST_UNREGISTER,
     PRE_MOUNT,
     PRE_UNMOUNT,
+    PRE_UNREGISTER,
     BrickHealthReport,
     BrickLifecycleProtocol,
     BrickSpec,
@@ -94,15 +103,18 @@ class CyclicDependencyError(Exception):
 
 # Maps (current_state, event) → next_state
 _TRANSITIONS: dict[tuple[BrickState, str], BrickState] = {
-    (BrickState.REGISTERED, "mount"): BrickState.STARTING,
-    (BrickState.REGISTERED, "failed"): BrickState.FAILED,  # Issue #2060: 5B
-    (BrickState.STARTING, "started"): BrickState.ACTIVE,
-    (BrickState.STARTING, "failed"): BrickState.FAILED,
-    (BrickState.ACTIVE, "unmount"): BrickState.STOPPING,
-    (BrickState.ACTIVE, "failed"): BrickState.FAILED,
-    (BrickState.STOPPING, "stopped"): BrickState.UNREGISTERED,
-    (BrickState.STOPPING, "failed"): BrickState.FAILED,
-    (BrickState.FAILED, "reset"): BrickState.REGISTERED,  # Issue #2060: 7A
+    (BrickState.REGISTERED, EVENT_MOUNT): BrickState.STARTING,
+    (BrickState.REGISTERED, EVENT_FAILED): BrickState.FAILED,  # Issue #2060: 5B
+    (BrickState.STARTING, EVENT_STARTED): BrickState.ACTIVE,
+    (BrickState.STARTING, EVENT_FAILED): BrickState.FAILED,
+    (BrickState.ACTIVE, EVENT_UNMOUNT): BrickState.STOPPING,
+    (BrickState.ACTIVE, EVENT_FAILED): BrickState.FAILED,
+    (BrickState.STOPPING, EVENT_STOPPED): BrickState.UNMOUNTED,  # Issue #2363: was UNREGISTERED
+    (BrickState.STOPPING, EVENT_FAILED): BrickState.FAILED,
+    (BrickState.UNMOUNTED, EVENT_MOUNT): BrickState.STARTING,  # Issue #2363: re-mount
+    (BrickState.UNMOUNTED, EVENT_UNREGISTER): BrickState.UNREGISTERED,  # Issue #2363: full removal
+    (BrickState.UNMOUNTED, EVENT_FAILED): BrickState.FAILED,  # Issue #2363: error during unregister
+    (BrickState.FAILED, EVENT_RESET): BrickState.REGISTERED,  # Issue #2060: 7A
 }
 
 
@@ -125,6 +137,7 @@ class _BrickEntry:
         "error",
         "started_at",
         "stopped_at",
+        "unmounted_at",
         "retry_count",
         "lock",
     )
@@ -140,6 +153,7 @@ class _BrickEntry:
         self.error: str | None = None
         self.started_at: float | None = None
         self.stopped_at: float | None = None
+        self.unmounted_at: float | None = None
         self.retry_count: int = 0
         self.lock = asyncio.Lock()
 
@@ -165,6 +179,7 @@ class _BrickEntry:
             error=self.error,
             started_at=self.started_at,
             stopped_at=self.stopped_at,
+            unmounted_at=self.unmounted_at,
         )
 
     def to_spec(self) -> BrickSpec:
@@ -237,16 +252,33 @@ class BrickLifecycleManager:
         self._bricks[name] = _BrickEntry(spec=spec, instance=instance)
         logger.info("[LIFECYCLE] Registered brick %r (protocol=%s)", name, protocol_name)
 
-    def unregister(self, name: str) -> None:
-        """Remove a brick from lifecycle management.
+    async def unregister(self, name: str, *, agent_id: str | None = None) -> None:
+        """Unregister a brick: UNMOUNTED → UNREGISTERED (terminal).
+
+        Fires PRE_UNREGISTER / POST_UNREGISTER hooks.  PRE_UNREGISTER is
+        non-vetable — it always proceeds (informational only).
+
+        Args:
+            name: Brick name to unregister.
+            agent_id: Agent requesting the unregister (for hook scoping).
 
         Raises:
             KeyError: If brick is not found.
+            InvalidTransitionError: If brick is not in UNMOUNTED state.
         """
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+
+        async with entry.lock:
+            await self._do_unregister(entry, agent_id=agent_id)
+
+    def _force_unregister(self, name: str) -> None:
+        """Force-remove a brick from the registry (testing only, no guards/hooks)."""
         if name not in self._bricks:
             raise KeyError(f"Brick {name!r} not found")
         del self._bricks[name]
-        logger.info("[LIFECYCLE] Unregistered brick %r", name)
+        logger.info("[LIFECYCLE] Force-unregistered brick %r", name)
 
     # ------------------------------------------------------------------
     # State machine
@@ -337,7 +369,7 @@ class BrickLifecycleManager:
             error_msg = result.error or f"Vetoed by {phase} hook"
             logger.warning("[LIFECYCLE] Brick %r vetoed by %s: %s", entry.name, phase, error_msg)
             if not veto_keeps_current:
-                self._transition(entry.name, "failed")
+                self._transition(entry.name, EVENT_FAILED)
                 entry.error = error_msg
             return False
 
@@ -383,10 +415,11 @@ class BrickLifecycleManager:
         entry = self._bricks.get(name)
         if entry is None:
             raise KeyError(f"Brick {name!r} not found")
-        self._transition(name, "reset")
+        self._transition(name, EVENT_RESET)
         entry.error = None
         entry.started_at = None
         entry.stopped_at = None
+        entry.unmounted_at = None
         entry.retry_count = 0
 
     # ------------------------------------------------------------------
@@ -455,10 +488,11 @@ class BrickLifecycleManager:
         if entry is None:
             raise KeyError(f"Brick {name!r} not found")
         new_retry = entry.retry_count + 1
-        self._transition(name, "reset")
+        self._transition(name, EVENT_RESET)
         entry.error = None
         entry.started_at = None
         entry.stopped_at = None
+        entry.unmounted_at = None
         entry.retry_count = new_retry
         return new_retry
 
@@ -482,7 +516,7 @@ class BrickLifecycleManager:
         entry = self._bricks.get(name)
         if entry is None:
             raise KeyError(f"Brick {name!r} not found")
-        self._transition(name, "failed")
+        self._transition(name, EVENT_FAILED)
         entry.error = error
 
     # ------------------------------------------------------------------
@@ -766,7 +800,7 @@ class BrickLifecycleManager:
         timeout: float = DEFAULT_START_TIMEOUT,
         agent_id: str | None = None,
     ) -> None:
-        """Mount a single brick: REGISTERED → STARTING → ACTIVE.
+        """Mount a single brick: REGISTERED/UNMOUNTED → STARTING → ACTIVE.
 
         For lifecycle-aware bricks (implementing BrickLifecycleProtocol),
         calls ``start()`` with the configured timeout. Stateless bricks
@@ -781,7 +815,7 @@ class BrickLifecycleManager:
 
         Raises:
             KeyError: If brick not found.
-            InvalidTransitionError: If brick is not in REGISTERED state.
+            InvalidTransitionError: If brick is not in REGISTERED or UNMOUNTED state.
         """
         entry = self._bricks.get(name)
         if entry is None:
@@ -811,32 +845,32 @@ class BrickLifecycleManager:
                 _record_span_result(span, state="FAILED", error="Vetoed by PRE_MOUNT hook")
                 return  # Vetoed — entry already marked FAILED
 
-            # Transition: REGISTERED → STARTING
-            self._transition(entry.name, "mount")
+            # Transition: REGISTERED/UNMOUNTED → STARTING
+            self._transition(entry.name, EVENT_MOUNT)
 
             is_lifecycle = isinstance(entry.instance, BrickLifecycleProtocol)
 
             if is_lifecycle:
                 try:
                     await asyncio.wait_for(entry.instance.start(), timeout=timeout)
-                    self._transition(entry.name, "started")
+                    self._transition(entry.name, EVENT_STARTED)
                     entry.started_at = time.monotonic()
                     logger.info("[LIFECYCLE] Brick %r mounted (ACTIVE)", entry.name)
                 except TimeoutError:
                     entry.error = f"Timeout after {timeout}s during start()"
-                    self._transition(entry.name, "failed")
+                    self._transition(entry.name, EVENT_FAILED)
                     logger.warning("[LIFECYCLE] Brick %r FAILED: %s", entry.name, entry.error)
                     _record_span_result(span, state="FAILED", error=entry.error)
                     return  # Don't fire POST_MOUNT on failure
                 except Exception as exc:
                     entry.error = str(exc)
-                    self._transition(entry.name, "failed")
+                    self._transition(entry.name, EVENT_FAILED)
                     logger.warning("[LIFECYCLE] Brick %r FAILED: %s", entry.name, entry.error)
                     _record_span_result(span, state="FAILED", error=entry.error)
                     return  # Don't fire POST_MOUNT on failure
             else:
                 # Stateless brick — skip start(), go directly to ACTIVE
-                self._transition(entry.name, "started")
+                self._transition(entry.name, EVENT_STARTED)
                 entry.started_at = time.monotonic()
                 logger.info("[LIFECYCLE] Brick %r mounted (ACTIVE, stateless)", entry.name)
 
@@ -844,11 +878,41 @@ class BrickLifecycleManager:
             await self._fire_hook(POST_MOUNT, entry, agent_id=agent_id)
             _record_span_result(span, state=entry.state.value)
 
+    async def remount(
+        self,
+        name: str,
+        *,
+        timeout: float = DEFAULT_START_TIMEOUT,
+        agent_id: str | None = None,
+    ) -> None:
+        """Re-mount an UNMOUNTED brick: UNMOUNTED → STARTING → ACTIVE.
+
+        Convenience method that delegates to ``mount()``.
+
+        Args:
+            name: Brick name to remount.
+            timeout: Maximum seconds to wait for ``start()`` to complete.
+            agent_id: Agent requesting the remount (for scoped hooks).
+
+        Raises:
+            KeyError: If brick not found.
+            InvalidTransitionError: If brick is not in UNMOUNTED state.
+        """
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+        if entry.state != BrickState.UNMOUNTED:
+            raise InvalidTransitionError(name, entry.state, EVENT_MOUNT)
+        await self.mount(name, timeout=timeout, agent_id=agent_id)
+
     async def unmount(self, name: str, *, agent_id: str | None = None) -> None:
-        """Unmount a single brick: ACTIVE → STOPPING → UNREGISTERED.
+        """Unmount a single brick: ACTIVE → STOPPING → UNMOUNTED.
 
         For lifecycle-aware bricks, calls ``stop()``. Stateless bricks
-        transition directly to UNREGISTERED.
+        transition directly to UNMOUNTED.
+
+        The brick remains in the registry and can be re-mounted via
+        ``mount()`` or ``remount()``.
 
         Args:
             name: Brick name to unmount.
@@ -871,6 +935,7 @@ class BrickLifecycleManager:
         Flow: PRE_UNMOUNT hook → transition → stop() → POST_UNMOUNT hook.
         If PRE_UNMOUNT vetoes, brick stays ACTIVE.
         If stop() fails, POST_UNMOUNT is NOT fired.
+        Terminal state is UNMOUNTED (not UNREGISTERED — Issue #2363).
 
         Args:
             agent_id: Agent requesting the unmount (for hook scoping).
@@ -884,31 +949,66 @@ class BrickLifecycleManager:
                 return  # Vetoed — brick stays in current state
 
             # Transition: ACTIVE → STOPPING
-            self._transition(entry.name, "unmount")
+            self._transition(entry.name, EVENT_UNMOUNT)
 
             is_lifecycle = isinstance(entry.instance, BrickLifecycleProtocol)
 
             if is_lifecycle:
                 try:
                     await entry.instance.stop()
-                    self._transition(entry.name, "stopped")
+                    self._transition(entry.name, EVENT_STOPPED)
                     entry.stopped_at = time.monotonic()
-                    logger.info("[LIFECYCLE] Brick %r unmounted (UNREGISTERED)", entry.name)
+                    entry.unmounted_at = time.monotonic()
+                    logger.info("[LIFECYCLE] Brick %r unmounted (UNMOUNTED)", entry.name)
                 except Exception as exc:
                     entry.error = str(exc)
-                    self._transition(entry.name, "failed")
+                    self._transition(entry.name, EVENT_FAILED)
                     logger.warning("[LIFECYCLE] Brick %r FAILED during stop: %s", entry.name, exc)
                     _record_span_result(span, state="FAILED", error=entry.error)
                     return  # Don't fire POST_UNMOUNT on failure
             else:
                 # Stateless brick — skip stop()
-                self._transition(entry.name, "stopped")
+                self._transition(entry.name, EVENT_STOPPED)
                 entry.stopped_at = time.monotonic()
-                logger.info("[LIFECYCLE] Brick %r unmounted (UNREGISTERED, stateless)", entry.name)
+                entry.unmounted_at = time.monotonic()
+                logger.info("[LIFECYCLE] Brick %r unmounted (UNMOUNTED, stateless)", entry.name)
 
             # Fire POST_UNMOUNT hook (informational)
             await self._fire_hook(POST_UNMOUNT, entry, agent_id=agent_id)
             _record_span_result(span, state=entry.state.value)
+
+    async def _do_unregister(self, entry: _BrickEntry, *, agent_id: str | None = None) -> None:
+        """Internal unregister logic (must be called under entry.lock).
+
+        Flow: PRE_UNREGISTER hook (non-vetable) → transition → remove → POST_UNREGISTER.
+        PRE_UNREGISTER is informational — always proceeds regardless of veto.
+
+        Args:
+            agent_id: Agent requesting the unregister (for hook scoping).
+        """
+        with _lifecycle_span("unregister", entry.name, protocol=entry.protocol_name) as span:
+            # Fire PRE_UNREGISTER hook (informational — non-vetable).
+            # Use veto_keeps_current=True so a veto doesn't transition to FAILED.
+            await self._fire_hook(PRE_UNREGISTER, entry, veto_keeps_current=True, agent_id=agent_id)
+
+            # Transition: UNMOUNTED → UNREGISTERED
+            self._transition(entry.name, EVENT_UNREGISTER)
+
+            # Remove from registry
+            brick_name = entry.name
+            del self._bricks[brick_name]
+            logger.info("[LIFECYCLE] Brick %r unregistered (removed from registry)", brick_name)
+
+            # Fire POST_UNREGISTER hook (informational)
+            try:
+                await self._fire_hook(POST_UNREGISTER, entry, agent_id=agent_id)
+            except Exception as exc:
+                logger.warning(
+                    "[LIFECYCLE] POST_UNREGISTER hook error for %r (continuing): %s",
+                    brick_name,
+                    exc,
+                )
+            _record_span_result(span, state="UNREGISTERED")
 
     # ------------------------------------------------------------------
     # Mount all / unmount all (DAG-ordered, concurrent per level)
@@ -931,7 +1031,7 @@ class BrickLifecycleManager:
                 name
                 for name in level
                 if name in self._bricks
-                and self._bricks[name].state == BrickState.REGISTERED
+                and self._bricks[name].state in (BrickState.REGISTERED, BrickState.UNMOUNTED)
                 and self._deps_satisfied(name)
             ]
             if not to_mount:
@@ -971,8 +1071,9 @@ class BrickLifecycleManager:
             if entry is not None and entry.state not in (
                 BrickState.FAILED,
                 BrickState.UNREGISTERED,
+                BrickState.UNMOUNTED,
             ):
-                self._transition(brick_name, "failed")
+                self._transition(brick_name, EVENT_FAILED)
                 entry.error = str(exc)
 
     async def _safe_mount(self, name: str, *, timeout: float) -> None:
@@ -1003,3 +1104,28 @@ class BrickLifecycleManager:
     async def _safe_unmount(self, name: str) -> None:
         """Unmount a brick, catching all exceptions (fail-forward)."""
         await self._safe_lifecycle_op(name, "unmount", self.unmount(name))
+
+    async def unregister_all(self) -> None:
+        """Unregister all UNMOUNTED bricks (remove from registry).
+
+        Iterates a snapshot of brick names to avoid dict-size-changed errors.
+        """
+        names = [
+            name
+            for name, entry in list(self._bricks.items())
+            if entry.state == BrickState.UNMOUNTED
+        ]
+        for name in names:
+            try:
+                await self.unregister(name)
+            except Exception as exc:
+                logger.warning("[LIFECYCLE] Failed to unregister %r: %s", name, exc)
+
+    async def shutdown_all(self) -> BrickHealthReport:
+        """Full shutdown: unmount all ACTIVE bricks, then unregister all UNMOUNTED.
+
+        Returns the health report after all operations complete.
+        """
+        report = await self.unmount_all()
+        await self.unregister_all()
+        return report

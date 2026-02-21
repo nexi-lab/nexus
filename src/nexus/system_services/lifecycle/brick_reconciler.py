@@ -267,7 +267,7 @@ class BrickReconciler:
                     action=DriftAction.RESET,
                     detail="Brick FAILED, will reset and remount",
                 )
-            if state == BrickState.REGISTERED:
+            if state in (BrickState.REGISTERED, BrickState.UNMOUNTED):
                 # Check if dependencies are met via public API
                 for dep_name in spec.depends_on:
                     dep_status = self._manager.get_status(dep_name)
@@ -279,12 +279,17 @@ class BrickReconciler:
                             action=DriftAction.SKIP,
                             detail=f"Dependency {dep_name!r} not ACTIVE",
                         )
+                detail = (
+                    "Brick UNMOUNTED but should be ACTIVE"
+                    if state == BrickState.UNMOUNTED
+                    else "Brick REGISTERED but should be ACTIVE"
+                )
                 return DriftReport(
                     brick_name=spec.name,
                     spec_state="enabled",
                     actual_state=state,
                     action=DriftAction.MOUNT,
-                    detail="Brick REGISTERED but should be ACTIVE",
+                    detail=detail,
                 )
             if state == BrickState.ACTIVE:
                 return None  # Handled by health check phase

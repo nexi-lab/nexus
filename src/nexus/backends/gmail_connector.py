@@ -259,7 +259,11 @@ class GmailConnectorBackend(
         logger = logging.getLogger(__name__)
 
         try:
-            from nexus.bricks.auth.oauth.factory import OAuthProviderFactory
+            import importlib as _il
+
+            OAuthProviderFactory = _il.import_module(
+                "nexus.bricks.auth.oauth.factory"
+            ).OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()

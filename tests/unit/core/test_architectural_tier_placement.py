@@ -31,6 +31,7 @@ class TestSchedulerTierPlacement:
         assert hasattr(mod, "InMemoryScheduler")
         assert hasattr(mod, "CreditsReservationProtocol")
         assert hasattr(mod, "NullCreditsReservation")
+        assert hasattr(mod, "classify_agent_request")
 
     def test_scheduler_service_in_services(self) -> None:
         mod = importlib.import_module("nexus.services.scheduler.service")

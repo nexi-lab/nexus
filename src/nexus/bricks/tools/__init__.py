@@ -13,7 +13,7 @@ from .prompts import (
     get_skills_prompt,
 )
 
-# Define __all__ to specify what is exported when doing 'from nexus.tools import *'
+# Define __all__ to specify what is exported when doing 'from nexus.bricks.tools import *'
 __all__ = [
     "langgraph",
     "get_nexus_tools",

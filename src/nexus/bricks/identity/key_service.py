@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select, update
 
-from nexus.identity.crypto import IdentityCrypto
-from nexus.identity.did import create_did_key
+from nexus.bricks.identity.crypto import IdentityCrypto
+from nexus.bricks.identity.did import create_did_key
 from nexus.storage.models import AgentKeyModel
 
 

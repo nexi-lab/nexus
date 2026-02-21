@@ -26,7 +26,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from nexus.identity.crypto import IdentityCrypto
+from nexus.bricks.identity.crypto import IdentityCrypto
 
 # Multicodec prefix for Ed25519 public key (varint-encoded 0xed)
 _ED25519_MULTICODEC_PREFIX = bytes([0xED, 0x01])

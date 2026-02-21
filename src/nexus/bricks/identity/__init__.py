@@ -20,15 +20,15 @@ References:
     - W3C VC Data Model: Verifiable Credentials
 """
 
-from nexus.identity.credentials import (
+from nexus.bricks.identity.credentials import (
     CapabilityIssuer,
     CapabilityVerifier,
     DelegationChain,
 )
-from nexus.identity.crypto import IdentityCrypto
-from nexus.identity.did import create_did_key, resolve_did_key
-from nexus.identity.key_service import AgentKeyRecord, KeyService
-from nexus.identity.utils import parse_metadata, serialize_metadata
+from nexus.bricks.identity.crypto import IdentityCrypto
+from nexus.bricks.identity.did import create_did_key, resolve_did_key
+from nexus.bricks.identity.key_service import AgentKeyRecord, KeyService
+from nexus.bricks.identity.utils import parse_metadata, serialize_metadata
 
 __all__ = [
     "AgentKeyRecord",

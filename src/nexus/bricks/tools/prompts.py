@@ -165,7 +165,7 @@ def get_skills_prompt(config: RunnableConfig, state: dict[str, Any] | None = Non
 
     Example:
         >>> from langchain_core.runnables import RunnableConfig
-        >>> from nexus.tools.prompts import get_skills_prompt
+        >>> from nexus.bricks.tools.prompts import get_skills_prompt
         >>>
         >>> config = RunnableConfig(metadata={
         ...     "x_auth": "Bearer sk-your-api-key",
@@ -234,7 +234,7 @@ def get_prompt(
 
     Example:
         >>> from langchain_core.runnables import RunnableConfig
-        >>> from nexus.tools.prompts import get_prompt
+        >>> from nexus.bricks.tools.prompts import get_prompt
         >>>
         >>> config = RunnableConfig(metadata={
         ...     "x_auth": "Bearer sk-your-api-key",

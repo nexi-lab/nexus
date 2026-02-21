@@ -30,7 +30,7 @@ from nexus.contracts.credential_types import (
     CredentialClaims,
     CredentialStatus,
 )
-from nexus.identity.credentials import (
+from nexus.bricks.identity.credentials import (
     CapabilityIssuer,
     CapabilityVerifier,
     DelegationChain,

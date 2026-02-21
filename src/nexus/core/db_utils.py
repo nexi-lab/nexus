@@ -3,8 +3,6 @@
 Issue #2195: Extracted from lifespan for testability and DRY.
 """
 
-from __future__ import annotations
-
 
 def sqlalchemy_url_to_asyncpg_dsn(url: str) -> str:
     """Convert a SQLAlchemy database URL to an asyncpg-compatible DSN.

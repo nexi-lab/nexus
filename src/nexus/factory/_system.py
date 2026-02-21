@@ -478,8 +478,8 @@ def _boot_system_services(
     event_log: Any = None
     if _on("eventlog"):
         try:
-            import os as _el_os
-            from pathlib import Path as _ElPath
+            import os
+            from pathlib import Path
             from typing import Literal
 
             from nexus.services.event_subsystem.log import EventLogConfig, create_event_log
@@ -487,19 +487,19 @@ def _boot_system_services(
             _wal_dir: str = (
                 ctx.wal_dir
                 if ctx.wal_dir is not None
-                else _el_os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
+                else os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
             )
             _sync_mode: str = (
                 ctx.wal_sync_mode
                 if ctx.wal_sync_mode is not None
-                else _el_os.getenv("NEXUS_WAL_SYNC_MODE", "every")
+                else os.getenv("NEXUS_WAL_SYNC_MODE", "every")
             )
             _seg_size = ctx.wal_segment_size or int(
-                _el_os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024))
+                os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024))
             )
 
             _el_config = EventLogConfig(
-                wal_dir=_ElPath(_wal_dir),
+                wal_dir=Path(_wal_dir),
                 segment_size_bytes=_seg_size,
                 sync_mode=cast(Literal["every", "none"], _sync_mode),
             )

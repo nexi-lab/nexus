@@ -70,9 +70,9 @@ def _boot_system_services(
         _is_pg = not ctx.db_url.startswith("sqlite")
 
         # --- ReBAC Manager ---
-        from nexus.rebac.manager import EnhancedReBACManager
+        from nexus.bricks.rebac.manager import ReBACManager
 
-        rebac_manager = EnhancedReBACManager(
+        rebac_manager = ReBACManager(
             engine=ctx.engine,
             cache_ttl_seconds=ctx.cache_ttl_seconds or 300,
             max_depth=10,
@@ -84,17 +84,17 @@ def _boot_system_services(
         )
 
         # --- Audit Store ---
-        from nexus.rebac.permissions_enhanced import AuditStore
+        from nexus.bricks.rebac.permissions_enhanced import AuditStore
 
         audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
 
         # --- Entity Registry ---
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         entity_registry = EntityRegistry(ctx.record_store)
 
         # --- Permission Enforcer ---
-        from nexus.rebac.enforcer import PermissionEnforcer
+        from nexus.bricks.rebac.enforcer import PermissionEnforcer
 
         permission_enforcer = PermissionEnforcer(
             metadata_store=ctx.metadata_store,
@@ -157,7 +157,7 @@ def _boot_system_services(
     # --- Directory Visibility Cache ---
     dir_visibility_cache: Any = None
     try:
-        from nexus.rebac.cache.visibility import DirectoryVisibilityCache
+        from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
 
         dir_visibility_cache = DirectoryVisibilityCache(
             tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
@@ -177,7 +177,7 @@ def _boot_system_services(
     # --- Hierarchy Manager ---
     hierarchy_manager: Any = None
     try:
-        from nexus.rebac.hierarchy_manager import HierarchyManager
+        from nexus.bricks.rebac.hierarchy_manager import HierarchyManager
 
         hierarchy_manager = HierarchyManager(
             rebac_manager=rebac_manager,
@@ -191,7 +191,7 @@ def _boot_system_services(
     deferred_permission_buffer: Any = None
     if ctx.perm.enable_deferred:
         try:
-            from nexus.rebac.deferred_permission_buffer import DeferredPermissionBuffer
+            from nexus.bricks.rebac.deferred_permission_buffer import DeferredPermissionBuffer
 
             deferred_permission_buffer = DeferredPermissionBuffer(
                 rebac_manager=rebac_manager,
@@ -296,8 +296,8 @@ def _boot_system_services(
         logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
     else:
         try:
-            from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
-            from nexus.rebac.namespace_factory import (
+            from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+            from nexus.bricks.rebac.namespace_factory import (
                 create_namespace_manager as _create_ns_manager,
             )
 

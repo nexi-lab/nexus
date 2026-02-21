@@ -18,12 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.contracts.types import (
-    OperationContext,
-    Permission,
-)
-from nexus.rebac.enforcer import PermissionEnforcer
-from nexus.rebac.manager import (
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.rebac.manager import (
     CheckResult,
     ConsistencyLevel,
     ConsistencyRequirement,
@@ -32,7 +28,11 @@ from nexus.rebac.manager import (
     TraversalStats,
     WriteResult,
 )
-from nexus.rebac.types import ConsistencyMode
+from nexus.bricks.rebac.types import ConsistencyMode
+from nexus.contracts.types import (
+    OperationContext,
+    Permission,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers

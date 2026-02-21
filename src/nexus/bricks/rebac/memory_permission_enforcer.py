@@ -20,7 +20,7 @@ from nexus.lib.zone import normalize_zone_id
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
-    from nexus.bricks.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import ReBACManager
 
 
 @runtime_checkable
@@ -46,7 +46,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
     def __init__(
         self,
         metadata_store: Any = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         memory_router: MemoryRouter | None = None,
         entity_registry: EntityRegistry | None = None,
     ) -> None:

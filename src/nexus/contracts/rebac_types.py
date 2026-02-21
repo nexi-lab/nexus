@@ -8,9 +8,9 @@ so bricks, services, and backends can depend on it without pulling in the
 ReBAC brick.
 
 Backward-compat shims:
-    - ``nexus.rebac.types`` re-exports consistency/graph types
-    - ``nexus.rebac.domain`` re-exports Entity, WILDCARD_SUBJECT
-    - ``nexus.rebac.cross_zone`` re-exports CROSS_ZONE_ALLOWED_RELATIONS
+    - ``nexus.bricks.rebac.types`` re-exports consistency/graph types
+    - ``nexus.bricks.rebac.domain`` re-exports Entity, WILDCARD_SUBJECT
+    - ``nexus.bricks.rebac.cross_zone`` re-exports CROSS_ZONE_ALLOWED_RELATIONS
 """
 
 from __future__ import annotations

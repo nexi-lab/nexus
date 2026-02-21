@@ -61,9 +61,9 @@ def main():
         # ── Setup: Create NexusFS via factory (fully wired services) ─────
         from nexus.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.backends.local import LocalBackend
+        from nexus.bricks.rebac.namespace_factory import create_namespace_manager
         from nexus.core.config import PermissionConfig
         from nexus.factory import create_nexus_fs
-        from nexus.rebac.namespace_factory import create_namespace_manager
         from nexus.server.fastapi_server import create_app
         from nexus.storage.raft_metadata_store import RaftMetadataStore
         from nexus.storage.record_store import SQLAlchemyRecordStore

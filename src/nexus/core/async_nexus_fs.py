@@ -34,8 +34,8 @@ from nexus.core.metadata import (
 from nexus.core.metastore import AsyncMetastoreWrapper
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
     from nexus.core.metastore import MetastoreABC
-    from nexus.rebac.async_permissions import AsyncPermissionEnforcer
     from nexus.storage.content_cache import ContentCache
 
 logger = logging.getLogger(__name__)

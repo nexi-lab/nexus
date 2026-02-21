@@ -1,6 +1,6 @@
 """Revision helpers — Version tokens and zone revision lookups.
 
-Extracts the consistency-related methods from EnhancedReBACManager
+Extracts the consistency-related methods from ReBACManager
 into standalone functions. These support Zanzibar-style consistency
 tokens (zookies) for snapshot reads and bounded staleness.
 

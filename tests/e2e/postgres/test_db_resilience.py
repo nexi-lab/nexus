@@ -55,12 +55,12 @@ class TestCircuitBreakerResilience:
 
     async def test_circuit_breaker_opens_during_outage(self):
         """Circuit breaker opens after repeated failures via call()."""
-        from nexus.contracts.exceptions import CircuitOpenError
-        from nexus.rebac.circuit_breaker import (
+        from nexus.bricks.rebac.circuit_breaker import (
             AsyncCircuitBreaker,
             CircuitBreakerConfig,
             CircuitState,
         )
+        from nexus.contracts.exceptions import CircuitOpenError
 
         cb = AsyncCircuitBreaker(
             name="test_db",
@@ -88,7 +88,7 @@ class TestCircuitBreakerResilience:
 
     async def test_circuit_breaker_closes_after_recovery(self):
         """Circuit breaker closes after enough successful calls in HALF_OPEN."""
-        from nexus.rebac.circuit_breaker import (
+        from nexus.bricks.rebac.circuit_breaker import (
             AsyncCircuitBreaker,
             CircuitBreakerConfig,
             CircuitState,

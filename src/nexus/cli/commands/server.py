@@ -1245,7 +1245,7 @@ def serve(
             from datetime import UTC, datetime, timedelta
 
             from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-            from nexus.rebac.entity_registry import EntityRegistry
+            from nexus.bricks.rebac.entity_registry import EntityRegistry
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
             _record_store = SQLAlchemyRecordStore(db_url=db_url)
@@ -1310,11 +1310,11 @@ def serve(
                             raise
 
                     # Grant admin user ownership
-                    from nexus.rebac.manager import (
-                        EnhancedReBACManager,
+                    from nexus.bricks.rebac.manager import (
+                        ReBACManager,
                     )
 
-                    rebac = EnhancedReBACManager(engine)
+                    rebac = ReBACManager(engine)
                     rebac.rebac_write(
                         subject=("user", admin_user),
                         relation="direct_owner",

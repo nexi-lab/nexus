@@ -24,6 +24,7 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.mcp.middleware import ToolNamespaceMiddleware
 from nexus.mcp.profiles import (
     grant_tools_for_profile,
@@ -31,7 +32,6 @@ from nexus.mcp.profiles import (
     revoke_tools_by_tuple_ids,
 )
 from nexus.mcp.server import create_mcp_server
-from nexus.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
 
 logger = logging.getLogger(__name__)

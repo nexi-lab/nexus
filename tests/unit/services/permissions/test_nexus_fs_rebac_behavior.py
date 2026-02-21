@@ -288,7 +288,7 @@ class MockNexusFS:
         offset: int = 0,
         cursor: str | None = None,
     ) -> dict[str, Any]:
-        from nexus.rebac.cache.iterator import CursorExpiredError
+        from nexus.bricks.rebac.cache.iterator import CursorExpiredError
 
         relation_to_level = {
             "shared-viewer": "viewer",
@@ -358,7 +358,7 @@ class MockNexusFS:
         offset: int = 0,
         cursor: str | None = None,
     ) -> dict[str, Any]:
-        from nexus.rebac.cache.iterator import CursorExpiredError
+        from nexus.bricks.rebac.cache.iterator import CursorExpiredError
 
         relation_to_level = {
             "shared-viewer": "viewer",

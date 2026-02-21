@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.manager import EnhancedReBACManager
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.derivation import derive_grants
 from nexus.services.delegation.errors import (

@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import pytest
 
+from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.bricks.rebac.namespace_factory import create_namespace_manager
+from nexus.bricks.rebac.namespace_manager import MountEntry
 from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
-from nexus.rebac.manager import EnhancedReBACManager
-from nexus.rebac.namespace_factory import create_namespace_manager
-from nexus.rebac.namespace_manager import MountEntry
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ---------------------------------------------------------------------------

@@ -23,10 +23,10 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
-from nexus.rebac.manager import (
+from nexus.bricks.rebac.manager import (
     EnhancedReBACManager,
 )
-from nexus.rebac.types import (
+from nexus.bricks.rebac.types import (
     ConsistencyLevel,
     ConsistencyMode,
     ConsistencyRequirement,

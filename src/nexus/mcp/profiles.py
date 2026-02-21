@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.rebac.manager import WriteResult
+    from nexus.bricks.rebac.manager import WriteResult
     from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 """Permission enforcer service protocol (Issue #2133).
 
 Service contract for path-level permission enforcement.
-Existing implementation: ``nexus.rebac.enforcer.PermissionEnforcer`` (sync).
+Existing implementation: ``nexus.bricks.rebac.enforcer.PermissionEnforcer`` (sync).
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3

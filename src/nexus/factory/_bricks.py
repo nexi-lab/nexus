@@ -462,7 +462,7 @@ def _boot_independent_bricks(
             entity_registry=system["entity_registry"],
         )
 
-        from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+        from nexus.bricks.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 
         memory_permission = MemoryPermissionEnforcer(
             metadata_store=ctx.metadata_store,
@@ -504,7 +504,7 @@ def _boot_independent_bricks(
     # --- ReBAC Circuit Breaker (Issue #2034: moved from kernel to brick tier) ---
     rebac_circuit_breaker: Any = None
     try:
-        from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+        from nexus.bricks.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
 
         _res = ctx.profile_tuning.resiliency
         rebac_circuit_breaker = AsyncCircuitBreaker(

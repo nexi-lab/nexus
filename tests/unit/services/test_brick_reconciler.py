@@ -13,8 +13,10 @@ import pytest
 from nexus.services.brick_lifecycle import BrickLifecycleManager
 from nexus.services.brick_reconciler import BrickReconciler
 from nexus.services.protocols.brick_lifecycle import (
+    BrickReconcileOutcome,
     BrickState,
     DriftAction,
+    ReconcileContext,
 )
 from tests.unit.services.conftest import (
     make_failing_brick as _make_failing_brick,
@@ -730,3 +732,331 @@ class TestReconcileUnmounted:
         assert _s is not None
         assert _s.state == BrickState.ACTIVE
         assert brick.start.await_count == 2
+
+
+# ---------------------------------------------------------------------------
+# TestReconcilePerBrick — per-brick ReconcilerProtocol (Issue #2059)
+# ---------------------------------------------------------------------------
+
+
+def _make_reconcilable_brick(
+    name: str = "search",
+    outcome: BrickReconcileOutcome | None = None,
+    side_effect: Exception | None = None,
+) -> AsyncMock:
+    """Create a mock brick that satisfies both BrickLifecycleProtocol + ReconcilerProtocol."""
+    from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
+
+    brick = AsyncMock(spec=BrickLifecycleProtocol)
+    brick.start = AsyncMock(return_value=None)
+    brick.stop = AsyncMock(return_value=None)
+    brick.health_check = AsyncMock(return_value=True)
+    brick.__class__.__name__ = f"{name.capitalize()}Brick"
+
+    # Add reconcile() method so isinstance(brick, ReconcilerProtocol) == True
+    if side_effect is not None:
+        brick.reconcile = AsyncMock(side_effect=side_effect)
+    else:
+        brick.reconcile = AsyncMock(return_value=outcome or BrickReconcileOutcome())
+    return brick
+
+
+class TestReconcilePerBrick:
+    """Test per-brick reconcile with ReconcilerProtocol (Issue #2059)."""
+
+    @pytest.mark.asyncio
+    async def test_reconcile_called_with_correct_context(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """Brick with ReconcilerProtocol → reconcile() called with correct ReconcileContext."""
+        brick = _make_reconcilable_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        await reconciler.reconcile()
+
+        brick.reconcile.assert_called_once()
+        ctx = brick.reconcile.call_args[0][0]
+        assert isinstance(ctx, ReconcileContext)
+        assert ctx.brick_name == "search"
+        assert ctx.current_state == BrickState.ACTIVE
+        assert ctx.desired_enabled is True
+        assert ctx.retry_count == 0
+
+    @pytest.mark.asyncio
+    async def test_requeue_true_sets_backoff(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """requeue=True → brick requeued with 1s-base backoff."""
+        brick = _make_reconcilable_brick("search", outcome=BrickReconcileOutcome(requeue=True))
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        await reconciler.reconcile()
+
+        # Should have set per-brick backoff
+        assert "search" in reconciler._next_retry_after
+
+    @pytest.mark.asyncio
+    async def test_requeue_after_explicit_timing(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """requeue_after=timedelta(5) → explicit timing honored."""
+        from datetime import timedelta
+
+        outcome = BrickReconcileOutcome(requeue=True, requeue_after=timedelta(seconds=5))
+        brick = _make_reconcilable_brick("search", outcome=outcome)
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        import time
+
+        before = time.monotonic()
+        await reconciler.reconcile()
+
+        # Backoff should be ~5 seconds from now
+        deadline = reconciler._next_retry_after["search"]
+        assert deadline >= before + 4.5  # Allow small tolerance
+
+    @pytest.mark.asyncio
+    async def test_error_transitions_to_failed(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """error="..." → brick transitions to FAILED."""
+        outcome = BrickReconcileOutcome(error="Index corrupted")
+        brick = _make_reconcilable_brick("search", outcome=outcome)
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        await reconciler.reconcile()
+
+        status = manager.get_status("search")
+        assert status is not None
+        assert status.state == BrickState.FAILED
+        assert status.error == "Index corrupted"
+
+    @pytest.mark.asyncio
+    async def test_healthy_no_action(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """requeue=False, error=None → healthy, backoff cleared."""
+        brick = _make_reconcilable_brick("search", outcome=BrickReconcileOutcome())
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        # Pre-set backoff to verify it gets cleared
+        reconciler._next_retry_after["search"] = 999999.0
+        await reconciler.reconcile()
+
+        # Backoff should have been cleared
+        assert "search" not in reconciler._next_retry_after
+
+    @pytest.mark.asyncio
+    async def test_brick_without_protocol_fallback(
+        self,
+        manager: BrickLifecycleManager,
+        reconciler: BrickReconciler,
+    ) -> None:
+        """Brick without ReconcilerProtocol → skipped in per-brick phase."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        result = await reconciler.reconcile()
+        assert result.errors == 0
+        # Should not appear in reconcile outcomes
+        assert len(reconciler.last_reconcile_outcomes) == 0
+
+    @pytest.mark.asyncio
+    async def test_reconcile_raises_caught(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """reconcile() raises → caught, logged, loop continues."""
+        brick = _make_reconcilable_brick("search", side_effect=RuntimeError("crash"))
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        # Should not raise
+        result = await reconciler.reconcile()
+        assert result.errors == 0  # The per-brick error is handled gracefully
+
+        # Outcome should be requeue=True (fallback on error)
+        outcomes = reconciler.last_reconcile_outcomes
+        assert len(outcomes) == 1
+        assert outcomes[0][1].requeue is True
+
+    @pytest.mark.asyncio
+    async def test_reconcile_timeout_treated_as_requeue(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """reconcile() timeout → treated as requeue=True."""
+
+        async def _slow_reconcile(ctx: ReconcileContext) -> BrickReconcileOutcome:
+            await asyncio.sleep(10)
+            return BrickReconcileOutcome()
+
+        brick = _make_reconcilable_brick("search")
+        brick.reconcile = AsyncMock(side_effect=_slow_reconcile)
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager, reconcile_timeout=0.05)
+        await reconciler.reconcile()
+
+        outcomes = reconciler.last_reconcile_outcomes
+        assert len(outcomes) == 1
+        assert outcomes[0][1].requeue is True
+
+    @pytest.mark.asyncio
+    async def test_sequential_execution(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """Per-brick reconcile runs sequentially (not concurrently)."""
+        order: list[str] = []
+
+        async def _track_reconcile(name: str):
+            async def _inner(ctx: ReconcileContext) -> BrickReconcileOutcome:
+                order.append(name)
+                return BrickReconcileOutcome()
+
+            return _inner
+
+        brick_a = _make_reconcilable_brick("a")
+        brick_b = _make_reconcilable_brick("b")
+
+        async def _reconcile_a(ctx: ReconcileContext) -> BrickReconcileOutcome:
+            order.append("a")
+            return BrickReconcileOutcome()
+
+        async def _reconcile_b(ctx: ReconcileContext) -> BrickReconcileOutcome:
+            order.append("b")
+            return BrickReconcileOutcome()
+
+        brick_a.reconcile = AsyncMock(side_effect=_reconcile_a)
+        brick_b.reconcile = AsyncMock(side_effect=_reconcile_b)
+
+        manager.register("a", brick_a, protocol_name="AP")
+        manager.register("b", brick_b, protocol_name="BP")
+        await manager.mount_all()
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        await reconciler.reconcile()
+
+        # Both should have been called
+        assert "a" in order
+        assert "b" in order
+
+    @pytest.mark.asyncio
+    async def test_outcomes_exposed_via_property(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """last_reconcile_outcomes property returns (name, outcome) pairs."""
+        outcome = BrickReconcileOutcome(requeue=True)
+        brick = _make_reconcilable_brick("search", outcome=outcome)
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        await reconciler.reconcile()
+
+        results = reconciler.last_reconcile_outcomes
+        assert len(results) == 1
+        assert results[0][0] == "search"
+        assert results[0][1].requeue is True
+
+    @pytest.mark.asyncio
+    async def test_terminating_zone_brick_skipped(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """Bricks in terminating zones are skipped in per-brick reconcile."""
+        brick = _make_reconcilable_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        reconciler.mark_zone_terminating("z1", brick_names={"search"})
+        await reconciler.reconcile()
+
+        # Should not have been called
+        brick.reconcile.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestBackoffStrategy — split backoff (Issue #2059)
+# ---------------------------------------------------------------------------
+
+
+class TestBackoffStrategy:
+    """Test split backoff: per-brick reconcile (1s) vs central restart (30s)."""
+
+    def test_per_brick_reconcile_uses_1s_base(self) -> None:
+        """Per-brick reconcile backoff starts at 1s."""
+        import nexus.system_services.lifecycle.brick_reconciler as mod
+
+        assert mod._BACKOFF_BASE_RECONCILE == 1.0
+
+    def test_central_restart_uses_30s_base(self) -> None:
+        """Central restart backoff starts at 30s."""
+        import nexus.system_services.lifecycle.brick_reconciler as mod
+
+        assert mod._BACKOFF_BASE_RESTART == 30.0
+
+    @pytest.mark.asyncio
+    async def test_explicit_requeue_after_overrides_default(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """BrickReconcileOutcome.requeue_after overrides computed backoff."""
+        from datetime import timedelta
+
+        outcome = BrickReconcileOutcome(requeue=True, requeue_after=timedelta(seconds=42))
+        brick = _make_reconcilable_brick("search", outcome=outcome)
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        import time
+
+        before = time.monotonic()
+        await reconciler.reconcile()
+
+        deadline = reconciler._next_retry_after.get("search", 0.0)
+        assert deadline >= before + 41  # ~42s from now
+
+    def test_cap_at_300s(self) -> None:
+        """Both backoff strategies cap at 300s."""
+        import nexus.system_services.lifecycle.brick_reconciler as mod
+
+        assert mod._BACKOFF_MAX == 300.0
+
+    @pytest.mark.asyncio
+    async def test_clear_on_success(
+        self,
+        manager: BrickLifecycleManager,
+    ) -> None:
+        """Successful per-brick reconcile clears backoff."""
+        brick = _make_reconcilable_brick("search", outcome=BrickReconcileOutcome())
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        reconciler._next_retry_after["search"] = 999999.0  # pre-set
+        await reconciler.reconcile()
+
+        assert "search" not in reconciler._next_retry_after

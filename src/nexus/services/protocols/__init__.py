@@ -30,6 +30,12 @@ from nexus.services.event_subsystem.log.protocol import EventLogConfig, EventLog
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
+from nexus.services.protocols.brick_lifecycle import (
+    BrickReconcileOutcome,
+    LifecycleManagerProtocol,
+    ReconcileContext,
+    ReconcilerProtocol,
+)
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.services.protocols.entity_registry import EntityRegistryProtocol
 from nexus.services.protocols.file_reader import FileReaderProtocol
@@ -98,6 +104,7 @@ from nexus.services.protocols.write_back import WriteBackProtocol
 __all__ = [
     "APIKeyCreatorProtocol",
     "AdaptiveKProtocol",
+    "BrickReconcileOutcome",
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
@@ -113,6 +120,7 @@ __all__ = [
     "HookPhaseType",
     "HookResult",
     "HookSpec",
+    "LifecycleManagerProtocol",
     "LLMProviderProtocol",
     "LLMServiceProtocol",
     "LockProtocol",
@@ -145,6 +153,8 @@ __all__ = [
     "PermissionProtocol",
     "ProgressCallback",
     "ReBACBrickProtocol",
+    "ReconcileContext",
+    "ReconcilerProtocol",
     "SandboxProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",

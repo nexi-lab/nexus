@@ -76,6 +76,15 @@ class DriftReportItem(BaseModel):
     detail: str = ""
 
 
+class BrickReconcileOutcomeItem(BaseModel):
+    """Per-brick reconcile outcome (Issue #2059)."""
+
+    brick_name: str
+    requeue: bool
+    requeue_after_seconds: float | None = None
+    error: str | None = None
+
+
 class DriftReportResponse(BaseModel):
     """Aggregated drift report from reconciliation."""
 
@@ -86,6 +95,7 @@ class DriftReportResponse(BaseModel):
     drifts: list[DriftReportItem]
     last_reconcile_at: float | None = None
     reconcile_count: int = 0
+    reconcile_outcomes: list[BrickReconcileOutcomeItem] = []
 
 
 class ResetBrickResponse(BaseModel):
@@ -151,6 +161,24 @@ async def brick_drift(
     The reconciler's periodic loop handles auto-healing separately.
     """
     result = reconciler.detect_drift()
+
+    # Per-brick reconcile outcomes (Issue #2059)
+    outcomes: list[BrickReconcileOutcomeItem] = []
+    if hasattr(reconciler, "last_reconcile_outcomes"):
+        for brick_name, outcome in reconciler.last_reconcile_outcomes:
+            outcomes.append(
+                BrickReconcileOutcomeItem(
+                    brick_name=brick_name,
+                    requeue=outcome.requeue,
+                    requeue_after_seconds=(
+                        outcome.requeue_after.total_seconds()
+                        if outcome.requeue_after is not None
+                        else None
+                    ),
+                    error=outcome.error,
+                )
+            )
+
     return DriftReportResponse(
         total_bricks=result.total_bricks,
         drifted=result.drifted,
@@ -168,6 +196,7 @@ async def brick_drift(
         ],
         last_reconcile_at=reconciler.last_reconcile_at,
         reconcile_count=reconciler.reconcile_count,
+        reconcile_outcomes=outcomes,
     )
 
 

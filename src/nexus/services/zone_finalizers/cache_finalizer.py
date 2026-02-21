@@ -7,7 +7,10 @@ Delegates to ``FileCache.delete_zone()`` for L1 cache and
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.storage.file_cache import FileContentCache
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +18,7 @@ logger = logging.getLogger(__name__)
 class CacheZoneFinalizer:
     """Finalizer that cleans L1 file cache and optional L2 distributed cache."""
 
-    def __init__(self, file_cache: Any, l2_cache: Any | None = None) -> None:
+    def __init__(self, file_cache: FileContentCache | Any, l2_cache: Any | None = None) -> None:
         self._file_cache = file_cache
         self._l2_cache = l2_cache
 

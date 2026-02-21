@@ -243,8 +243,9 @@ class SystemServices:
     # Event Log WAL — append-only audit trail (Issue #1397, #2195)
     event_log: Any = None
 
-    # Scheduler service — fair-share task scheduling (Issue #1212, #2195)
+    # Scheduler service — fair-share task scheduling (Issue #1212, #2195, #2360)
     scheduler_service: Any = None
+    scheduler_state_emitter: Any = None
 
 
 # ---------------------------------------------------------------------------

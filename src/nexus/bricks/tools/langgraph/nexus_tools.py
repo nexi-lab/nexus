@@ -32,7 +32,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
 from nexus.remote import RemoteNexusFS  # re-export for backward compatibility
-from nexus.tools._client import _get_nexus_client
+from nexus.bricks.tools._client import _get_nexus_client
 
 __all__ = [
     "RemoteNexusFS",
@@ -73,7 +73,7 @@ def list_skills(
 
     Examples:
         >>> from langchain_core.runnables import RunnableConfig
-        >>> from nexus.tools.langgraph.nexus_tools import list_skills
+        >>> from nexus.bricks.tools.langgraph.nexus_tools import list_skills
         >>>
         >>> config = RunnableConfig(metadata={
         ...     "x_auth": "Bearer sk-your-api-key",

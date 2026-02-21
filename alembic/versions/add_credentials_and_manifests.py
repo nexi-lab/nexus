@@ -1,8 +1,7 @@
-"""Add agent_credentials and access_manifests tables (Issues #1753, #1754).
+"""Add access_manifests table (Issue #1754).
 
-Creates tables for W3C Verifiable Credentials and MCP Access Manifests:
-- agent_credentials: JWT-VC storage for agent capability attestation
-- access_manifests: Declarative tool access rules per agent
+Creates the access_manifests table for declarative MCP tool access rules.
+The agent_credentials table is managed by the identity module (Issue #1753).
 
 Revision ID: add_credentials_and_manifests
 Revises: merge_agent_spec_zone_phase
@@ -23,47 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create agent_credentials and access_manifests tables."""
-    # --- agent_credentials ---
-    op.create_table(
-        "agent_credentials",
-        sa.Column("credential_id", sa.String(36), primary_key=True, nullable=False),
-        sa.Column("issuer_did", sa.String(255), nullable=False),
-        sa.Column("subject_did", sa.String(255), nullable=False),
-        sa.Column("subject_agent_id", sa.String(255), nullable=False),
-        sa.Column(
-            "credential_type",
-            sa.String(100),
-            nullable=False,
-            server_default="AgentCapabilityCredential",
-        ),
-        sa.Column("capabilities_json", sa.Text(), nullable=False),
-        sa.Column("constraints_json", sa.Text(), nullable=True),
-        sa.Column("jws_compact", sa.Text(), nullable=False),
-        sa.Column("status", sa.String(20), nullable=False, server_default="active"),
-        sa.Column("valid_from", sa.DateTime(), nullable=False),
-        sa.Column("valid_until", sa.DateTime(), nullable=True),
-        sa.Column("revoked_at", sa.DateTime(), nullable=True),
-        sa.Column("zone_id", sa.String(255), nullable=False, server_default="root"),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-    )
-    op.create_index(
-        "idx_agent_creds_subject_status",
-        "agent_credentials",
-        ["subject_agent_id", "status"],
-    )
-    op.create_index(
-        "idx_agent_creds_zone_status",
-        "agent_credentials",
-        ["zone_id", "status"],
-    )
-    op.create_index(
-        "idx_agent_creds_issuer",
-        "agent_credentials",
-        ["issuer_did"],
-    )
-
-    # --- access_manifests ---
+    """Create access_manifests table."""
     op.create_table(
         "access_manifests",
         sa.Column("manifest_id", sa.String(36), primary_key=True, nullable=False),
@@ -88,11 +47,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove agent_credentials and access_manifests tables."""
+    """Remove access_manifests table."""
     op.drop_index("idx_access_manifests_agent_zone_status", table_name="access_manifests")
     op.drop_table("access_manifests")
-
-    op.drop_index("idx_agent_creds_issuer", table_name="agent_credentials")
-    op.drop_index("idx_agent_creds_zone_status", table_name="agent_credentials")
-    op.drop_index("idx_agent_creds_subject_status", table_name="agent_credentials")
-    op.drop_table("agent_credentials")

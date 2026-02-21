@@ -59,8 +59,8 @@ def main():
 
     try:
         # ── Setup: Create NexusFS via factory (fully wired services) ─────
-        from nexus.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.backends.local import LocalBackend
+        from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.bricks.rebac.namespace_factory import create_namespace_manager
         from nexus.core.config import PermissionConfig
         from nexus.factory import create_nexus_fs

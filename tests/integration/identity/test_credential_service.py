@@ -17,13 +17,13 @@ import types
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from nexus.bricks.identity.credential_service import CredentialService
+from nexus.bricks.identity.credentials import CapabilityIssuer, CapabilityVerifier
+from nexus.bricks.identity.did import create_did_key
 from nexus.contracts.credential_types import (
     Ability,
     Capability,
 )
-from nexus.identity.credential_service import CredentialService
-from nexus.identity.credentials import CapabilityIssuer, CapabilityVerifier
-from nexus.identity.did import create_did_key
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

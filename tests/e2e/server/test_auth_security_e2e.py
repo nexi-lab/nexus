@@ -26,8 +26,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.backends.local import LocalBackend
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
@@ -716,7 +716,7 @@ class TestStaleSessionDetection:
 
     def test_jwt_roundtrip_with_agent_generation(self):
         """Full JWT roundtrip: create_token → authenticate → auth_result has generation."""
-        from nexus.auth.providers.local import LocalAuth
+        from nexus.bricks.auth.providers.local import LocalAuth
 
         auth = LocalAuth(jwt_secret="e2e-test-secret", token_expiry=3600)
 

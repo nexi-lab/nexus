@@ -2,7 +2,7 @@
 
 This module extends the official Nexus tools with additional web search capabilities.
 
-Official Nexus Tools (from nexus.tools.langgraph):
+Official Nexus Tools (from nexus.bricks.tools.langgraph):
 1. grep_files: Search file content using grep-style commands
 2. glob_files: Find files by name pattern using glob syntax
 3. read_file: Read file content using cat/less-style commands
@@ -32,7 +32,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 # Import official Nexus tools
-from nexus.tools.langgraph.nexus_tools import get_nexus_tools as get_official_nexus_tools
+from nexus.bricks.tools.langgraph.nexus_tools import get_nexus_tools as get_official_nexus_tools
 
 logger = logging.getLogger(__name__)
 

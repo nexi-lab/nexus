@@ -3,6 +3,6 @@
 Issue #2281: Moved to nexus.auth.oauth.config (auth brick).
 """
 
-from nexus.auth.oauth.config import OAuthConfig, OAuthProviderConfig
+from nexus.bricks.auth.oauth.config import OAuthConfig, OAuthProviderConfig
 
 __all__ = ["OAuthConfig", "OAuthProviderConfig"]

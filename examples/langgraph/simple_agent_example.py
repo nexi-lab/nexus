@@ -9,11 +9,11 @@ import os
 from langchain_anthropic import ChatAnthropic
 from langgraph.prebuilt import create_react_agent
 
-# Option 1: Import from nexus.tools (recommended)
-from nexus.tools import CODING_AGENT_SYSTEM_PROMPT, get_nexus_tools
+# Option 1: Import from nexus.bricks.tools (recommended)
+from nexus.bricks.tools import CODING_AGENT_SYSTEM_PROMPT, get_nexus_tools
 
-# Option 2: Import from nexus.tools.langgraph (more explicit)
-# from nexus.tools.langgraph import CODING_AGENT_SYSTEM_PROMPT, get_nexus_tools
+# Option 2: Import from nexus.bricks.tools.langgraph (more explicit)
+# from nexus.bricks.tools.langgraph import CODING_AGENT_SYSTEM_PROMPT, get_nexus_tools
 
 # Create LLM
 llm = ChatAnthropic(

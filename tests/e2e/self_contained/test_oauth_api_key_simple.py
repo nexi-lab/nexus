@@ -10,8 +10,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.auth.oauth.crypto import OAuthCrypto
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel, Base, OAuthAPIKeyModel, UserModel
 
 

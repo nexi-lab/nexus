@@ -211,7 +211,7 @@ def create_app(
 
     app.state.brick_container = BrickContainer()
     if auth_provider is not None:
-        from nexus.auth.protocol import AuthBrickProtocol
+        from nexus.bricks.auth.protocol import AuthBrickProtocol
 
         if isinstance(auth_provider, AuthBrickProtocol):
             app.state.brick_container.register(AuthBrickProtocol, auth_provider)
@@ -455,9 +455,9 @@ def create_app(
     if auth_provider is not None:
         try:
             # Extract DatabaseLocalAuth from DiscriminatingAuthProvider if needed
-            from nexus.auth.providers.base import AuthProvider
-            from nexus.auth.providers.database_local import DatabaseLocalAuth
-            from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+            from nexus.bricks.auth.providers.base import AuthProvider
+            from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
             from nexus.server.auth.auth_routes import set_auth_provider
 
             local_auth_provider: AuthProvider | None = None

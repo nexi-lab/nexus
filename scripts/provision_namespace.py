@@ -522,7 +522,7 @@ def ensure_admin_api_key(zone_id: str = ROOT_ZONE_ID, env_file: str = ".env") ->
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.bricks.rebac.entity_registry import EntityRegistry
 
     # Load .env

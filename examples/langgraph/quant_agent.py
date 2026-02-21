@@ -41,7 +41,7 @@ from langgraph.prebuilt import create_react_agent
 from nexus_tools import get_nexus_tools
 
 # Import official system prompt from Nexus tools
-from nexus.tools import CODING_AGENT_SYSTEM_PROMPT
+from nexus.bricks.tools import CODING_AGENT_SYSTEM_PROMPT
 
 
 # Backtest tool for qlib strategies

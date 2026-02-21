@@ -283,7 +283,7 @@ send_notifications: true
     def _register_oauth_provider(self) -> None:
         """Register OAuth provider with TokenManager using OAuthProviderFactory."""
         try:
-            from nexus.auth.oauth.factory import OAuthProviderFactory
+            from nexus.bricks.auth.oauth.factory import OAuthProviderFactory
 
             factory = OAuthProviderFactory()
 

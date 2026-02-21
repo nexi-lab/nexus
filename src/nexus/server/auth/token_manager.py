@@ -3,7 +3,7 @@
 Issue #2281: Moved to nexus.auth.oauth.token_manager (auth brick).
 """
 
-from nexus.auth.oauth.token_manager import (  # noqa: F401
+from nexus.bricks.auth.oauth.token_manager import (  # noqa: F401
     _LOCK_ACQUIRE_TIMEOUT_SECONDS,
     _MAX_REFRESH_LOCKS,
     _PROVIDER_REFRESH_TIMEOUT_SECONDS,

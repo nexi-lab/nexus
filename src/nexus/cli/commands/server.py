@@ -970,15 +970,15 @@ def serve(
             sys.exit(1)
 
         # Create authentication provider
-        from nexus.auth.providers.base import AuthProvider
+        from nexus.bricks.auth.providers.base import AuthProvider
 
         auth_provider: AuthProvider | None = None
         if auth_type == "database":
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-            from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
             from nexus.factory._record_store import create_record_store
             from nexus.server.auth.factory import DiscriminatingAuthProvider
 
@@ -1021,7 +1021,7 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
             from nexus.factory._record_store import create_record_store
 
             db_url = get_database_url()
@@ -1244,7 +1244,7 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
-            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.bricks.rebac.entity_registry import EntityRegistry
             from nexus.constants import ROOT_ZONE_ID
             from nexus.factory._record_store import create_record_store

@@ -432,12 +432,20 @@ disable_error_code = ["attr-defined", "return-value"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.core.async_scoped_filesystem",
-    "nexus.tools.langgraph.nexus_tools",
+    "nexus.bricks.tools.langgraph.nexus_tools",
 ]
 # These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
 # dispatched via __getattr__ (Issue #1289 RPC Proxy). The proxy returns Any
 # for dynamically-dispatched methods, triggering no-any-return warnings.
 warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = "nexus.bricks.*.tests.*"
+# Brick-internal test files (moved from tests/ to src/nexus/bricks/*/tests/).
+# Relax strict typing for test code — fixture parameters are injected by pytest
+# and don't need type annotations.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.delegating"

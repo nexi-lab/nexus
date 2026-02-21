@@ -30,7 +30,7 @@ class TestNullCacheStoreIdentity:
 
 
 class TestPersistentViewStoreShim:
-    """PostgresPersistentViewStore must be accessible from all legacy paths."""
+    """PostgresPersistentViewStore must be accessible from brick shim path."""
 
     def test_storage_is_canonical(self) -> None:
         from nexus.bricks.cache.persistent_view_postgres import (
@@ -41,16 +41,6 @@ class TestPersistentViewStoreShim:
         )
 
         assert canonical is via_brick_shim
-
-    def test_cache_shim(self) -> None:
-        from nexus.cache.persistent_view_postgres import (
-            PostgresPersistentViewStore as via_cache_shim,
-        )
-        from nexus.storage.persistent_view_postgres import (
-            PostgresPersistentViewStore as canonical,
-        )
-
-        assert canonical is via_cache_shim
 
 
 class TestZeroViolations:

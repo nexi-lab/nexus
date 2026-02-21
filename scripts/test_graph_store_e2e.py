@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from nexus.search.graph_store import GraphStore
+from nexus.bricks.search.graph_store import GraphStore
 from nexus.storage.models import Base
 
 logging.basicConfig(

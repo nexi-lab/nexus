@@ -52,8 +52,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.services.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-    from nexus.services.protocols.rebac import ReBACBrickProtocol
     from nexus.services.protocols.reputation import ReputationProtocol
     from nexus.storage.record_store import RecordStoreABC
 
@@ -76,8 +74,8 @@ class DelegationService:
     def __init__(
         self,
         record_store: RecordStoreABC,
-        rebac_manager: ReBACBrickProtocol,
-        namespace_manager: NamespaceManagerProtocol | None = None,
+        rebac_manager: Any,
+        namespace_manager: Any = None,
         entity_registry: EntityRegistryProtocol | None = None,
         agent_registry: Any = None,
         reputation_service: ReputationProtocol | None = None,

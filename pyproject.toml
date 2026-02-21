@@ -598,7 +598,12 @@ module = [
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = "nexus.services.memory.memory_api"
+module = [
+    "nexus.services.memory.memory_api",
+    "nexus.services.memory.memory_router",
+    "nexus.services.memory_provider",
+    "nexus.migrations.migrate_identity_memory_v04",
+]
 # EntityRegistry accepts SimpleNamespace duck-type for session_factory
 disable_error_code = ["arg-type"]
 

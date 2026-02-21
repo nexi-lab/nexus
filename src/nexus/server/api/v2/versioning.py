@@ -264,6 +264,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Bricks routes: %s", e)
 
+    # ---- Connector discovery router (Issue #2069) ----
+    try:
+        from nexus.server.api.v2.routers.connectors import router as connectors_router
+
+        registry.add(RouterEntry(router=connectors_router, name="connectors", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Connectors routes: %s", e)
+
     # ---- Batch operations router (Issue #1242) ----
     try:
         from nexus.server.api.v2.routers.batch import create_batch_router

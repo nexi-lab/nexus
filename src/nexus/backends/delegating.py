@@ -60,6 +60,7 @@ class DelegatingBackend(Backend):
 
     def __init__(self, inner: Backend) -> None:
         self._inner = inner
+        self._cached_capabilities = inner.capabilities
 
     # === Name & Chain Introspection ===
 
@@ -113,6 +114,17 @@ class DelegatingBackend(Backend):
     @property
     def supports_parallel_mmap_read(self) -> bool:
         return self._inner.supports_parallel_mmap_read
+
+    # === Capability Discovery (Issue #2069) ===
+
+    @property
+    def capabilities(self) -> frozenset:
+        """Delegate to inner backend's capabilities (cached in __init__)."""
+        return self._cached_capabilities
+
+    def has_capability(self, cap: object) -> bool:
+        """Check capability using cached frozenset."""
+        return cap in self._cached_capabilities
 
     # === Transform Hooks (override in data-transforming wrappers) ===
 

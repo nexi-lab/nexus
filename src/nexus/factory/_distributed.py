@@ -1,7 +1,5 @@
 """Distributed infrastructure — event bus, event log, lock manager, workflow engine."""
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING, Any, Literal
@@ -54,8 +52,8 @@ def _create_event_log_wal() -> Any:
 
 
 def _create_distributed_infra(
-    dist: DistributedConfig,
-    metadata_store: MetastoreABC,
+    dist: "DistributedConfig",
+    metadata_store: "MetastoreABC",
     record_store: Any,
     coordination_url: str | None,
 ) -> tuple[Any, Any]:
@@ -135,7 +133,7 @@ def _create_distributed_infra(
 
 def _create_workflow_engine(
     record_store: Any, glob_match_fn: Any = None
-) -> WorkflowProtocol | None:
+) -> "WorkflowProtocol | None":
     """Create workflow engine with async store and DI.
 
     Args:

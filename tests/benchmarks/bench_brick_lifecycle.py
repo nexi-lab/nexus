@@ -15,8 +15,6 @@ Uses manual ``time.perf_counter`` timing with explicit performance budgets.
 Issue #2370: Load-test hot-swap brick lifecycle at 100+ bricks scale.
 """
 
-from __future__ import annotations
-
 import asyncio
 import gc
 import time
@@ -49,7 +47,6 @@ BUDGET_DAG_SORT_100_MS = 20  # 0.2 ms/node
 BUDGET_HEALTH_REPORT_100_MS = 10  # 0.1 ms/brick
 BUDGET_ZONE_DEPROVISION_100_MS = 500  # 5 ms/brick
 MEMORY_GROWTH_TOLERANCE_KB = 512  # over 500 cycles
-
 
 # ---------------------------------------------------------------------------
 # Helpers

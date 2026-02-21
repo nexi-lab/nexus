@@ -13,8 +13,6 @@ Steps:
     load_context       — Pre-load context manifest sources
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -25,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def load_credentials(ctx: WarmupContext) -> bool:
+async def load_credentials(ctx: "WarmupContext") -> bool:
     """Verify agent has valid credentials in the registry.
 
     Checks that the agent record has a non-empty owner_id and is in a
@@ -51,7 +49,7 @@ async def load_credentials(ctx: WarmupContext) -> bool:
     return True
 
 
-async def mount_namespace(ctx: WarmupContext) -> bool:
+async def mount_namespace(ctx: "WarmupContext") -> bool:
     """Resolve the agent's namespace mount table.
 
     Validates that the namespace manager can resolve mounts for this agent.
@@ -82,7 +80,7 @@ async def mount_namespace(ctx: WarmupContext) -> bool:
         return False
 
 
-async def verify_bricks(ctx: WarmupContext) -> bool:
+async def verify_bricks(ctx: "WarmupContext") -> bool:
     """Check that the deployment has enabled bricks.
 
     Validates that the enabled_bricks set is non-empty. If the agent
@@ -114,7 +112,7 @@ async def verify_bricks(ctx: WarmupContext) -> bool:
     return True
 
 
-async def warm_caches(ctx: WarmupContext) -> bool:
+async def warm_caches(ctx: "WarmupContext") -> bool:
     """Pre-populate cache for the agent's zone (optional step).
 
     If a cache store is available and the agent has a zone_id, attempts
@@ -137,7 +135,7 @@ async def warm_caches(ctx: WarmupContext) -> bool:
         return False
 
 
-async def connect_mcp(ctx: WarmupContext) -> bool:
+async def connect_mcp(ctx: "WarmupContext") -> bool:
     """Validate MCP server configuration (optional step).
 
     Checks that MCP configuration is syntactically valid if provided.
@@ -162,7 +160,7 @@ async def connect_mcp(ctx: WarmupContext) -> bool:
         return False
 
 
-async def load_context(ctx: WarmupContext) -> bool:
+async def load_context(ctx: "WarmupContext") -> bool:
     """Pre-load context manifest sources.
 
     Validates that the agent's context_manifest (if any) references
@@ -198,7 +196,7 @@ async def load_context(ctx: WarmupContext) -> bool:
         return False
 
 
-def register_standard_steps(service: AgentWarmupService) -> None:
+def register_standard_steps(service: "AgentWarmupService") -> None:
     """Register all standard warmup steps into the service's step registry.
 
     Called during service initialization (e.g., in factory.py or lifespan setup).

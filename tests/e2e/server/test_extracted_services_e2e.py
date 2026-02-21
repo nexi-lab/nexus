@@ -20,8 +20,6 @@ Permission enforcement:
 The server runs in open-access mode with X-Nexus-Subject identity.
 """
 
-from __future__ import annotations
-
 import base64
 
 HEADERS = {
@@ -187,7 +185,6 @@ class TestMCPServiceE2E:
 
 
 # ─── ShareLinkService ────────────────────────────────────────────────
-
 
 ALICE_HEADERS = {
     "X-Nexus-Subject": "user:alice",

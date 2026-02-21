@@ -9,8 +9,6 @@ Phase 4 (Issue #940): Full async permission enforcement integration with
 AsyncReBACManager for non-blocking permission checks.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -68,11 +66,11 @@ class AsyncNexusFS:
     def __init__(
         self,
         backend_root: str | Path,
-        metadata_store: MetastoreABC,
+        metadata_store: "MetastoreABC",
         tenant_id: str | None = None,
         enforce_permissions: bool = False,
-        permission_enforcer: AsyncPermissionEnforcer | None = None,
-        content_cache: ContentCache | None = None,
+        permission_enforcer: "AsyncPermissionEnforcer | None" = None,
+        content_cache: "ContentCache | None" = None,
     ):
         """
         Initialize async filesystem.

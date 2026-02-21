@@ -10,8 +10,6 @@ Usage:
     state_mgr.invalidate("mem_123", invalid_at="2026-01-15")
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -37,7 +35,7 @@ class MemoryStateManager:
     def __init__(
         self,
         memory_router: MemoryViewRouter,
-        permission_enforcer: MemoryPermissionCheckerProtocol,
+        permission_enforcer: "MemoryPermissionCheckerProtocol",
         context: OperationContext,
     ) -> None:
         self._memory_router = memory_router

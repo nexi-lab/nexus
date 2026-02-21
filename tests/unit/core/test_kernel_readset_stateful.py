@@ -12,8 +12,6 @@ Invariants checked after every rule:
   3. Zone isolation: zone-filtered results only include matching zones
 """
 
-from __future__ import annotations
-
 import os
 
 from hypothesis import settings
@@ -46,7 +44,6 @@ _PATHS = st.sampled_from(
         "/workspace/project/test.py",
     ]
 )
-
 
 # ---------------------------------------------------------------------------
 # State Machine

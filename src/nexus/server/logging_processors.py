@@ -23,8 +23,6 @@ Secret Redaction (Issue #86):
     that contain no trigger substrings. Target: <1ms overhead per line.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import re
@@ -162,7 +160,6 @@ _GENERIC_API_KEY_ASSIGNMENT = _RedactionPattern(
     "generic_api_key_assignment",
     r"(?:api_key|apikey|api-key|access_token|auth_token)\s*[=:]\s*[\"']?[^\s\"']{10,}[\"']?",
 )
-
 
 # The default set of patterns, ordered from most specific to least specific
 # to minimize false-positive overlap.

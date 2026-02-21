@@ -9,8 +9,6 @@ Set NEXUS_NATS_URL to override the default nats://localhost:4222.
 Related: Issue #1747 (LEGO 17.7)
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 
@@ -44,7 +42,6 @@ pytestmark = [
     pytest.mark.skipif(not _is_nats_available(), reason="NATS not available"),
     pytest.mark.xdist_group("nats"),
 ]
-
 
 # --- In-memory VFS for the cold path (reuse from unit tests) ---
 

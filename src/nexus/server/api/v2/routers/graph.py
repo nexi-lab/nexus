@@ -11,8 +11,6 @@ Ported from v1 with improvements:
 - Generic error messages (don't leak internal exceptions)
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -26,7 +24,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/graph", tags=["graph"])
-
 
 # =============================================================================
 # Request Models

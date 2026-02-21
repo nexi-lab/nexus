@@ -7,8 +7,6 @@ sandbox metadata persistence.
 Issue #2189: Extracted from bricks/sandbox/repository.py.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -39,7 +37,7 @@ class SQLAlchemySandboxRepository:
         record_store: RecordStoreABC providing database access.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._session_factory = record_store.session_factory
 
     @contextmanager

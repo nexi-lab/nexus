@@ -4,8 +4,6 @@ Ensures every AgentState maps to a valid AgentPhase and
 the mapping is stable across refactors.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.contracts.agent_types import (

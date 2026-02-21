@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -289,19 +287,19 @@ class EntityModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    source_relationships: Mapped[list[RelationshipModel]] = relationship(
+    source_relationships: "Mapped[list[RelationshipModel]]" = relationship(
         "RelationshipModel",
         foreign_keys="RelationshipModel.source_entity_id",
         back_populates="source_entity",
         cascade="all, delete-orphan",
     )
-    target_relationships: Mapped[list[RelationshipModel]] = relationship(
+    target_relationships: "Mapped[list[RelationshipModel]]" = relationship(
         "RelationshipModel",
         foreign_keys="RelationshipModel.target_entity_id",
         back_populates="target_entity",
         cascade="all, delete-orphan",
     )
-    mentions: Mapped[list[EntityMentionModel]] = relationship(
+    mentions: "Mapped[list[EntityMentionModel]]" = relationship(
         "EntityMentionModel",
         back_populates="entity",
         cascade="all, delete-orphan",

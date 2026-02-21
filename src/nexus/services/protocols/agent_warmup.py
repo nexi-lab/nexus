@@ -12,8 +12,6 @@ References:
     - Issue #2172: Agent warmup phase
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -37,8 +35,8 @@ class AgentWarmupProtocol(Protocol):
     async def warmup(
         self,
         agent_id: str,
-        steps: list[WarmupStep] | None = None,
-    ) -> WarmupResult:
+        steps: "list[WarmupStep] | None" = None,
+    ) -> "WarmupResult":
         """Execute warmup steps for an agent.
 
         Runs each step sequentially. Required steps that fail abort warmup

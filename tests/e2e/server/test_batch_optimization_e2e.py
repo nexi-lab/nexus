@@ -10,8 +10,6 @@ Validates that:
 3. No performance regression from batch optimizations
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal

@@ -10,8 +10,6 @@ Tests cover:
 - Edge cases (None metadata, empty parts, all part types)
 """
 
-from __future__ import annotations
-
 import base64
 from datetime import UTC, datetime
 

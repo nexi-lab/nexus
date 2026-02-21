@@ -3,8 +3,6 @@
 Tests create_semantic_search_components and SemanticSearchComponents.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

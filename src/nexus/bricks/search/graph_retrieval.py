@@ -14,8 +14,6 @@ References:
     - LightRAG GitHub: https://github.com/HKUDS/LightRAG
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field
@@ -39,11 +37,9 @@ HierarchicalMemoryManager = Any
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Configuration
 # =============================================================================
-
 
 VALID_GRAPH_MODES = {"none", "low", "high", "dual"}
 
@@ -112,9 +108,9 @@ class GraphContext:
     """
 
     # Entities found in or related to this result
-    entities: list[Entity] = field(default_factory=list)
+    entities: "list[Entity]" = field(default_factory=list)
     # Relationships connecting entities
-    relationships: list[Relationship] = field(default_factory=list)
+    relationships: "list[Relationship]" = field(default_factory=list)
     # Theme/cluster information (for high-level context)
     theme: str | None = None
     theme_abstraction_level: int = 0
@@ -160,9 +156,9 @@ class GraphEnhancedSearchResult(BaseSearchResult):
     @classmethod
     def from_semantic_result(
         cls,
-        result: SemanticSearchResult,
+        result: "SemanticSearchResult",
         chunk_id: str | None = None,
-    ) -> GraphEnhancedSearchResult:
+    ) -> "GraphEnhancedSearchResult":
         """Create from a SemanticSearchResult."""
         return cls(
             path=result.path,
@@ -342,10 +338,10 @@ class GraphEnhancedRetriever:
 
     def __init__(
         self,
-        semantic_search: SearchableProtocol | Any,
-        graph_store: GraphStore | None = None,
+        semantic_search: "SearchableProtocol | Any",
+        graph_store: "GraphStore | None" = None,
         hierarchy_manager: HierarchicalMemoryManager | None = None,
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
         config: GraphRetrievalConfig | None = None,
     ):
         """Initialize graph-enhanced retriever.
@@ -392,7 +388,7 @@ class GraphEnhancedRetriever:
         search_mode: str = "hybrid",
         alpha: float = 0.5,
         include_graph_context: bool = True,
-    ) -> list[GraphEnhancedSearchResult]:
+    ) -> "list[GraphEnhancedSearchResult]":
         """Execute graph-enhanced search.
 
         Args:
@@ -538,7 +534,7 @@ class GraphEnhancedRetriever:
         query: str,  # noqa: ARG002 - kept for logging/future use
         query_embedding: list[float],
         limit: int,  # noqa: ARG002 - used indirectly via config
-    ) -> tuple[list[Entity], set[str]]:
+    ) -> "tuple[list[Entity], set[str]]":
         """Low-level entity search with N-hop expansion.
 
         1. Find entities similar to query embedding
@@ -670,8 +666,8 @@ class GraphEnhancedRetriever:
 
     async def _enrich_with_graph_context(
         self,
-        results: list[GraphEnhancedSearchResult],
-        matched_entities: list[Entity],
+        results: "list[GraphEnhancedSearchResult]",
+        matched_entities: "list[Entity]",
     ) -> None:
         """Populate graph_context for each result.
 

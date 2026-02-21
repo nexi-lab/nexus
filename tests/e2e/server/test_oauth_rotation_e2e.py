@@ -6,8 +6,6 @@ Issue #997: Exercises the full lifecycle through FastAPI endpoints:
 Uses FastAPI TestClient with mock OAuth provider and real SQLite DB.
 """
 
-from __future__ import annotations
-
 import gc
 import logging
 import tempfile

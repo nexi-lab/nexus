@@ -25,8 +25,6 @@ Profile hierarchy matches DeploymentProfile:
     (bare)  (minimal)  (conservative)  (balanced)  (aggressive)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -34,7 +32,6 @@ from nexus.contracts.qos import QoSClassConfig, QoSTuning
 
 if TYPE_CHECKING:
     from nexus.contracts.deployment_profile import DeploymentProfile
-
 
 # ---------------------------------------------------------------------------
 # Domain-specific tuning dataclasses (frozen = immutable at runtime)
@@ -702,7 +699,7 @@ def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
     }
 
 
-def resolve_profile_tuning(profile: DeploymentProfile) -> ProfileTuning:
+def resolve_profile_tuning(profile: "DeploymentProfile") -> ProfileTuning:
     """Resolve the ProfileTuning for a deployment profile.
 
     Args:

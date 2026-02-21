@@ -7,8 +7,6 @@ All sync handlers are wrapped with ``to_thread_with_timeout`` by the dispatch
 layer — they MUST NOT call async code directly.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -25,14 +23,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
 # Download URL generation
 # ---------------------------------------------------------------------------
 
 
 def generate_download_url(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     path: str,
     context: Any,
     expires_in: int = 3600,
@@ -114,7 +111,9 @@ def generate_download_url(
 # ---------------------------------------------------------------------------
 
 
-async def handle_read_async(nexus_fs: NexusFS, params: Any, context: Any) -> bytes | dict[str, Any]:
+async def handle_read_async(
+    nexus_fs: "NexusFS", params: Any, context: Any
+) -> bytes | dict[str, Any]:
     """Handle read method (async version for parsed reads).
 
     Returns raw bytes which will be encoded by encode_rpc_message using
@@ -192,7 +191,7 @@ async def handle_read_async(nexus_fs: NexusFS, params: Any, context: Any) -> byt
 # ---------------------------------------------------------------------------
 
 
-def handle_write(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle write method."""
     content = params.content
     if isinstance(content, str):
@@ -216,12 +215,12 @@ def handle_write(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]
     return {"bytes_written": bytes_written}
 
 
-def handle_exists(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
     return {"exists": nexus_fs.exists(params.path, context=context)}
 
 
-def handle_list(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle list method with optional pagination support."""
     import time as _time
 
@@ -291,7 +290,7 @@ def handle_list(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     return response
 
 
-def handle_delete(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_delete(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
     try:
         nexus_fs.delete(params.path, context=context)
@@ -300,7 +299,7 @@ def handle_delete(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any
     return {"deleted": True}
 
 
-def handle_rename(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_rename(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
     try:
         nexus_fs.rename(params.old_path, params.new_path, context=context)
@@ -309,13 +308,13 @@ def handle_rename(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any
     return {"renamed": True}
 
 
-def handle_copy(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_copy(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle copy method."""
     cast(Any, nexus_fs).copy(params.src_path, params.dst_path, context=context)
     return {"copied": True}
 
 
-def handle_mkdir(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle mkdir method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "parents") and params.parents is not None:
@@ -327,7 +326,7 @@ def handle_mkdir(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]
     return {"created": True}
 
 
-def handle_rmdir(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle rmdir method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "recursive") and params.recursive is not None:
@@ -344,7 +343,7 @@ def handle_rmdir(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def handle_get_metadata(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
     metadata = nexus_fs.get_metadata(params.path, context=context)
     if isinstance(metadata, dict):
@@ -352,7 +351,7 @@ def handle_get_metadata(nexus_fs: NexusFS, params: Any, context: Any) -> dict[st
     return {"metadata": metadata}
 
 
-def handle_glob(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle glob method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
@@ -363,7 +362,7 @@ def handle_glob(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     return {"matches": matches}
 
 
-def handle_grep(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle grep method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
@@ -382,7 +381,7 @@ def handle_grep(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     return {"results": results}
 
 
-def handle_search(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle search method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
@@ -397,7 +396,7 @@ def handle_search(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any
 
 
 async def handle_semantic_search_index(
-    nexus_fs: NexusFS, params: Any, _context: Any
+    nexus_fs: "NexusFS", params: Any, _context: Any
 ) -> dict[str, Any]:
     """Handle semantic_search_index method."""
     path = getattr(params, "path", "/")
@@ -422,6 +421,6 @@ async def handle_semantic_search_index(
     return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
 
-def handle_is_directory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
+def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}

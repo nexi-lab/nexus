@@ -13,8 +13,6 @@ Design:
     - Zero kernel imports — contracts module only
 """
 
-from __future__ import annotations
-
 import enum
 from dataclasses import dataclass, field
 from datetime import UTC, datetime

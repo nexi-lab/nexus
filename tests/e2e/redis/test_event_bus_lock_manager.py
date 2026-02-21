@@ -10,8 +10,6 @@ Requirements:
 Related: Issue #1106 Block 2
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 from typing import TYPE_CHECKING
@@ -31,7 +29,6 @@ pytestmark = pytest.mark.skipif(
 _skip_lock_manager = pytest.mark.skip(
     reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
-
 
 # =============================================================================
 # Fixtures
@@ -1793,7 +1790,7 @@ class TestAdditionalEdgeCases:
     """Additional edge case tests for completeness."""
 
     @pytest.mark.asyncio
-    async def test_wait_for_event_nonexistent_path_pattern(self, event_bus: RedisEventBus):
+    async def test_wait_for_event_nonexistent_path_pattern(self, event_bus: "RedisEventBus"):
         """Test wait_for_event on path that will never receive events."""
         import uuid
 
@@ -1810,7 +1807,7 @@ class TestAdditionalEdgeCases:
         assert event is None
 
     @pytest.mark.asyncio
-    async def test_lock_manager_is_locked_never_locked_path(self, lock_manager: RedisLockManager):
+    async def test_lock_manager_is_locked_never_locked_path(self, lock_manager: "RedisLockManager"):
         """Test is_locked() on a path that was never locked."""
         import uuid
 
@@ -1825,7 +1822,7 @@ class TestAdditionalEdgeCases:
         assert is_locked is False
 
     @pytest.mark.asyncio
-    async def test_lock_manager_get_lock_info_never_locked(self, lock_manager: RedisLockManager):
+    async def test_lock_manager_get_lock_info_never_locked(self, lock_manager: "RedisLockManager"):
         """Test get_lock_info() on a path that was never locked."""
         import uuid
 
@@ -1855,7 +1852,7 @@ class TestStressAndPerformance:
     """Stress tests for high-volume scenarios."""
 
     @pytest.mark.asyncio
-    async def test_rapid_event_publishing(self, event_bus: RedisEventBus):
+    async def test_rapid_event_publishing(self, event_bus: "RedisEventBus"):
         """Test publishing many events rapidly doesn't cause issues."""
         import uuid
 
@@ -1876,7 +1873,7 @@ class TestStressAndPerformance:
         # No assertions needed - just verify no exceptions
 
     @pytest.mark.asyncio
-    async def test_rapid_lock_acquire_release(self, lock_manager: RedisLockManager):
+    async def test_rapid_lock_acquire_release(self, lock_manager: "RedisLockManager"):
         """Test rapid lock acquire/release cycles."""
         import uuid
 
@@ -1901,7 +1898,7 @@ class TestStressAndPerformance:
             assert released is True
 
     @pytest.mark.asyncio
-    async def test_event_ordering_under_load(self, event_bus: RedisEventBus):
+    async def test_event_ordering_under_load(self, event_bus: "RedisEventBus"):
         """Test that events maintain ordering under load."""
         import uuid
 
@@ -1966,7 +1963,7 @@ class TestStressAndPerformance:
             await subscribe_client.disconnect()
 
     @pytest.mark.asyncio
-    async def test_concurrent_locks_different_paths(self, lock_manager: RedisLockManager):
+    async def test_concurrent_locks_different_paths(self, lock_manager: "RedisLockManager"):
         """Test acquiring locks on many different paths concurrently."""
         import uuid
 
@@ -2010,7 +2007,7 @@ class TestErrorRecoveryLayer2:
     """Error recovery tests for Layer 2 distributed system."""
 
     @pytest.mark.asyncio
-    async def test_publish_to_stopped_bus_raises(self, event_bus: RedisEventBus):
+    async def test_publish_to_stopped_bus_raises(self, event_bus: "RedisEventBus"):
         """Test that publishing to stopped bus raises appropriate error."""
         from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
@@ -2031,7 +2028,7 @@ class TestErrorRecoveryLayer2:
         await event_bus.start()
 
     @pytest.mark.asyncio
-    async def test_wait_for_event_on_stopped_bus_raises(self, event_bus: RedisEventBus):
+    async def test_wait_for_event_on_stopped_bus_raises(self, event_bus: "RedisEventBus"):
         """Test that wait_for_event on stopped bus raises appropriate error."""
         # Stop the bus first
         await event_bus.stop()
@@ -2048,14 +2045,14 @@ class TestErrorRecoveryLayer2:
         await event_bus.start()
 
     @pytest.mark.asyncio
-    async def test_health_check_returns_status(self, event_bus: RedisEventBus):
+    async def test_health_check_returns_status(self, event_bus: "RedisEventBus"):
         """Test health_check returns proper status."""
         # Should return True when Redis is available
         is_healthy = await event_bus.health_check()
         assert is_healthy is True
 
     @pytest.mark.asyncio
-    async def test_bus_can_restart_after_stop(self, event_bus: RedisEventBus):
+    async def test_bus_can_restart_after_stop(self, event_bus: "RedisEventBus"):
         """Test that bus can restart after being stopped."""
         from nexus.services.event_subsystem.types import FileEvent, FileEventType
 

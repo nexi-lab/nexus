@@ -9,8 +9,6 @@ Tests the feedback → event → materialized score pipeline including:
 - Interaction counters
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest

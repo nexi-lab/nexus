@@ -3,8 +3,6 @@
 Tests the path_matches_pattern function extracted from reactive_subscriptions.
 """
 
-from __future__ import annotations
-
 from nexus.core.glob_utils import path_matches_pattern
 
 

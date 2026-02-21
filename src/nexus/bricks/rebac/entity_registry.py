@@ -4,8 +4,6 @@ Lightweight registry for ID disambiguation and relationship tracking.
 Enables order-neutral virtual paths for memories.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -34,7 +32,7 @@ class EntityRegistry:
     _session: Session | None
     _session_factory: Any
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         """Initialize entity registry.
 
         Args:

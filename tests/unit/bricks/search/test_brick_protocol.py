@@ -4,8 +4,6 @@ Validates that SearchBrickProtocol is runtime_checkable, that mock classes
 satisfy isinstance checks, and that all method signatures are correct.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest

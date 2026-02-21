@@ -4,8 +4,6 @@ This module provides HMAC-SHA256 based token generation and verification
 for secure, time-limited file streaming access via the local backend.
 """
 
-from __future__ import annotations
-
 import hmac
 import os
 import secrets

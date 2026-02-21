@@ -7,8 +7,6 @@ Provides CRUD operations for BackendChangeLogModel to support delta sync.
 Uses SyncStoreBase for shared session management and dialect detection.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -50,7 +48,7 @@ class ChangeLogStore(SyncStoreBase):
 
     def __init__(
         self,
-        record_store: RecordStoreABC | None,
+        record_store: "RecordStoreABC | None",
         *,
         is_postgresql: bool = False,
     ) -> None:

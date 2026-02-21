@@ -4,8 +4,6 @@ Validates that SearchBrickProtocol indirection adds <1ms overhead
 for 1000 mock calls through the protocol layer.
 """
 
-from __future__ import annotations
-
 import time
 from typing import Any
 

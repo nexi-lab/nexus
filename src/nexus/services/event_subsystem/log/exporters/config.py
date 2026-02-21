@@ -4,8 +4,6 @@ Defines KafkaExporterConfig, NatsExporterConfig, PubSubExporterConfig,
 and the top-level EventStreamConfig that selects which exporter to use.
 """
 
-from __future__ import annotations
-
 from typing import Literal
 
 from pydantic import BaseModel, Field

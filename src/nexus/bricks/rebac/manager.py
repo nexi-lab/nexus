@@ -15,8 +15,6 @@ Usage:
     manager = ReBACManager(engine)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os
@@ -93,7 +91,6 @@ from nexus.lib.zone import normalize_zone_id
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.bricks.rebac.cache.iterator import IteratorCache
     from nexus.bricks.rebac.cache.leopard import LeopardIndex
     from nexus.bricks.rebac.cache.tiger import TigerCache, TigerCacheUpdater
 
@@ -102,7 +99,6 @@ logger = logging.getLogger(__name__)
 # Canonical mapping imported from domain.py — see RELATION_TO_PERMISSIONS.
 # Local alias kept for backward compat with code referencing the old name.
 _RELATION_TO_PERMISSIONS = RELATION_TO_PERMISSIONS
-
 
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
@@ -131,14 +127,14 @@ class ReBACManager:
 
     def __init__(
         self,
-        engine: Engine,
+        engine: "Engine",
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
         enforce_zone_isolation: bool = False,
         enable_graph_limits: bool = True,
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
-        read_engine: Engine | None = None,
+        read_engine: "Engine | None" = None,
         is_postgresql: bool = False,
     ):
         """Initialize ReBAC manager.
@@ -200,7 +196,7 @@ class ReBACManager:
         # (initialized below, after leopard_facade is created)
 
         # Leopard index for O(1) transitive group lookups (Issue #692)
-        self._leopard: LeopardIndex | None = None
+        self._leopard: "LeopardIndex | None" = None
         if enable_leopard:
             from nexus.bricks.rebac.cache.leopard import LeopardIndex
 
@@ -232,8 +228,8 @@ class ReBACManager:
 
         # Tiger Cache for materialized permissions (Issue #682)
         # Only enable on PostgreSQL - SQLite has lock contention issues
-        self._tiger_cache: TigerCache | None = None
-        self._tiger_updater: TigerCacheUpdater | None = None
+        self._tiger_cache: "TigerCache | None" = None
+        self._tiger_updater: "TigerCacheUpdater | None" = None
         if enable_tiger_cache and is_postgresql:
             from nexus.bricks.rebac.cache.tiger import (
                 TigerCache,

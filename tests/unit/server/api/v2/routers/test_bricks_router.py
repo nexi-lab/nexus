@@ -4,8 +4,6 @@ Tests all 4 endpoints using FastAPI TestClient with a mock
 BrickLifecycleManager.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -62,7 +60,6 @@ _admin_result = {"authenticated": True, "is_admin": True, "subject_id": "test-ad
 _test_app.dependency_overrides[require_admin] = lambda: _admin_result
 
 client = TestClient(_test_app)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

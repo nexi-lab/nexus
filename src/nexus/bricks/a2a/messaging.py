@@ -9,8 +9,6 @@ Moved from ``core/`` to ``a2a/`` because this module depends on
 See: Decision 2 / #1587
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field

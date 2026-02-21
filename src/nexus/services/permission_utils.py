@@ -4,8 +4,6 @@ Centralizes permission check logic used by MountCoreService and SyncService
 to prevent code duplication and ensure consistent error handling.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -27,10 +25,10 @@ class PermissionCheckError(Exception):
 
 
 def check_permission(
-    gw: NexusFSGateway,
+    gw: "NexusFSGateway",
     path: str,
     permission: str,
-    context: OperationContext | None,
+    context: "OperationContext | None",
 ) -> bool:
     """Check if user has permission on path.
 

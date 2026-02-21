@@ -11,8 +11,6 @@ are not mutations and have no hook list).
 Issue #1169 / #1519 / #625.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -34,12 +32,12 @@ class CacheInvalidationObserver(Protocol):
     ``on_read()`` is called directly (reads are not mutations).
     """
 
-    def on_mutation(self, event: MutationEvent) -> None: ...
+    def on_mutation(self, event: "MutationEvent") -> None: ...
 
     def on_read(
         self,
         path: str,
-        metadata: FileMetadata | None,
+        metadata: "FileMetadata | None",
         revision: int,
         zone_id: str,
         resource_type: str = "file",
@@ -56,7 +54,7 @@ class ReadSetCacheObserver:
     def __init__(self, read_set_cache: Any) -> None:
         self._cache = read_set_cache
 
-    def on_mutation(self, event: MutationEvent) -> None:
+    def on_mutation(self, event: "MutationEvent") -> None:
         """Handle write/delete/rename via PostMutationHook."""
         from nexus.lib.mutation_hooks import MutationOp
 
@@ -70,7 +68,7 @@ class ReadSetCacheObserver:
     def on_read(
         self,
         path: str,
-        metadata: FileMetadata | None,
+        metadata: "FileMetadata | None",
         revision: int,
         zone_id: str,
         resource_type: str = "file",

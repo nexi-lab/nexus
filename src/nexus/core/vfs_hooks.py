@@ -15,8 +15,6 @@ Lifecycle:
     rename: pre_rename → [kernel: validate → route → metadata.rename] → post_rename
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -25,7 +23,6 @@ from nexus.core.operation_result import OperationWarning
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
     from nexus.core.metadata import FileMetadata
-
 
 # ---------------------------------------------------------------------------
 # Hook context dataclasses — passed through pre/post hook chains
@@ -37,10 +34,10 @@ class ReadHookContext:
     """Context passed through read hooks."""
 
     path: str
-    context: OperationContext | None
+    context: "OperationContext | None"
     zone_id: str | None = None
     agent_id: str | None = None
-    metadata: FileMetadata | None = None
+    metadata: "FileMetadata | None" = None
     content: bytes | None = None
     content_hash: str | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
@@ -53,13 +50,13 @@ class WriteHookContext:
 
     path: str
     content: bytes
-    context: OperationContext | None
+    context: "OperationContext | None"
     zone_id: str | None = None
     agent_id: str | None = None
     is_new_file: bool = False
     content_hash: str | None = None
-    metadata: FileMetadata | None = None
-    old_metadata: FileMetadata | None = None
+    metadata: "FileMetadata | None" = None
+    old_metadata: "FileMetadata | None" = None
     new_version: int = 1
     snapshot_hash: str | None = None
     metadata_snapshot: dict[str, Any] | None = None
@@ -72,10 +69,10 @@ class DeleteHookContext:
     """Context passed through delete hooks."""
 
     path: str
-    context: OperationContext | None
+    context: "OperationContext | None"
     zone_id: str | None = None
     agent_id: str | None = None
-    metadata: FileMetadata | None = None
+    metadata: "FileMetadata | None" = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -86,11 +83,11 @@ class RenameHookContext:
 
     old_path: str
     new_path: str
-    context: OperationContext | None
+    context: "OperationContext | None"
     zone_id: str | None = None
     agent_id: str | None = None
     is_directory: bool = False
-    metadata: FileMetadata | None = None
+    metadata: "FileMetadata | None" = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 

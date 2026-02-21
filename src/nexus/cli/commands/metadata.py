@@ -3,8 +3,6 @@
 Commands for viewing file information, exporting/importing metadata, and calculating sizes.
 """
 
-from __future__ import annotations
-
 import sys
 from typing import Any, cast
 

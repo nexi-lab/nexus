@@ -12,8 +12,6 @@ Algorithm:
         Convergence when ||t(k+1) - t(k)||_1 < epsilon
 """
 
-from __future__ import annotations
-
 import numpy as np
 from scipy import sparse
 

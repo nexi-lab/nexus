@@ -14,8 +14,6 @@ All strategies are explicitly bounded to prevent pathological inputs:
   - Numeric ranges: realistic bounds
 """
 
-from __future__ import annotations
-
 from hypothesis import strategies as st
 
 from nexus.contracts.types import OperationContext

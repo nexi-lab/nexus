@@ -5,8 +5,6 @@ This module contains MCP-related CLI commands for:
 - Starting MCP server with HTTP transport (for web clients)
 """
 
-from __future__ import annotations
-
 import sys
 from typing import TYPE_CHECKING, Any, cast
 
@@ -64,7 +62,7 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
         class APIKeyMiddleware(BaseHTTPMiddleware):
             """Middleware to extract API key from HTTP headers."""
 
-            async def dispatch(self, request: Request, call_next: Any) -> Response:
+            async def dispatch(self, request: "Request", call_next: Any) -> "Response":
                 # Extract API key from header (try both formats)
                 api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get(
                     "x-nexus-api-key"

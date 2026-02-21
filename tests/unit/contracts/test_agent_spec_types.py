@@ -10,8 +10,6 @@ Verifies:
 7. AgentCondition with all fields
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest

@@ -1,7 +1,5 @@
 """Boot Tier 2b (WIRED) — services needing NexusFS reference."""
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Callable
@@ -15,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 def _boot_wired_services(
     nx: Any,
-    kernel_services: KernelServices,
+    kernel_services: "KernelServices",
     system_services: Any,
-    brick_services: BrickServices,
+    brick_services: "BrickServices",
     brick_on: Callable[[str], bool] | None = None,
-) -> WiredServices:
+) -> "WiredServices":
     """Boot Tier 2b (WIRED) — services needing NexusFS reference.
 
     Two-phase init: called AFTER NexusFS construction in ``create_nexus_fs()``.

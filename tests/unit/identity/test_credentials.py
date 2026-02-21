@@ -4,8 +4,6 @@ Pure-function tests using real Ed25519 keys, no DB required.
 Tests all 10 edge cases for credential verification.
 """
 
-from __future__ import annotations
-
 import time
 import types
 

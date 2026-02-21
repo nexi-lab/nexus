@@ -8,8 +8,6 @@ Tests the full flow:
 5. Revoke old key → immediately unusable
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any

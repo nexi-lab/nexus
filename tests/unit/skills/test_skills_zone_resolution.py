@@ -8,8 +8,6 @@ Tests the code paths being modified:
 Uses nexus.bricks.skills submodules directly (canonical location).
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 from nexus.bricks.skills.registry import SkillRegistry

@@ -1,7 +1,5 @@
 """Protocol conformance tests for workflow contracts (Issue #2137)."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.contracts.workflow_types import MetadataStoreProtocol, NexusOperationsProtocol

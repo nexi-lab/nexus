@@ -8,8 +8,6 @@ References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from nexus.constants import ROOT_ZONE_ID
@@ -31,7 +29,7 @@ class ChunkedUploadProtocol(Protocol):
         zone_id: str = ROOT_ZONE_ID,
         user_id: str = "anonymous",
         checksum_algorithm: str | None = None,
-    ) -> UploadSession: ...
+    ) -> "UploadSession": ...
 
     async def receive_chunk(
         self,
@@ -39,9 +37,9 @@ class ChunkedUploadProtocol(Protocol):
         offset: int,
         chunk_data: bytes,
         checksum_header: str | None = None,
-    ) -> UploadSession: ...
+    ) -> "UploadSession": ...
 
-    async def get_upload_status(self, upload_id: str) -> UploadSession: ...
+    async def get_upload_status(self, upload_id: str) -> "UploadSession": ...
 
     async def terminate_upload(self, upload_id: str) -> None: ...
 

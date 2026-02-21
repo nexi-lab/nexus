@@ -5,8 +5,6 @@ resolution, query, create, and delete operations — before the Memory
 service gets moved to the brick structure.
 """
 
-from __future__ import annotations
-
 import importlib
 from types import SimpleNamespace
 

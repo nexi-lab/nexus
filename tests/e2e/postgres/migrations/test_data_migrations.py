@@ -26,8 +26,6 @@ Why migrate_up_to / migrate_down_to (not migrate_up_one / migrate_down_one)?
     expected. Explicit revision targets avoid this ambiguity.
 """
 
-from __future__ import annotations
-
 import uuid
 
 import pytest

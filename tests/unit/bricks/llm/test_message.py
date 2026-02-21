@@ -1,7 +1,5 @@
 """Tests for Message types (src/nexus/llm/message.py)."""
 
-from __future__ import annotations
-
 from nexus.bricks.llm.message import (
     ContentType,
     ImageContent,

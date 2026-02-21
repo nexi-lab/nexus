@@ -4,8 +4,6 @@ Implements lightweight named entity extraction inspired by SimpleMem's
 symbolic layer for improved multi-hop query performance.
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from typing import Literal

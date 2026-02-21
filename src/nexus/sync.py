@@ -4,8 +4,6 @@ Provides efficient sync, copy, and move operations with hash-based
 change detection and progress reporting.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -71,7 +69,7 @@ def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
 
 
 def copy_file(
-    nx: NexusFilesystem,
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     is_source_local: bool,
@@ -165,7 +163,7 @@ def copy_file(
 
 
 def sync_directories(
-    nx: NexusFilesystem,
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     delete: bool = False,
@@ -307,7 +305,7 @@ def sync_directories(
 
 
 def copy_recursive(
-    nx: NexusFilesystem,
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     checksum: bool = True,
@@ -321,7 +319,7 @@ def copy_recursive(
 
 
 def move_file(
-    nx: NexusFilesystem,
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
 ) -> bool:

@@ -19,8 +19,6 @@ Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
     BrickServices   — Tier 2: optional, silent on failure, hot-swappable
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -195,13 +193,13 @@ class SystemServices:
     # =================================================================
 
     # ReBAC permission subsystem — critical (Issue #2133: typed with Protocols)
-    rebac_manager: ReBACBrickProtocol | None = None
+    rebac_manager: "ReBACBrickProtocol | None" = None
     audit_store: Any = None
-    entity_registry: EntityRegistryProtocol | None = None
-    permission_enforcer: PermissionEnforcerProtocol | None = None
+    entity_registry: "EntityRegistryProtocol | None" = None
+    permission_enforcer: "PermissionEnforcerProtocol | None" = None
 
     # Write sync — critical
-    write_observer: WriteObserverProtocol | None = None
+    write_observer: "WriteObserverProtocol | None" = None
 
     # =================================================================
     # Former-kernel DEGRADABLE services (WARNING + None on failure)
@@ -215,7 +213,7 @@ class SystemServices:
     # Workspace subsystem — degradable
     workspace_registry: Any = None
     mount_manager: Any = None
-    workspace_manager: WorkspaceManagerProtocol | None = None
+    workspace_manager: "WorkspaceManagerProtocol | None" = None
 
     # VFS hook pipeline (Issue #2033 Phase 5) — degradable
     hook_pipeline: Any = None
@@ -232,7 +230,7 @@ class SystemServices:
     async_agent_registry: Any = None
 
     # Namespace visibility (Issue #1502)
-    namespace_manager: NamespaceManagerProtocol | None = None
+    namespace_manager: "NamespaceManagerProtocol | None" = None
     async_namespace_manager: Any = None
 
     # Workspace branching (Issue #1315)
@@ -293,7 +291,7 @@ class BrickServices:
     # Infrastructure bricks
     event_bus: Any = None
     lock_manager: Any = None
-    workflow_engine: WorkflowProtocol | None = None
+    workflow_engine: "WorkflowProtocol | None" = None
     rebac_circuit_breaker: Any = None
 
     # Feature bricks

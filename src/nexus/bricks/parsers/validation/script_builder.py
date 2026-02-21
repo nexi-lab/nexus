@@ -5,8 +5,6 @@ output, capturing per-tool exit code, stdout, and stderr. This avoids
 N+1 sandbox exec calls by running everything in one shot.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 

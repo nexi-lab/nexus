@@ -27,8 +27,6 @@ Performance expectations:
 - Cache miss detection: O(1) via Bloom filter
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import os

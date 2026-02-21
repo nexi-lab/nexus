@@ -8,8 +8,6 @@ Scheduling (Decision #15): every 5 minutes OR when 1000 uncovered
 records accumulate, whichever comes first.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -37,7 +35,7 @@ class MerkleCheckpointTask:
     def __init__(
         self,
         *,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         audit_logger: ExchangeAuditLogger,
         interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
         threshold: int = DEFAULT_THRESHOLD,

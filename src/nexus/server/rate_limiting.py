@@ -17,8 +17,6 @@ Environment Variables:
     DRAGONFLY_URL: Alternative Redis URL (Dragonfly-specific)
 """
 
-from __future__ import annotations
-
 import hashlib
 import os
 

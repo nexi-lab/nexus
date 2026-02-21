@@ -6,8 +6,6 @@ Verifies:
 - NexusFS initialization creates the lock manager attribute.
 """
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import pytest

@@ -8,8 +8,6 @@ timing/performance.
 Uses httpx ASGITransport for in-process testing (no subprocess).
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 from pathlib import Path

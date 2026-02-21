@@ -4,8 +4,6 @@ These tests use a real RaftLockManager backed by SQLite (no external
 dependencies) to verify the full lock lifecycle through the REST API.
 """
 
-from __future__ import annotations
-
 import pytest
 from pydantic import ValidationError
 

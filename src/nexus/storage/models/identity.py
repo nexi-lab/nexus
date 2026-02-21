@@ -10,8 +10,6 @@ Private keys are encrypted at rest using Fernet (AES-128 + HMAC-SHA256),
 reusing the existing OAuthCrypto infrastructure.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, LargeBinary, String, Text

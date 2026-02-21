@@ -13,8 +13,6 @@ Tests cover:
 - Concurrent operations through the isolation boundary
 """
 
-from __future__ import annotations
-
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor

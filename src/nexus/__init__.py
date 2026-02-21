@@ -41,8 +41,6 @@ nexus.bricks.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
-from __future__ import annotations
-
 import logging
 import os as _os
 from typing import TYPE_CHECKING, Any, cast
@@ -168,8 +166,8 @@ def __getattr__(name: str) -> Any:
 
 
 def connect(
-    config: str | Path | dict | NexusConfig | None = None,
-) -> NexusFilesystem:
+    config: "str | Path | dict | NexusConfig | None" = None,
+) -> "NexusFilesystem":
     """
     Connect to Nexus filesystem.
 
@@ -471,7 +469,7 @@ def connect(
     return nx_fs
 
 
-def _restore_mounts(nx_fs: NexusFS) -> None:
+def _restore_mounts(nx_fs: "NexusFS") -> None:
     """Restore saved mounts from database at application startup.
 
     This is application-layer I/O that runs after NexusFS construction.

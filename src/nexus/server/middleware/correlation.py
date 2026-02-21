@@ -15,8 +15,6 @@ It is then:
 - Set as the ``X-Request-ID`` response header
 """
 
-from __future__ import annotations
-
 import re
 import time
 import uuid

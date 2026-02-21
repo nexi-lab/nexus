@@ -7,8 +7,6 @@ deprovision_user tears everything down.
 Issue #2033 — Phase 2.2 of LEGO microkernel decomposition.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -81,7 +79,7 @@ class UserProvisioningService:
         zone_name: str | None = None,
         create_api_key: bool = True,
         api_key_name: str | None = None,
-        api_key_expires_at: datetime | None = None,
+        api_key_expires_at: "datetime | None" = None,
         create_agents: bool = True,
         import_skills: bool = True,
         context: OperationContext | None = None,

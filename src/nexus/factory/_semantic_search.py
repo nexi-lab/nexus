@@ -8,8 +8,6 @@ component wiring.
 See also: docs/design/NEXUS-LEGO-ARCHITECTURE.md §2 (Factory Layer).
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -29,10 +27,10 @@ logger = logging.getLogger(__name__)
 class SemanticSearchComponents:
     """All components produced by the semantic search factory."""
 
-    query_service: QueryService | None
-    indexing_service: IndexingService | None
-    pipeline_indexer: PipelineIndexer | None
-    indexing_pipeline: IndexingPipeline | None
+    query_service: "QueryService | None"
+    indexing_service: "IndexingService | None"
+    pipeline_indexer: "PipelineIndexer | None"
+    indexing_pipeline: "IndexingPipeline | None"
 
 
 async def create_semantic_search_components(

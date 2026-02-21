@@ -4,8 +4,6 @@ Verifies that all ``nexus/parsers/*.py`` files have zero runtime imports from
 ``nexus.core``, matching the tier-neutral brick pattern.
 """
 
-from __future__ import annotations
-
 import ast
 import importlib
 from pathlib import Path

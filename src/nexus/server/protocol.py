@@ -10,8 +10,6 @@ Implementation details:
   - rpc_results.py           — response-side result types
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 # Issue #1519, 1A: RPC types live in contracts/rpc_types.py (pure data types).

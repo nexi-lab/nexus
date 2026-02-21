@@ -7,8 +7,6 @@ Wired via ``rpc_server.register_service()`` at server startup.
 Issue #2033 — Phase 2.1 of LEGO microkernel decomposition.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -36,7 +34,7 @@ class AgentRPCService:
         self,
         *,
         vfs: VFSOperations,
-        metastore: MetastoreABC,
+        metastore: "MetastoreABC",
         session_factory: Any,
         record_store: Any | None = None,
         agent_registry: Any | None = None,

@@ -4,8 +4,6 @@ Tests parse_json_metadata() with valid JSON, malformed JSON, None, empty
 strings, and non-dict JSON values.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.governance.json_utils import parse_json_metadata

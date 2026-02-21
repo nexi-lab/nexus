@@ -10,8 +10,6 @@ Comprehensive TDD test suite covering:
 - Error message hardening (no internal leakage)
 """
 
-from __future__ import annotations
-
 import inspect
 import re
 import uuid

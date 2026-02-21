@@ -18,8 +18,6 @@ Example:
     "Call back in 3 days" -> "Call back on 2025-01-13"
 """
 
-from __future__ import annotations
-
 import calendar
 import re
 from abc import ABC, abstractmethod

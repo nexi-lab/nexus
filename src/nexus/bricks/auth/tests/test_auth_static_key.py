@@ -1,7 +1,5 @@
 """Unit tests for static API key authentication provider."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth

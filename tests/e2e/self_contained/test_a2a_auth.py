@@ -7,8 +7,6 @@ LangSmith, etc.) which require auth for all operational endpoints.
 Reference: https://a2a-protocol.org/latest/topics/enterprise-ready/
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest

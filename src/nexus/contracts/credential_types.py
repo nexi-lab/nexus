@@ -15,8 +15,6 @@ References:
     - UCAN Specification: https://ucan.xyz/specification/
 """
 
-from __future__ import annotations
-
 import types
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -53,7 +51,6 @@ VC_TYPES: tuple[str, ...] = (
     "VerifiableCredential",
     "AgentCapabilityCredential",
 )
-
 
 # ---------------------------------------------------------------------------
 # Ability enum
@@ -129,7 +126,7 @@ class Capability:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Capability:
+    def from_dict(cls, data: dict[str, Any]) -> "Capability":
         """Deserialize from a JWT claims dict.
 
         Args:
@@ -149,7 +146,7 @@ class Capability:
             caveats=types.MappingProxyType(caveats) if caveats else types.MappingProxyType({}),
         )
 
-    def is_subset_of(self, parent: Capability) -> bool:
+    def is_subset_of(self, parent: "Capability") -> bool:
         """Check if this capability is a valid attenuation of *parent*.
 
         A capability is a subset if:
@@ -201,7 +198,7 @@ class CredentialClaims:
     issuer_did: str
     subject_did: str
     credential_id: str
-    capabilities: tuple[Capability, ...]
+    capabilities: "tuple[Capability, ...]"
     issued_at: float
     expires_at: float
     parent_credential_id: str | None = None

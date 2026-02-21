@@ -5,8 +5,6 @@ for the ReBAC brick (Issue #2179).  These are pure functions with no
 external dependencies.
 """
 
-from __future__ import annotations
-
 
 def split_path(path: str) -> tuple[str, ...]:
     """Split a virtual path into its component parts.

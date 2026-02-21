@@ -6,8 +6,6 @@ and cache invalidation.
 All async service methods are tested via asyncio.run().
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 

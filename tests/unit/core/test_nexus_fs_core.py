@@ -13,8 +13,6 @@ Strategy: Since NexusFSCoreMixin is a mixin that requires full NexusFS
 For integration tests of actual read/write behavior, see tests/integration/.
 """
 
-from __future__ import annotations
-
 import inspect
 
 import pytest

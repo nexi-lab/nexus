@@ -3,8 +3,6 @@
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 

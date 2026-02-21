@@ -4,8 +4,6 @@ Verifies that the complete NexusFS + factory import chain resolves without
 circular import errors or missing dependencies. Does NOT require a database.
 """
 
-from __future__ import annotations
-
 import importlib
 
 

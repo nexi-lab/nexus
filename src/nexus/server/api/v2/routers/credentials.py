@@ -10,8 +10,6 @@ Provides JWT-VC credential lifecycle endpoints:
 All endpoints require authentication.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any
@@ -25,7 +23,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["credentials"])
-
 
 # =============================================================================
 # Request / Response Models

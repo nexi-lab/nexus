@@ -7,8 +7,6 @@ Thin wrapper around ``nexus.auth.oauth.credential_service.OAuthCredentialService
 Issue #2281 / #8B: Split OAuthService into brick (credential lifecycle) + services (RPC + MCP).
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from collections.abc import Callable
@@ -110,7 +108,7 @@ class OAuthService:
     @rpc_expose(description="List all available OAuth providers")
     async def oauth_list_providers(
         self,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all available OAuth providers from configuration.
 
@@ -172,7 +170,7 @@ class OAuthService:
         state: str | None = None,
         redirect_uri: str | None = None,
         code_verifier: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Exchange OAuth authorization code for tokens and store credentials.
 
@@ -216,7 +214,7 @@ class OAuthService:
         self,
         provider: str | None = None,
         include_revoked: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all OAuth credentials for the current user.
 
@@ -237,7 +235,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Revoke an OAuth credential.
 
@@ -258,7 +256,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Test if an OAuth credential is valid and can be refreshed.
 
@@ -283,7 +281,7 @@ class OAuthService:
         self,
         provider: str,
         redirect_url: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Connect to an MCP provider using Klavis hosted OAuth.
 
@@ -700,7 +698,7 @@ class OAuthService:
         provider: str,
         user_email: str,
         zone_id: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         *,
         action: str = "access",
     ) -> None:

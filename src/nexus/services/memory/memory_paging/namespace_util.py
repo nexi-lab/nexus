@@ -1,7 +1,5 @@
 """Shared utility for tier namespace manipulation."""
 
-from __future__ import annotations
-
 # Tier namespace prefixes to strip when moving memories between tiers
 _TIER_PREFIXES = ("recall/", "archival/")
 

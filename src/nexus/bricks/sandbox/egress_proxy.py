@@ -15,8 +15,6 @@ so it can route traffic out while agents cannot bypass the proxy.
 Issue #1000: Enhance agent sandboxing with network isolation.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import re

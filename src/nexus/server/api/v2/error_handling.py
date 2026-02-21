@@ -6,8 +6,6 @@ well-known exception types to HTTP status codes.
 Issue #995: API versioning strategy — code quality improvements.
 """
 
-from __future__ import annotations
-
 import functools
 import logging
 from collections.abc import Callable

@@ -5,8 +5,6 @@ Full 18-test matrix covering operations, satisfied, TTL, edge cases,
 and integration with BrickReconciler.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 

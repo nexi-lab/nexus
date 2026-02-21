@@ -7,8 +7,6 @@ Architecture: System Service (server-layer), wired into _brick_sources
 via factory function. Receives MetastoreABC via dependency injection.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime

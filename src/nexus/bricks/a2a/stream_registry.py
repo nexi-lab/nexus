@@ -7,8 +7,6 @@ Extracted from ``TaskManager`` following the Single Responsibility
 Principle (mirrors the HeartbeatBuffer extraction pattern).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from contextlib import suppress as _suppress

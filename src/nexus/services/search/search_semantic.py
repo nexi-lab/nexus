@@ -9,8 +9,6 @@ Provides all semantic search functionality:
 - Initialization of embedding providers
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from typing import TYPE_CHECKING, Any
@@ -69,10 +67,10 @@ class SemanticSearchMixin:
             )
 
     # Type hints for attributes provided by SearchService.__init__
-    _query_service: QueryService | None
-    _indexing_service: IndexingService | None
+    _query_service: "QueryService | None"
+    _indexing_service: "IndexingService | None"
     _indexing_pipeline: Any  # IndexingPipeline | None
-    _pipeline_indexer: PipelineIndexer | None
+    _pipeline_indexer: "PipelineIndexer | None"
     _record_store: Any
     _gw_session_factory: Any
     _gw_backend: Any

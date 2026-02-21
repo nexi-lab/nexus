@@ -7,8 +7,6 @@ No imports from nexus.core, nexus.storage, or nexus.server.
 ``nexus.contracts.workflow_types`` (tier-neutral).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 

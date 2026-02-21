@@ -3,8 +3,6 @@
 Issue #1246 Phase 4: Extracted from monolithic models.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -73,7 +71,7 @@ class FilePathModel(Base):
     posix_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Relationships
-    metadata_entries: Mapped[list[FileMetadataModel]] = relationship(
+    metadata_entries: "Mapped[list[FileMetadataModel]]" = relationship(
         "FileMetadataModel", back_populates="file_path", cascade="all, delete-orphan"
     )
 

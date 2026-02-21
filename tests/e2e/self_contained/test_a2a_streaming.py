@@ -9,8 +9,6 @@ Error cases use regular client.post() since errors return JSON responses
 (not SSE streams).
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from typing import Any

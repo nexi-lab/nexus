@@ -1,7 +1,5 @@
 """Cache management commands - warmup, stats, clear (Issue #1076)."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 

@@ -11,8 +11,6 @@ The tests are marked with @pytest.mark.docker so they can be skipped in CI
 environments without Docker.
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 

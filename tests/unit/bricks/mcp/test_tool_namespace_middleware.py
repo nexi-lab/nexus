@@ -8,8 +8,6 @@ Tests cover:
 - Edge cases (no subject, disabled middleware, empty grants)
 """
 
-from __future__ import annotations
-
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass

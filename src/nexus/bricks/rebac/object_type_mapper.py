@@ -4,8 +4,6 @@ Maps backend paths to ReBAC object types and IDs, decoupling
 permission logic from the storage Backend interface.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -22,7 +20,7 @@ class ObjectTypeMapper:
     the Backend ABC focused on storage operations.
     """
 
-    def get_object_type(self, backend: Backend, backend_path: str) -> str:
+    def get_object_type(self, backend: "Backend", backend_path: str) -> str:
         """Get ReBAC object type for a backend path.
 
         Delegates to backend.get_object_type() which defaults to 'file'.
@@ -46,7 +44,7 @@ class ObjectTypeMapper:
 
     def get_object_id(
         self,
-        backend: Backend,
+        backend: "Backend",
         backend_path: str,
         virtual_path: str,
         object_type: str,

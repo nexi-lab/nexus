@@ -19,8 +19,6 @@ Usage::
     tagged = wrap_untrusted_data(file_content, "FILE_CONTENT")
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -205,7 +203,7 @@ def wrap_untrusted_data(text: str, label: str = "USER_DATA") -> str:
 
 def enforce_injection_policy(
     text: str,
-    policy: InjectionPolicyConfig | None = None,
+    policy: "InjectionPolicyConfig | None" = None,
 ) -> tuple[bool, list[tuple[str, str]]]:
     """Apply configurable enforcement against detected injection patterns.
 
@@ -258,7 +256,7 @@ def enforce_injection_policy(
     return allowed, detections
 
 
-def _get_action_for_severity(policy: InjectionPolicyConfig, severity: str) -> InjectionAction:
+def _get_action_for_severity(policy: "InjectionPolicyConfig", severity: str) -> "InjectionAction":
     """Get the configured action for a given severity level."""
     severity_map = {
         "high": policy.high_severity_action,

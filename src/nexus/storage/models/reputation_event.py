@@ -10,8 +10,6 @@ Design decisions:
 - 4 strategic indexes for common query patterns.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Float, Index, String

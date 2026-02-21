@@ -3,8 +3,6 @@
 Provides LangGraph tool integration utilities.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 BRICK_NAME = "tools"

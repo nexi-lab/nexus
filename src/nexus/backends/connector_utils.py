@@ -3,8 +3,6 @@
 Extracted from Backend ABC to decouple OAuth/database concerns from storage.
 """
 
-from __future__ import annotations
-
 import os
 
 

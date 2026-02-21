@@ -4,8 +4,6 @@ Extracted from server.auth.database_key to allow services layer
 to manage API keys without importing from the server layer.
 """
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import logging
@@ -55,7 +53,7 @@ def validate_key_format(key: str) -> bool:
 
 
 def create_api_key(
-    session: Session,
+    session: "Session",
     user_id: str,
     name: str,
     subject_type: str = "user",
@@ -115,7 +113,7 @@ def create_api_key(
     return (api_key.key_id, raw_key)
 
 
-def revoke_api_key(session: Session, key_id: str) -> bool:
+def revoke_api_key(session: "Session", key_id: str) -> bool:
     """Revoke an API key by key_id.
 
     Args:

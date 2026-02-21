@@ -3,8 +3,6 @@
 Issue #997: Response models for the secrets audit log endpoints.
 """
 
-from __future__ import annotations
-
 from nexus.server.api.v2.models.base import ApiModel
 
 

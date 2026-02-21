@@ -4,8 +4,6 @@ Issue #643: Services are now created by factory._boot_wired_services(),
 not by NexusFS.__init__. Tests use create_nexus_fs() factory entry point.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

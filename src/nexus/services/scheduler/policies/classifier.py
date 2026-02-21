@@ -17,8 +17,6 @@ SchedulerService and InMemoryScheduler (DRY).
 parsing of AgentRequest.priority and AgentRequest.request_state.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from nexus.services.scheduler.constants import (
@@ -65,7 +63,7 @@ def classify_request(
 
 
 def parse_request_enums(
-    request: AgentRequest,
+    request: "AgentRequest",
 ) -> tuple[PriorityTier, RequestState]:
     """Parse AgentRequest.priority and .request_state into typed enums.
 
@@ -86,7 +84,7 @@ def parse_request_enums(
     return tier, req_state
 
 
-def classify_agent_request(request: AgentRequest) -> str:
+def classify_agent_request(request: "AgentRequest") -> str:
     """Classify an AgentRequest into a PriorityClass string.
 
     Single source of truth for AgentRequest → PriorityClass conversion.

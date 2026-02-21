@@ -17,8 +17,6 @@ No WAL or crash recovery needed because:
 - Worst case: file exists but can't be shared until reconciliation
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -44,8 +42,8 @@ class DeferredPermissionBuffer:
 
     def __init__(
         self,
-        rebac_manager: ReBACManager | None = None,
-        hierarchy_manager: HierarchyManager | None = None,
+        rebac_manager: "ReBACManager | None" = None,
+        hierarchy_manager: "HierarchyManager | None" = None,
         flush_interval_sec: float = 0.1,  # 100ms default
         max_batch_size: int = 1000,
     ):

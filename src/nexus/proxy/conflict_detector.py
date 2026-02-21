@@ -6,8 +6,6 @@ whether operations conflict and how to resolve them using LWW (last-writer-wins)
 Issue #1707: Edge split-brain resilience.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from enum import Enum

@@ -13,8 +13,6 @@ Tests the full server-level flow for JWT-VC credential lifecycle:
 Run: pytest tests/e2e/server/test_credentials_e2e.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 import uuid

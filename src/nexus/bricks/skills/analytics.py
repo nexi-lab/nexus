@@ -1,7 +1,5 @@
 """Skill analytics and usage tracking."""
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -144,7 +142,7 @@ class SkillAnalyticsTracker:
         >>> print(f"Total skills: {metrics.total_skills}")
     """
 
-    def __init__(self, cache_store: CacheStoreABC | None = None) -> None:
+    def __init__(self, cache_store: "CacheStoreABC | None" = None) -> None:
         """Initialize analytics tracker.
 
         Args:

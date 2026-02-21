@@ -10,8 +10,6 @@ Covers:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

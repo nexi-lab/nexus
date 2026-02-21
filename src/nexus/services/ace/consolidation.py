@@ -11,8 +11,6 @@ Reference: SimpleMem: Efficient Lifelong Memory for LLM Agents
 https://arxiv.org/html/2601.02553
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -434,7 +432,7 @@ Provide only the consolidated summary, no additional commentary.
     async def consolidate_by_affinity_async(
         self,
         memory_ids: list[str] | None = None,
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
         beta: float = 0.7,
         lambda_decay: float = 0.1,
         affinity_threshold: float = 0.85,
@@ -713,7 +711,7 @@ Provide only the consolidated summary, no additional commentary.
     async def _ensure_embeddings(
         self,
         memory_vectors: list[MemoryVector],
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
     ) -> tuple[list[MemoryVector], list[str]]:
         """Ensure all memory vectors have embeddings.
 
@@ -794,7 +792,7 @@ Provide only the consolidated summary, no additional commentary.
     def sync_consolidate_by_affinity(
         self,
         memory_ids: list[str] | None = None,
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
         beta: float = 0.7,
         lambda_decay: float = 0.1,
         affinity_threshold: float = 0.85,

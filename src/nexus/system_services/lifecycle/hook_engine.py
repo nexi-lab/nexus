@@ -25,8 +25,6 @@ References:
     - Issue #2064: Mutating/validating phases with failure policies
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import uuid
@@ -98,7 +96,6 @@ def _effective_phase_type(entry: _ScopedEntry) -> HookPhaseType:
 
 _PROCEED = HookResult(proceed=True, modified_context=None, error=None)
 
-
 # ---------------------------------------------------------------------------
 # ScopedHookEngine
 # ---------------------------------------------------------------------------
@@ -125,7 +122,7 @@ class ScopedHookEngine:
 
     def __init__(
         self,
-        inner: AsyncHookEngine,
+        inner: "AsyncHookEngine",
         *,
         default_timeout_ms: int = 5000,
     ) -> None:

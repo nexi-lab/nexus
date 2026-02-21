@@ -3,8 +3,6 @@
 Issue: #1727, LEGO §8: Filesystem-as-IPC.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING
@@ -19,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_ipc(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start IPC background tasks (TTLSweeper).
 
     Reads ``ipc_storage_driver`` and ``ipc_provisioner`` from
@@ -69,7 +67,7 @@ async def startup_ipc(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]
     return bg_tasks
 
 
-async def shutdown_ipc(app: FastAPI, svc: LifespanServices) -> None:
+async def shutdown_ipc(app: "FastAPI", svc: "LifespanServices") -> None:
     """Stop IPC background tasks."""
     sweeper = app.state.ipc_sweeper
     if sweeper is not None and hasattr(sweeper, "stop"):

@@ -4,8 +4,6 @@ Verifies that each A2AError subclass has a consistent grpc_status
 attribute mapped to the expected gRPC status code.
 """
 
-from __future__ import annotations
-
 import grpc
 import pytest
 

@@ -1,7 +1,5 @@
 """Unit tests for AuthService (Decision #7)."""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

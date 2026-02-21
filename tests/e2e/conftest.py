@@ -11,8 +11,6 @@ Provides fixtures for:
 Merged from tests/integration/conftest.py and tests/e2e/conftest.py.
 """
 
-from __future__ import annotations
-
 import gc
 import os
 import signal
@@ -54,7 +52,7 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
+def _drain_pipe(pipe, lines: list[str], ready: "threading.Event | None" = None):
     """Read lines from a subprocess pipe (runs in daemon thread).
 
     If *ready* is provided and a line contains "Application startup complete",

@@ -5,8 +5,6 @@ Mock repository verifies that service delegates correctly and manages
 caching, rate limits, and evaluation independently.
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 from unittest.mock import AsyncMock
 

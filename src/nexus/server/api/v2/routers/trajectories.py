@@ -8,8 +8,6 @@ Provides 5 endpoints for trajectory tracking:
 - GET  /api/v2/trajectories/{id}         - Get trajectory
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -27,7 +25,6 @@ from nexus.server.api.v2.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/trajectories", tags=["trajectories"])
-
 
 # =============================================================================
 # Endpoints

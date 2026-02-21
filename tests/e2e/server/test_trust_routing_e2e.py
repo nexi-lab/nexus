@@ -8,8 +8,6 @@ Full integration test with real services (SQLite in-memory):
 5. Query reputation again — verify score updated
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.rebac.entity_registry import EntityRegistry

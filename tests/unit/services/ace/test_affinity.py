@@ -5,8 +5,6 @@ compute_affinity, compute_affinity_matrix, AffinityConfig validation,
 and cluster_by_affinity.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 
 import numpy as np

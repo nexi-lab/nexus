@@ -14,8 +14,6 @@ References:
     - Issue #1273: Agent namespace forking for speculative execution
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -45,20 +43,20 @@ class AgentNamespaceForkProtocol(Protocol):
         zone_id: str | None = None,
         *,
         parent_fork_id: str | None = None,
-        mode: ForkMode = ...,
-    ) -> NamespaceForkInfo: ...
+        mode: "ForkMode" = ...,
+    ) -> "NamespaceForkInfo": ...
 
     def merge(
         self,
         fork_id: str,
         *,
         strategy: str = "fail",
-    ) -> NamespaceMergeResult: ...
+    ) -> "NamespaceMergeResult": ...
 
     def discard(self, fork_id: str) -> None: ...
 
-    def get_fork_info(self, fork_id: str) -> NamespaceForkInfo: ...
+    def get_fork_info(self, fork_id: str) -> "NamespaceForkInfo": ...
 
-    def list_forks(self, agent_id: str | None = None) -> list[NamespaceForkInfo]: ...
+    def list_forks(self, agent_id: str | None = None) -> "list[NamespaceForkInfo]": ...
 
     def cleanup_expired(self) -> int: ...

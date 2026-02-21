@@ -7,8 +7,6 @@ and MessageProcessor.
 Issue: #1747 (LEGO 17.7)
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
@@ -26,7 +24,7 @@ class NatsHotPathAdapter:
         nc: A connected NATS client (shared/multiplexed).
     """
 
-    def __init__(self, nc: NatsClient) -> None:
+    def __init__(self, nc: "NatsClient") -> None:
         self._nc = nc
 
     async def publish(self, subject: str, data: bytes) -> None:

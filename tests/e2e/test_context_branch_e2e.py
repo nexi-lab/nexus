@@ -9,8 +9,6 @@ with real SQLite DB and CAS backend. Validates:
 - Code review fixes (C1, C2, C3, H1-H6)
 """
 
-from __future__ import annotations
-
 import hashlib
 from datetime import UTC, datetime
 from types import SimpleNamespace

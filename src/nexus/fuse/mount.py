@@ -6,8 +6,6 @@ FUSE filesystem, including mount mode management and lifecycle control.
 Issue #1076: Added automatic cache warmup on mount for faster first access.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -57,7 +55,7 @@ class NexusFUSE:
 
     def __init__(
         self,
-        nexus_fs: NexusFilesystem,
+        nexus_fs: "NexusFilesystem",
         mount_point: str,
         mode: MountMode = MountMode.SMART,
         cache_config: dict[str, int | bool] | None = None,
@@ -400,7 +398,7 @@ class NexusFUSE:
         if self._mount_thread and self._mount_thread.is_alive():
             self._mount_thread.join()
 
-    def __enter__(self) -> NexusFUSE:
+    def __enter__(self) -> "NexusFUSE":
         """Context manager entry."""
         return self
 
@@ -414,7 +412,7 @@ class NexusFUSE:
 
 
 def mount_nexus(
-    nexus_fs: NexusFilesystem,
+    nexus_fs: "NexusFilesystem",
     mount_point: str,
     mode: str = "smart",
     foreground: bool = True,
@@ -428,7 +426,7 @@ def mount_nexus(
     owner_id: str | None = None,
     zone_id: str | None = None,
     use_rust: bool = False,
-) -> NexusFUSE:
+) -> "NexusFUSE":
     """Convenience function to mount Nexus filesystem.
 
     Args:

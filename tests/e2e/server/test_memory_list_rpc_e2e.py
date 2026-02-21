@@ -7,8 +7,6 @@ Uses Starlette TestClient with real NexusFS + SQLAlchemy metadata store
 (no Rust/Raft dependency, no async fixtures needed).
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from pathlib import Path

@@ -4,8 +4,6 @@ Tests prompt building, response parsing, fallback reflection logic,
 and the reflect_async orchestration with mocked LLM and trajectory dependencies.
 """
 
-from __future__ import annotations
-
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock

@@ -1,7 +1,5 @@
 """Tests for health probe endpoints (#2168)."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 from fastapi import FastAPI

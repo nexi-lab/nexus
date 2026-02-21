@@ -8,8 +8,6 @@ requiring a full database. For real E2E tests with database failure
 injection, see the E2E validation step in the plan.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 

@@ -8,8 +8,6 @@ Endpoints:
     GET  /api/v2/connectors/{name}/capabilities — Get capabilities for a connector
 """
 
-from __future__ import annotations
-
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -18,7 +16,6 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/connectors", tags=["connectors"])
-
 
 # ---------------------------------------------------------------------------
 # Response models

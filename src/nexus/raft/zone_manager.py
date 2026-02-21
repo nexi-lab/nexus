@@ -14,8 +14,6 @@ Each zone is an independent Raft group with its own redb database.
 All zones share one gRPC port (zone_id routing in transport layer).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -98,7 +96,7 @@ class ZoneManager:
         self,
         root_zone_id: str = ROOT_ZONE_ID,
         peers: list[str] | None = None,
-    ) -> RaftMetadataStore:
+    ) -> "RaftMetadataStore":
         """Bootstrap this node's root zone Raft group.
 
         Creates the Raft group with ConfState (standard raft-rs bootstrap).
@@ -142,7 +140,7 @@ class ZoneManager:
         self,
         zone_id: str,
         peers: list[str] | None = None,
-    ) -> RaftMetadataStore:
+    ) -> "RaftMetadataStore":
         """Create a new zone and return its RaftMetadataStore.
 
         Only creates the Raft group + redb database. Does NOT create a
@@ -174,7 +172,7 @@ class ZoneManager:
         self,
         zone_id: str,
         peers: list[str] | None = None,
-    ) -> RaftMetadataStore:
+    ) -> "RaftMetadataStore":
         """Join an existing zone as a new Voter.
 
         Creates a local ZoneConsensus node without bootstrapping ConfState.
@@ -201,7 +199,7 @@ class ZoneManager:
         )
         return store
 
-    def get_store(self, zone_id: str) -> RaftMetadataStore | None:
+    def get_store(self, zone_id: str) -> "RaftMetadataStore | None":
         """Get the RaftMetadataStore for a zone.
 
         Returns None if the zone doesn't exist.
@@ -394,7 +392,7 @@ class ZoneManager:
     # =========================================================================
 
     @staticmethod
-    def _increment_links(store: RaftMetadataStore, zone_id: str) -> int:
+    def _increment_links(store: "RaftMetadataStore", zone_id: str) -> int:
         """Increment a zone's i_links_count on its root "/" entry.
 
         Returns the new count.
@@ -421,7 +419,7 @@ class ZoneManager:
         return new_count
 
     @staticmethod
-    def _decrement_links(store: RaftMetadataStore) -> int:
+    def _decrement_links(store: "RaftMetadataStore") -> int:
         """Decrement a zone's i_links_count on its root "/" entry.
 
         Returns the new count. Never goes below 0.
@@ -678,7 +676,7 @@ class ZoneManager:
         return True
 
     @staticmethod
-    def _is_zone_leader(store: RaftMetadataStore) -> bool:
+    def _is_zone_leader(store: "RaftMetadataStore") -> bool:
         """Check if this node is the Raft leader for the given zone's store."""
         try:
             engine = store._engine  # noqa: SLF001

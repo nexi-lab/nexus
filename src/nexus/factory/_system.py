@@ -14,8 +14,6 @@ Two severity classes:
     original system services (agent registry, namespace, etc.).
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Callable

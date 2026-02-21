@@ -8,8 +8,6 @@ Issue #1355: Created for AgentKeyService, available for future services.
 Issue #2131: Added ``commit`` parameter for read-only operations.
 """
 
-from __future__ import annotations
-
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -24,10 +22,10 @@ class SessionMixin:
     Subclasses must set ``self._session_factory`` to a ``sessionmaker`` instance.
     """
 
-    _session_factory: sessionmaker[Session]
+    _session_factory: "sessionmaker[Session]"
 
     @contextmanager
-    def _get_session(self, *, commit: bool = True) -> Generator[Session, None, None]:
+    def _get_session(self, *, commit: bool = True) -> "Generator[Session, None, None]":
         """Create a session with auto-commit/rollback/close.
 
         Args:

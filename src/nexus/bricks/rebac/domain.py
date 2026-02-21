@@ -29,8 +29,6 @@ Example:
     )  # Returns True (alice is member of eng_team, which owns file)
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -136,7 +134,7 @@ class ReBACTuple:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ReBACTuple:
+    def from_dict(cls, data: dict[str, Any]) -> "ReBACTuple":
         """Create tuple from dictionary."""
         return cls(
             tuple_id=data["tuple_id"],
@@ -372,7 +370,7 @@ class NamespaceConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> NamespaceConfig:
+    def from_dict(cls, data: dict[str, Any]) -> "NamespaceConfig":
         """Create from dictionary."""
         return cls(
             namespace_id=data["namespace_id"],
@@ -437,7 +435,7 @@ class CheckCacheEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CheckCacheEntry:
+    def from_dict(cls, data: dict[str, Any]) -> "CheckCacheEntry":
         """Create from dictionary."""
         return cls(
             cache_id=data["cache_id"],
@@ -498,7 +496,7 @@ class ChangelogEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ChangelogEntry:
+    def from_dict(cls, data: dict[str, Any]) -> "ChangelogEntry":
         """Create from dictionary."""
         return cls(
             change_id=data["change_id"],

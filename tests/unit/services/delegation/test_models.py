@@ -4,8 +4,6 @@ Tests DelegationMode, DelegationStatus, DelegationScope, DelegationRecord,
 and DelegationResult frozen dataclasses.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from datetime import UTC, datetime
 from decimal import Decimal

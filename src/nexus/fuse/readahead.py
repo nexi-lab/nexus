@@ -32,8 +32,6 @@ References:
 - GeeseFS: https://github.com/yandex-cloud/geesefs
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import threading
@@ -100,7 +98,7 @@ class ReadaheadConfig:
     prefetch_on_open: bool = DEFAULT_PREFETCH_ON_OPEN  # Start prefetching on file open
 
     @classmethod
-    def from_io_profile(cls, profile: IOProfile) -> ReadaheadConfig:
+    def from_io_profile(cls, profile: "IOProfile") -> "ReadaheadConfig":
         """Create ReadaheadConfig from an IOProfile (Issue #1413).
 
         Args:
@@ -119,7 +117,7 @@ class ReadaheadConfig:
         )
 
     @classmethod
-    def from_dict(cls, config: dict[str, Any]) -> ReadaheadConfig:
+    def from_dict(cls, config: dict[str, Any]) -> "ReadaheadConfig":
         """Create config from dictionary."""
         return cls(
             enabled=config.get("readahead_enabled", True),
@@ -574,9 +572,9 @@ class ReadaheadManager:
 
     def __init__(
         self,
-        config: ReadaheadConfig,
+        config: "ReadaheadConfig",
         read_func: Callable[[str, int, int], bytes],
-        local_disk_cache: LocalDiskCache | None = None,
+        local_disk_cache: "LocalDiskCache | None" = None,
         content_hash_func: Callable[[str], str | None] | None = None,
         zone_id: str | None = None,
     ):
@@ -635,7 +633,7 @@ class ReadaheadManager:
         fh: int,
         path: str,
         file_size: int | None = None,
-        io_profile: IOProfile | None = None,
+        io_profile: "IOProfile | None" = None,
     ) -> None:
         """Called when a file is opened.
 
@@ -838,7 +836,7 @@ class ReadaheadManager:
         self,
         fh: int,
         path: str,
-        io_profile: IOProfile | None = None,
+        io_profile: "IOProfile | None" = None,
     ) -> ReadSession:
         """Get or create a read session for a file handle.
 

@@ -8,8 +8,6 @@ Tables:
     spending_approvals — approval workflow records (Phase 2)
 """
 
-from __future__ import annotations
-
 from datetime import UTC, date, datetime
 
 from sqlalchemy import (

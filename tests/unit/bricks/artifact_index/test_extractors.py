@@ -1,7 +1,5 @@
 """Tests for artifact content extraction (~15 edge cases)."""
 
-from __future__ import annotations
-
 import json
 
 from nexus.bricks.artifact_index.extractors import extract_content

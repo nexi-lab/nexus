@@ -4,8 +4,6 @@ Validates that hooks registered on the pipeline are actually invoked
 during NexusFS read/write/rename operations.
 """
 
-from __future__ import annotations
-
 from nexus.core.vfs_hooks import (
     DeleteHookContext,
     ReadHookContext,

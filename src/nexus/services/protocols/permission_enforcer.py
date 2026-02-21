@@ -9,8 +9,6 @@ References:
     - Issue #2359: Moved from core/protocols/ to services/protocols/ (service tier)
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -28,26 +26,26 @@ class PermissionEnforcerProtocol(Protocol):
     def check(
         self,
         path: str,
-        permission: Permission,
-        context: OperationContext,
+        permission: "Permission",
+        context: "OperationContext",
     ) -> bool: ...
 
     def filter_list(
         self,
         paths: list[str],
-        context: OperationContext,
+        context: "OperationContext",
     ) -> list[str]: ...
 
     def has_accessible_descendants(
         self,
         prefix: str,
-        context: OperationContext,
+        context: "OperationContext",
     ) -> bool: ...
 
     def has_accessible_descendants_batch(
         self,
         prefixes: list[str],
-        context: OperationContext,
+        context: "OperationContext",
     ) -> dict[str, bool]: ...
 
     def invalidate_cache(

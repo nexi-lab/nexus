@@ -4,8 +4,6 @@ Tests the _get_cross_zone_shared_paths() method on SearchService which queries
 rebac_tuples for files shared across zone boundaries.
 """
 
-from __future__ import annotations
-
 import sqlite3
 import tempfile
 from collections.abc import Generator

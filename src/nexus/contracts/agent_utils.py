@@ -5,8 +5,6 @@ core/ -> services/ import dependency. These are stateless functions
 with no service-layer dependencies.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 

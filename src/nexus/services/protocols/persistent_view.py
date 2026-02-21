@@ -1,8 +1,12 @@
 """Persistent namespace view protocol and data model (Issue #1265).
 
-Defines the PersistentViewStore protocol for L3 cache — persists constructed
-namespace views for instant restoration on agent reconnection. Sits between
-in-memory mount table (L2) and full ReBAC rebuild.
+Service-level Protocol (Tier 1) — defines the PersistentViewStore protocol
+for L3 cache. Persists constructed namespace views for instant restoration
+on agent reconnection. Sits between in-memory mount table (L2) and full
+ReBAC rebuild.
+
+Moved from nexus.core (#2127) per NEXUS-LEGO-ARCHITECTURE: L3 cache is a
+service-level concern, not a kernel mechanism.
 
 Inspired by Twizzler OS's persistent FOT views (ATC 2020).
 
@@ -23,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,7 @@ class PersistentView:
     created_at: datetime
 
 
+@runtime_checkable
 class PersistentViewStore(Protocol):
     """Protocol for persistent namespace view storage (L3 cache).
 

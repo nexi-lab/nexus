@@ -431,6 +431,19 @@ class NexusFS(  # type: ignore[misc]
         return getattr(self, "_rebac_manager", None)
 
     @property
+    def record_store(self) -> Any | None:
+        """Public accessor for the RecordStore pillar (#2138)."""
+        return self._record_store
+
+    @property
+    def llm_provider(self) -> Any | None:
+        """Public accessor for the LLM provider (#2138).
+
+        Set dynamically by server lifespan; may be None if no LLM configured.
+        """
+        return getattr(self, "_llm_provider", None)
+
+    @property
     def semantic_search_engine(self) -> Any | None:
         """Public accessor for the semantic search engine instance."""
         return self._semantic_search

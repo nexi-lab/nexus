@@ -194,7 +194,7 @@ class TestBootSystemServices:
 
         ctx = _make_mock_ctx()
         with patch(
-            "nexus.bricks.rebac.manager.EnhancedReBACManager",
+            "nexus.bricks.rebac.manager.ReBACManager",
             side_effect=RuntimeError("db connection failed"),
         ):
             with pytest.raises(BootError) as exc_info:
@@ -532,7 +532,7 @@ class TestCreateNexusServicesIntegration:
 
         with (
             patch(
-                "nexus.bricks.rebac.manager.EnhancedReBACManager",
+                "nexus.bricks.rebac.manager.ReBACManager",
                 side_effect=RuntimeError("fatal"),
             ),
             pytest.raises(BootError),

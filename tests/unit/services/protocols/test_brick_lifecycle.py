@@ -36,13 +36,13 @@ from nexus.services.protocols.brick_lifecycle import (
 
 
 class TestBrickState:
-    """Verify BrickState is a proper StrEnum with 5 lifecycle states + FAILED."""
+    """Verify BrickState is a proper StrEnum with 6 lifecycle states + FAILED."""
 
     def test_is_enum(self) -> None:
         assert issubclass(BrickState, Enum)
 
-    def test_has_five_lifecycle_states(self) -> None:
-        expected = {"REGISTERED", "STARTING", "ACTIVE", "STOPPING", "UNREGISTERED"}
+    def test_has_six_lifecycle_states(self) -> None:
+        expected = {"REGISTERED", "STARTING", "ACTIVE", "STOPPING", "UNMOUNTED", "UNREGISTERED"}
         actual = {s.name for s in BrickState if s.name != "FAILED"}
         assert expected == actual
 
@@ -61,7 +61,8 @@ class TestBrickState:
         assert names.index("REGISTERED") < names.index("STARTING")
         assert names.index("STARTING") < names.index("ACTIVE")
         assert names.index("ACTIVE") < names.index("STOPPING")
-        assert names.index("STOPPING") < names.index("UNREGISTERED")
+        assert names.index("STOPPING") < names.index("UNMOUNTED")
+        assert names.index("UNMOUNTED") < names.index("UNREGISTERED")
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,7 @@ class TestBrickStatus:
             "error",
             "started_at",
             "stopped_at",
+            "unmounted_at",
         }
 
     def test_defaults(self) -> None:
@@ -104,6 +106,7 @@ class TestBrickStatus:
         assert status.error is None
         assert status.started_at is None
         assert status.stopped_at is None
+        assert status.unmounted_at is None
 
     def test_with_error(self) -> None:
         status = BrickStatus(

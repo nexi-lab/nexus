@@ -20,7 +20,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from nexus.cache.base import EmbeddingCacheProtocol
+    from nexus.core.protocols.caching import EmbeddingCacheProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -485,10 +485,9 @@ class CachedEmbeddingProvider(EmbeddingProvider):
     - Content-hash based caching (same text = same embedding)
     - Batch deduplication (dedupe before API call)
 
-    Usage:
-        from nexus.cache import CacheFactory, CacheSettings
+    Usage::
 
-        # Initialize cache
+        # Initialize cache (CacheFactory from nexus.bricks.cache)
         settings = CacheSettings.from_env()
         factory = CacheFactory(settings)
         await factory.initialize()
@@ -717,8 +716,8 @@ async def create_cached_embedding_provider(
 
     # Try to create cached provider via CacheStoreABC
     try:
-        from nexus.cache.domain import EmbeddingCache
-        from nexus.cache.dragonfly import DragonflyCacheStore, DragonflyClient
+        from nexus.bricks.cache.domain import EmbeddingCache
+        from nexus.bricks.cache.dragonfly import DragonflyCacheStore, DragonflyClient
 
         # Connect to cache
         client = DragonflyClient(url=cache_url)

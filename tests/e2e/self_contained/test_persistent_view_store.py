@@ -11,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.models import Base
+from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ---------------------------------------------------------------------------

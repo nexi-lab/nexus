@@ -56,11 +56,15 @@ CROSS_BRICK_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+nexus\.bricks\.(\w+)"
 # DI refactoring to fix properly. Each entry maps (source_brick, target_brick)
 # to a list of importing modules. Remove entries as fixes land.
 # TODO(#2286): Fix memory->search via DI refactoring.
+# TODO(#2364): Fix search->cache via DI refactoring for EmbeddingCache/Dragonfly.
 KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("memory", "search"): [
         "nexus.bricks.memory.enrichment",
         "nexus.bricks.memory.memory_with_paging",
         "nexus.bricks.memory.service",
+    ],
+    ("search", "cache"): [
+        "nexus.bricks.search.embeddings",
     ],
 }
 

@@ -36,9 +36,19 @@ class DelegatingBackend(Backend):
     Delegates every Backend property and method to ``_inner`` by default.
     Concrete wrappers override only the operations they intercept.
 
-    Data-transforming wrappers (compression, encryption) override
-    ``_transform_on_write`` and ``_transform_on_read`` instead of
-    ``write_content`` / ``read_content`` / ``batch_read_content``.
+    Wrapper Patterns:
+
+        **Data-transform wrappers** (CompressedStorage, EncryptedStorage):
+        Override ``_transform_on_write`` and ``_transform_on_read`` hooks.
+        DelegatingBackend handles write_content/read_content/batch_read_content
+        orchestration, calling the hooks at the right points. These wrappers
+        never touch directory ops or connection lifecycle.
+
+        **Behavioral wrappers** (CachingBackendWrapper, LoggingBackendWrapper):
+        Override full methods directly (read_content, write_content, etc.)
+        to add caching, logging, or other cross-cutting behavior. These
+        wrappers bypass the transform hooks entirely and manage delegation
+        to ``_inner`` themselves.
 
     Recursive Wrapping Rules (PART 16):
         1. Wrapper MUST implement the same Protocol as ``inner``.

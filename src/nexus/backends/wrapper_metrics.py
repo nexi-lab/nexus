@@ -102,7 +102,15 @@ class WrapperMetrics:
     def _get_otel_counters(self) -> dict[str, Any] | None:
         """Lazy-init OTel counters. Returns None if OTel is unavailable.
 
-        Uses double-checked locking for thread safety.
+        Uses double-checked locking for thread safety. The OTel
+        initialization is performed entirely inside the lock to prevent
+        another thread from seeing ``_otel_initialized = True`` before
+        ``_otel_counters`` is populated.
+
+        NOTE: The unsynchronized read of ``_otel_initialized`` (line below)
+        relies on CPython's GIL making attribute reads/writes atomic at the
+        bytecode level. If targeting free-threaded Python (PEP 703), this
+        must be replaced with ``threading.Lock``-only access or atomics.
         """
         if self._otel_initialized:
             return self._otel_counters
@@ -110,21 +118,23 @@ class WrapperMetrics:
         with self._lock:
             if self._otel_initialized:
                 return self._otel_counters
-            self._otel_initialized = True
 
-        try:
-            from nexus.server.telemetry import is_telemetry_enabled
+            try:
+                from nexus.server.telemetry import is_telemetry_enabled
 
-            if not is_telemetry_enabled():
-                return None
+                if not is_telemetry_enabled():
+                    return None
 
-            from opentelemetry import metrics
+                from opentelemetry import metrics
 
-            meter = metrics.get_meter(self._meter_name)
-            self._otel_counters = {
-                name: meter.create_counter(f"{self._meter_name}.{name}")
-                for name in self._counter_names
-            }
+                meter = metrics.get_meter(self._meter_name)
+                self._otel_counters = {
+                    name: meter.create_counter(f"{self._meter_name}.{name}")
+                    for name in self._counter_names
+                }
+            except Exception as e:
+                logger.debug("OTel counter init failed for %s: %s", self._meter_name, e)
+            finally:
+                self._otel_initialized = True
+
             return self._otel_counters
-        except Exception:
-            return None

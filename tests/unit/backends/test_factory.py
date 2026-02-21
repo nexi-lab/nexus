@@ -1,6 +1,7 @@
-"""BackendFactory tests (Issue #1601).
+"""BackendFactory tests (Issue #1601, #2362).
 
-Tests for centralized backend creation via BackendFactory.create().
+Tests for centralized backend creation via BackendFactory.create()
+and wrapper chain assembly via BackendFactory.wrap().
 """
 
 from __future__ import annotations
@@ -66,3 +67,60 @@ class TestBackendFactory:
         # LocalBackend: config_key="data_dir" -> param="root_path"
         backend = BackendFactory.create("local", {"data_dir": str(tmp_path / "mapped")})
         assert backend.has_root_path is True
+
+
+# ---------------------------------------------------------------------------
+# BackendFactory.wrap() tests (Issue #2362, Decision 11A)
+# ---------------------------------------------------------------------------
+
+
+class TestBackendFactoryWrap:
+    """Tests for BackendFactory.wrap() wrapper chain assembly."""
+
+    def test_wrap_logging(self, tmp_path: Any) -> None:
+        """wrap("logging") creates a LoggingBackendWrapper."""
+        from nexus.backends.logging_wrapper import LoggingBackendWrapper
+
+        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        wrapped = BackendFactory.wrap(base, "logging")
+        assert isinstance(wrapped, LoggingBackendWrapper)
+
+    def test_wrap_compressed(self, tmp_path: Any) -> None:
+        """wrap("compress") creates a CompressedStorage."""
+        from nexus.backends.compressed_wrapper import CompressedStorage
+
+        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        wrapped = BackendFactory.wrap(base, "compress")
+        assert isinstance(wrapped, CompressedStorage)
+
+    def test_wrap_encrypted(self, tmp_path: Any) -> None:
+        """wrap("encrypt") creates an EncryptedStorage."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
+
+        from nexus.backends.encrypted_wrapper import EncryptedStorage
+
+        key = AESGCMSIV.generate_key(bit_length=256)
+        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        wrapped = BackendFactory.wrap(base, "encrypt", {"key": key})
+        assert isinstance(wrapped, EncryptedStorage)
+
+    def test_wrap_caching(self, tmp_path: Any) -> None:
+        """wrap("cache") creates a CachingBackendWrapper."""
+        from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
+
+        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        wrapped = BackendFactory.wrap(base, "cache")
+        assert isinstance(wrapped, CachingBackendWrapper)
+
+    def test_wrap_unknown_type(self, tmp_path: Any) -> None:
+        """wrap() raises ValueError for unknown wrapper types."""
+        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        with pytest.raises(ValueError, match="Unknown wrapper type"):
+            BackendFactory.wrap(base, "nonexistent")
+
+    def test_wrap_chain_describe(self, tmp_path: Any) -> None:
+        """Successive wrap() calls produce correct describe() output."""
+        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        logged = BackendFactory.wrap(base, "logging")
+        cached = BackendFactory.wrap(logged, "cache")
+        assert cached.describe() == "cache → logging → local"

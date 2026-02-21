@@ -523,9 +523,8 @@ disable_error_code = ["attr-defined", "no-any-return"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.core.exceptions",
-    "nexus.bricks.a2a.stores.database",
 ]
-# Pre-existing errors from develop merges (zone-id-default-root, a2a DI).
+# Pre-existing errors from develop merges (zone-id-default-root).
 # Suppressed to unblock mixin extraction PR.
 disable_error_code = ["misc", "assignment", "attr-defined"]
 

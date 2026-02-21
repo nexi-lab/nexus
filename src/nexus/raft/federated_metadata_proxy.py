@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.core.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import MetastoreABC
+from nexus.core.metastore import CasResult, MetastoreABC
 
 if TYPE_CHECKING:
     from nexus.raft.zone_path_resolver import ResolvedPath, ZonePathResolver
@@ -136,6 +136,17 @@ class FederatedMetadataProxy(MetastoreABC):
         resolved = self._resolve(metadata.path)
         zone_meta = self._to_zone_metadata(metadata, resolved)
         return resolved.store.put(zone_meta, consistency=consistency)
+
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        resolved = self._resolve(metadata.path)
+        zone_meta = self._to_zone_metadata(metadata, resolved)
+        return resolved.store.put_if_version(zone_meta, expected_version, consistency=consistency)
 
     def is_committed(self, token: int) -> str | None:
         return self._root_store.is_committed(token)

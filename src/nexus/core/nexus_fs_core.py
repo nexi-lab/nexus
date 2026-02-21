@@ -155,7 +155,7 @@ class NexusFSCoreMixin:
             return
 
         try:
-            from nexus.services.event_subsystem.types import FileEvent, FileEventType
+            from nexus.core.file_events import FileEvent, FileEventType
 
             # Map string to enum
             type_map = {

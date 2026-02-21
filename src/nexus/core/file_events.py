@@ -1,0 +1,222 @@
+"""Kernel-tier file event data types.
+
+FileEvent and FileEventType are kernel primitives used by:
+- Core filesystem (nexus_fs_core) for publishing change notifications
+- Services layer (event_subsystem) for event bus pub/sub
+- Bricks layer for event subscriptions
+
+Per NEXUS-LEGO-ARCHITECTURE, data types can be defined in lower tiers and used
+by higher tiers. FileEvent is a kernel data type, even though it's primarily
+used by service-layer event bus implementations.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
+
+
+class FileEventType(StrEnum):
+    """Types of file system events."""
+
+    FILE_WRITE = "file_write"
+    FILE_DELETE = "file_delete"
+    FILE_RENAME = "file_rename"
+    METADATA_CHANGE = "metadata_change"  # chmod, chown, truncate (Issue #1115)
+    DIR_CREATE = "dir_create"
+    DIR_DELETE = "dir_delete"
+    # Issue #1129: Bidirectional sync events
+    SYNC_TO_BACKEND_REQUESTED = "sync_to_backend_requested"
+    SYNC_TO_BACKEND_COMPLETED = "sync_to_backend_completed"
+    SYNC_TO_BACKEND_FAILED = "sync_to_backend_failed"
+    CONFLICT_DETECTED = "conflict_detected"
+
+
+@dataclass
+class FileEvent:
+    """Unified file system event for both Layer 1 (local) and Layer 2 (distributed).
+
+    This is the single source of truth for file events across both layers:
+    - Layer 1 (inotify/ReadDirectoryChangesW): Creates via from_file_change()
+    - Layer 2 (Redis Pub/Sub): Creates directly with all fields
+
+    Attributes:
+        type: Type of event (file_write, file_delete, file_rename, etc.)
+        path: Virtual path that changed
+        zone_id: Zone that owns the file (None for Layer 1 local events)
+        timestamp: When the event occurred (ISO format)
+        event_id: Unique event ID for deduplication
+        old_path: Previous path (for rename events only)
+        size: File size in bytes (for write events)
+        etag: Content hash (for write events)
+        agent_id: Agent that performed the operation (optional)
+        revision: Filesystem revision number for consistency tracking (Issue #1187)
+    """
+
+    type: FileEventType | str
+    path: str
+    zone_id: str | None = None  # None for Layer 1 (local) events
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    old_path: str | None = None
+    size: int | None = None
+    etag: str | None = None
+    agent_id: str | None = None
+    revision: int | None = None  # Issue #1187: For consistency tracking
+    vector_clock: str | None = None  # Issue #1707: Edge split-brain causality
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        result: dict[str, Any] = {
+            "type": self.type.value if isinstance(self.type, FileEventType) else self.type,
+            "path": self.path,
+            "timestamp": self.timestamp,
+            "event_id": self.event_id,
+        }
+        # Optional fields - only include if set
+        if self.zone_id is not None:
+            result["zone_id"] = self.zone_id
+        if self.old_path is not None:
+            result["old_path"] = self.old_path
+        if self.size is not None:
+            result["size"] = self.size
+        if self.etag is not None:
+            result["etag"] = self.etag
+        if self.agent_id is not None:
+            result["agent_id"] = self.agent_id
+        if self.revision is not None:
+            result["revision"] = self.revision
+        if self.vector_clock is not None:
+            result["vector_clock"] = self.vector_clock
+        return result
+
+    def to_json(self) -> str:
+        """Serialize to JSON string."""
+        return json.dumps(self.to_dict())
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FileEvent:
+        """Create FileEvent from dictionary."""
+        return cls(
+            type=data["type"],
+            path=data["path"],
+            zone_id=data.get("zone_id"),  # Optional for Layer 1
+            timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
+            event_id=data.get("event_id", str(uuid.uuid4())),
+            old_path=data.get("old_path"),
+            size=data.get("size"),
+            etag=data.get("etag"),
+            agent_id=data.get("agent_id"),
+            revision=data.get("revision"),  # Issue #1187
+            vector_clock=data.get("vector_clock"),  # Issue #1707
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str | bytes) -> FileEvent:
+        """Deserialize from JSON string."""
+        if isinstance(json_str, bytes):
+            json_str = json_str.decode("utf-8")
+        return cls.from_dict(json.loads(json_str))
+
+    @classmethod
+    def from_file_change(
+        cls,
+        change: Any,  # FileChange from services/watch/file_watcher.py (avoid circular import)
+        zone_id: str | None = None,
+    ) -> FileEvent:
+        """Create FileEvent from Layer 1 FileChange.
+
+        Maps ChangeType to FileEventType:
+        - CREATED → FILE_WRITE (new file created)
+        - MODIFIED → FILE_WRITE (file content changed)
+        - DELETED → FILE_DELETE
+        - RENAMED → FILE_RENAME
+
+        Args:
+            change: FileChange from services/watch/file_watcher.py
+            zone_id: Optional zone ID to associate
+
+        Returns:
+            FileEvent with unified format
+        """
+        # Map ChangeType string values to FileEventType
+        change_type = change.type.value if hasattr(change.type, "value") else change.type
+
+        type_mapping = {
+            "created": FileEventType.FILE_WRITE,
+            "modified": FileEventType.FILE_WRITE,
+            "deleted": FileEventType.FILE_DELETE,
+            "renamed": FileEventType.FILE_RENAME,
+        }
+
+        event_type = type_mapping.get(change_type, change_type)
+
+        return cls(
+            type=event_type,
+            path=change.path,
+            zone_id=zone_id,
+            old_path=getattr(change, "old_path", None),
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, FileEvent):
+            return NotImplemented
+        return self.event_id == other.event_id
+
+    def __hash__(self) -> int:
+        return hash(self.event_id)
+
+    def matches_path_pattern(self, pattern: str) -> bool:
+        """Check if this event matches a path pattern.
+
+        Supports:
+        - Exact match: "/inbox/file.txt"
+        - Directory match: "/inbox/" (matches all files in /inbox/)
+        - Glob patterns: "/inbox/*.txt", "/inbox/**"
+
+        Args:
+            pattern: Path pattern to match against
+
+        Returns:
+            True if event path matches the pattern
+        """
+        # Exact match
+        if self.path == pattern:
+            return True
+
+        # Directory match - pattern ends with / OR pattern is a directory path
+        # Handle both "/inbox/" and "/inbox" as directory patterns
+        if pattern.endswith("/"):
+            if self.path.startswith(pattern):
+                return True
+            if self.path == pattern.rstrip("/"):
+                return True
+        else:
+            # Pattern without trailing slash - treat as directory if path is under it
+            # e.g., pattern "/inbox" should match path "/inbox/test.txt"
+            if self.path.startswith(pattern + "/"):
+                return True
+
+        # For rename events, also check old_path
+        if self.old_path:
+            if self.old_path == pattern:
+                return True
+            if pattern.endswith("/") and self.old_path.startswith(pattern):
+                return True
+            if not pattern.endswith("/") and self.old_path.startswith(pattern + "/"):
+                return True
+
+        # Glob pattern match — delegate to path_utils for consistency
+        if "*" in pattern or "?" in pattern:
+            from nexus.lib.path_utils import path_matches_pattern
+
+            if path_matches_pattern(self.path, pattern):
+                return True
+            if self.old_path and path_matches_pattern(self.old_path, pattern):
+                return True
+
+        return False

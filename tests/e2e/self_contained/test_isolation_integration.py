@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from nexus.isolation import IsolatedBackend, IsolationConfig
+from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
 _MOD = "tests.e2e.self_contained.isolation_helpers"
 _CLS = "MockBackend"

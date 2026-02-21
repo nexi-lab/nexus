@@ -7,7 +7,7 @@ the host process's state.  All tests use ``ProcessPoolExecutor``
 
 import sys
 
-from nexus.isolation import IsolatedBackend, IsolationConfig
+from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
 # Path to helpers defined in this file (importable by child processes).
 _HELPER_MOD = "tests.e2e.self_contained.test_isolation_boundary"

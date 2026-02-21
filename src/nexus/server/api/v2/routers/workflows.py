@@ -312,7 +312,7 @@ async def get_executions(
     if not engine.workflow_store:
         return []
 
-    executions = await engine.workflow_store.get_executions_by_name(name, limit=limit)
+    executions = await engine.workflow_store.get_executions(name=name, limit=limit)
     return [
         ExecutionSummary(
             execution_id=e["execution_id"],

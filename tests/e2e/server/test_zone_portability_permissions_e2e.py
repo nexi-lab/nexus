@@ -12,16 +12,16 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.contracts.types import OperationContext
-from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.factory import create_nexus_fs
-from nexus.portability import (
+from nexus.bricks.portability import (
     ConflictMode,
     ZoneImportOptions,
     ZoneImportService,
     export_zone_bundle,
     import_zone_bundle,
 )
+from nexus.contracts.types import OperationContext
+from nexus.core.config import ParseConfig, PermissionConfig
+from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

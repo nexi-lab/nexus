@@ -19,7 +19,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from nexus.portability.models import (
+from nexus.bricks.portability.models import (
     BUNDLE_PATHS,
     MANIFEST_FILENAME,
     ExportManifest,
@@ -177,7 +177,7 @@ class BundleReader:
                     yield FileRecord.from_jsonl(line_str)
 
         except KeyError:
-            logger.warning(f"Bundle missing {BUNDLE_PATHS['files']}")
+            logger.warning("Bundle missing %s", BUNDLE_PATHS["files"])
 
     def iter_permission_records(self) -> Iterator[PermissionRecord]:
         """Iterate over permission records from rebac_tuples.jsonl.
@@ -200,7 +200,7 @@ class BundleReader:
                     yield PermissionRecord.from_jsonl(line_str)
 
         except KeyError:
-            logger.debug(f"Bundle missing {BUNDLE_PATHS['permissions']}")
+            logger.debug("Bundle missing %s", BUNDLE_PATHS["permissions"])
 
     def read_content_blob(self, content_hash: str) -> bytes | None:
         """Read a content blob from the bundle.
@@ -241,7 +241,7 @@ class BundleReader:
             raise RuntimeError("Bundle not open. Call open() first.")
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        self._tar.extractall(output_dir)
+        self._tar.extractall(output_dir, filter="data")
 
     def list_contents(self) -> list[str]:
         """List all files in the bundle.

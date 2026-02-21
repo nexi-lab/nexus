@@ -352,7 +352,7 @@ class TestGetExecutions:
         """Test getting executions with mock store."""
         _mock_engine.workflows = {"my-wf": Mock()}
         mock_store = Mock()
-        mock_store.get_executions_by_name = AsyncMock(
+        mock_store.get_executions = AsyncMock(
             return_value=[
                 {
                     "execution_id": str(uuid.uuid4()),
@@ -374,4 +374,4 @@ class TestGetExecutions:
         data = resp.json()
         assert len(data) == 1
         assert data[0]["status"] == "succeeded"
-        mock_store.get_executions_by_name.assert_called_once_with("my-wf", limit=5)
+        mock_store.get_executions.assert_called_once_with(name="my-wf", limit=5)

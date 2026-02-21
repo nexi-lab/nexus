@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.connectors.base import ErrorDef, ValidationError
-from nexus.connectors.error_formatter import SkillErrorFormatter
+from nexus.backends.connectors.base import ErrorDef, ValidationError
+from nexus.backends.connectors.error_formatter import SkillErrorFormatter
 
 
 @pytest.fixture()

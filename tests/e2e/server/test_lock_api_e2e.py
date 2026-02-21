@@ -77,7 +77,9 @@ class TestLockApiWithoutRedis:
 
     def test_release_lock_returns_503_without_redis(self, test_app: httpx.Client, auth_headers):
         """Test that DELETE /api/v2/locks/{path} returns 503 when lock manager unavailable."""
-        response = test_app.delete("/api/v2/locks/test/file.txt?lock_id=fake-id", headers=auth_headers)
+        response = test_app.delete(
+            "/api/v2/locks/test/file.txt?lock_id=fake-id", headers=auth_headers
+        )
         assert response.status_code == 503
 
     def test_extend_lock_returns_503_without_redis(self, test_app: httpx.Client, auth_headers):
@@ -225,7 +227,9 @@ class TestLockApiWithRedis:
         real_lock_id = response.json()["lock_id"]
 
         # Try to release with wrong ID
-        response = test_app.delete(f"/api/v2/locks{path}?lock_id=wrong-id-12345", headers=auth_headers)
+        response = test_app.delete(
+            f"/api/v2/locks{path}?lock_id=wrong-id-12345", headers=auth_headers
+        )
         assert response.status_code == 403
 
         # Cleanup with real ID

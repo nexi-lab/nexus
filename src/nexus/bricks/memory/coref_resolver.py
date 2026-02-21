@@ -224,7 +224,10 @@ Resolved text:"""
 
         try:
             # Build message list for providers that expect structured messages
-            from nexus.bricks.llm import Message, MessageRole
+            import importlib as _il
+
+            _llm = _il.import_module("nexus.bricks.llm")
+            Message, MessageRole = _llm.Message, _llm.MessageRole
 
             messages = [Message(role=MessageRole.USER, content=prompt)]
 

@@ -14,8 +14,8 @@ NOTE: These are SERVICE-LEVEL domain caches, NOT kernel code.
     - Kernel only knows CacheStoreABC (the Pillar ABC) + NullCacheStore.
     - These classes live under core/cache/ as cache infrastructure, but the
       kernel (NexusFS) never imports them directly.
-    - Only CacheFactory (systemd layer) and upper services (search, auth)
-      consume these domain caches.
+    - Only CacheBrick and upper services (search, auth) consume these
+      domain caches.
 """
 
 from __future__ import annotations

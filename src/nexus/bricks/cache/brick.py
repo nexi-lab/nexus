@@ -69,7 +69,6 @@ class CacheBrick:
         self,
         cache_store: Any | None = None,
         settings: CacheSettings | None = None,
-        record_store: Any | None = None,
     ) -> None:
         """Initialize the CacheBrick.
 
@@ -77,11 +76,9 @@ class CacheBrick:
             cache_store: CacheStoreABC driver. If None, NullCacheStore is used
                 (Tier 2 = silent degradation).
             settings: Cache configuration. If None, defaults are used.
-            record_store: Optional RecordStoreABC for PostgreSQL cache fallback.
         """
         self._store = cache_store if cache_store is not None else NullCacheStore()
         self._settings = settings or CacheSettings(dragonfly_url=None)
-        self._record_store = record_store
         self._started = False
 
         # Domain caches (driver-agnostic, built on CacheStoreABC primitives)
@@ -143,37 +140,31 @@ class CacheBrick:
             return False
 
     # ------------------------------------------------------------------
-    # CacheFactory-compatible API (Issue #1524 / #3A absorption)
+    # Convenience accessors (method-style)
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """CacheFactory-compatible alias for ``start()``.
-
-        Allows CacheBrick to be used as a drop-in replacement for CacheFactory.
-        """
+        """Alias for ``start()``."""
         await self.start()
 
     async def shutdown(self) -> None:
-        """CacheFactory-compatible alias for ``stop()``.
-
-        Allows CacheBrick to be used as a drop-in replacement for CacheFactory.
-        """
+        """Alias for ``stop()``."""
         await self.stop()
 
     def get_permission_cache(self) -> PermissionCacheProtocol:
-        """CacheFactory-compatible accessor for permission cache."""
+        """Get permission cache instance."""
         return self._permission_cache
 
     def get_tiger_cache(self) -> TigerCacheProtocol:
-        """CacheFactory-compatible accessor for tiger cache."""
+        """Get tiger cache instance."""
         return self._tiger_cache
 
     def get_resource_map_cache(self) -> ResourceMapCacheProtocol:
-        """CacheFactory-compatible accessor for resource map cache."""
+        """Get resource map cache instance."""
         return self._resource_map_cache
 
     def get_embedding_cache(self) -> EmbeddingCacheProtocol:
-        """CacheFactory-compatible accessor for embedding cache."""
+        """Get embedding cache instance."""
         return self._embedding_cache
 
     # ------------------------------------------------------------------

@@ -21,6 +21,7 @@ Tracked by: Issue #1241, #1138
 import asyncio
 import logging
 import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.operation_types import OperationType
@@ -87,6 +88,7 @@ class EventDeliveryWorker:
         record_store: "RecordStoreABC",
         event_bus: Any | None = None,
         exporter_registry: "ExporterRegistry | None" = None,
+        subscription_manager_getter: Callable[[], Any] | None = None,
         *,
         event_loop: asyncio.AbstractEventLoop | None = None,
         poll_interval_ms: int = 200,
@@ -98,6 +100,7 @@ class EventDeliveryWorker:
         self._session_factory = record_store.session_factory
         self._event_bus = event_bus
         self._exporter_registry = exporter_registry
+        self._subscription_manager_getter = subscription_manager_getter
         self._event_loop = event_loop
         self._poll_interval_s = poll_interval_ms / 1000.0
         self._batch_size = batch_size
@@ -255,11 +258,10 @@ class EventDeliveryWorker:
         if bus is not None:
             _run_async(bus.publish(event), self._event_loop)
 
-        # 2. Broadcast to webhook subscriptions
-        try:
-            from nexus.server.subscriptions import get_subscription_manager
-
-            sub_manager = get_subscription_manager()
+        # 2. Broadcast to webhook subscriptions (injected getter, no server import)
+        getter = self._subscription_manager_getter
+        if getter is not None:
+            sub_manager = getter()
             if sub_manager is not None:
                 event_type_str = str(event.type)
 
@@ -276,8 +278,6 @@ class EventDeliveryWorker:
                     )
 
                 _run_async(_broadcast(), self._event_loop)
-        except ImportError:
-            pass  # Subscription manager not available
 
         logger.debug(
             "[DELIVERY] Dispatched: %s %s (op=%s)",

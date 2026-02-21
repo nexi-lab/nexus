@@ -454,8 +454,8 @@ def _boot_system_services(
             zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
 
             # Register session-based finalizers (available at boot).
-            # Cache + Mount finalizers are registered later in service_wiring
-            # when their dependencies (file_cache, mount_service) exist.
+            # Cache, Mount, and BrickDrain finalizers are registered in
+            # create_nexus_fs() after _boot_wired_services() (Issue #2070).
             try:
                 from nexus.services.zone_finalizers import (
                     ReBACZoneFinalizer,
@@ -463,8 +463,10 @@ def _boot_system_services(
                 )
 
                 zone_lifecycle.register_finalizer(SearchZoneFinalizer(session_factory))
-                # ReBAC finalizer (MUST be last — Decision #13A)
-                zone_lifecycle.register_finalizer(ReBACZoneFinalizer(session_factory))
+                # ReBAC finalizer (MUST run last — phase="sequential")
+                zone_lifecycle.register_finalizer(
+                    ReBACZoneFinalizer(session_factory), phase="sequential"
+                )
             except Exception as exc:
                 logger.warning("[BOOT:SYSTEM] Zone finalizer registration failed: %s", exc)
 

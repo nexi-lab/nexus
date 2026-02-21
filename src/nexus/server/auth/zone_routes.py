@@ -3,12 +3,11 @@
 Provides endpoints for creating, updating, and managing zones.
 """
 
-import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.auth.user_queries import get_user_by_id
@@ -70,6 +69,21 @@ class ZoneListResponse(BaseModel):
 
     zones: list[ZoneResponse]
     total: int
+
+
+def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
+    """Convert a ZoneModel to a ZoneResponse (DRY helper)."""
+    return ZoneResponse(
+        zone_id=zone.zone_id,
+        name=zone.name,
+        domain=zone.domain,
+        description=zone.description,
+        phase=zone.phase,
+        finalizers=zone.parsed_finalizers,
+        is_active=zone.is_active,
+        created_at=zone.created_at.isoformat(),
+        updated_at=zone.updated_at.isoformat(),
+    )
 
 
 @router.post("", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
@@ -134,7 +148,7 @@ async def create_zone_endpoint(
                         role="owner",
                         caller_user_id=None,  # System action, no caller check needed
                     )
-                    logger.info(f"Added user {user_id} as owner of zone {zone_id}")
+                    logger.info("Added user %s as owner of zone %s", user_id, zone_id)
                 except Exception as e:
                     logger.error(
                         "Failed to add user %s as zone owner: %s", user_id, e, exc_info=True
@@ -145,21 +159,12 @@ async def create_zone_endpoint(
                     ) from e
             else:
                 logger.warning(
-                    f"NexusFS or ReBAC manager not available. "
-                    f"User {user_id} not added as owner of zone {zone_id}"
+                    "NexusFS or ReBAC manager not available. User %s not added as owner of zone %s",
+                    user_id,
+                    zone_id,
                 )
 
-            return ZoneResponse(
-                zone_id=zone.zone_id,
-                name=zone.name,
-                domain=zone.domain,
-                description=zone.description,
-                phase=zone.phase,
-                finalizers=json.loads(zone.finalizers),
-                is_active=zone.is_active,
-                created_at=zone.created_at.isoformat(),
-                updated_at=zone.updated_at.isoformat(),
-            )
+            return _zone_to_response(zone)
 
         except ValueError as e:
             raise HTTPException(
@@ -221,17 +226,7 @@ async def get_zone(
                 detail=f"Zone '{zone_id}' not found",
             )
 
-        return ZoneResponse(
-            zone_id=zone.zone_id,
-            name=zone.name,
-            domain=zone.domain,
-            description=zone.description,
-            phase=zone.phase,
-            finalizers=json.loads(zone.finalizers),
-            is_active=zone.is_active,
-            created_at=zone.created_at.isoformat(),
-            updated_at=zone.updated_at.isoformat(),
-        )
+        return _zone_to_response(zone)
 
 
 @router.get("", response_model=ZoneListResponse)
@@ -276,9 +271,15 @@ async def list_zones(
             )
             zones = session.scalars(stmt).all()
 
-            # Count total active zones
-            total_stmt = select(ZoneModel).where(ZoneModel.phase != "Terminated")
-            total = len(session.scalars(total_stmt).all())
+            # Count total active zones (Issue #2070: use COUNT(*) not len())
+            total = (
+                session.scalar(
+                    select(func.count())
+                    .select_from(ZoneModel)
+                    .where(ZoneModel.phase != "Terminated")
+                )
+                or 0
+            )
         else:
             # Regular users only see zones they belong to
             nx = get_nexus_instance()
@@ -303,20 +304,7 @@ async def list_zones(
             total = len(user_zone_ids)
 
         return ZoneListResponse(
-            zones=[
-                ZoneResponse(
-                    zone_id=t.zone_id,
-                    name=t.name,
-                    domain=t.domain,
-                    description=t.description,
-                    phase=t.phase,
-                    finalizers=json.loads(t.finalizers),
-                    is_active=t.is_active,
-                    created_at=t.created_at.isoformat(),
-                    updated_at=t.updated_at.isoformat(),
-                )
-                for t in zones
-            ],
+            zones=[_zone_to_response(t) for t in zones],
             total=total,
         )
 
@@ -370,8 +358,6 @@ async def delete_zone_endpoint(
 
     with auth.session_factory() as session:
         # Check authorization: must be zone owner or global admin
-        from nexus.server.auth.user_helpers import get_user_by_id
-
         user = get_user_by_id(session, user_id)
         is_global_admin = user and user.is_global_admin == 1
 

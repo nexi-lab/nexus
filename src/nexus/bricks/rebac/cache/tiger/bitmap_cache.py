@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
     from nexus.bricks.rebac.cache.tiger.resource_map import TigerResourceMap
     from nexus.bricks.rebac.manager import ReBACManager
-    from nexus.cache.base import TigerCacheProtocol
+    from nexus.core.protocols.caching import TigerCacheProtocol
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 """Unit tests for _scoped_base.py shared path-scoping logic (Phase 6.1, Issue #2033)."""
 
-from nexus.core._scoped_base import GLOBAL_NAMESPACES, ScopedPathMixin
+from nexus.bricks.filesystem._scoped_base import GLOBAL_NAMESPACES, ScopedPathMixin
 
 
 class _TestScoper(ScopedPathMixin):

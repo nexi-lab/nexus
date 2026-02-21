@@ -4,6 +4,8 @@ This module provides a ScopedFilesystem wrapper that rebases all paths
 to a user's root directory, enabling multi-zone isolation without
 modifying existing code that uses hardcoded global paths.
 
+Moved from core/ → services/filesystem/ → bricks/filesystem/ (Issue #2424).
+
 Example:
     # For user at /zones/aquarius_team_12/users/user_12/
     scoped_fs = ScopedFilesystem(nexus_fs, root="/zones/aquarius_team_12/users/user_12")
@@ -13,6 +15,8 @@ Example:
     registry = SkillRegistry(filesystem=scoped_fs)
 """
 
+from __future__ import annotations
+
 import builtins
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
@@ -20,8 +24,8 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
-from nexus.core._scoped_base import GLOBAL_NAMESPACES, ScopedPathMixin
-from nexus.core.filesystem import NexusFilesystem
+from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 
 class ScopedFilesystem(ScopedPathMixin):
@@ -35,14 +39,11 @@ class ScopedFilesystem(ScopedPathMixin):
     all operations to the underlying filesystem after path translation.
 
     Attributes:
-        _fs: The underlying NexusFilesystem instance
+        _fs: The underlying NexusFilesystemABC instance
         _root: The root path prefix to prepend to all paths
     """
 
-    # Re-export for backward compat (tests may reference ScopedFilesystem.GLOBAL_NAMESPACES)
-    GLOBAL_NAMESPACES = GLOBAL_NAMESPACES
-
-    def __init__(self, fs: NexusFilesystem, root: str) -> None:
+    def __init__(self, fs: NexusFilesystemABC, root: str) -> None:
         """Initialize ScopedFilesystem.
 
         Args:
@@ -54,7 +55,7 @@ class ScopedFilesystem(ScopedPathMixin):
         self._fs = fs
 
     @property
-    def wrapped_fs(self) -> NexusFilesystem:
+    def wrapped_fs(self) -> NexusFilesystemABC:
         """The underlying wrapped filesystem."""
         return self._fs
 
@@ -100,8 +101,6 @@ class ScopedFilesystem(ScopedPathMixin):
 
         Args:
             lock: If True, acquire distributed lock before writing.
-                Adds ~2-10ms latency for lock acquire/release.
-                For read-modify-write patterns, use locked() context manager instead.
             lock_timeout: Max time to wait for lock in seconds (only used if lock=True).
         """
         kwargs: dict[str, Any] = {}
@@ -138,6 +137,21 @@ class ScopedFilesystem(ScopedPathMixin):
     ) -> dict[str, Any]:
         """Append content to an existing file."""
         result = self._fs.append(self._scope_path(path), content, context, if_match, force)
+        return self._unscope_dict(result, ["path"])
+
+    def edit(
+        self,
+        path: str,
+        edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
+        context: Any = None,
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        """Apply surgical search/replace edits to a file."""
+        result = self._fs.edit(
+            self._scope_path(path), edits, context, if_match, fuzzy_threshold, preview
+        )
         return self._unscope_dict(result, ["path"])
 
     def delete(self, path: str) -> None:
@@ -212,7 +226,7 @@ class ScopedFilesystem(ScopedPathMixin):
         """Remove a directory."""
         self._fs.rmdir(self._scope_path(path), recursive)
 
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
         """Check if path is a directory."""
         return self._fs.is_directory(self._scope_path(path), context)
 
@@ -460,7 +474,7 @@ class ScopedFilesystem(ScopedPathMixin):
         """Close the filesystem and release resources."""
         self._fs.close()
 
-    def __enter__(self) -> "ScopedFilesystem":
+    def __enter__(self) -> ScopedFilesystem:
         """Context manager entry."""
         return self
 

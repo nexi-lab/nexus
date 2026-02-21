@@ -1,6 +1,6 @@
 """Async Remote Nexus filesystem client.
 
-Implements NexusFilesystem asynchronously by proxying RPC calls to a Nexus
+Implements NexusFilesystemABC asynchronously by proxying RPC calls to a Nexus
 server over HTTP using httpx.AsyncClient. Uses __getattr__-based dispatch
 for trivial methods, with explicit async overrides for complex methods.
 
@@ -57,7 +57,7 @@ from nexus.contracts.exceptions import (
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.core.filesystem import NexusFilesystem
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.remote.negative_cache import NegativeCache
@@ -846,6 +846,6 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         return bool(result.get("released", False)) if result else False
 
 
-# Register as virtual subclass of NexusFilesystem so isinstance() works at runtime
+# Register as virtual subclass of NexusFilesystemABC so isinstance() works at runtime
 # without putting abstract methods in MRO (which would shadow __getattr__ dispatch).
-NexusFilesystem.register(AsyncRemoteNexusFS)
+NexusFilesystemABC.register(AsyncRemoteNexusFS)

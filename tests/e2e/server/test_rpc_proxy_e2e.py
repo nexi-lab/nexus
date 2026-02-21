@@ -466,9 +466,9 @@ class TestVirtualSubclass:
     """Test that isinstance works with virtual subclass registration."""
 
     def test_isinstance_nexus_filesystem(self, admin_client: RemoteNexusFS) -> None:
-        from nexus.core.filesystem import NexusFilesystem
+        from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
-        assert isinstance(admin_client, NexusFilesystem)
+        assert isinstance(admin_client, NexusFilesystemABC)
 
     def test_isinstance_remote_nexusfs(self, admin_client: RemoteNexusFS) -> None:
         assert isinstance(admin_client, RemoteNexusFS)

@@ -1,6 +1,6 @@
 """Remote Nexus filesystem client (sync).
 
-Implements NexusFilesystem by proxying RPC calls to a Nexus server over HTTP.
+Implements NexusFilesystemABC by proxying RPC calls to a Nexus server over HTTP.
 Uses __getattr__-based dispatch for ~170 trivial methods, with explicit
 overrides for ~30 methods requiring negative cache, content encoding,
 response decoding, dynamic timeouts, or other complex logic.
@@ -55,7 +55,7 @@ from nexus.contracts.exceptions import (
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.core.filesystem import NexusFilesystem
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.remote.negative_cache import NegativeCache
@@ -136,7 +136,7 @@ _DOMAIN_METHOD_MAP: dict[str, tuple[str, str]] = {
 class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     """Remote Nexus filesystem client.
 
-    Implements NexusFilesystem interface by making RPC calls to a remote server.
+    Implements NexusFilesystemABC interface by making RPC calls to a remote server.
     Trivial methods (~170) are auto-dispatched via __getattr__; complex methods
     (~30) are explicit overrides below.
 
@@ -757,6 +757,6 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self.session.close()
 
 
-# Register as virtual subclass of NexusFilesystem so isinstance() works at runtime
+# Register as virtual subclass of NexusFilesystemABC so isinstance() works at runtime
 # without putting abstract methods in MRO (which would shadow __getattr__ dispatch).
-NexusFilesystem.register(RemoteNexusFS)
+NexusFilesystemABC.register(RemoteNexusFS)

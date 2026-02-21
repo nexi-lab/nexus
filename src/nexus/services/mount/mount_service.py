@@ -37,7 +37,7 @@ ProgressCallback = Callable[[int, str], None]
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS as NexusFilesystem
     from nexus.core.router import PathRouter
 
     from .mount_manager import MountManager
@@ -526,7 +526,7 @@ class MountService:
                             )
                         elif subject_id:
                             # Check if user has read permission (includes owner, editor, viewer)
-                            has_permission = self.nexus_fs.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
+                            has_permission = self.nexus_fs.rebac_service.rebac_check_sync(
                                 subject=(subject_type, subject_id),
                                 permission="read",
                                 object=("file", mount_point),

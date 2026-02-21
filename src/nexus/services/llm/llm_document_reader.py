@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.bricks.llm.provider import LLMProvider
     from nexus.bricks.search.protocols import SearchableProtocol as SemanticSearch
-    from nexus.core.filesystem import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 
 @dataclass
@@ -52,7 +52,7 @@ class LLMDocumentReader:
 
     def __init__(
         self,
-        nx: "NexusFilesystem",
+        nx: "NexusFilesystemABC",
         provider: "LLMProvider",
         search: "SemanticSearch | None" = None,
         system_prompt: str | None = None,
@@ -61,7 +61,7 @@ class LLMDocumentReader:
         """Initialize document reader.
 
         Args:
-            nx: NexusFilesystem instance
+            nx: NexusFilesystemABC instance
             provider: LLM provider
             search: Semantic search instance (optional - if None, only direct reading works)
             system_prompt: Custom system prompt (optional)

@@ -1,13 +1,16 @@
-"""Lock API router (Issue #1186, #1288).
+"""Lock API v2 router (#2056).
 
 Provides distributed locking endpoints using Redis/Dragonfly:
-- POST   /api/locks              — acquire a lock
-- GET    /api/locks              — list active locks
-- GET    /api/locks/{path:path}  — get lock status
-- DELETE /api/locks/{path:path}  — release a lock
-- PATCH  /api/locks/{path:path}  — extend a lock TTL
+- POST   /api/v2/locks              — acquire a lock
+- GET    /api/v2/locks              — list active locks
+- GET    /api/v2/locks/{path:path}  — get lock status
+- DELETE /api/v2/locks/{path:path}  — release a lock
+- PATCH  /api/v2/locks/{path:path}  — extend a lock TTL
 
-Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
+Ported from v1 with improvements:
+- Pydantic request/response models (already existed in v1)
+- Extracted helpers (_to_lock_response, _normalize_path) for DRY
+- fence_token returned directly from acquire (no extra get_lock_info call)
 """
 
 from __future__ import annotations
@@ -19,9 +22,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from nexus.constants import ROOT_ZONE_ID
-from nexus.server.api.v1.dependencies import get_lock_manager
-from nexus.server.api.v1.models.locks import (
+from nexus.server.api.v2.models.locks import (
     LockAcquireRequest,
     LockExtendRequest,
     LockHolderResponse,
@@ -35,26 +36,85 @@ from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["locks"])
+router = APIRouter(prefix="/api/v2/locks", tags=["locks"])
 
 
-@router.post("/api/locks", status_code=201, response_model=LockResponse)
+# =============================================================================
+# Dependencies
+# =============================================================================
+
+
+def _get_lock_manager(request: Any) -> Any:
+    """Get the distributed lock manager from NexusFS, raising 503 if not configured."""
+    fs = getattr(request.app.state, "nexus_fs", None)
+    if fs is None:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    lock_mgr = getattr(fs, "_lock_manager", None)
+    if lock_mgr is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Distributed lock manager not configured. "
+            "Enable Redis/Dragonfly for distributed locking.",
+        )
+    return lock_mgr
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _normalize_path(path: str) -> str:
+    """Ensure path has a leading slash."""
+    return path if path.startswith("/") else "/" + path
+
+
+def _to_lock_info_response(lock_info: Any) -> LockInfoMutex | LockInfoSemaphore:
+    """Convert a LockInfo dataclass to the appropriate response model."""
+    if lock_info.mode == "mutex" and lock_info.holders:
+        h = lock_info.holders[0]
+        return LockInfoMutex(
+            lock_id=h.lock_id,
+            holder_info=h.holder_info,
+            acquired_at=h.acquired_at,
+            expires_at=h.expires_at,
+            fence_token=lock_info.fence_token,
+        )
+    return LockInfoSemaphore(
+        max_holders=lock_info.max_holders,
+        holders=[
+            LockHolderResponse(
+                lock_id=h.lock_id,
+                holder_info=h.holder_info,
+                acquired_at=h.acquired_at,
+                expires_at=h.expires_at,
+            )
+            for h in lock_info.holders
+        ],
+        current_holders=len(lock_info.holders),
+        fence_token=lock_info.fence_token,
+    )
+
+
+# =============================================================================
+# Endpoints
+# =============================================================================
+
+
+@router.post("", status_code=201, response_model=LockResponse)
 async def acquire_lock(
     request: LockAcquireRequest,
     auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(get_lock_manager),
+    lock_manager: Any = Depends(_get_lock_manager),
 ) -> LockResponse:
     """Acquire a distributed lock on a path.
 
     Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
     Use blocking=false for non-blocking acquisition (returns immediately).
     """
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-
-    # Normalize path to ensure leading slash
-    path = request.path if request.path.startswith("/") else "/" + request.path
-
-    # Non-blocking mode: use timeout=0
+    zone_id = auth_result.get("zone_id") or "root"
+    path = _normalize_path(request.path)
     timeout = request.timeout if request.blocking else 0.0
 
     try:
@@ -66,7 +126,6 @@ async def acquire_lock(
             max_holders=request.max_holders,
         )
     except ValueError as e:
-        # SSOT violation (max_holders mismatch)
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     if lock_id is None:
@@ -75,17 +134,15 @@ async def acquire_lock(
                 status_code=409,
                 detail=f"Lock acquisition timeout after {request.timeout}s",
             )
-        else:
-            raise HTTPException(
-                status_code=409,
-                detail="Lock not available (non-blocking mode)",
-            )
+        raise HTTPException(
+            status_code=409,
+            detail="Lock not available (non-blocking mode)",
+        )
 
-    # Calculate expiration time
     expires_at = datetime.now(UTC).timestamp() + request.ttl
     expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
-    # Get lock info to retrieve fence token
+    # Get fence token from lock info
     lock_info = await lock_manager.get_lock_info(zone_id, path)
     fence_token = lock_info.fence_token if lock_info else 0
 
@@ -100,118 +157,55 @@ async def acquire_lock(
     )
 
 
-@router.get("/api/locks", response_model=LockListResponse)
+@router.get("", response_model=LockListResponse)
 async def list_locks(
     limit: int = Query(100, ge=1, le=1000, description="Max number of locks to return"),
     pattern: str = Query("*", description="Path pattern filter (glob-style)"),
     auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(get_lock_manager),
+    lock_manager: Any = Depends(_get_lock_manager),
 ) -> LockListResponse:
     """List active locks for the current zone."""
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-
+    zone_id = auth_result.get("zone_id") or "root"
     lock_infos = await lock_manager.list_locks(zone_id, pattern=pattern, limit=limit)
 
-    # Convert LockInfo dataclasses to response models
-    locks: list[LockInfoMutex | LockInfoSemaphore] = []
-    for lock_info in lock_infos:
-        if lock_info.mode == "mutex" and lock_info.holders:
-            h = lock_info.holders[0]
-            locks.append(
-                LockInfoMutex(
-                    lock_id=h.lock_id,
-                    holder_info=h.holder_info,
-                    acquired_at=h.acquired_at,
-                    expires_at=h.expires_at,
-                    fence_token=lock_info.fence_token,
-                )
-            )
-        else:
-            locks.append(
-                LockInfoSemaphore(
-                    max_holders=lock_info.max_holders,
-                    holders=[
-                        LockHolderResponse(
-                            lock_id=h.lock_id,
-                            holder_info=h.holder_info,
-                            acquired_at=h.acquired_at,
-                            expires_at=h.expires_at,
-                        )
-                        for h in lock_info.holders
-                    ],
-                    current_holders=len(lock_info.holders),
-                    fence_token=lock_info.fence_token,
-                )
-            )
-
+    locks: list[LockInfoMutex | LockInfoSemaphore] = [
+        _to_lock_info_response(li) for li in lock_infos
+    ]
     return LockListResponse(locks=locks, count=len(locks))
 
 
-@router.get("/api/locks/{path:path}", response_model=LockStatusResponse)
+@router.get("/{path:path}", response_model=LockStatusResponse)
 async def get_lock_status(
     path: str,
     auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(get_lock_manager),
+    lock_manager: Any = Depends(_get_lock_manager),
 ) -> LockStatusResponse:
     """Get lock status for a specific path."""
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-
-    # Normalize path to ensure leading slash (URL path captures without leading /)
-    if not path.startswith("/"):
-        path = "/" + path
+    zone_id = auth_result.get("zone_id") or "root"
+    path = _normalize_path(path)
 
     lock_info = await lock_manager.get_lock_info(zone_id, path)
     if not lock_info:
         return LockStatusResponse(path=path, locked=False, lock_info=None)
 
-    # Convert LockInfo dataclass to response model
-    lock_info_response: LockInfoMutex | LockInfoSemaphore
-    if lock_info.mode == "mutex" and lock_info.holders:
-        h = lock_info.holders[0]
-        lock_info_response = LockInfoMutex(
-            lock_id=h.lock_id,
-            holder_info=h.holder_info,
-            acquired_at=h.acquired_at,
-            expires_at=h.expires_at,
-            fence_token=lock_info.fence_token,
-        )
-    else:
-        lock_info_response = LockInfoSemaphore(
-            max_holders=lock_info.max_holders,
-            holders=[
-                LockHolderResponse(
-                    lock_id=h.lock_id,
-                    holder_info=h.holder_info,
-                    acquired_at=h.acquired_at,
-                    expires_at=h.expires_at,
-                )
-                for h in lock_info.holders
-            ],
-            current_holders=len(lock_info.holders),
-            fence_token=lock_info.fence_token,
-        )
-
-    return LockStatusResponse(path=path, locked=True, lock_info=lock_info_response)
+    return LockStatusResponse(path=path, locked=True, lock_info=_to_lock_info_response(lock_info))
 
 
-@router.delete("/api/locks/{path:path}")
+@router.delete("/{path:path}")
 async def release_lock(
     path: str,
     lock_id: str = Query(..., description="Lock ID from acquire response"),
     force: bool = Query(False, description="Force release (admin only)"),
     auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(get_lock_manager),
+    lock_manager: Any = Depends(_get_lock_manager),
 ) -> JSONResponse:
     """Release a distributed lock.
 
     The lock_id must match the ID returned during acquisition.
     Use force=true for admin recovery of stuck locks (requires admin role).
     """
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-
-    # Normalize path to ensure leading slash (URL path captures without leading /)
-    if not path.startswith("/"):
-        path = "/" + path
+    zone_id = auth_result.get("zone_id") or "root"
+    path = _normalize_path(path)
 
     if force:
         if not auth_result.get("is_admin", False):
@@ -222,7 +216,6 @@ async def release_lock(
         logger.warning("Lock force-released by admin: zone=%s, path=%s", zone_id, path)
         return JSONResponse(content={"released": True, "forced": True})
 
-    # Normal release with ownership check
     released = await lock_manager.release(lock_id, zone_id, path)
     if not released:
         raise HTTPException(
@@ -232,23 +225,20 @@ async def release_lock(
     return JSONResponse(content={"released": True})
 
 
-@router.patch("/api/locks/{path:path}", response_model=LockResponse)
+@router.patch("/{path:path}", response_model=LockResponse)
 async def extend_lock(
     path: str,
     request: LockExtendRequest,
     auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(get_lock_manager),
+    lock_manager: Any = Depends(_get_lock_manager),
 ) -> LockResponse:
     """Extend a lock's TTL (heartbeat).
 
     Call this periodically (e.g., every TTL/2) to keep long-running
     operations alive. The lock must be owned by the caller (lock_id match).
     """
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-
-    # Normalize path to ensure leading slash (URL path captures without leading /)
-    if not path.startswith("/"):
-        path = "/" + path
+    zone_id = auth_result.get("zone_id") or "root"
+    path = _normalize_path(path)
 
     extended = await lock_manager.extend(request.lock_id, zone_id, path, ttl=request.ttl)
     if not extended.success:
@@ -257,11 +247,9 @@ async def extend_lock(
             detail="Lock extend failed: not owned by this lock_id or already expired",
         )
 
-    # Calculate new expiration
     expires_at = datetime.now(UTC).timestamp() + request.ttl
     expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
-    # Use lock_info from ExtendResult
     lock_info = extended.lock_info
     mode: Literal["mutex", "semaphore"] = "mutex"
     max_holders = 1

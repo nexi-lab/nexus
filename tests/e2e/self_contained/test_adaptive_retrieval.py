@@ -1,6 +1,6 @@
 """End-to-end tests for adaptive retrieval depth (Issue #1021).
 
-Tests the adaptive k calculation through the FastAPI /api/search/query endpoint.
+Tests the adaptive k calculation through the FastAPI /api/v2/search/query endpoint.
 """
 
 from __future__ import annotations
@@ -106,9 +106,9 @@ class TestAdaptiveRetrievalFastAPI:
         fastapi_server._fastapi_app.state.search_daemon = original_daemon
 
     def test_search_endpoint_accepts_adaptive_k_param(self, test_client, mock_app_state):
-        """Test that /api/search/query accepts adaptive_k parameter."""
+        """Test that /api/v2/search/query accepts adaptive_k parameter."""
         response = test_client.get(
-            "/api/search/query",
+            "/api/v2/search/query",
             params={
                 "q": "What is Python?",
                 "limit": 10,
@@ -123,7 +123,7 @@ class TestAdaptiveRetrievalFastAPI:
         """Test that adaptive_k parameter is passed to search daemon."""
         # Make request with adaptive_k=true
         response = test_client.get(
-            "/api/search/query",
+            "/api/v2/search/query",
             params={
                 "q": "How does authentication compare to authorization?",
                 "limit": 10,
@@ -141,7 +141,7 @@ class TestAdaptiveRetrievalFastAPI:
     def test_search_without_adaptive_k_defaults_to_false(self, test_client, mock_app_state):
         """Test that adaptive_k defaults to False when not specified."""
         response = test_client.get(
-            "/api/search/query",
+            "/api/v2/search/query",
             params={
                 "q": "What is Python?",
                 "limit": 10,
@@ -262,7 +262,7 @@ class TestAdaptiveRetrievalAPIContract:
         openapi = app.openapi()
 
         # Find the search endpoint
-        search_path = openapi.get("paths", {}).get("/api/search/query", {})
+        search_path = openapi.get("paths", {}).get("/api/v2/search/query", {})
         get_params = search_path.get("get", {}).get("parameters", [])
 
         param_names = [p.get("name") for p in get_params]

@@ -92,7 +92,7 @@ class TestReadSetCacheE2E:
         _read(test_app, "/stats-test/file.txt")
 
         # Check cache stats endpoint
-        resp = test_app.get("/api/cache/stats")
+        resp = test_app.get("/api/v2/cache/stats")
         assert resp.status_code == 200
         stats = resp.json()
 

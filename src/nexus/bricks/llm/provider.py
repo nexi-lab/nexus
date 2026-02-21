@@ -24,11 +24,11 @@ from litellm.exceptions import RateLimitError
 from litellm.types.utils import CostPerToken, ModelInfo, ModelResponse, Usage
 from litellm.utils import create_pretrained_tokenizer
 
-from nexus.llm.cancellation import AsyncCancellationToken
-from nexus.llm.config import LLMConfig
-from nexus.llm.exceptions import LLMCancellationError, LLMNoResponseError
-from nexus.llm.message import Message
-from nexus.llm.metrics import LLMMetrics
+from nexus.bricks.llm.cancellation import AsyncCancellationToken
+from nexus.bricks.llm.config import LLMConfig
+from nexus.bricks.llm.exceptions import LLMCancellationError, LLMNoResponseError
+from nexus.bricks.llm.metrics import LLMMetrics
+from nexus.contracts.llm_types import Message
 
 logger = logging.getLogger(__name__)
 
@@ -100,25 +100,10 @@ def retry_decorator(
     retry_max_wait: float = 10.0,
     retry_multiplier: float = 2.0,
 ) -> Callable:
-    """Decorator for retrying functions with exponential backoff (tenacity-backed)."""
-    from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+    """Decorator for retrying sync/async functions with exponential backoff.
 
-    return retry(
-        stop=stop_after_attempt(num_retries + 1),
-        wait=wait_exponential(multiplier=retry_multiplier, min=retry_min_wait, max=retry_max_wait),
-        retry=retry_if_exception_type(retry_exceptions),
-        reraise=True,
-    )
-
-
-def async_retry_decorator(
-    num_retries: int = 3,
-    retry_exceptions: tuple[type[Exception], ...] = LLM_RETRY_EXCEPTIONS,
-    retry_min_wait: float = 4.0,
-    retry_max_wait: float = 10.0,
-    retry_multiplier: float = 2.0,
-) -> Callable:
-    """Decorator for retrying async functions with exponential backoff (tenacity-backed)."""
+    Tenacity auto-detects async callables; a single decorator works for both.
+    """
     from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
     return retry(
@@ -557,7 +542,7 @@ class LiteLLMProvider(LLMProvider):
             start_time = time.time()
 
             # Create completion task with retry
-            @async_retry_decorator(
+            @retry_decorator(
                 num_retries=self.config.num_retries,
                 retry_exceptions=LLM_RETRY_EXCEPTIONS,
                 retry_min_wait=self.config.retry_min_wait,
@@ -708,7 +693,7 @@ class LiteLLMProvider(LLMProvider):
                 (self.config.model + str(formatted_messages)).encode()
             ).hexdigest()
             if cache_key in self._token_count_cache:
-                return self._token_count_cache[cache_key]
+                return int(self._token_count_cache[cache_key])
         except (TypeError, AttributeError, ValueError):
             cache_key = None
 
@@ -801,7 +786,7 @@ class LiteLLMProvider(LLMProvider):
             extra_kwargs["custom_cost_per_token"] = cost_per_token
 
         try:
-            cost = litellm_completion_cost(completion_response=response, **extra_kwargs)  # type: ignore[arg-type]
+            cost = litellm_completion_cost(completion_response=response, **extra_kwargs)  # type: ignore[arg-type]  # allowed
             if cost is not None:
                 self.metrics.add_cost(float(cost))
                 return float(cost)
@@ -816,7 +801,7 @@ class LiteLLMProvider(LLMProvider):
                 cost = litellm_completion_cost(
                     completion_response=response,
                     model=model_name,
-                    **extra_kwargs,  # type: ignore[arg-type]
+                    **extra_kwargs,  # type: ignore[arg-type]  # allowed
                 )
                 if cost is not None:
                     self.metrics.add_cost(float(cost))

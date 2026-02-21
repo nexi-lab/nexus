@@ -1,7 +1,7 @@
 """Import path identity tests for contracts/ type promotions (Issue #2190).
 
-Verifies that types imported from canonical (contracts/) and legacy (shim)
-paths resolve to the **same Python object** — ensuring isinstance checks,
+Verifies that types imported from canonical (contracts/) and brick re-export
+paths resolve to the **same Python object** -- ensuring isinstance checks,
 dict keys, pickling, etc. all work identically regardless of import path.
 """
 
@@ -9,43 +9,43 @@ from __future__ import annotations
 
 
 class TestLLMTypesIdentity:
-    """Verify nexus.contracts.llm_types ↔ nexus.llm.message identity."""
+    """Verify nexus.contracts.llm_types ↔ nexus.bricks.llm re-export identity."""
 
     def test_message_identity(self) -> None:
+        from nexus.bricks.llm import Message as reexport
         from nexus.contracts.llm_types import Message as canonical
-        from nexus.llm.message import Message as shim
 
-        assert canonical is shim
+        assert canonical is reexport
 
     def test_message_role_identity(self) -> None:
+        from nexus.bricks.llm import MessageRole as reexport
         from nexus.contracts.llm_types import MessageRole as canonical
-        from nexus.llm.message import MessageRole as shim
 
-        assert canonical is shim
+        assert canonical is reexport
 
     def test_content_type_identity(self) -> None:
+        from nexus.bricks.llm import ContentType as reexport
         from nexus.contracts.llm_types import ContentType as canonical
-        from nexus.llm.message import ContentType as shim
 
-        assert canonical is shim
+        assert canonical is reexport
 
     def test_text_content_identity(self) -> None:
+        from nexus.bricks.llm import TextContent as reexport
         from nexus.contracts.llm_types import TextContent as canonical
-        from nexus.llm.message import TextContent as shim
 
-        assert canonical is shim
+        assert canonical is reexport
 
     def test_image_content_identity(self) -> None:
+        from nexus.bricks.llm import ImageContent as reexport
         from nexus.contracts.llm_types import ImageContent as canonical
-        from nexus.llm.message import ImageContent as shim
 
-        assert canonical is shim
+        assert canonical is reexport
 
     def test_image_detail_identity(self) -> None:
+        from nexus.bricks.llm import ImageDetail as reexport
         from nexus.contracts.llm_types import ImageDetail as canonical
-        from nexus.llm.message import ImageDetail as shim
 
-        assert canonical is shim
+        assert canonical is reexport
 
 
 class TestReBACTypesIdentity:

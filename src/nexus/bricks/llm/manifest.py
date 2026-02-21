@@ -55,12 +55,12 @@ def verify_imports() -> dict[str, bool]:
 
     # Internal modules
     for mod in [
-        "nexus.llm.config",
-        "nexus.llm.provider",
-        "nexus.llm.message",
-        "nexus.llm.metrics",
-        "nexus.llm.exceptions",
-        "nexus.llm.cancellation",
+        "nexus.bricks.llm.config",
+        "nexus.bricks.llm.provider",
+        "nexus.contracts.llm_types",
+        "nexus.bricks.llm.metrics",
+        "nexus.bricks.llm.exceptions",
+        "nexus.bricks.llm.cancellation",
     ]:
         try:
             importlib.import_module(mod)

@@ -66,6 +66,9 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("search", "cache"): [
         "nexus.bricks.search.embeddings",
     ],
+    ("memory", "llm"): [
+        "nexus.bricks.memory.relationship_extractor",
+    ],
 }
 
 # Lines matching these patterns are not actual imports (comments, strings, etc.)

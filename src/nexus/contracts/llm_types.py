@@ -8,7 +8,7 @@ This module has **zero** runtime imports from ``nexus.*`` --- only pydantic
 and stdlib --- so bricks, services, and backends can depend on it without
 pulling in the LLM brick.
 
-Backward-compat shim: ``nexus.llm.message`` re-exports everything from here.
+Imported by ``nexus.bricks.llm`` and consumers via ``nexus.contracts.llm_types``.
 """
 
 from __future__ import annotations

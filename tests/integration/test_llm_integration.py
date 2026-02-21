@@ -51,7 +51,7 @@ class TestImportPaths:
 
     def test_brick_level_exports(self) -> None:
         """LLM brick __init__ exports core types (not orchestration)."""
-        from nexus.llm import (
+        from nexus.bricks.llm import (
             LiteLLMProvider,
             LLMBrickManifest,
             LLMConfig,
@@ -86,7 +86,7 @@ class TestProtocolCompliance:
 
     def test_litellm_provider_satisfies_protocol(self) -> None:
         """LiteLLMProvider satisfies LLMProviderProtocol at runtime."""
-        from nexus.llm.provider import LiteLLMProvider
+        from nexus.bricks.llm.provider import LiteLLMProvider
         from nexus.services.protocols.llm_provider import LLMProviderProtocol
 
         assert issubclass(LiteLLMProvider, LLMProviderProtocol)
@@ -120,7 +120,7 @@ class TestBrickManifest:
 
     def test_manifest_metadata(self) -> None:
         """LLMBrickManifest has correct metadata."""
-        from nexus.llm.manifest import LLMBrickManifest
+        from nexus.bricks.llm.manifest import LLMBrickManifest
 
         manifest = LLMBrickManifest()
         assert manifest.name == "llm"
@@ -134,7 +134,7 @@ class TestBrickManifest:
 
     def test_manifest_is_frozen(self) -> None:
         """LLMBrickManifest is immutable."""
-        from nexus.llm.manifest import LLMBrickManifest
+        from nexus.bricks.llm.manifest import LLMBrickManifest
 
         manifest = LLMBrickManifest()
         with pytest.raises(AttributeError):
@@ -142,7 +142,7 @@ class TestBrickManifest:
 
     def test_verify_imports_all_pass(self) -> None:
         """verify_imports() succeeds for all required modules."""
-        from nexus.llm.manifest import verify_imports
+        from nexus.bricks.llm.manifest import verify_imports
 
         status = verify_imports()
         for mod, ok in status.items():
@@ -150,7 +150,7 @@ class TestBrickManifest:
 
     def test_verify_imports_returns_expected_modules(self) -> None:
         """verify_imports() checks the correct set of modules."""
-        from nexus.llm.manifest import verify_imports
+        from nexus.bricks.llm.manifest import verify_imports
 
         status = verify_imports()
         # Required external dependencies
@@ -158,12 +158,12 @@ class TestBrickManifest:
         assert "pydantic" in status
         assert "tenacity" in status
         # Internal modules
-        assert "nexus.llm.config" in status
-        assert "nexus.llm.provider" in status
-        assert "nexus.llm.message" in status
-        assert "nexus.llm.metrics" in status
-        assert "nexus.llm.exceptions" in status
-        assert "nexus.llm.cancellation" in status
+        assert "nexus.bricks.llm.config" in status
+        assert "nexus.bricks.llm.provider" in status
+        assert "nexus.contracts.llm_types" in status
+        assert "nexus.bricks.llm.metrics" in status
+        assert "nexus.bricks.llm.exceptions" in status
+        assert "nexus.bricks.llm.cancellation" in status
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +193,8 @@ class TestCrossModuleWiring:
 
     def test_no_circular_import_services_to_llm(self) -> None:
         """Services → LLM brick imports work without circular dependency."""
-        # This was a real bug: services/llm_document_reader → nexus.llm.message
-        # → nexus.llm.__init__ → nexus.llm.document_reader (stub) → services/
+        # This was a real bug: services/llm_document_reader → nexus.bricks.llm
+        # → nexus.bricks.llm.__init__ → document_reader (stub) → services/
         # Fixed by removing eager re-exports from __init__.py
         import sys
 
@@ -312,7 +312,7 @@ class TestPerformanceValidation:
         import time
 
         start = time.perf_counter()
-        importlib.import_module("nexus.llm")
+        importlib.import_module("nexus.bricks.llm")
         elapsed = time.perf_counter() - start
 
         # Should be fast since litellm is already cached
@@ -322,7 +322,7 @@ class TestPerformanceValidation:
         """verify_imports() completes quickly (<1s)."""
         import time
 
-        from nexus.llm.manifest import verify_imports
+        from nexus.bricks.llm.manifest import verify_imports
 
         start = time.perf_counter()
         verify_imports()

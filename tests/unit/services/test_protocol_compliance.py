@@ -276,7 +276,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "LLMProviderProtocol",
         "nexus.services.protocols.llm_provider",
-        "nexus.llm.provider.LiteLLMProvider",
+        "nexus.bricks.llm.provider.LiteLLMProvider",
         True,
     ),
     (

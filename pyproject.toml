@@ -548,10 +548,13 @@ disallow_untyped_defs = false
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-module = "nexus.llm.provider"
+module = "nexus.bricks.llm.provider"
 # litellm's completion_cost has complex overloads that mypy can't resolve with **kwargs
 # Different mypy versions handle this differently, so we disable the check
 warn_unused_ignores = false
+# cachetools doesn't ship type stubs
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
 module = "nexus.cache.dragonfly"
@@ -669,11 +672,6 @@ module = [
 ]
 # pydantic v2 API
 disable_error_code = ["attr-defined"]
-
-[[tool.mypy.overrides]]
-module = "nexus.llm.message"
-# pydantic BaseModel.model_dump
-disable_error_code = ["no-any-return", "misc"]
 
 [[tool.mypy.overrides]]
 module = ["nexus.core._metadata_generated", "nexus.core._compact_generated"]

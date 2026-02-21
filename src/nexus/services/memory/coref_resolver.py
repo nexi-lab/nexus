@@ -34,7 +34,7 @@ class LLMProviderProtocol(Protocol):
     - complete_async(messages) -> response with .content attribute
     - complete(messages) -> response with .content attribute
 
-    TODO(#2124): Extract to nexus.llm.protocols when LLM module is brick-extracted.
+    TODO(#2124): Extract to nexus.bricks.llm.protocols.
     """
 
     def complete(self, messages: Sequence[Any]) -> Any:
@@ -226,7 +226,7 @@ Resolved text:"""
 
         try:
             # Build message list for providers that expect structured messages
-            from nexus.llm import Message, MessageRole
+            from nexus.contracts.llm_types import Message, MessageRole
 
             messages = [Message(role=MessageRole.USER, content=prompt)]
 

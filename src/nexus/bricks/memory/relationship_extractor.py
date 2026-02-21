@@ -368,7 +368,7 @@ Output:"""
     async def _call_llm(self, provider: Any, prompt: str) -> str:
         """Call LLM provider and get response."""
         if hasattr(provider, "complete_async"):
-            from nexus.llm import Message, MessageRole
+            from nexus.contracts.llm_types import Message, MessageRole
 
             messages = [Message(role=MessageRole.USER, content=prompt)]
             response = await provider.complete_async(messages)
@@ -378,7 +378,7 @@ Output:"""
             return str(response)
         elif hasattr(provider, "complete"):
             if hasattr(provider, "config"):
-                from nexus.llm import Message, MessageRole
+                from nexus.contracts.llm_types import Message, MessageRole
 
                 messages = [Message(role=MessageRole.USER, content=prompt)]
                 response = provider.complete(messages)
@@ -472,7 +472,7 @@ Output:"""
         try:
             from pydantic import SecretStr
 
-            from nexus.llm import LiteLLMProvider, LLMConfig
+            from nexus.bricks.llm import LiteLLMProvider, LLMConfig
 
             # Prefer OpenRouter for cost-effective extraction
             if os.environ.get("OPENROUTER_API_KEY"):

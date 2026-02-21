@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.llm.message import (
+from nexus.contracts.llm_types import (
     ContentType,
     ImageContent,
     ImageDetail,

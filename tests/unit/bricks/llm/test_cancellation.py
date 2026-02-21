@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.llm.cancellation import (
+from nexus.bricks.llm.cancellation import (
     AsyncCancellationToken,
     CancellationToken,
     request_shutdown,

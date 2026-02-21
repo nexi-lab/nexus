@@ -14,16 +14,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import SecretStr
 
-from nexus.llm.cancellation import AsyncCancellationToken
-from nexus.llm.config import LLMConfig
-from nexus.llm.exceptions import LLMCancellationError
-from nexus.llm.message import Message, MessageRole, TextContent
-from nexus.llm.provider import (
+from nexus.bricks.llm.cancellation import AsyncCancellationToken
+from nexus.bricks.llm.config import LLMConfig
+from nexus.bricks.llm.exceptions import LLMCancellationError
+from nexus.bricks.llm.provider import (
     CACHE_PROMPT_SUPPORTED_MODELS,
     LiteLLMProvider,
     LiteLLMResponse,
     LLMProvider,
 )
+from nexus.contracts.llm_types import Message, MessageRole, TextContent
 
 
 def _make_config(**overrides: Any) -> LLMConfig:
@@ -84,7 +84,7 @@ def _mock_model_response(
 @pytest.fixture()
 def provider() -> LiteLLMProvider:
     """Create a LiteLLMProvider with mocked model info."""
-    with patch("nexus.llm.provider.litellm") as mock_litellm:
+    with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
         mock_litellm.get_model_info.return_value = {
             "max_input_tokens": 200000,
             "max_output_tokens": 4096,
@@ -102,7 +102,7 @@ class TestLiteLLMProviderInit:
 
     def test_init_model_info_with_prefix(self) -> None:
         """Test provider init with model that has provider/ prefix."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             # First call fails (with prefix), second succeeds (without)
             mock_litellm.get_model_info.side_effect = [
                 Exception("not found"),
@@ -116,7 +116,7 @@ class TestLiteLLMProviderInit:
 
     def test_init_sets_default_max_input_tokens(self) -> None:
         """Test that max_input_tokens defaults to 4096 when model_info unavailable."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.side_effect = Exception("not found")
             mock_litellm.supports_function_calling.return_value = False
             mock_litellm.supports_vision.return_value = False
@@ -129,7 +129,7 @@ class TestFunctionCallingDetection:
 
     def test_function_calling_active_for_supported_model(self) -> None:
         """Test that function calling is active for models in the supported list."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.return_value = {}
             mock_litellm.supports_function_calling.return_value = True
             mock_litellm.supports_vision.return_value = False
@@ -138,7 +138,7 @@ class TestFunctionCallingDetection:
 
     def test_function_calling_disabled_when_config_false(self) -> None:
         """Test that function calling is off when native_tool_calling=False."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.return_value = {}
             mock_litellm.supports_function_calling.return_value = True
             mock_litellm.supports_vision.return_value = False
@@ -192,7 +192,7 @@ class TestCompleteAsync:
         async def slow_completion(**kwargs: Any) -> None:
             await asyncio.sleep(10)
 
-        provider._acompletion_partial = slow_completion  # type: ignore[assignment]
+        provider._acompletion_partial = slow_completion  # type: ignore[assignment]  # allowed
 
         # Cancel after a short delay
         async def cancel_after_delay() -> None:
@@ -257,14 +257,14 @@ class TestCountTokens:
 
     def test_token_count_basic(self, provider: LiteLLMProvider) -> None:
         """Test basic token counting."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.token_counter.return_value = 42
             count = provider.count_tokens(_make_messages())
         assert count == 42
 
     def test_token_count_with_cache_hit(self, provider: LiteLLMProvider) -> None:
         """Test that cached token count is returned on subsequent calls."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.token_counter.return_value = 42
             msgs = _make_messages()
             # First call should invoke litellm
@@ -278,7 +278,7 @@ class TestCountTokens:
 
     def test_token_count_cache_eviction(self) -> None:
         """Test that cache evicts oldest entries when full."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.return_value = {}
             mock_litellm.supports_function_calling.return_value = False
             mock_litellm.supports_vision.return_value = False
@@ -290,7 +290,7 @@ class TestCountTokens:
 
             p._token_count_cache = LRUCache(maxsize=2)
 
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.token_counter.return_value = 10
             # Fill cache with 2 entries
             p.count_tokens(_make_messages("msg1"))
@@ -307,14 +307,14 @@ class TestCostCalculation:
     def test_cost_calculation_primary(self, provider: LiteLLMProvider) -> None:
         """Test normal cost calculation path."""
         mock_resp = _mock_model_response()
-        with patch("nexus.llm.provider.litellm_completion_cost", return_value=0.005):
+        with patch("nexus.bricks.llm.provider.litellm_completion_cost", return_value=0.005):
             cost = provider._calculate_cost(mock_resp)
         assert cost == 0.005
         assert provider.metrics.accumulated_cost == 0.005
 
     def test_cost_calculation_fallback_base_model(self) -> None:
         """Test cost calculation falls back to base model name (strips provider prefix)."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.return_value = {}
             mock_litellm.supports_function_calling.return_value = False
             mock_litellm.supports_vision.return_value = False
@@ -322,7 +322,7 @@ class TestCostCalculation:
 
         mock_resp = _mock_model_response()
 
-        with patch("nexus.llm.provider.litellm_completion_cost") as mock_cost:
+        with patch("nexus.bricks.llm.provider.litellm_completion_cost") as mock_cost:
             # First call fails, fallback succeeds
             mock_cost.side_effect = [KeyError("not found"), 0.003]
             cost = p._calculate_cost(mock_resp)
@@ -332,7 +332,9 @@ class TestCostCalculation:
     def test_cost_calculation_disables_on_failure(self, provider: LiteLLMProvider) -> None:
         """Test that cost tracking is disabled when calculation fails."""
         mock_resp = _mock_model_response()
-        with patch("nexus.llm.provider.litellm_completion_cost", side_effect=KeyError("fail")):
+        with patch(
+            "nexus.bricks.llm.provider.litellm_completion_cost", side_effect=KeyError("fail")
+        ):
             cost = provider._calculate_cost(mock_resp)
         assert cost == 0.0
         assert provider.cost_metric_supported is False
@@ -366,7 +368,7 @@ class TestCachingPrompt:
     def test_caching_prompt_active_for_supported_model(self) -> None:
         """Test caching is active for models in the supported list."""
         model = CACHE_PROMPT_SUPPORTED_MODELS[0]
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.return_value = {}
             mock_litellm.supports_function_calling.return_value = False
             mock_litellm.supports_vision.return_value = False
@@ -376,7 +378,7 @@ class TestCachingPrompt:
     def test_caching_prompt_inactive_when_disabled(self) -> None:
         """Test caching is inactive when config disables it."""
         model = CACHE_PROMPT_SUPPORTED_MODELS[0]
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.return_value = {}
             mock_litellm.supports_function_calling.return_value = False
             mock_litellm.supports_vision.return_value = False
@@ -393,7 +395,7 @@ class TestVision:
 
     def test_vision_disabled_by_config(self) -> None:
         """Test vision can be disabled via config."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.return_value = {"supports_vision": True}
             mock_litellm.supports_function_calling.return_value = False
             mock_litellm.supports_vision.return_value = True
@@ -482,7 +484,7 @@ class TestFromConfig:
 
     def test_from_config_returns_litellm_provider(self) -> None:
         """Test that from_config creates a LiteLLMProvider."""
-        with patch("nexus.llm.provider.litellm") as mock_litellm:
+        with patch("nexus.bricks.llm.provider.litellm") as mock_litellm:
             mock_litellm.get_model_info.return_value = {}
             mock_litellm.supports_function_calling.return_value = False
             mock_litellm.supports_vision.return_value = False

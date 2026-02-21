@@ -13,7 +13,7 @@ citation) moved to nexus.services.llm_* modules. This brick now only
 exports provider primitives.
 """
 
-from nexus.llm.cancellation import (
+from nexus.bricks.llm.cancellation import (
     AsyncCancellationToken,
     CancellationToken,
     install_signal_handlers,
@@ -21,8 +21,8 @@ from nexus.llm.cancellation import (
     reset_shutdown_flag,
     should_continue,
 )
-from nexus.llm.config import LLMConfig
-from nexus.llm.exceptions import (
+from nexus.bricks.llm.config import LLMConfig
+from nexus.bricks.llm.exceptions import (
     LLMAuthenticationError,
     LLMCancellationError,
     LLMConfigError,
@@ -35,8 +35,10 @@ from nexus.llm.exceptions import (
     LLMTimeoutError,
     LLMTokenCountError,
 )
-from nexus.llm.manifest import LLMBrickManifest, verify_imports
-from nexus.llm.message import (
+from nexus.bricks.llm.manifest import LLMBrickManifest, verify_imports
+from nexus.bricks.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
+from nexus.bricks.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
+from nexus.contracts.llm_types import (
     ContentType,
     ImageContent,
     ImageDetail,
@@ -46,8 +48,6 @@ from nexus.llm.message import (
     ToolCall,
     ToolFunction,
 )
-from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
-from nexus.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
 
 __all__ = [
     # Manifest

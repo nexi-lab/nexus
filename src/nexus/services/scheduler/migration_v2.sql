@@ -26,3 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_sched_executor_state
   ON scheduled_tasks (executor_state) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS idx_sched_agent_running
   ON scheduled_tasks (agent_id) WHERE status = 'running';
+
+-- Zone-filtered pending count (Issue #2360: supports count_pending(zone_id=...) in queue.py)
+CREATE INDEX IF NOT EXISTS idx_sched_zone_pending
+  ON scheduled_tasks (zone_id) WHERE status = 'queued';

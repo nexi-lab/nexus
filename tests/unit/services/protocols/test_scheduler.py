@@ -100,6 +100,8 @@ class TestSchedulerProtocol:
             "complete",
             "classify",
             "metrics",
+            "initialize",
+            "shutdown",
         }
         actual = {
             name
@@ -317,9 +319,19 @@ class TestClassifyAgentRequest:
         req = AgentRequest(agent_id="a1", zone_id=None, priority=0)
         assert classify_agent_request(req) == "interactive"
 
+    def test_high_priority_maps_to_interactive(self) -> None:
+        """PriorityTier.HIGH (1) → 'interactive'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=1)
+        assert classify_agent_request(req) == "interactive"
+
     def test_low_priority_maps_to_background(self) -> None:
         """PriorityTier.LOW (3) → 'background'."""
         req = AgentRequest(agent_id="a1", zone_id=None, priority=3)
+        assert classify_agent_request(req) == "background"
+
+    def test_best_effort_maps_to_background(self) -> None:
+        """PriorityTier.BEST_EFFORT (4) → 'background'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=4)
         assert classify_agent_request(req) == "background"
 
     def test_io_wait_promotes_background_to_batch(self) -> None:
@@ -394,3 +406,55 @@ class TestInMemorySchedulerCompletedBound:
         assert len(scheduler._completed) <= _MAX_COMPLETED
         # Most recent tasks should still be present
         assert await scheduler.get_status(task_ids[-1]) is not None
+
+    async def test_no_eviction_at_boundary(self) -> None:
+        """Exactly _MAX_COMPLETED entries → no eviction yet."""
+        scheduler = InMemoryScheduler()
+        task_ids = []
+        for _ in range(_MAX_COMPLETED):
+            tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+            task_ids.append(tid)
+            await scheduler.next()
+            await scheduler.complete(tid)
+
+        assert len(scheduler._completed) == _MAX_COMPLETED
+        # First and last tasks should both be present
+        assert await scheduler.get_status(task_ids[0]) is not None
+        assert await scheduler.get_status(task_ids[-1]) is not None
+
+    async def test_evicted_task_returns_none(self) -> None:
+        """Tasks evicted from _completed return None from get_status."""
+        scheduler = InMemoryScheduler()
+        # Fill to boundary
+        first_ids = []
+        for _ in range(_MAX_COMPLETED):
+            tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+            first_ids.append(tid)
+            await scheduler.next()
+            await scheduler.complete(tid)
+
+        # Add one more to trigger eviction of the oldest
+        tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+        await scheduler.next()
+        await scheduler.complete(tid)
+
+        # Oldest task should have been evicted
+        assert await scheduler.get_status(first_ids[0]) is None
+        # Newest task should still be accessible
+        assert await scheduler.get_status(tid) is not None
+
+    async def test_eviction_preserves_fifo_order(self) -> None:
+        """Eviction removes the oldest entry (FIFO order)."""
+        scheduler = InMemoryScheduler()
+        task_ids = []
+        for _ in range(_MAX_COMPLETED + 3):
+            tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+            task_ids.append(tid)
+            await scheduler.next()
+            await scheduler.complete(tid)
+
+        # First 3 should be evicted
+        for i in range(3):
+            assert await scheduler.get_status(task_ids[i]) is None
+        # Fourth should still exist
+        assert await scheduler.get_status(task_ids[3]) is not None

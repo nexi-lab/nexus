@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -68,6 +69,7 @@ class EdgeSyncManager:
         conflict_detector: ConflictDetector | None = None,
         health_check_url: str | None = None,
         node_id: str = "edge",
+        replay_wake: Callable[[], None] | None = None,
     ) -> None:
         self._queue = queue
         self._transport = transport
@@ -76,6 +78,7 @@ class EdgeSyncManager:
         self._conflict_detector = conflict_detector
         self._health_check_url = health_check_url
         self._node_id = node_id
+        self._replay_wake = replay_wake
         self._state = SyncState.ONLINE
         self._stopped = False
         self._reconnect_task: asyncio.Task[None] | None = None
@@ -87,6 +90,8 @@ class EdgeSyncManager:
 
     def notify_disconnected(self) -> None:
         """Signal that connectivity has been lost."""
+        if self._stopped:
+            return
         if self._state is not SyncState.DISCONNECTED:
             self._state = SyncState.DISCONNECTED
             if self._auth_manager is not None:
@@ -98,9 +103,14 @@ class EdgeSyncManager:
 
         Triggers the reconnection state machine if currently disconnected.
         """
+        if self._stopped:
+            return
         if self._state is SyncState.DISCONNECTED:
             self._state = SyncState.RECONNECTING
             logger.info("Edge node %s starting reconnection sequence", self._node_id)
+            # Cancel any lingering reconnect task before creating a new one
+            if self._reconnect_task is not None and not self._reconnect_task.done():
+                self._reconnect_task.cancel()
             self._reconnect_task = asyncio.create_task(self._reconnect())
 
     async def _reconnect(self) -> None:
@@ -141,9 +151,9 @@ class EdgeSyncManager:
             return not self._circuit.is_open
 
         try:
-            result = await self._transport.call("health.check", params={})
+            await self._transport.call("health.check", params={})
             logger.info("Health check passed for node %s", self._node_id)
-            return result is not None or True  # Any non-exception response = healthy
+            return True  # Any non-exception response = healthy
         except Exception:
             logger.warning("Health check failed for node %s", self._node_id)
             return False
@@ -155,9 +165,7 @@ class EdgeSyncManager:
 
         self._auth_manager.exit_offline_mode()
         if self._auth_manager.needs_refresh:
-            # The actual token is managed by the transport layer.
-            # We just need to signal the auth cache to invalidate.
-            await self._auth_manager.force_refresh("")
+            await self._auth_manager.force_refresh()
             logger.info("Auth tokens refreshed for node %s", self._node_id)
 
     async def _scan_conflicts(self) -> None:
@@ -190,6 +198,8 @@ class EdgeSyncManager:
                 self._node_id,
                 pending,
             )
+            if self._replay_wake is not None:
+                self._replay_wake()
         else:
             logger.info("No pending operations for node %s — WAL replay skipped", self._node_id)
 

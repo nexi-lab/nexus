@@ -458,7 +458,7 @@ class TestReconcileContext:
             last_healthy_at=1000.0,
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
-            object.__setattr__(ctx, "brick_name", "changed")
+            ctx.brick_name = "changed"
 
     def test_slots(self) -> None:
         assert hasattr(ReconcileContext, "__slots__")
@@ -514,7 +514,7 @@ class TestBrickReconcileOutcome:
     def test_frozen(self) -> None:
         outcome = BrickReconcileOutcome()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            object.__setattr__(outcome, "requeue", True)
+            outcome.requeue = True
 
 
 # ---------------------------------------------------------------------------

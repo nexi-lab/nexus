@@ -80,16 +80,14 @@ class AuthCacheManager:
             return None
         return self._auth_cache.get(token)
 
-    async def force_refresh(self, token: str) -> dict[str, Any] | None:
-        """Force-refresh a token by invalidating cache and re-fetching.
+    async def force_refresh(self) -> None:
+        """Invalidate all cached tokens so they are re-authenticated on next use.
 
         Must be called during reconnection before any data operations.
-        Returns the new auth result, or None if refresh fails.
         """
-        self._auth_cache.invalidate(token)
+        self._auth_cache.clear()
         self._needs_refresh = False
-        logger.info("Forced auth refresh completed for reconnection")
-        return None
+        logger.info("Forced auth refresh — cache cleared for reconnection")
 
     def clear(self) -> None:
         """Clear all cached auth state."""

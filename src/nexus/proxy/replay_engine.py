@@ -54,7 +54,8 @@ class ReplayEngine:
         self._poll_interval = poll_interval
         self._stopped = False
         self._wake = asyncio.Event()
-        self._replayed_keys: set[str] = set()
+        self._replayed_keys: dict[str, None] = {}
+        self._max_replayed_keys = 10_000
 
     def wake(self) -> None:
         """Signal the replay loop to check the queue immediately."""
@@ -104,7 +105,12 @@ class ReplayEngine:
                         await self._queue.mark_done(op.id)
                         await self._circuit.record_success()
                         if op.idempotency_key:
-                            self._replayed_keys.add(op.idempotency_key)
+                            self._replayed_keys[op.idempotency_key] = None
+                            if len(self._replayed_keys) > self._max_replayed_keys:
+                                # Evict oldest entries (first inserted in dict order)
+                                excess = len(self._replayed_keys) - self._max_replayed_keys
+                                for evict_key in list(self._replayed_keys)[:excess]:
+                                    del self._replayed_keys[evict_key]
                     except json.JSONDecodeError as jexc:
                         logger.error("Failed to decode op %d: %s", op.id, jexc)
                         await self._queue.mark_dead_letter(op.id)

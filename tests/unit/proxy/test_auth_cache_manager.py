@@ -113,9 +113,9 @@ class TestAuthCacheManagerForceRefresh:
         mgr.exit_offline_mode()
         assert mgr.needs_refresh
 
-        await mgr.force_refresh("token123")
+        await mgr.force_refresh()
         assert not mgr.needs_refresh
-        cache.invalidate.assert_called_once_with("token123")
+        cache.clear.assert_called()
 
 
 class TestAuthCacheManagerClear:

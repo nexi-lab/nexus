@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -108,26 +107,17 @@ async def shutdown_realtime(app: FastAPI, svc: LifespanServices) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_event_log(app: FastAPI, _svc: LifespanServices) -> None:
-    """Event Log WAL for durable event persistence (Issue #1397)."""
-    app.state.event_log = None
-    try:
-        from nexus.services.event_log import EventLogConfig, create_event_log
+def _startup_event_log(app: FastAPI, svc: LifespanServices) -> None:
+    """Wire factory-created EventLog into app.state (Issue #2195).
 
-        wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
-        sync_mode = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
-        segment_size = int(os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024)))
-
-        event_log_config = EventLogConfig(
-            wal_dir=Path(wal_dir),
-            segment_size_bytes=segment_size,
-            sync_mode=sync_mode,
-        )
-        app.state.event_log = create_event_log(event_log_config)
-        if app.state.event_log:
-            logger.info("Event log initialized (wal_dir=%s, sync_mode=%s)", wal_dir, sync_mode)
-    except Exception as e:
-        logger.warning("Failed to initialize event log: %s", e)
+    Construction moved to ``factory._boot_system_services``.
+    Lifespan only reads the pre-built instance from SystemServices.
+    """
+    _nx = svc.nexus_fs
+    _sys = getattr(_nx, "_system_services", None) if _nx else None
+    app.state.event_log = getattr(_sys, "event_log", None) if _sys else None
+    if app.state.event_log:
+        logger.info("Event log wired from factory (WAL)")
 
 
 async def _startup_event_bus(app: FastAPI, svc: LifespanServices) -> None:

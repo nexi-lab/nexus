@@ -39,3 +39,8 @@ class _BootContext:
     resiliency_raw: dict[str, Any] | None
     db_url: str
     profile_tuning: ProfileTuning
+
+    # WAL config for EventLog (Issue #2195)
+    wal_dir: str | None = None
+    wal_sync_mode: str | None = None
+    wal_segment_size: int | None = None

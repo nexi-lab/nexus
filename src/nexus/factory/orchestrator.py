@@ -194,6 +194,9 @@ def create_nexus_services(
         resiliency_manager=system_dict["resiliency_manager"],
         eviction_manager=system_dict.get("eviction_manager"),
         zone_lifecycle=system_dict.get("zone_lifecycle"),
+        # Issue #2195: EventLog + Scheduler
+        event_log=system_dict.get("event_log"),
+        scheduler_service=system_dict.get("scheduler_service"),
     )
 
     brick_services = _BrickServices(

@@ -89,7 +89,7 @@ async def shared_event_bus(redis_client):
 @pytest.fixture
 async def redis_client():
     """Create a DragonflyClient for testing."""
-    from nexus.cache.dragonfly import DragonflyClient
+    from nexus.bricks.cache.dragonfly import DragonflyClient
 
     redis_url = os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6379")
     client = DragonflyClient(url=redis_url)

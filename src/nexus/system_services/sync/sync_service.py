@@ -1108,7 +1108,9 @@ class SyncService:
         Returns:
             True if file should be included
         """
-        from nexus.bricks.search.primitives import glob_fast
+        import importlib as _il
+
+        glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
 
         # Check include patterns
         if ctx.include_patterns and not glob_fast.glob_match(file_path, list(ctx.include_patterns)):

@@ -1005,7 +1005,7 @@ ignore_imports = [
     "nexus.factory -> nexus.factory.wallet",
     "nexus.factory.orchestrator -> nexus.bricks.cache.brick",
     "nexus.factory.wallet -> nexus.bricks.pay.constants",
-    "nexus.system_services.sync.sync_service -> nexus.bricks.search.primitives.glob_fast",
+    # (removed: nexus.system_services.sync.sync_service -> glob_fast; now uses importlib)
     # --- non-layer imports involving rebac (Issue #2179) ---
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
 ]

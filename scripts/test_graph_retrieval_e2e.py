@@ -40,14 +40,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from nexus.search.graph_retrieval import (
+from nexus.bricks.search.graph_retrieval import (
     GraphEnhancedRetriever,
     GraphEnhancedSearchResult,
     GraphRetrievalConfig,
     graph_enhanced_fusion,
 )
-from nexus.search.graph_store import GraphStore
-from nexus.search.results import BaseSearchResult as SemanticSearchResult
+from nexus.bricks.search.graph_store import GraphStore
+from nexus.bricks.search.results import BaseSearchResult as SemanticSearchResult
 from nexus.storage.models import Base
 
 logging.basicConfig(

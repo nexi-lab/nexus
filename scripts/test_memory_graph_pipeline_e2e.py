@@ -231,7 +231,7 @@ class MemoryGraphPipelineE2ETest:
                 self.async_engine, class_=AsyncSession, expire_on_commit=False
             )
 
-            from nexus.search.graph_store import GraphStore
+            from nexus.bricks.search.graph_store import GraphStore
 
             async with async_session_factory() as session:
                 graph_store = GraphStore(session, zone_id=self.zone_id)

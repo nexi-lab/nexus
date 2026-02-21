@@ -12,7 +12,7 @@ Ported from v1 with improvements:
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from nexus.server.dependencies import require_auth
@@ -42,7 +42,7 @@ class CacheWarmupRequest(BaseModel):
 # =============================================================================
 
 
-def _get_nexus_fs(request: Any) -> Any:
+def _get_nexus_fs(request: Request) -> Any:
     """Get NexusFS instance from app.state."""
     fs = getattr(request.app.state, "nexus_fs", None)
     if fs is None:

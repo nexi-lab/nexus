@@ -12,7 +12,7 @@ Invariants proven:
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from nexus.core.read_set import (
+from nexus.storage.read_set import (
     AccessType,
     ReadSet,
     ReadSetEntry,

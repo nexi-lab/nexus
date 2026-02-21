@@ -9,13 +9,13 @@ import pytest
 from fastapi import WebSocket
 from helpers.mock_websocket import MockWebSocket
 
-from nexus.core.read_set import ReadSet, ReadSetRegistry
 from nexus.server.websocket.manager import WebSocketManager
 from nexus.services.event_subsystem.subscriptions import (
     ReactiveSubscriptionManager,
     Subscription,
 )
 from nexus.services.event_subsystem.types import FileEvent
+from nexus.storage.read_set import ReadSet, ReadSetRegistry
 
 
 class TestReactiveWSIntegration:

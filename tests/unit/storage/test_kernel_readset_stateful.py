@@ -24,7 +24,7 @@ from hypothesis.stateful import (
     rule,
 )
 
-from nexus.core.read_set import AccessType, ReadSet, ReadSetRegistry
+from nexus.storage.read_set import AccessType, ReadSet, ReadSetRegistry
 
 # ---------------------------------------------------------------------------
 # Strategies for stateful testing

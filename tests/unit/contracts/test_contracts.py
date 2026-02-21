@@ -246,7 +246,7 @@ class TestEnableReadTrackingStandalone:
 
     def test_enable_read_tracking_basic(self):
         from nexus.contracts.types import OperationContext
-        from nexus.core.read_set import enable_read_tracking
+        from nexus.storage.read_set import enable_read_tracking
 
         ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
         enable_read_tracking(ctx)
@@ -256,7 +256,7 @@ class TestEnableReadTrackingStandalone:
 
     def test_enable_read_tracking_with_explicit_zone(self):
         from nexus.contracts.types import OperationContext
-        from nexus.core.read_set import enable_read_tracking
+        from nexus.storage.read_set import enable_read_tracking
 
         ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
         enable_read_tracking(ctx, zone_id="custom_zone")
@@ -264,7 +264,7 @@ class TestEnableReadTrackingStandalone:
 
     def test_enable_read_tracking_defaults_to_root(self):
         from nexus.contracts.types import OperationContext
-        from nexus.core.read_set import enable_read_tracking
+        from nexus.storage.read_set import enable_read_tracking
 
         ctx = OperationContext(user_id="alice", groups=[])
         enable_read_tracking(ctx)

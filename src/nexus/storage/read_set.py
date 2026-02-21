@@ -17,7 +17,7 @@ Inspired by:
     - Incremental View Maintenance: Delta propagation
 
 Example:
-    >>> from nexus.core.read_set import ReadSet, ReadSetEntry
+    >>> from nexus.storage.read_set import ReadSet, ReadSetEntry
     >>>
     >>> # Create read set for a query
     >>> read_set = ReadSet(query_id="q1", zone_id="zone1")
@@ -703,14 +703,14 @@ def enable_read_tracking(ctx: "OperationContext", zone_id: str | None = None) ->
     """Enable read tracking and initialize read set on an OperationContext.
 
     Standalone replacement for the former ``OperationContext.enable_read_tracking()``
-    method.  Lives here (not in ``contracts/``) because it imports ``ReadSet``.
+    method.  Lives here in ``storage/`` alongside ``ReadSet``.
 
     Args:
         ctx: The OperationContext to enable tracking on.
         zone_id: Zone ID for the read set (defaults to ctx.zone_id or ROOT_ZONE_ID).
 
     Example:
-        >>> from nexus.core.read_set import enable_read_tracking
+        >>> from nexus.storage.read_set import enable_read_tracking
         >>> ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
         >>> enable_read_tracking(ctx)
         >>> ctx.track_reads

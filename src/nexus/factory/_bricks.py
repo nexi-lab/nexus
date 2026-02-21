@@ -30,6 +30,7 @@ class BrickFactoryDescriptor:
     name: str | None  # Profile gate name (None = always enabled)
     result_key: str
     create_fn: Callable[..., Any]
+    manifest: Any | None = None  # Optional BrickManifest instance
 
 
 def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDescriptor]:
@@ -39,6 +40,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
     - ``BRICK_NAME``: Maps to deployment profile gate name (None = always on)
     - ``TIER``: ``"independent"`` or ``"dependent"``
     - ``RESULT_KEY``: Key in the result dict
+    - ``MANIFEST``: Optional ``BrickManifest`` instance for import verification
     - ``create(ctx, system) -> Any``: Factory function
     """
     import importlib
@@ -67,6 +69,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
                 name=getattr(mod, "BRICK_NAME", name),
                 result_key=mod.RESULT_KEY,
                 create_fn=mod.create,
+                manifest=getattr(mod, "MANIFEST", None),
             )
         )
 
@@ -105,6 +108,15 @@ def _boot_independent_bricks(
     # === Auto-discovered bricks ===
     auto_results: dict[str, Any] = {}
     for desc in _discover_brick_factories("independent"):
+        # Manifest pre-check: skip brick if required modules are missing
+        if desc.manifest is not None and not desc.manifest.all_required_present:
+            logger.debug(
+                "[BOOT:BRICK] Skipping %s — required modules missing",
+                desc.result_key,
+            )
+            desc.manifest.verify_imports()  # Log details at ERROR/WARNING
+            continue
+
         if desc.name is None:
             # No profile gate — always create
             auto_results[desc.result_key] = _safe_create(
@@ -119,6 +131,16 @@ def _boot_independent_bricks(
                 lambda d=desc: d.create_fn(ctx, system),  # type: ignore[misc]
                 _on,
             )
+
+        # Log manifest verification for successfully created bricks
+        if desc.manifest is not None and auto_results.get(desc.result_key) is not None:
+            _status = desc.manifest.verify_imports()
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "[BOOT:BRICK] %s manifest: %s",
+                    desc.result_key,
+                    _status,
+                )
 
     # === Manually-wired bricks (complex conditional logic) ===
 

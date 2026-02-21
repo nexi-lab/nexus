@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 from nexus.core.nexus_fs import NexusFS
-from nexus.services.rebac_service import ReBACService
+from nexus.services.rebac.rebac_service import ReBACService
 
 ROOT_ZONE_ID = "default"
 

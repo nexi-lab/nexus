@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.contracts.types import OperationContext
-from nexus.services.search_service import SearchService
+from nexus.services.search.search_service import SearchService
 
 # ---------------------------------------------------------------------------
 # Helpers

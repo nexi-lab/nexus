@@ -47,7 +47,7 @@ class TestStrategySelection:
 
     def test_select_trigram_when_available(self, built_index, tmp_path):
         """Should select TRIGRAM_INDEX when file count exceeds threshold."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
         service._gw = None
@@ -79,7 +79,7 @@ class TestStrategySelection:
 
     def test_skip_trigram_when_no_index(self):
         """Should not select TRIGRAM_INDEX when index doesn't exist."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
         service._gw = None
@@ -94,7 +94,7 @@ class TestStrategySelection:
 
     def test_skip_trigram_when_below_threshold(self, built_index):
         """Should not select TRIGRAM_INDEX for small file counts."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
         service._gw = None
@@ -109,7 +109,7 @@ class TestStrategySelection:
 
     def test_cached_text_preferred_over_trigram(self, built_index):
         """CACHED_TEXT strategy should take priority over TRIGRAM_INDEX."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
         service._gw = None
@@ -128,7 +128,7 @@ class TestTrigramFallback:
 
     def test_try_grep_with_trigram_no_index(self):
         """Should return None when index doesn't exist."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
         service._gw = None
@@ -144,7 +144,7 @@ class TestTrigramFallback:
 
     def test_try_grep_with_trigram_success(self, built_index):
         """Should return results when index exists."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
         service._gw = None
@@ -174,7 +174,7 @@ class TestIndexManagement:
 
     def test_get_index_status_not_built(self):
         """Status should report not_built for missing index."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
         service._gw = None
@@ -185,7 +185,7 @@ class TestIndexManagement:
 
     def test_invalidate_nonexistent_index(self):
         """Invalidating non-existent index should not crash."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
         service._gw = None

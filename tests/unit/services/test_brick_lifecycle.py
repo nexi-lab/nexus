@@ -13,11 +13,6 @@ import pytest
 from hypothesis import settings
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule
 
-from nexus.services.brick_lifecycle import (
-    BrickLifecycleManager,
-    CyclicDependencyError,
-    InvalidTransitionError,
-)
 from nexus.services.protocols.brick_lifecycle import (
     EVENT_FAILED,
     EVENT_MOUNT,
@@ -29,6 +24,11 @@ from nexus.services.protocols.brick_lifecycle import (
     EVENT_UNREGISTER,
     BrickSpec,
     BrickState,
+)
+from nexus.system_services.lifecycle.brick_lifecycle import (
+    BrickLifecycleManager,
+    CyclicDependencyError,
+    InvalidTransitionError,
 )
 from tests.unit.services.conftest import (
     make_failing_brick as _make_failing_brick,

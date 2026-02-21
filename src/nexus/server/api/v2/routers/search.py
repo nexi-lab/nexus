@@ -43,6 +43,14 @@ def _get_search_daemon(request: Any) -> Any:
     return daemon
 
 
+def _get_record_store(request: Any) -> Any:
+    """Get RecordStore from app.state."""
+    store = getattr(request.app.state, "record_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Record store not available")
+    return store
+
+
 def _get_optional_search_daemon(request: Any) -> Any:
     """Get SearchDaemon from app.state, returning None if not enabled."""
     return getattr(request.app.state, "search_daemon", None)
@@ -106,6 +114,7 @@ async def search_query(
     _auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
     async_session_factory: Any = Depends(_get_async_read_session_factory),
+    record_store: Any = Depends(_get_record_store),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon."""
     from nexus.bricks.search.query_router import QueryRouter
@@ -152,7 +161,7 @@ async def search_query(
 
     try:
         if effective_graph_mode != "none":
-            from nexus.services.graph_search_service import graph_enhanced_search
+            from nexus.services.search.graph_search_service import graph_enhanced_search
 
             results = await graph_enhanced_search(
                 query=q,
@@ -161,6 +170,7 @@ async def search_query(
                 path_filter=path,
                 alpha=alpha,
                 graph_mode=effective_graph_mode,
+                record_store=record_store,
                 async_session_factory=async_session_factory,
                 search_daemon=search_daemon,
             )

@@ -104,7 +104,7 @@ class TestCachedPermissionServedWhenCircuitOpen:
         """Verify that ReBACService returns cached results during outage."""
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.rebac_service import ReBACService
+        from nexus.services.rebac.rebac_service import ReBACService
 
         mock_manager = MagicMock()
         mock_manager.rebac_check.side_effect = OperationalError("conn lost", None, None)
@@ -155,7 +155,7 @@ class TestCircuitRecoveryThroughService:
         """Trip → wait timeout → verify recovery via state."""
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.rebac_service import ReBACService
+        from nexus.services.rebac.rebac_service import ReBACService
 
         mock_manager = MagicMock()
         mock_manager.rebac_check.side_effect = OperationalError("conn lost", None, None)

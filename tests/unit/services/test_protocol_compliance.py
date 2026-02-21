@@ -11,7 +11,7 @@ Usage::
 
     from tests.unit.services.test_protocol_compliance import assert_protocol_compliance
     from nexus.services.protocols import SkillsProtocol
-    from nexus.services.skill_service import SkillService
+    from nexus.services.skills.skill_service import SkillService
 
     def test_skill_service_protocol():
         assert_protocol_compliance(SkillService, SkillsProtocol)
@@ -154,57 +154,57 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "LLMServiceProtocol",
         "nexus.services.protocols.llm",
-        "nexus.services.llm_service.LLMService",
+        "nexus.services.llm.llm_service.LLMService",
         True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
     ),
     # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
     (
         "SkillsProtocol",
         "nexus.services.protocols.skills",
-        "nexus.services.skill_service.SkillService",
+        "nexus.services.skills.skill_service.SkillService",
         True,
     ),
     (
         "MountProtocol",
         "nexus.services.protocols.mount",
-        "nexus.services.mount_service.MountService",
+        "nexus.services.mount.mount_service.MountService",
         True,  # Fixed: added delete_connector, context param naming, full_sync param
     ),
     (
         "OAuthProtocol",
         "nexus.services.protocols.oauth",
-        "nexus.services.oauth_service.OAuthService",
+        "nexus.services.oauth.oauth_service.OAuthService",
         True,
     ),
     (
         "SearchProtocol",
         "nexus.services.protocols.search",
-        "nexus.services.search_service.SearchService",
+        "nexus.services.search.search_service.SearchService",
         True,
     ),
     (
         "PermissionProtocol",
         "nexus.services.protocols.permission",
-        "nexus.services.rebac_service.ReBACService",
+        "nexus.services.rebac.rebac_service.ReBACService",
         True,  # Fixed: protocol updated to match async ReBACService interface
     ),
     # ── ShareLinkService extracted (Issue #1387) ────────────────────────
     (
         "ShareLinkProtocol",
         "nexus.services.protocols.share_link",
-        "nexus.services.share_link_service.ShareLinkService",
+        "nexus.services.share_link.share_link_service.ShareLinkService",
         True,  # Method names match (async/sync checked separately)
     ),
     (
         "WatchProtocol",
         "nexus.services.protocols.watch",
-        "nexus.services.events_service.EventsService",
+        "nexus.system_services.lifecycle.events_service.EventsService",
         True,  # wait_for_changes method match
     ),
     (
         "LockProtocol",
         "nexus.services.protocols.lock",
-        "nexus.services.events_service.EventsService",
+        "nexus.system_services.lifecycle.events_service.EventsService",
         True,  # lock/extend_lock/unlock methods match
     ),
     # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
@@ -237,7 +237,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "MCPProtocol",
         "nexus.services.protocols.mcp",
-        "nexus.services.mcp_service.MCPService",
+        "nexus.services.mcp.mcp_service.MCPService",
         True,
     ),
     (
@@ -307,7 +307,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "WorkspaceManagerProtocol",
         "nexus.services.protocols.workspace_manager",
-        "nexus.services.workspace_manager.WorkspaceManager",
+        "nexus.system_services.workspace.workspace_manager.WorkspaceManager",
         True,
     ),
 ]

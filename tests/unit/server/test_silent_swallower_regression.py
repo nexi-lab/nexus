@@ -54,7 +54,7 @@ class TestOAuthCleanupLogging:
 
     def test_oauth_service_uses_specific_exceptions(self) -> None:
         """oauth_service.py should not have except Exception: pass."""
-        from nexus.services import oauth_service
+        from nexus.services.oauth import oauth_service
 
         found, line = _has_silent_swallower(inspect.getsource(oauth_service))
         assert not found, f"Silent swallower found at line {line}"

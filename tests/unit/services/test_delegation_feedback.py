@@ -248,4 +248,4 @@ class TestCompleteDelegation:
             )
 
         call_kwargs = mock_reputation_service.submit_feedback.call_args.kwargs
-        assert call_kwargs["zone_id"] == "default"
+        assert call_kwargs["zone_id"] == "root"

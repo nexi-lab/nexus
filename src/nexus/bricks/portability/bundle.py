@@ -19,7 +19,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from nexus.portability.models import (
+from nexus.bricks.portability.models import (
     BUNDLE_PATHS,
     MANIFEST_FILENAME,
     ExportManifest,

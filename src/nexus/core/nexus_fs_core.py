@@ -1474,7 +1474,11 @@ class NexusFSCoreMixin:
                 if parent_path:
                     self._permission_checker.check(parent_path, Permission.WRITE, ctx)
 
-        # Optimistic concurrency control
+        # Optimistic concurrency control — early validation for fast-fail.
+        # The atomic CAS check at metadata.put_if_version() provides the
+        # actual race-free guarantee; this is just a courtesy check.
+        use_cas = False  # whether to use atomic CAS at the put() call site
+        expected_version: int = 0  # version for CAS comparison
         if not force:
             # Check if_none_match (create-only mode)
             if if_none_match and meta is not None:
@@ -1496,6 +1500,14 @@ class NexusFSCoreMixin:
                         expected_etag=if_match,
                         current_etag=meta.etag or "(no etag)",
                     )
+                # Etag matches — use atomic CAS at write time
+                use_cas = True
+                expected_version = meta.version
+
+            # Create-only via if_none_match: CAS with expected_version=0
+            if if_none_match:
+                use_cas = True
+                expected_version = 0
 
         # Write to routed backend - returns content hash
         # Add backend_path to context for path-based connectors
@@ -1543,7 +1555,24 @@ class NexusFSCoreMixin:
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
-        self.metadata.put(metadata)
+        # Issue #2066: Atomic CAS at the metadata write call site.
+        # When OCC is requested (if_match or if_none_match), use
+        # put_if_version() for a zero-race-window guarantee.
+        if use_cas:
+            from nexus.core.metastore import CasResult
+
+            cas_result: CasResult = self.metadata.put_if_version(metadata, expected_version)
+            if not cas_result.success:
+                if if_none_match:
+                    raise FileExistsError(f"File already exists: {path}")
+                raise ConflictError(
+                    path=path,
+                    expected_etag=if_match or "",
+                    current_etag=f"(version {cas_result.current_version})",
+                )
+        else:
+            # No OCC requested — blind write
+            self.metadata.put(metadata)
 
         # Issue #1169: Advance zone revision counter after mutation
         new_revision = self._increment_zone_revision()

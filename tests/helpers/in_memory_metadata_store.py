@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from nexus.core.metadata import FileMetadata
-from nexus.core.metastore import MetastoreABC
+from nexus.core.metastore import CasResult, MetastoreABC
 
 
 class InMemoryMetastore(MetastoreABC):
@@ -24,8 +24,24 @@ class InMemoryMetastore(MetastoreABC):
     def get(self, path: str, **kwargs: Any) -> FileMetadata | None:
         return self._store.get(path)
 
-    def put(self, metadata: FileMetadata, **kwargs: Any) -> None:
+    def put(self, metadata: FileMetadata, **kwargs: Any) -> int | None:
         self._store[metadata.path] = metadata
+        return None
+
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        """Atomic CAS — trivially safe under Python GIL."""
+        current = self._store.get(metadata.path)
+        current_ver = current.version if current else 0
+        if current_ver != expected_version:
+            return CasResult(success=False, current_version=current_ver)
+        self._store[metadata.path] = metadata
+        return CasResult(success=True, current_version=metadata.version)
 
     def delete(self, path: str, **kwargs: Any) -> dict[str, Any] | None:
         if path in self._store:

@@ -208,6 +208,44 @@ impl PyMetastore {
         Ok(None)
     }
 
+    /// Compare-and-swap metadata for a path.
+    ///
+    /// Atomically writes metadata only if the current version matches
+    /// `expected_version`. This is the foundation for optimistic
+    /// concurrency control (OCC) — zero race window.
+    ///
+    /// Args:
+    ///     path: The file path (key).
+    ///     value: Serialized metadata bytes.
+    ///     expected_version: Expected current version (0 = create-only).
+    ///     consistency: "sc" (default) or "ec".
+    ///
+    /// Returns:
+    ///     Tuple of (success: bool, current_version: int).
+    #[pyo3(signature = (path, value, expected_version, consistency="sc"))]
+    pub fn cas_set_metadata(
+        &mut self,
+        path: &str,
+        value: Vec<u8>,
+        expected_version: u32,
+        consistency: &str,
+    ) -> PyResult<(bool, u32)> {
+        validate_consistency(consistency)?;
+        let cmd = Command::CasSetMetadata {
+            key: path.to_string(),
+            value,
+            expected_version,
+        };
+        let result = self.apply_command_raw(cmd)?;
+        match result {
+            CommandResult::CasResult {
+                success,
+                current_version,
+            } => Ok((success, current_version)),
+            _ => Err(PyRuntimeError::new_err("Unexpected CAS result type")),
+        }
+    }
+
     /// Get metadata for a path.
     ///
     /// Args:
@@ -543,6 +581,7 @@ impl PyMetastore {
             CommandResult::Success => Ok(true),
             CommandResult::Error(e) => Err(PyRuntimeError::new_err(e)),
             CommandResult::LockResult(state) => Ok(state.acquired),
+            CommandResult::CasResult { success, .. } => Ok(success),
             CommandResult::Value(_) => Ok(true),
         }
     }
@@ -879,6 +918,41 @@ impl PyZoneHandle {
         }
     }
 
+    /// Compare-and-swap metadata for a path (replicated through consensus).
+    ///
+    /// Args:
+    ///     path: The file path (key).
+    ///     value: Serialized metadata bytes.
+    ///     expected_version: Expected current version (0 = create-only).
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write).
+    ///
+    /// Returns:
+    ///     Tuple of (success: bool, current_version: int).
+    #[pyo3(signature = (path, value, expected_version, consistency="sc"))]
+    pub fn cas_set_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        value: Vec<u8>,
+        expected_version: u32,
+        consistency: &str,
+    ) -> PyResult<(bool, u32)> {
+        validate_consistency(consistency)?;
+        let cmd = Command::CasSetMetadata {
+            key: path.to_string(),
+            value,
+            expected_version,
+        };
+        let result = self.propose_command_raw(py, cmd)?;
+        match result {
+            CommandResult::CasResult {
+                success,
+                current_version,
+            } => Ok((success, current_version)),
+            _ => Err(PyRuntimeError::new_err("Unexpected CAS result type")),
+        }
+    }
+
     /// Get metadata for a path (local read, no consensus).
     pub fn get_metadata(&self, py: Python<'_>, path: &str) -> PyResult<Option<Vec<u8>>> {
         let node = self.node.clone();
@@ -1070,6 +1144,7 @@ impl PyZoneHandle {
             CommandResult::Success => Ok(true),
             CommandResult::Error(e) => Err(PyRuntimeError::new_err(e)),
             CommandResult::LockResult(state) => Ok(state.acquired),
+            CommandResult::CasResult { success, .. } => Ok(success),
             CommandResult::Value(_) => Ok(true),
         }
     }

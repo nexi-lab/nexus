@@ -1586,7 +1586,7 @@ class NexusFSCoreMixin:
         # When a file is created in a directory that has been granted to users,
         # the file should inherit those permissions (if include_future_files=True)
         is_new_file = meta is None
-        if is_new_file and hasattr(self, "_rebac_manager") and self._rebac_manager:
+        if is_new_file and self._rebac_manager:
             try:
                 tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
                 if tiger_cache:
@@ -1647,7 +1647,7 @@ class NexusFSCoreMixin:
                     )
 
             # Issue #548: Grant direct_owner permission to the user who created the file
-            if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+            if meta is None and self._rebac_manager:
                 try:
                     if ctx.user_id and not ctx.is_system:
                         logger.debug(
@@ -2507,12 +2507,9 @@ class NexusFSCoreMixin:
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
-        logger.warning(f"[RENAME-REBAC] Starting ReBAC update: {old_path} -> {new_path}")
-        logger.warning(
-            f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"
-        )
+        logger.warning("[RENAME-REBAC] Starting ReBAC update: %s -> %s", old_path, new_path)
 
-        if hasattr(self, "_rebac_manager") and self._rebac_manager:
+        if self._rebac_manager:
             try:
                 logger.warning(
                     f"[RENAME-REBAC] Calling update_object_path: old={old_path}, new={new_path}, is_dir={is_directory}"

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
@@ -76,6 +77,9 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
         "has_root_path",
         "has_virtual_filesystem",
         "has_token_manager",
+        # CapabilityAwareProtocol (Issue #2069)
+        "capabilities",
+        "has_capability",
     }
 )
 
@@ -203,6 +207,9 @@ class ConnectorInfo:
     When set, service_map.py auto-derives the connector field from this registry,
     eliminating manual synchronization between ConnectorRegistry and SERVICE_REGISTRY.
     """
+
+    capabilities: frozenset[ConnectorCapability] = field(default_factory=frozenset)
+    """Capabilities declared by this connector (Issue #2069)."""
 
     @property
     def connection_args(self) -> dict[str, ConnectionArg]:
@@ -344,6 +351,11 @@ class ConnectorRegistry:
 
         config_mapping = derive_config_mapping(connector_class)
 
+        # Extract capabilities from class (Issue #2069)
+        capabilities: frozenset[ConnectorCapability] = getattr(
+            connector_class, "_CAPABILITIES", frozenset()
+        )
+
         info = ConnectorInfo(
             name=name,
             connector_class=connector_class,
@@ -353,6 +365,7 @@ class ConnectorRegistry:
             user_scoped=user_scoped,
             config_mapping=config_mapping,
             service_name=service_name,
+            capabilities=capabilities,
         )
         cls._base.register(name, info, allow_overwrite=True)
 
@@ -450,6 +463,33 @@ class ConnectorRegistry:
             True if registered, False otherwise
         """
         return name in cls._base
+
+    @classmethod
+    def get_capabilities(cls, name: str) -> frozenset[ConnectorCapability]:
+        """Get capabilities for a connector by name (Issue #2069).
+
+        Args:
+            name: Connector identifier
+
+        Returns:
+            frozenset of ConnectorCapability values
+
+        Raises:
+            KeyError: If connector is not found
+        """
+        return cls.get_info(name).capabilities
+
+    @classmethod
+    def list_by_capability(cls, cap: ConnectorCapability) -> list[ConnectorInfo]:
+        """List all connectors with a specific capability (Issue #2069).
+
+        Args:
+            cap: Capability to filter by
+
+        Returns:
+            List of ConnectorInfo objects that declare the given capability
+        """
+        return [info for info in cls._base.list_all() if cap in info.capabilities]
 
     @classmethod
     def get_by_service_name(cls, service_name: str) -> ConnectorInfo | None:

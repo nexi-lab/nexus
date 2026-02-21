@@ -58,6 +58,7 @@ from nexus.connectors.calendar.schemas import (
     UpdateEventSchema,
 )
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
 # Suppress annoying googleapiclient discovery cache warnings
@@ -108,6 +109,14 @@ class GoogleCalendarConnectorBackend(
     - /{calendar_id}/{event_id}.yaml - Event files
     - /{calendar_id}/_new.yaml - Write here to create new event
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SKILL_DOC,
+        }
+    )
 
     # =========================================================================
     # Mixin Configuration

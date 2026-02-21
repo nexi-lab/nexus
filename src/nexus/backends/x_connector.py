@@ -52,6 +52,7 @@ from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.bricks.search.primitives import glob_fast
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES
 from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
@@ -109,6 +110,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     - Read-only for most paths
     - Fixed virtual directory structure
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES
 
     user_scoped = True
 

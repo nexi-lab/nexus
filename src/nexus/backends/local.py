@@ -16,6 +16,7 @@ from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
@@ -68,6 +69,17 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
     - Thread-safe file locking
     - Directory support for compatibility
     """
+
+    _CAPABILITIES = frozenset(
+        {
+            ConnectorCapability.ROOT_PATH,
+            ConnectorCapability.PARALLEL_MMAP,
+            ConnectorCapability.MULTIPART_UPLOAD,
+            ConnectorCapability.STREAMING,
+            ConnectorCapability.BATCH_CONTENT,
+            ConnectorCapability.DIRECTORY_LISTING,
+        }
+    )
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "root_path": ConnectionArg(

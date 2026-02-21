@@ -34,7 +34,9 @@ if TYPE_CHECKING:
 
     from nexus.backends.backend import FileInfo, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
+    from nexus.core.protocols.capabilities import ConnectorCapability
     from nexus.lib.response import HandlerResponse
+
 
 # ---------------------------------------------------------------------------
 # SearchableConnector (Issue #2367)
@@ -144,7 +146,23 @@ class DirectoryOpsProtocol(Protocol):
 
 
 @runtime_checkable
-class ConnectorProtocol(ContentStoreProtocol, DirectoryOpsProtocol, Protocol):
+class CapabilityAwareProtocol(Protocol):
+    """Protocol for backends that declare capabilities (Issue #2069).
+
+    Implemented by Backend ABC and all wrappers. Consumers use this to
+    query backend capabilities uniformly instead of hasattr/isinstance.
+    """
+
+    @property
+    def capabilities(self) -> frozenset[ConnectorCapability]: ...
+
+    def has_capability(self, cap: ConnectorCapability) -> bool: ...
+
+
+@runtime_checkable
+class ConnectorProtocol(
+    ContentStoreProtocol, DirectoryOpsProtocol, CapabilityAwareProtocol, Protocol
+):
     """Full connector interface — the Storage Brick boundary.
 
     Combines CAS content operations, directory operations, and connection
@@ -277,3 +295,33 @@ class DirectoryListingProtocol(Protocol):
     def get_file_info(
         self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[FileInfo]: ...
+
+
+@runtime_checkable
+class SignedUrlProtocol(Protocol):
+    """Backend can generate pre-signed/signed download URLs (Issue #2069).
+
+    Replaces orphan ``hasattr(backend, 'generate_presigned_url')`` and
+    ``hasattr(backend, 'generate_signed_url')`` checks in filesystem.py.
+    """
+
+    def generate_signed_download_url(
+        self,
+        backend_path: str,
+        expires_in: int = 3600,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class PathDeleteProtocol(Protocol):
+    """Backend supports path-based delete (Issue #2069).
+
+    Replaces 3-way hasattr fallback chain in write_back_service.py.
+    """
+
+    def delete(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[None]: ...

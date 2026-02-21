@@ -21,15 +21,19 @@ References:
 """
 
 from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
+    CapabilityAwareProtocol,
     ConnectorProtocol,
     ContentStoreProtocol,
     DirectoryListingProtocol,
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
     PassthroughProtocol,
+    PathDeleteProtocol,
     SearchableConnector,
+    SignedUrlProtocol,
     StreamingProtocol,
 )
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
@@ -39,6 +43,8 @@ __all__ = [
     "BatchContentProtocol",
     "CacheConfigContract",
     "CachingConnectorContract",
+    "CapabilityAwareProtocol",
+    "ConnectorCapability",
     "ConnectorProtocol",
     "ContentStoreProtocol",
     "DirectoryListingProtocol",
@@ -46,8 +52,10 @@ __all__ = [
     "MountInfo",
     "OAuthCapableProtocol",
     "PassthroughProtocol",
+    "PathDeleteProtocol",
     "ResolvedPath",
     "SearchableConnector",
+    "SignedUrlProtocol",
     "StreamingProtocol",
     "VFSCoreProtocol",
     "VFSRouterProtocol",

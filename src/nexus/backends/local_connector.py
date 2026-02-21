@@ -35,6 +35,7 @@ from nexus.backends.registry import (
 )
 from nexus.contracts.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
@@ -89,6 +90,15 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         >>> backend = LocalConnectorBackend("C:/Users/user/projects")
         >>> content = backend.read_content("", context)  # Uses context.backend_path
     """
+
+    _CAPABILITIES = frozenset(
+        {
+            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.DIRECTORY_LISTING,
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+        }
+    )
 
     @property
     def has_virtual_filesystem(self) -> bool:  # noqa: D102

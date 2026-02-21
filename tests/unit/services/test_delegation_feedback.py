@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.delegation.errors import DelegationError, DelegationNotFoundError
 from nexus.services.delegation.models import (
     DelegationMode,
@@ -230,7 +231,7 @@ class TestCompleteDelegation:
     def test_complete_delegation_null_zone_defaults_to_default(
         self, delegation_service, mock_reputation_service
     ):
-        """zone_id=None uses 'default' for feedback."""
+        """zone_id=None uses ROOT_ZONE_ID ('root') for feedback."""
         active_record = _make_record(zone_id=None)
         completed_record = _make_record(zone_id=None, status=DelegationStatus.COMPLETED)
 
@@ -248,4 +249,4 @@ class TestCompleteDelegation:
             )
 
         call_kwargs = mock_reputation_service.submit_feedback.call_args.kwargs
-        assert call_kwargs["zone_id"] == "root"
+        assert call_kwargs["zone_id"] == ROOT_ZONE_ID

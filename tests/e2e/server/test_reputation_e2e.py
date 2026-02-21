@@ -90,12 +90,12 @@ def pg_engine():
     # Cleanup reputation tables
     with engine.connect() as conn:
         conn.execute(
-            text("DELETE FROM reputation_events WHERE zone_id LIKE 'e2e-%' OR zone_id = 'default'")
+            text("DELETE FROM reputation_events WHERE zone_id LIKE 'e2e-%' OR zone_id = 'root'")
         )
         conn.execute(
-            text("DELETE FROM reputation_scores WHERE zone_id LIKE 'e2e-%' OR zone_id = 'default'")
+            text("DELETE FROM reputation_scores WHERE zone_id LIKE 'e2e-%' OR zone_id = 'root'")
         )
-        conn.execute(text("DELETE FROM disputes WHERE zone_id LIKE 'e2e-%' OR zone_id = 'default'"))
+        conn.execute(text("DELETE FROM disputes WHERE zone_id LIKE 'e2e-%' OR zone_id = 'root'"))
         conn.commit()
 
     engine.dispose()

@@ -178,7 +178,7 @@ class TestWildcardDirectDB:
                     relation TEXT NOT NULL,
                     object_type TEXT NOT NULL,
                     object_id TEXT NOT NULL,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
+                    zone_id TEXT NOT NULL DEFAULT 'root',
                     conditions TEXT,
                     expires_at TEXT,
                     created_at TIMESTAMP,
@@ -223,7 +223,7 @@ class TestWildcardDirectDB:
                     member_id TEXT NOT NULL,
                     group_type TEXT NOT NULL,
                     group_id TEXT NOT NULL,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
+                    zone_id TEXT NOT NULL DEFAULT 'root',
                     depth INTEGER NOT NULL DEFAULT 1,
                     updated_at TIMESTAMP,
                     PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
@@ -312,7 +312,7 @@ class TestWildcardDirectDB:
                 text("""
                     INSERT INTO rebac_tuples
                     (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
-                    VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/readonly.txt', 'default')
+                    VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/readonly.txt', 'root')
                 """),
                 {"tuple_id": str(uuid.uuid4())},
             )
@@ -356,7 +356,7 @@ class TestWildcardPerformance:
                     relation TEXT NOT NULL,
                     object_type TEXT NOT NULL,
                     object_id TEXT NOT NULL,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
+                    zone_id TEXT NOT NULL DEFAULT 'root',
                     conditions TEXT,
                     expires_at TEXT
                 )
@@ -390,7 +390,7 @@ class TestWildcardPerformance:
                     member_id TEXT NOT NULL,
                     group_type TEXT NOT NULL,
                     group_id TEXT NOT NULL,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
+                    zone_id TEXT NOT NULL DEFAULT 'root',
                     depth INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
                 )
@@ -428,7 +428,7 @@ class TestWildcardPerformance:
                     text("""
                         INSERT INTO rebac_tuples
                         (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
-                        VALUES (:tuple_id, 'user', :user_id, 'reader', 'file', :file_path, 'default')
+                        VALUES (:tuple_id, 'user', :user_id, 'reader', 'file', :file_path, 'root')
                     """),
                     {
                         "tuple_id": str(uuid.uuid4()),

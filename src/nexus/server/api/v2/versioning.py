@@ -316,7 +316,9 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.subscriptions import router as subscriptions_router
 
-        registry.add(RouterEntry(router=subscriptions_router, name="subscriptions", endpoint_count=4))
+        registry.add(
+            RouterEntry(router=subscriptions_router, name="subscriptions", endpoint_count=4)
+        )
     except ImportError as e:
         logger.warning("Failed to import Subscriptions routes: %s", e)
 

@@ -104,13 +104,19 @@ class SchedulerProtocol(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# classify_agent_request — re-exported from implementation layer
+# classify_agent_request — lazy re-export from implementation layer
 # ---------------------------------------------------------------------------
 # Canonical location: nexus.services.scheduler.policies.classifier
-# Re-exported here for backward compatibility with existing imports.
-from nexus.services.scheduler.policies.classifier import (  # noqa: E402, I001
-    classify_agent_request,
-)
+# Lazy re-export here for backward compatibility with existing imports.
+# Uses __getattr__ to avoid runtime import in protocol file (CI: no-heavy-runtime-imports).
+
+
+def __getattr__(name: str) -> Any:
+    if name == "classify_agent_request":
+        from nexus.services.scheduler.policies.classifier import classify_agent_request
+
+        return classify_agent_request
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +261,9 @@ class InMemoryScheduler:
             del self._completed[oldest]
 
     async def classify(self, request: AgentRequest) -> str:
-        return classify_agent_request(request)  # canonical: policies.classifier
+        from nexus.services.scheduler.policies.classifier import classify_agent_request
+
+        return classify_agent_request(request)
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         count = await self.pending_count(zone_id=zone_id)

@@ -270,9 +270,9 @@ def _startup_credential_service(app: FastAPI, svc: LifespanServices) -> None:
     try:
         from sqlalchemy import Table
 
-        from nexus.identity.credential_service import CredentialService
-        from nexus.identity.credentials import CapabilityIssuer, CapabilityVerifier
-        from nexus.identity.crypto import IdentityCrypto
+        from nexus.bricks.identity.credential_service import CredentialService
+        from nexus.bricks.identity.credentials import CapabilityIssuer, CapabilityVerifier
+        from nexus.bricks.identity.crypto import IdentityCrypto
         from nexus.storage.models.access_manifest import AccessManifestModel
         from nexus.storage.models.identity import AgentCredentialModel
 

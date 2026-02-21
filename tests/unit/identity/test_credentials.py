@@ -12,19 +12,19 @@ import types
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from nexus.contracts.credential_types import (
-    MAX_DELEGATION_DEPTH,
-    Ability,
-    Capability,
-)
-from nexus.identity.credentials import (
+from nexus.bricks.identity.credentials import (
     CapabilityIssuer,
     CapabilityVerifier,
     DelegationChain,
     parse_capabilities_json,
     serialize_capabilities_json,
 )
-from nexus.identity.did import create_did_key
+from nexus.bricks.identity.did import create_did_key
+from nexus.contracts.credential_types import (
+    MAX_DELEGATION_DEPTH,
+    Ability,
+    Capability,
+)
 
 
 @pytest.fixture

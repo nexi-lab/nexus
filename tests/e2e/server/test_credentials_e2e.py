@@ -114,7 +114,7 @@ def session_factory(db_path: Any) -> Any:
 
 @pytest.fixture
 def api_keys(session_factory: Any) -> dict[str, Any]:
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
     with session_factory() as session:
         admin_key_id, admin_raw = DatabaseAPIKeyAuth.create_key(
@@ -146,9 +146,9 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     """FastAPI app with permissions enabled, database auth, identity + credentials."""
     from types import SimpleNamespace
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.backends.local import LocalBackend
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.core.nexus_fs import NexusFS
     from nexus.server.fastapi_server import create_app
     from nexus.storage.record_store import SQLAlchemyRecordStore

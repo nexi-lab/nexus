@@ -190,8 +190,8 @@ class GoogleDriveConnectorBackend(Backend):
         # Import TokenManager here to avoid circular imports
         # Support both file paths and database URLs
         # Resolve database URL (checks TOKEN_MANAGER_DB env var)
-        from nexus.bricks.auth.oauth.token_manager import TokenManager
         from nexus.backends.connector_utils import resolve_database_url
+        from nexus.bricks.auth.oauth.token_manager import TokenManager
 
         resolved_db = resolve_database_url(token_manager_db)
 

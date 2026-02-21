@@ -5,10 +5,16 @@ from __future__ import annotations
 import errno
 import stat
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fuse import FuseOSError
+
+from nexus.fuse.cache import FUSECacheManager
+from nexus.fuse.ops.metadata_handler import (
+    _PARSED_SIZE_MULTIPLIER,
+    _VIRTUAL_VIEW_DEFAULT_SIZE,
+)
 
 
 class TestGetattr:
@@ -94,3 +100,171 @@ class TestReaddir:
         entries = fuse_ops.readdir("/cached")
         assert entries == [".", "..", "a.txt"]
         mock_nexus_fs.list.assert_not_called()
+
+
+class TestResolveFileSize:
+    """_resolve_file_size: tiered size estimation for getattr (Issue #1568)."""
+
+    def _make_handler(
+        self,
+        mock_nexus_fs: MagicMock,
+        mock_cache: MagicMock,
+    ) -> Any:
+        """Create a MetadataHandler with controlled dependencies."""
+        from nexus.fuse.ops.metadata_handler import MetadataHandler
+
+        ctx = MagicMock()
+        ctx.nexus_fs = mock_nexus_fs
+        ctx.cache = mock_cache
+        ctx.context = None
+        return MetadataHandler(ctx)
+
+    def test_raw_view_uses_metadata_size(
+        self, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        """Raw files use metadata size directly (no multiplier)."""
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+        metadata = MagicMock()
+        metadata.size = 2048
+
+        result = handler._resolve_file_size("/data.bin", metadata, None)
+
+        assert result == 2048
+
+    def test_raw_view_type_uses_original_behavior(
+        self, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        """/.raw/ paths (view_type='raw') use metadata directly like raw files."""
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+        metadata = MagicMock()
+        metadata.size = 5000
+
+        result = handler._resolve_file_size("/report.xlsx", metadata, "raw")
+
+        assert result == 5000
+
+    def test_virtual_view_tier1_parsed_cache_exact(
+        self, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        """Tier 1: parsed cache returns exact size."""
+        mock_cache.get_parsed_size.return_value = 4200
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+
+        result = handler._resolve_file_size("/report.xlsx", None, "md")
+
+        assert result == 4200
+        mock_cache.get_parsed_size.assert_called_once_with("/report.xlsx", "md")
+
+    def test_virtual_view_tier2_raw_content_estimate(
+        self, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        """Tier 2: raw content cache size * multiplier."""
+        mock_cache.get_parsed_size.return_value = None
+        mock_cache.get_content.return_value = b"x" * 1000
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+
+        result = handler._resolve_file_size("/report.xlsx", None, "md")
+
+        assert result == 1000 * _PARSED_SIZE_MULTIPLIER
+
+    def test_virtual_view_tier2_skips_zero_byte(
+        self, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        """Tier 2: 0-byte raw content falls through to next tier."""
+        mock_cache.get_parsed_size.return_value = None
+        mock_cache.get_content.return_value = b""
+        metadata = MagicMock()
+        metadata.size = 500
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+
+        result = handler._resolve_file_size("/empty.xlsx", metadata, "md")
+
+        # Should fall through to tier 3 (metadata * multiplier)
+        assert result == 500 * _PARSED_SIZE_MULTIPLIER
+
+    def test_virtual_view_tier3_metadata_estimate(
+        self, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        """Tier 3: metadata.size * multiplier."""
+        mock_cache.get_parsed_size.return_value = None
+        mock_cache.get_content.return_value = None
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+        metadata = MagicMock()
+        metadata.size = 2000
+
+        result = handler._resolve_file_size("/report.xlsx", metadata, "md")
+
+        assert result == 2000 * _PARSED_SIZE_MULTIPLIER
+
+    def test_virtual_view_tier4_stat_estimate(
+        self, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        """Tier 4: stat() RPC size * multiplier."""
+        mock_cache.get_parsed_size.return_value = None
+        mock_cache.get_content.return_value = None
+        mock_nexus_fs.stat.return_value = {"st_size": 3000}
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+
+        result = handler._resolve_file_size("/report.xlsx", None, "md")
+
+        assert result == 3000 * _PARSED_SIZE_MULTIPLIER
+
+    def test_virtual_view_tier5_default_constant(
+        self, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        """Tier 5: 10 MiB default when nothing is available."""
+        mock_cache.get_parsed_size.return_value = None
+        mock_cache.get_content.return_value = None
+        mock_nexus_fs.stat.return_value = None
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+
+        result = handler._resolve_file_size("/report.xlsx", None, "md")
+
+        assert result == _VIRTUAL_VIEW_DEFAULT_SIZE
+
+    @patch("nexus.fuse.ops.metadata_handler.stat_size_fallback", return_value=0)
+    def test_virtual_view_no_full_read_triggered(
+        self,
+        _mock_stat: MagicMock,
+        mock_nexus_fs: MagicMock,
+        mock_cache: MagicMock,
+    ) -> None:
+        """nexus_fs.read() must NEVER be called during _resolve_file_size."""
+        mock_cache.get_parsed_size.return_value = None
+        mock_cache.get_content.return_value = None
+        handler = self._make_handler(mock_nexus_fs, mock_cache)
+
+        handler._resolve_file_size("/report.xlsx", None, "md")
+
+        mock_nexus_fs.read.assert_not_called()
+
+
+class TestCacheGetParsedSize:
+    """FUSECacheManager.get_parsed_size: lightweight size lookup."""
+
+    def test_returns_none_when_not_cached(self) -> None:
+        cache = FUSECacheManager()
+        assert cache.get_parsed_size("/file.xlsx", "md") is None
+
+    def test_returns_exact_size_when_cached(self) -> None:
+        cache = FUSECacheManager()
+        content = b"# Parsed markdown output\nSome data here."
+        cache.cache_parsed("/file.xlsx", "md", content)
+
+        assert cache.get_parsed_size("/file.xlsx", "md") == len(content)
+
+    def test_different_view_types_independent(self) -> None:
+        cache = FUSECacheManager()
+        cache.cache_parsed("/file.xlsx", "md", b"short")
+        cache.cache_parsed("/file.xlsx", "txt", b"a longer text output")
+
+        assert cache.get_parsed_size("/file.xlsx", "md") == 5
+        assert cache.get_parsed_size("/file.xlsx", "txt") == 20
+
+    def test_returns_none_after_invalidation(self) -> None:
+        cache = FUSECacheManager()
+        cache.cache_parsed("/file.xlsx", "md", b"cached data")
+        assert cache.get_parsed_size("/file.xlsx", "md") is not None
+
+        cache.invalidate_path("/file.xlsx")
+        assert cache.get_parsed_size("/file.xlsx", "md") is None

@@ -185,6 +185,9 @@ class TestBootSystemServices:
             "scoped_hook_engine",
             "tiger_cache_manager",
             "zone_lifecycle",
+            # Issue #2195: EventLog + Scheduler
+            "event_log",
+            "scheduler_service",
         }
         assert expected_keys == set(result.keys())
 
@@ -201,6 +204,64 @@ class TestBootSystemServices:
                 _boot_system_services(ctx)
             assert "system-critical" in exc_info.value.tier
             assert "db connection failed" in str(exc_info.value)
+
+    def test_event_log_present_in_system_keys(self) -> None:
+        """Event log should be present in system service dict (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx()
+        result = _boot_system_services(ctx)
+        assert "event_log" in result
+
+    def test_scheduler_service_present_in_system_keys(self) -> None:
+        """Scheduler service should be present in system service dict (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx()
+        result = _boot_system_services(ctx)
+        assert "scheduler_service" in result
+
+    def test_scheduler_none_without_postgresql(self) -> None:
+        """Scheduler should be None when db_url is not PostgreSQL (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx(db_url="sqlite:///:memory:")
+        result = _boot_system_services(ctx)
+        assert result["scheduler_service"] is None
+
+    def test_scheduler_created_with_postgresql(self) -> None:
+        """Scheduler should be created (not initialized) with PostgreSQL (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx(db_url="postgresql://localhost/test")
+        result = _boot_system_services(ctx)
+        scheduler = result["scheduler_service"]
+        assert scheduler is not None
+        assert scheduler._initialized is False
+
+    def test_scheduler_degradable_on_import_error(self) -> None:
+        """Scheduler should degrade gracefully on import error (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx(db_url="postgresql://localhost/test")
+        with patch(
+            "nexus.services.scheduler.service.SchedulerService",
+            side_effect=ImportError("missing dep"),
+        ):
+            result = _boot_system_services(ctx)
+        assert result["scheduler_service"] is None
+
+    def test_event_log_degradable_when_wal_unavailable(self) -> None:
+        """Event log should degrade gracefully when WAL is unavailable (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx()
+        with patch(
+            "nexus.services.event_subsystem.log.create_event_log",
+            side_effect=RuntimeError("WAL not available"),
+        ):
+            result = _boot_system_services(ctx)
+        assert result["event_log"] is None
 
     def test_degradable_failure_warns_but_continues(self, caplog: pytest.LogCaptureFixture) -> None:
         from nexus.factory import _boot_system_services

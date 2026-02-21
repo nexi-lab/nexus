@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from nexus.bricks.skills.skill_service_adapter import SkillService
 from nexus.contracts.types import OperationContext
-from nexus.services.skills.skill_service import SkillService
 
 # =============================================================================
 # Fixtures

@@ -6,18 +6,18 @@ All functions are pure (no I/O), so these tests are fast and isolated.
 
 import pytest
 
-from nexus.services.delegation.derivation import (
+from nexus.bricks.delegation.derivation import (
     GrantSpec,
     derive_grants,
     validate_scope_prefix,
 )
-from nexus.services.delegation.errors import (
+from nexus.bricks.delegation.errors import (
     EscalationError,
     InvalidDelegationModeError,
     InvalidPrefixError,
     TooManyGrantsError,
 )
-from nexus.services.delegation.models import DelegationMode
+from nexus.bricks.delegation.models import DelegationMode
 
 # ---------------------------------------------------------------------------
 # validate_scope_prefix

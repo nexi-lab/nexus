@@ -17,7 +17,7 @@ References:
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.services.delegation.models import (
+    from nexus.bricks.delegation.models import (
         DelegationMode,
         DelegationOutcome,
         DelegationRecord,

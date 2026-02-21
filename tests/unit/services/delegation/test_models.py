@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from nexus.services.delegation.models import (
+from nexus.bricks.delegation.models import (
     DelegationMode,
     DelegationRecord,
     DelegationResult,

@@ -11,7 +11,7 @@ Usage::
 
     from tests.unit.services.test_protocol_compliance import assert_protocol_compliance
     from nexus.services.protocols import SkillsProtocol
-    from nexus.services.skills.skill_service import SkillService
+    from nexus.bricks.skills.skill_service_adapter import SkillService
 
     def test_skill_service_protocol():
         assert_protocol_compliance(SkillService, SkillsProtocol)
@@ -159,7 +159,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "SkillsProtocol",
         "nexus.services.protocols.skills",
-        "nexus.services.skills.skill_service.SkillService",
+        "nexus.bricks.skills.skill_service_adapter.SkillService",
         True,
     ),
     (
@@ -241,7 +241,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "DelegationProtocol",
         "nexus.services.protocols.delegation",
-        "nexus.services.delegation.service.DelegationService",
+        "nexus.bricks.delegation.service.DelegationService",
         True,
     ),
     (

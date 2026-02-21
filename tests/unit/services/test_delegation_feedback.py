@@ -13,15 +13,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
-from nexus.services.delegation.errors import DelegationError, DelegationNotFoundError
-from nexus.services.delegation.models import (
+from nexus.bricks.delegation.errors import DelegationError, DelegationNotFoundError
+from nexus.bricks.delegation.models import (
     DelegationMode,
     DelegationOutcome,
     DelegationRecord,
     DelegationStatus,
 )
-from nexus.services.delegation.service import DelegationService
+from nexus.bricks.delegation.service import DelegationService
+from nexus.constants import ROOT_ZONE_ID
 
 
 def _make_record(

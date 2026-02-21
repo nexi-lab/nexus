@@ -14,10 +14,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.bricks.delegation.errors import InsufficientTrustError
+from nexus.bricks.delegation.models import DelegationMode
+from nexus.bricks.delegation.service import DelegationService
 from nexus.constants import ROOT_ZONE_ID
-from nexus.services.delegation.errors import InsufficientTrustError
-from nexus.services.delegation.models import DelegationMode
-from nexus.services.delegation.service import DelegationService
 
 
 @dataclass(frozen=True)

@@ -10,15 +10,15 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from nexus.services.delegation.derivation import (
+from nexus.bricks.delegation.derivation import (
     derive_grants,
     validate_scope_prefix,
 )
-from nexus.services.delegation.errors import (
+from nexus.bricks.delegation.errors import (
     EscalationError,
     InvalidPrefixError,
 )
-from nexus.services.delegation.models import DelegationMode
+from nexus.bricks.delegation.models import DelegationMode
 
 # ---------------------------------------------------------------------------
 # Strategies

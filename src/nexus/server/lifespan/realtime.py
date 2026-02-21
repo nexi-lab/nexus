@@ -111,11 +111,10 @@ def _startup_event_log(app: FastAPI, svc: LifespanServices) -> None:
     """Wire factory-created EventLog into app.state (Issue #2195).
 
     Construction moved to ``factory._boot_system_services``.
-    Lifespan only reads the pre-built instance from SystemServices.
+    Lifespan reads the pre-built instance from LifespanServices (extracted
+    once in ``from_app()``).
     """
-    _nx = svc.nexus_fs
-    _sys = getattr(_nx, "_system_services", None) if _nx else None
-    app.state.event_log = getattr(_sys, "event_log", None) if _sys else None
+    app.state.event_log = svc.event_log
     if app.state.event_log:
         logger.info("Event log wired from factory (WAL)")
 

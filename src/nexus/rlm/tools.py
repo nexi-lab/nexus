@@ -51,7 +51,7 @@ def nexus_read(
             timeout=30,
         )
         resp.raise_for_status()
-        content = resp.text
+        content: str = resp.text
         if len(content) > _MAX_OUTPUT_CHARS:
             return content[:_MAX_OUTPUT_CHARS] + f"\n... [truncated, {len(content)} total chars]"
         return content

@@ -56,9 +56,9 @@ def initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
             return
 
         # Initialize OAuth provider (provider-agnostic via DI)
-        from nexus.auth.oauth.crypto import OAuthCrypto
-        from nexus.auth.oauth.providers.google import GoogleOAuthProvider
-        from nexus.auth.oauth.user_auth import OAuthUserAuth
+        from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+        from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
+        from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
         from nexus.server.auth.auth_routes import set_oauth_provider
 
         _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
@@ -80,7 +80,7 @@ def initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
         # Issue #2281: inject UserProvisionerProtocol to break circular dep
         user_provisioner = None
         try:
-            from nexus.auth.stores.nexusfs_provisioner import NexusFSUserProvisioner
+            from nexus.bricks.auth.stores.nexusfs_provisioner import NexusFSUserProvisioner
 
             user_provisioner = NexusFSUserProvisioner(nexus_fs)
         except Exception:

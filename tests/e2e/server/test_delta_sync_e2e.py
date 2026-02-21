@@ -105,7 +105,7 @@ def clean_db(pg_engine):
 @pytest.fixture()
 def admin_api_key(pg_engine, clean_db):
     """Create an admin API key directly in the database."""
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import UserModel
 
     sf = sessionmaker(bind=pg_engine)
@@ -224,7 +224,7 @@ class TestServerWithPostgresAuth:
 @pytest.fixture()
 def non_admin_api_key(pg_engine, clean_db):
     """Create a non-admin API key directly in the database."""
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import UserModel
 
     sf = sessionmaker(bind=pg_engine)

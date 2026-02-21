@@ -31,9 +31,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.database_local import DatabaseLocalAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
 from nexus.backends.local import LocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS

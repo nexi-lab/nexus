@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 
 

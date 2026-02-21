@@ -14,7 +14,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.auth.oauth.credential_service import OAuthCredentialService, PKCEStateStore
+from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService, PKCEStateStore
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.protocols.filesystem import NexusFilesystem

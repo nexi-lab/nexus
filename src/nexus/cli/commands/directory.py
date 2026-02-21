@@ -51,7 +51,6 @@ def list_files(
         # Time-travel: List files at historical operation point
         nexus ls /workspace --at-operation op_abc123
     """
-    # Import at function level - needed for both time-travel and regular long listing
     from nexus.core.nexus_fs import NexusFS
 
     try:
@@ -59,33 +58,13 @@ def list_files(
 
         if at_operation:
             # Time-travel: List files at historical operation point
-            try:
-                from nexus.storage.time_travel import TimeTravelReader
-            except ImportError as e:
-                console.print(f"[red]Error:[/red] Failed to import time-travel modules: {e}")
-                nx.close()
-                return
-
-            if not isinstance(nx, NexusFS):
+            time_travel = getattr(nx, "time_travel_service", None)
+            if time_travel is None:
                 console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
                 nx.close()
                 return
 
-            # Create time-travel reader with a session
-            record_store = nx._record_store
-            if record_store is None:
-                console.print("[red]Error:[/red] Time-travel requires a record store")
-                nx.close()
-                return
-
-            with record_store.session_factory() as session:
-                time_travel = TimeTravelReader(session, nx.backend)
-
-                # Get directory listing at operation
-                files = time_travel.list_files_at_operation(
-                    path, at_operation, zone_id=nx._default_context.zone_id, recursive=recursive
-                )
-
+            files = time_travel.list_files_at_operation(path, at_operation, recursive=recursive)
             nx.close()
 
             if not files:

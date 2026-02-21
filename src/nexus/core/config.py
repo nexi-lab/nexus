@@ -376,6 +376,10 @@ class WiredServices:
     events_service: Any = None
     task_queue_service: Any = None
 
+    # Versioning services (Issue #882: session-managed facades)
+    time_travel_service: Any = None
+    operations_service: Any = None
+
     # RPC services (Issue #2133: migrated from service_wiring.py)
     workspace_rpc_service: Any = None
     agent_rpc_service: Any = None

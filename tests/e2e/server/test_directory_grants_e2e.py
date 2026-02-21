@@ -370,7 +370,7 @@ def standalone_engine(tmp_path):
                 resource_int_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 resource_type VARCHAR(50) NOT NULL,
                 resource_id TEXT NOT NULL,
-                zone_id VARCHAR(255) NOT NULL DEFAULT 'default',
+                zone_id VARCHAR(255) NOT NULL DEFAULT 'root',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (resource_type, resource_id)
             )
@@ -410,7 +410,7 @@ class TestDirectoryGrantWorker:
                     """
                 INSERT INTO tiger_directory_grants
                 (grant_id, subject_type, subject_id, permission, directory_path, zone_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
-                VALUES (1, 'user', 'testuser', 'read', '/test/dir/', 'default', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
+                VALUES (1, 'user', 'testuser', 'read', '/test/dir/', 'root', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
             """
                 )
             )
@@ -447,7 +447,7 @@ class TestDirectoryGrantWorker:
                     """
                 INSERT INTO tiger_directory_grants
                 (grant_id, subject_type, subject_id, permission, directory_path, zone_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
-                VALUES (1, 'user', 'emptyuser', 'read', '/empty/dir/', 'default', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
+                VALUES (1, 'user', 'emptyuser', 'read', '/empty/dir/', 'root', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
             """
                 )
             )

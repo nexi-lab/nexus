@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from nexus.core.operation_result import OperationResult, OperationWarning
+from nexus.contracts.types import OperationWarning
+from nexus.core.operation_result import OperationResult
 
 
 class TestOperationWarning:

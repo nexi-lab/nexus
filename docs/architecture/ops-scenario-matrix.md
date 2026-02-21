@@ -400,6 +400,13 @@ for VFS path concurrency — see KERNEL-ARCHITECTURE.md §3.
 
 **Decision: Keep as separate domain — Lifecycle Hooks.**
 
+> **Kernel vs Service (Issue #625):** S15/P17 `HookEngineProtocol` is the
+> service-layer API for plugin/user hook registration (like netfilter userspace
+> config) — an optional service brick. Separate from the kernel's internal VFS
+> notification dispatch (`security_hook_heads` / `fsnotify` analogue) documented
+> in `KERNEL-ARCHITECTURE.md` §3. Kernel dispatch is always-on infrastructure;
+> HookEngine is an optional brick.
+
 ### 1.19 Namespace Visibility
 
 | Scenario | Caller | Freq | Latency | Mutation | Scope | Auth | State | Fed | Why Exists |
@@ -712,7 +719,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | P14 | **AgentRegistryProtocol** | `services/protocols/agent_registry.py` | Service | Async | 6 (Small) | Standalone | process table | Agent identity + lifecycle |
 | P15 | **SchedulerProtocol** | `services/protocols/scheduler.py` | Service | Async | 4 (Small) | Standalone | CFS scheduler | Work queue: submit/next/cancel |
 | P16 | **SkillsProtocol** | `services/protocols/skills.py` | Service | Sync | 9 (Medium) | Standalone | `apt` / `npm` | Skill distribution + subscription + package |
-| P17 | **HookEngineProtocol** | `services/protocols/hook_engine.py` | Service | Async | 3 (Micro) | Standalone | `netfilter` hooks | Pre/post operation hook registration + firing |
+| P17 | **HookEngineProtocol** | `services/protocols/hook_engine.py` | Service | Async | 3 (Micro) | Standalone | `netfilter` hooks | Plugin/user hook registration + firing. Above kernel notification dispatch (see `KERNEL-ARCHITECTURE.md` §3). |
 | P18 | **NamespaceManagerProtocol** | `services/protocols/namespace_manager.py` | Service | Async | 3 (Micro) | Standalone | dcache / mount ns | Path visibility check + mount table |
 | P19 | **EventLogProtocol** (service) | `services/event_log/protocol.py` | Service | Mixed | 8 (Medium) | Standalone | WAL / `auditd` | Durable append-only event log with WAL |
 | P20 | **AnomalyDetectorProtocol** | `services/governance/protocols.py` | Service | Sync | 1 (Micro) | Standalone | LSM hook | Statistical anomaly detection |
@@ -756,7 +763,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | ~~**BUNDLE**~~ | ~~P9 (Events)~~ | ~~Bundles file watching + advisory locking~~ | **DONE (#546)** — split into WatchProtocol + LockProtocol |
 | **TWO LEVELS** | P6 (Search) + P7 (SearchBrick) | Both cover Content Discovery; P7 is per-brick, P6 is aggregate | Keep both — P7 is driver-level, P6 is service-level |
 | **COMPOSITION** | P2 (ContentStore) + P3 (DirOps) → P4 (Connector) | P4 is the union of P2 + P3 + lifecycle | Keep all three — ISP compliance (callers needing only read don't depend on mkdir) |
-| **OVERLAP** | P19 (EventLog service) ↔ P17 (HookEngine) | Both fire on operations; hooks are sync pre/post, event log is async durable append | Keep both — different timing (inline vs async) and durability (ephemeral vs durable) |
+| **OVERLAP** | P19 (EventLog service) ↔ P17 (HookEngine) | Both fire on operations; hooks are sync pre/post, event log is async durable append | Keep both — different timing (inline vs async) and durability (ephemeral vs durable). Note: both are service-layer; kernel has its own notification dispatch (INTERCEPT + OBSERVE) in `KERNEL-ARCHITECTURE.md` §3. |
 | **TINY** | P20 (AnomalyDetector) | 1 method — too small for an ABC? | Keep as-is — strategy pattern for swappable detection algorithms |
 | **TINY** | P22 (ContextManifest) | 1 method — scenario was eliminated as "orchestration" | **CANDIDATE FOR REMOVAL** as Ops ABC (keep as convenience interface) |
 

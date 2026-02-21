@@ -1,188 +1,54 @@
-"""VFS Hook Pipeline — pre/post hooks for read and write operations.
+"""VFS Hook Pipeline — kernel notification dispatch mechanism.
 
-Extracts side-effect logic (caching, ReBAC, observers, parsing, tracking)
-from the read()/write() hot paths into a composable hook pipeline.
+Aggregates registered VFS hooks and dispatches them in order after
+each kernel VFS operation.  This is the kernel's dispatch mechanism
+(like Linux's ``security_hook_heads`` + ``fsnotify_group``).
 
-Hooks are registered at init time and invoked in order.  Each hook receives
-a typed context dict and can modify it or accumulate warnings.
+Architecture (KERNEL-ARCHITECTURE.md §3 "Kernel Notification Dispatch"):
+- Kernel **knows** (has callback list attributes)
+- Kernel does **not construct** (factory registers callbacks via DI)
+- Empty lists = no-op dispatch = kernel operates with zero services
 
-Architecture reference: NEXUS-LEGO-ARCHITECTURE.md §4.3
+Contracts (context dataclasses + hook protocols) live in
+``contracts/vfs_hooks.py`` (tier-neutral, like ``include/linux/notifier.h``).
+Concrete implementations live in ``services/hooks/`` (policy).
 
-Lifecycle:
-    read:   pre_read  → [kernel: validate → route → metadata → backend.read] → post_read
-    write:  pre_write → [kernel: validate → route → backend.write → metadata.put] → post_write
-    delete: pre_delete → [kernel: validate → route → metadata.delete] → post_delete
-    rename: pre_rename → [kernel: validate → route → metadata.rename] → post_rename
+Issue #625: Context types + protocols extracted to ``contracts/vfs_hooks.py``.
+Pipeline dispatch stays in kernel (``core/vfs_hooks.py``).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from nexus.contracts.types import OperationWarning
 
-from nexus.core.operation_result import OperationWarning
-
-if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
-    from nexus.core.permissions import OperationContext
-
-
-# ---------------------------------------------------------------------------
-# Hook context dataclasses — passed through pre/post hook chains
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ReadHookContext:
-    """Context passed through read hooks."""
-
-    path: str
-    context: OperationContext | None
-    zone_id: str | None = None
-    agent_id: str | None = None
-    metadata: FileMetadata | None = None
-    content: bytes | None = None
-    content_hash: str | None = None
-    warnings: list[OperationWarning] = field(default_factory=list)
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class WriteHookContext:
-    """Context passed through write hooks."""
-
-    path: str
-    content: bytes
-    context: OperationContext | None
-    zone_id: str | None = None
-    agent_id: str | None = None
-    is_new_file: bool = False
-    content_hash: str | None = None
-    metadata: FileMetadata | None = None
-    old_metadata: FileMetadata | None = None
-    new_version: int = 1
-    snapshot_hash: str | None = None
-    metadata_snapshot: dict[str, Any] | None = None
-    warnings: list[OperationWarning] = field(default_factory=list)
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class DeleteHookContext:
-    """Context passed through delete hooks."""
-
-    path: str
-    context: OperationContext | None
-    zone_id: str | None = None
-    agent_id: str | None = None
-    metadata: FileMetadata | None = None
-    warnings: list[OperationWarning] = field(default_factory=list)
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class RenameHookContext:
-    """Context passed through rename hooks."""
-
-    old_path: str
-    new_path: str
-    context: OperationContext | None
-    zone_id: str | None = None
-    agent_id: str | None = None
-    is_directory: bool = False
-    metadata: FileMetadata | None = None
-    warnings: list[OperationWarning] = field(default_factory=list)
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Hook protocols — implemented by services that plug into VFS operations
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class VFSReadHook(Protocol):
-    """Hook that runs before or after a read operation."""
-
-    @property
-    def name(self) -> str: ...
-
-    def on_post_read(self, ctx: ReadHookContext) -> None:
-        """Called after content is read from backend.
-
-        Implementations may:
-        - Filter/transform ctx.content (e.g., dynamic viewer filter)
-        - Record read tracking (e.g., dependency tracker)
-        - Register cache read sets
-        - Append warnings to ctx.warnings
-        """
-        ...
-
-
-@runtime_checkable
-class VFSWriteHook(Protocol):
-    """Hook that runs before or after a write operation."""
-
-    @property
-    def name(self) -> str: ...
-
-    def on_post_write(self, ctx: WriteHookContext) -> None:
-        """Called after content is written and metadata stored.
-
-        Implementations may:
-        - Update tiger cache bitmaps
-        - Advance zone revision
-        - Notify observers (audit trail)
-        - Queue deferred permissions
-        - Auto-parse file content
-        - Append warnings to ctx.warnings
-        """
-        ...
-
-
-@runtime_checkable
-class VFSDeleteHook(Protocol):
-    """Hook that runs after a delete operation."""
-
-    @property
-    def name(self) -> str: ...
-
-    def on_post_delete(self, ctx: DeleteHookContext) -> None: ...
-
-
-@runtime_checkable
-class VFSRenameHook(Protocol):
-    """Hook that runs after a rename operation."""
-
-    @property
-    def name(self) -> str: ...
-
-    def on_post_rename(self, ctx: RenameHookContext) -> None: ...
-
-
-# ---------------------------------------------------------------------------
-# Pipeline — aggregates hooks and dispatches in order
-# ---------------------------------------------------------------------------
+# Re-export contracts for backward compatibility — existing code imports
+# from nexus.core.vfs_hooks.  New code should import from nexus.contracts.vfs_hooks.
+from nexus.contracts.vfs_hooks import (  # noqa: F401
+    DeleteHookContext,
+    ReadHookContext,
+    RenameHookContext,
+    VFSDeleteHook,
+    VFSReadHook,
+    VFSRenameHook,
+    VFSWriteHook,
+    WriteHookContext,
+)
 
 
 class VFSHookPipeline:
     """Aggregates and dispatches VFS hooks in registration order.
 
+    Kernel dispatch mechanism — like Linux's ``call_void_hook()`` loop.
     Hooks are registered at init time (not discovered at runtime).
     Each hook failure is caught, logged, and added as a warning —
     the core operation is never aborted by a hook failure.
 
-    Usage:
+    Usage (in factory/orchestrator.py):
         pipeline = VFSHookPipeline()
         pipeline.register_read_hook(DynamicViewerHook(...))
-        pipeline.register_read_hook(ReadTrackingHook(...))
-        pipeline.register_write_hook(TigerCacheHook(...))
-        pipeline.register_write_hook(ObserverHook(...))
-
-        # In kernel read():
-        ctx = ReadHookContext(path=path, context=context, content=content)
-        pipeline.run_post_read(ctx)
-        # ctx.content may be filtered, ctx.warnings may have entries
+        pipeline.register_write_hook(AutoParseHook(...))
+        pipeline.register_rename_hook(TigerCacheHook(...))
+        # inject via SystemServices.hook_pipeline
     """
 
     def __init__(self) -> None:

@@ -432,6 +432,9 @@ def create_nexus_fs(
     if _mds is not None:
         cast(Any, nx)._metadata_export_service = _mds
 
+    # --- Register VFS hooks (Issue #625: each hook lives in its service) ---
+    _register_vfs_hooks(nx)
+
     # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)
     _blm = getattr(system_services, "brick_lifecycle_manager", None)
     if _blm is not None:
@@ -439,3 +442,68 @@ def create_nexus_fs(
         _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
 
     return nx
+
+
+def _register_vfs_hooks(nx: NexusFS) -> None:
+    """Register concrete VFS hook implementations on the pipeline.
+
+    Each hook lives in its own service directory (Issue #625):
+      - DynamicViewerReadHook  → services/rebac/
+      - AutoParseWriteHook     → parsers/
+      - TigerCacheRenameHook   → services/permissions/cache/tiger/
+
+    Called by ``create_nexus_fs()`` after NexusFS construction + wired
+    services binding, keeping the kernel free of service-layer imports.
+    """
+    pipeline = nx._hook_pipeline
+
+    # DynamicViewerReadHook (post-read: column-level CSV filtering)
+    rebac_mgr = getattr(nx, "_rebac_manager", None)
+    has_viewer = (
+        rebac_mgr is not None
+        and hasattr(nx, "_get_subject_from_context")
+        and hasattr(nx, "get_dynamic_viewer_config")
+        and hasattr(nx, "apply_dynamic_viewer_filter")
+    )
+    if has_viewer:
+        from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
+
+        pipeline.register_read_hook(
+            DynamicViewerReadHook(
+                get_subject=nx._get_subject_from_context,
+                get_viewer_config=nx.get_dynamic_viewer_config,
+                apply_filter=nx.apply_dynamic_viewer_filter,
+            )
+        )
+
+    # AutoParseWriteHook (post-write: background parsing)
+    parser_reg = getattr(nx, "parser_registry", None)
+    parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
+    if parser_reg is not None and parse_fn is not None and getattr(nx, "auto_parse", False):
+        from nexus.parsers.auto_parse_hook import AutoParseWriteHook
+
+        pipeline.register_write_hook(
+            AutoParseWriteHook(
+                get_parser=parser_reg.get_parser,
+                parse_fn=parse_fn,
+            )
+        )
+
+    # TigerCacheRenameHook (post-rename: bitmap updates)
+    tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
+    if tiger_cache is not None:
+        from nexus.services.permissions.cache.tiger.rename_hook import TigerCacheRenameHook
+
+        def _metadata_list_iter(
+            prefix: str,
+            recursive: bool = True,
+            zone_id: str = "root",  # noqa: ARG001
+        ) -> Any:
+            return nx.metadata.list(prefix=prefix, recursive=recursive)
+
+        pipeline.register_rename_hook(
+            TigerCacheRenameHook(
+                tiger_cache=tiger_cache,
+                metadata_list_iter=_metadata_list_iter,
+            )
+        )

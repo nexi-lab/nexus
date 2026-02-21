@@ -145,6 +145,7 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
 | `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW locking with hierarchy awareness |
 | `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
+| Notification dispatch | `security_hook_heads` + `fsnotify` | Two-phase callback lists at VFS operation points (see §3 Notification Dispatch) |
 
 `MetastoreABC` is kernel because it IS the inode layer — the typed contract
 between VFS and storage. Without it, the kernel cannot describe files.
@@ -165,6 +166,12 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 **no service business logic** — services are accessed through `ServiceRegistry`
 (Phase 2) or thin delegation stubs (Phase 1).
 
+`NexusFSCoreMixin` contains the VFS operation implementations (like `vfs_read`,
+`vfs_write` in Linux), inherited by NexusFS. This is an implementation detail —
+a Python mixin used to split the large NexusFS class. As services continue
+extracting, the mixin should shrink to pure VFS ops and eventually evolve from
+mixin (inheritance) to composition (standalone `VFSCore` class).
+
 `factory.py` is the init system (analogous to systemd): constructs kernel + drivers
 + services and wires them together. NexusFS receives pre-built dependencies via its
 constructor and never auto-creates services.
@@ -173,6 +180,36 @@ constructor and never auto-creates services.
 > `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
 > `_wire_services()` deleted — all service creation moved to `factory._boot_wired_services()` (#643).
 > Remaining: replace `KernelServices` dataclass with `ServiceRegistry`.
+
+### Kernel Notification Dispatch
+
+The kernel provides callback-based notification at VFS operation points (read,
+write, delete, rename, mkdir, rmdir). Like Linux's `security_hook_heads` and
+`fsnotify_group`, these are kernel-internal callback lists.
+
+**Decision (Issue #625):** Kernel **knows** (has callback list attributes),
+kernel does **not construct** (factory registers callbacks via DI). Empty
+lists = no-op dispatch = kernel operates with zero services.
+
+Two-phase dispatch per VFS operation:
+
+| Phase | Semantics | Abort? | Modify? | Linux Analogue | Current Mechanism |
+|-------|-----------|--------|---------|----------------|-------------------|
+| **INTERCEPT** | Synchronous, ordered | Yes | Yes | LSM `call_void_hook()` | `WriteObserverProtocol` (abort), `VFSHookPipeline` (modify) |
+| **OBSERVE** | Fire-and-forget | No | No | `fsnotify()` / `notifier_call_chain()` | `PostMutationHook` |
+
+**Contracts:** Callback protocols and context types in `contracts/` (tier-neutral,
+like `include/linux/notifier.h`). Concrete implementations in `services/hooks/`
+(policy, like SELinux/AppArmor modules). Factory wires them at startup.
+
+**Distinction from HookEngineProtocol (S15/P17):** The kernel notification
+dispatch is an internal mechanism — always-on infrastructure that dispatches
+at operation points. `HookEngineProtocol` is the service-layer API for
+plugin/user hook registration (like netfilter userspace config) — an optional
+service brick that sits above kernel dispatch.
+
+> **Gap:** Three separate mechanisms (`WriteObserverProtocol`, `VFSHookPipeline`,
+> `PostMutationHook`) should unify into a single two-phase dispatch model.
 
 ### Service Protocols (`nexus.services.protocols`)
 

@@ -15,9 +15,9 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.isolation._pool import IsolatedPool
-from nexus.isolation.config import IsolationConfig
-from nexus.isolation.errors import (
+from nexus.bricks.sandbox.isolation._pool import IsolatedPool
+from nexus.bricks.sandbox.isolation.config import IsolationConfig
+from nexus.bricks.sandbox.isolation.errors import (
     IsolationCallError,
     IsolationError,
     IsolationTimeoutError,

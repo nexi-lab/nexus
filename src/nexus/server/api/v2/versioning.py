@@ -127,13 +127,19 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import ACE v2 routes: %s", e)
 
-    # ---- Events replay router (Issue #1139) ----
+    # ---- Events replay router (Issue #1139, #2056) ----
     try:
-        from nexus.server.api.v2.routers.events_replay import router as events_replay_router
+        from nexus.server.api.v2.routers.events_replay import (
+            router as events_replay_router,
+        )
+        from nexus.server.api.v2.routers.events_replay import (
+            watch_router,
+        )
 
         registry.add(
-            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=2)
+            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=3)
         )
+        registry.add(RouterEntry(router=watch_router, name="watch", endpoint_count=1))
     except ImportError as e:
         logger.warning("Failed to import Events replay routes: %s", e)
 
@@ -294,9 +300,59 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.governance import router as governance_router
 
-        registry.add(RouterEntry(router=governance_router, name="governance", endpoint_count=14))
+        registry.add(RouterEntry(router=governance_router, name="governance", endpoint_count=16))
     except ImportError as e:
         logger.warning("Failed to import Governance routes: %s", e)
+
+    # ---- Locks router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.locks import router as locks_router
+
+        registry.add(RouterEntry(router=locks_router, name="locks", endpoint_count=4))
+    except ImportError as e:
+        logger.warning("Failed to import Locks routes: %s", e)
+
+    # ---- Subscriptions router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.subscriptions import router as subscriptions_router
+
+        registry.add(
+            RouterEntry(router=subscriptions_router, name="subscriptions", endpoint_count=4)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Subscriptions routes: %s", e)
+
+    # ---- Identity router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.identity import router as identity_router
+
+        registry.add(RouterEntry(router=identity_router, name="identity", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Identity routes: %s", e)
+
+    # ---- Search router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.search import router as search_router
+
+        registry.add(RouterEntry(router=search_router, name="search", endpoint_count=5))
+    except ImportError as e:
+        logger.warning("Failed to import Search routes: %s", e)
+
+    # ---- Graph router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.graph import router as graph_router
+
+        registry.add(RouterEntry(router=graph_router, name="graph", endpoint_count=4))
+    except ImportError as e:
+        logger.warning("Failed to import Graph routes: %s", e)
+
+    # ---- Cache router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.cache import router as cache_router
+
+        registry.add(RouterEntry(router=cache_router, name="cache", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import Cache routes: %s", e)
 
     # ---- x402 protocol router (Issue #1206) ----
     try:

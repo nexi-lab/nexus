@@ -626,7 +626,7 @@ class TestSignedIPCWithFastAPI:
             assert "key_id" in result
 
             # Verify identity endpoint returns same info
-            resp2 = client["client"].get(f"/api/agents/{agent_id}/identity", headers=headers)
+            resp2 = client["client"].get(f"/api/v2/agents/{agent_id}/identity", headers=headers)
             assert resp2.status_code == 200
             identity = resp2.json()
             assert identity["did"] == result["did"]

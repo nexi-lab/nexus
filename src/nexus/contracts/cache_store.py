@@ -216,3 +216,19 @@ class NullCacheStore(CacheStoreABC):
 
     async def close(self) -> None:
         pass
+
+
+def __getattr__(name: str) -> type:
+    """Lazy re-export InMemoryCacheStore for cross-brick access.
+
+    InMemoryCacheStore lives in bricks/cache/inmemory.py but bricks need to
+    access it via the pillar module (contracts.cache_store) to satisfy the
+    brick import boundary check. This replaces the old nexus.core.cache_store
+    pillar module's re-export.
+    """
+    if name == "InMemoryCacheStore":
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
+
+        return InMemoryCacheStore
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)

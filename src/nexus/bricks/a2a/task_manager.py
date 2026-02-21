@@ -64,7 +64,7 @@ class TaskManager:
             self._store: TaskStoreProtocol = store
         else:
             from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
-            from nexus.core.cache_store import InMemoryCacheStore
+            from nexus.contracts.cache_store import InMemoryCacheStore
 
             self._store = CacheBackedTaskStore(InMemoryCacheStore())
 

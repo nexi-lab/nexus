@@ -23,7 +23,7 @@ BRICKS_RELATIVE_PATH = Path("src") / "nexus" / "bricks"
 # Forbidden import patterns for files under bricks/
 # Bricks may only import from:
 #   - nexus.core.protocols.*    (kernel protocol interfaces)
-#   - nexus.core.cache_store    (CacheStoreABC — kernel storage pillar)
+#   - nexus.contracts.cache_store (CacheStoreABC — kernel storage pillar)
 #   - nexus.core.object_store   (ObjectStoreABC — kernel storage pillar)
 #   - nexus.services.protocols.*  (system service protocol interfaces)
 #   - nexus.storage.*           (storage pillar ABCs + RecordStoreABC)
@@ -239,7 +239,7 @@ def main() -> int:
         print("LEGO Architecture Principle 3: Bricks don't know about the kernel")
         print("or each other. Bricks may only import from:")
         print("     nexus.core.protocols.*      (kernel protocol interfaces)")
-        print("     nexus.core.cache_store      (CacheStoreABC -- storage pillar)")
+        print("     nexus.contracts.cache_store  (CacheStoreABC -- storage pillar)")
         print("     nexus.core.object_store     (ObjectStoreABC -- storage pillar)")
         print("     nexus.services.protocols.*   (system service protocol interfaces)")
         print("     nexus.storage.*              (RecordStoreABC + storage utilities)")

@@ -5,7 +5,7 @@ Creates tables for W3C Verifiable Credentials and MCP Access Manifests:
 - access_manifests: Declarative tool access rules per agent
 
 Revision ID: add_credentials_and_manifests
-Revises: add_agent_keys_table
+Revises: merge_agent_spec_zone_phase
 Create Date: 2026-02-21
 """
 
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "add_credentials_and_manifests"
-down_revision: Union[str, Sequence[str], None] = "add_agent_keys_table"
+down_revision: Union[str, Sequence[str], None] = "merge_agent_spec_zone_phase"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

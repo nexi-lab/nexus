@@ -1,26 +1,23 @@
-"""Auth brick manifest and startup validation (Issue #1399).
+"""Auth brick manifest (Issue #1399).
 
-Declares the Auth brick's metadata and provides verify_imports()
-for validating required and optional modules at startup.
+Extends :class:`~nexus.contracts.brick_manifest.BrickManifest` with
+auth-specific configuration and module declarations.
 """
 
 from __future__ import annotations
 
-import importlib
-import logging
 from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+from nexus.contracts.brick_manifest import BrickManifest
 
 
 @dataclass(frozen=True)
-class AuthBrickManifest:
+class AuthBrickManifest(BrickManifest):
     """Brick manifest for the Auth module."""
 
     name: str = "auth"
     protocol: str = "AuthBrickProtocol"
-    version: str = "1.0.0"
-    config_schema: dict = field(
+    config_schema: dict[str, dict[str, object]] = field(
         default_factory=lambda: {
             "auth_type": {
                 "type": "str",
@@ -30,44 +27,21 @@ class AuthBrickManifest:
             "cache_max_size": {"type": "int", "default": 1000},
         }
     )
-    dependencies: list[str] = field(default_factory=list)
-
-
-def verify_imports() -> dict[str, bool]:
-    """Validate required and optional Auth imports at startup.
-
-    Returns:
-        Dict mapping module name to import success status.
-    """
-    results: dict[str, bool] = {}
-
-    # Required modules
-    for mod in [
+    required_modules: tuple[str, ...] = (
         "nexus.auth.types",
         "nexus.auth.protocol",
         "nexus.auth.constants",
         "nexus.auth.cache",
         "nexus.auth.providers.base",
         "nexus.auth.providers.discriminator",
-    ]:
-        try:
-            importlib.import_module(mod)
-            results[mod] = True
-        except ImportError:
-            results[mod] = False
-            logger.error("Required Auth module missing: %s", mod)
-
-    # Optional modules
-    for mod in [
+    )
+    optional_modules: tuple[str, ...] = (
         "nexus.auth.providers.oidc",
         "nexus.auth.providers.database_key",
         "nexus.auth.service",
-    ]:
-        try:
-            importlib.import_module(mod)
-            results[mod] = True
-        except ImportError:
-            results[mod] = False
-            logger.warning("Optional Auth module unavailable: %s", mod)
+    )
 
-    return results
+
+def verify_imports() -> dict[str, bool]:
+    """Convenience wrapper — instantiates manifest and verifies imports."""
+    return AuthBrickManifest().verify_imports()

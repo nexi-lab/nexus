@@ -1,20 +1,22 @@
 """RLM brick manifest — declares the brick's identity and config schema.
 
-Follows the Lego Architecture brick manifest pattern (see llm/manifest.py).
+Extends :class:`~nexus.contracts.brick_manifest.BrickManifest` with
+RLM-specific configuration.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from nexus.contracts.brick_manifest import BrickManifest
+
 
 @dataclass(frozen=True)
-class RLMBrickManifest:
+class RLMBrickManifest(BrickManifest):
     """Manifest for the RLM inference brick."""
 
     name: str = "rlm"
     protocol: str = "RLMInferenceProtocol"
-    version: str = "1.0.0"
     description: str = (
         "Recursive Language Model inference for unbounded context processing. "
         "Enables agents to process near-infinite context (10M+ tokens) by "

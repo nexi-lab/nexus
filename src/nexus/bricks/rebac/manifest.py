@@ -1,26 +1,23 @@
-"""ReBAC brick manifest and startup validation (Issue #1385).
+"""ReBAC brick manifest (Issue #1385).
 
-Declares the ReBAC brick's metadata and provides verify_imports()
-for validating required and optional modules at startup.
+Extends :class:`~nexus.contracts.brick_manifest.BrickManifest` with
+ReBAC-specific configuration and module declarations.
 """
 
 from __future__ import annotations
 
-import importlib
-import logging
 from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+from nexus.contracts.brick_manifest import BrickManifest
 
 
 @dataclass(frozen=True)
-class ReBACBrickManifest:
+class ReBACBrickManifest(BrickManifest):
     """Brick manifest for the ReBAC module."""
 
     name: str = "rebac"
     protocol: str = "ReBACBrickProtocol"
-    version: str = "1.0.0"
-    config_schema: dict = field(
+    config_schema: dict[str, dict[str, object]] = field(
         default_factory=lambda: {
             "enforce_zone_isolation": {"type": "bool", "default": True},
             "enable_graph_limits": {"type": "bool", "default": True},
@@ -28,41 +25,16 @@ class ReBACBrickManifest:
             "enable_tiger_cache": {"type": "bool", "default": True},
         }
     )
-    dependencies: list[str] = field(default_factory=list)
-
-
-def verify_imports() -> dict[str, bool]:
-    """Validate required and optional ReBAC imports at startup.
-
-    Returns:
-        Dict mapping module name to import success status.
-    """
-    results: dict[str, bool] = {}
-
-    # Required modules
-    for mod in [
+    required_modules: tuple[str, ...] = (
         "nexus.bricks.rebac.manager",
         "nexus.bricks.rebac.types",
         "nexus.bricks.rebac.graph",
         "nexus.bricks.rebac.cache",
         "nexus.bricks.rebac.tuples",
-    ]:
-        try:
-            importlib.import_module(mod)
-            results[mod] = True
-        except ImportError:
-            results[mod] = False
-            logger.error("Required ReBAC module missing: %s", mod)
+    )
+    optional_modules: tuple[str, ...] = ("nexus.bricks.rebac.cache.tiger",)
 
-    # Optional modules
-    for mod in [
-        "nexus.bricks.rebac.cache.tiger",
-    ]:
-        try:
-            importlib.import_module(mod)
-            results[mod] = True
-        except ImportError:
-            results[mod] = False
-            logger.warning("Optional ReBAC module unavailable: %s", mod)
 
-    return results
+def verify_imports() -> dict[str, bool]:
+    """Convenience wrapper — instantiates manifest and verifies imports."""
+    return ReBACBrickManifest().verify_imports()

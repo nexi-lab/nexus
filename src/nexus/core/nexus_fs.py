@@ -337,6 +337,8 @@ class NexusFS(  # type: ignore[misc]
             self.share_link_service = wired.get("share_link_service")
             self.events_service = wired.get("events_service")
             self.task_queue_service = wired.get("task_queue_service")
+            self.time_travel_service = wired.get("time_travel_service")
+            self.operations_service = wired.get("operations_service")
             self._workspace_rpc_service = wired.get("workspace_rpc_service")
             self._agent_rpc_service = wired.get("agent_rpc_service")
             self._user_provisioning_service = wired.get("user_provisioning_service")
@@ -363,6 +365,8 @@ class NexusFS(  # type: ignore[misc]
         self.share_link_service = wired.share_link_service
         self.events_service = wired.events_service
         self.task_queue_service = wired.task_queue_service
+        self.time_travel_service = wired.time_travel_service
+        self.operations_service = wired.operations_service
         self._workspace_rpc_service = wired.workspace_rpc_service
         self._agent_rpc_service = wired.agent_rpc_service
         self._user_provisioning_service = wired.user_provisioning_service

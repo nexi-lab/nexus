@@ -184,7 +184,7 @@ def create_mcp_server(
 
         # Check cache for existing connection
         if request_api_key in _connection_cache:
-            return cast(NexusFilesystemABC, _connection_cache[request_api_key])
+            return _connection_cache[request_api_key]
 
         # Create new remote connection with API key from context
         from nexus.remote import RemoteNexusFS

@@ -577,9 +577,12 @@ module = [
     "nexus.skills.parser",
     "nexus.server.auth.oauth_factory",
     "nexus.bricks.workflows.storage",
+    "nexus.bricks.rlm.tools",
+    "nexus.bricks.scheduler.policies.fair_share",
+    "nexus.validation.config",
 ]
-# yaml/requests stubs handled at project level
-disable_error_code = ["import-untyped"]
+# yaml/requests/cachetools stubs handled at project level
+disable_error_code = ["import-untyped", "no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [

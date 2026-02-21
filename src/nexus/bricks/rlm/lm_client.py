@@ -14,7 +14,7 @@ import asyncio
 import logging
 from typing import Any
 
-from nexus.rlm.types import RLMInfrastructureError
+from nexus.bricks.rlm.types import RLMInfrastructureError
 
 logger = logging.getLogger(__name__)
 

@@ -17,8 +17,8 @@ import asyncio
 import logging
 from typing import Any
 
-from nexus.rlm.tools import build_tools_injection_code
-from nexus.rlm.types import REPLResult, RLMInfrastructureError
+from nexus.bricks.rlm.tools import build_tools_injection_code
+from nexus.bricks.rlm.types import REPLResult, RLMInfrastructureError
 
 logger = logging.getLogger(__name__)
 

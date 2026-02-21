@@ -17,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.rlm.types import RLMInferenceResult, RLMStatus, SSEEvent, SSEEventType
+from nexus.bricks.rlm.types import RLMInferenceResult, RLMStatus, SSEEvent, SSEEventType
 from nexus.server.api.v2.routers.rlm import router
 from nexus.server.api.v2.versioning import VersionHeaderMiddleware
 from nexus.server.dependencies import require_auth

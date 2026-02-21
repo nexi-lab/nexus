@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.rlm.service import RLMInferenceService, _extract_code_blocks, _find_final_answer
-from nexus.rlm.types import (
+from nexus.bricks.rlm.service import RLMInferenceService, _extract_code_blocks, _find_final_answer
+from nexus.bricks.rlm.types import (
     RLMInferenceRequest,
     RLMInferenceResult,
     RLMStatus,

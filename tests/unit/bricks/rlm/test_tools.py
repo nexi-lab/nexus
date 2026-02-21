@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from nexus.rlm.tools import (
+from nexus.bricks.rlm.tools import (
     build_tools_injection_code,
     nexus_list,
     nexus_read,
@@ -23,7 +23,7 @@ from nexus.rlm.tools import (
 class TestNexusRead:
     """nexus_read() fetches file content via Nexus REST API."""
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_read_returns_content(self, mock_get: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -43,7 +43,7 @@ class TestNexusRead:
         call_url = mock_get.call_args.args[0]
         assert "/api/v2/files/" in call_url
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_read_passes_auth_header(self, mock_get: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -62,7 +62,7 @@ class TestNexusRead:
         assert "headers" in call_kwargs
         assert call_kwargs["headers"].get("Authorization") == "Bearer test-key"
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_read_404_returns_error_message(self, mock_get: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 404
@@ -79,7 +79,7 @@ class TestNexusRead:
 
         assert "error" in result.lower() or "Error" in result
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_read_network_error(self, mock_get: MagicMock) -> None:
         mock_get.side_effect = ConnectionError("Connection refused")
 
@@ -96,7 +96,7 @@ class TestNexusRead:
 class TestNexusSearch:
     """nexus_search() queries Nexus search endpoint."""
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_search_returns_results(self, mock_get: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -119,7 +119,7 @@ class TestNexusSearch:
         assert isinstance(result, str)
         assert "doc1.md" in result or "Result 1" in result
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_search_with_limit(self, mock_get: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -140,7 +140,7 @@ class TestNexusSearch:
             mock_get.call_args
         )
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_search_error_returns_message(self, mock_get: MagicMock) -> None:
         mock_get.side_effect = ConnectionError("timeout")
 
@@ -157,7 +157,7 @@ class TestNexusSearch:
 class TestNexusList:
     """nexus_list() lists directory contents via Nexus API."""
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_list_returns_entries(self, mock_get: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -180,7 +180,7 @@ class TestNexusList:
         assert isinstance(result, str)
         assert "doc1.md" in result
 
-    @patch("nexus.rlm.tools.requests.get")
+    @patch("nexus.bricks.rlm.tools.requests.get")
     def test_list_error_returns_message(self, mock_get: MagicMock) -> None:
         mock_get.side_effect = ConnectionError("timeout")
 

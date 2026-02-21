@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.rlm.lm_client import NexusLMClient
-from nexus.rlm.types import RLMInfrastructureError
+from nexus.bricks.rlm.lm_client import NexusLMClient
+from nexus.bricks.rlm.types import RLMInfrastructureError
 
 
 def _make_provider(

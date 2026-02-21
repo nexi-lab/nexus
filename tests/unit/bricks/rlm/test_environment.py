@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.rlm.environment import NexusREPL
-from nexus.rlm.types import REPLResult, RLMInfrastructureError
+from nexus.bricks.rlm.environment import NexusREPL
+from nexus.bricks.rlm.types import REPLResult, RLMInfrastructureError
 
 
 def _make_sandbox_manager(

@@ -21,8 +21,8 @@ Reference: arXiv:2512.24601 (Zhang, Kraska, Khattab — MIT OASYS Lab)
 Related: Issue #1306, #1258 (MemGPT paging), #1271 (agent delegation)
 """
 
-from nexus.rlm.manifest import RLMBrickManifest
-from nexus.rlm.types import (
+from nexus.bricks.rlm.manifest import RLMBrickManifest
+from nexus.bricks.rlm.types import (
     REPLResult,
     RLMBudgetExceededError,
     RLMCodeError,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.rlm.types import (
+from nexus.bricks.rlm.types import (
     REPLResult,
     RLMBudgetExceededError,
     RLMCodeError,
@@ -100,7 +100,7 @@ class TestRLMInferenceRequest:
     def test_immutable(self) -> None:
         req = RLMInferenceRequest(query="test")
         with pytest.raises(AttributeError):
-            req.query = "changed"  # type: ignore[misc]
+            req.query = "changed"
 
 
 class TestREPLResult:
@@ -121,7 +121,7 @@ class TestREPLResult:
     def test_immutable(self) -> None:
         result = REPLResult()
         with pytest.raises(AttributeError):
-            result.stdout = "changed"  # type: ignore[misc]
+            result.stdout = "changed"
 
 
 class TestRLMIteration:

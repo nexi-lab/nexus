@@ -373,7 +373,7 @@ def _startup_rlm_service(app: FastAPI) -> None:
     llm_provider = getattr(app.state.nexus_fs, "_llm_provider", None)
 
     try:
-        from nexus.rlm.service import RLMInferenceService
+        from nexus.bricks.rlm.service import RLMInferenceService
 
         nexus_api_url = os.environ.get("NEXUS_API_URL", "http://localhost:2026")
         max_concurrent = int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8"))

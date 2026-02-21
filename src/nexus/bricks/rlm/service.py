@@ -36,9 +36,9 @@ from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from nexus.rlm.environment import NexusREPL
-from nexus.rlm.lm_client import NexusLMClient
-from nexus.rlm.types import (
+from nexus.bricks.rlm.environment import NexusREPL
+from nexus.bricks.rlm.lm_client import NexusLMClient
+from nexus.bricks.rlm.types import (
     REPLResult,
     RLMInferenceRequest,
     RLMInferenceResult,

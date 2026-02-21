@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.security.policy import InjectionAction, InjectionPolicyConfig
-from nexus.security.prompt_sanitizer import (
+from nexus.lib.security.policy import InjectionAction, InjectionPolicyConfig
+from nexus.lib.security.prompt_sanitizer import (
     MAX_PROMPT_LENGTH,
     detect_injection_patterns,
     enforce_injection_policy,

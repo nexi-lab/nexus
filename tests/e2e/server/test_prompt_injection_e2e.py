@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 
 from nexus.bricks.workflows.actions import _LLM_SYSTEM_PROMPT, BashAction, LLMAction
 from nexus.bricks.workflows.types import ActionResult, TriggerType, WorkflowContext
-from nexus.security.prompt_sanitizer import (
+from nexus.lib.security.prompt_sanitizer import (
     detect_injection_patterns,
     sanitize_for_prompt,
     wrap_untrusted_data,
@@ -456,8 +456,8 @@ class TestSecurityModuleIntegration:
     """E2E: Verify all security modules import and work together."""
 
     def test_full_security_stack_import(self):
-        """All security modules importable from nexus.security."""
-        from nexus.security import (
+        """All security modules importable from nexus.lib.security."""
+        from nexus.lib.security import (
             detect_injection_patterns,
             enforce_injection_policy,
             sanitize_for_prompt,
@@ -488,7 +488,7 @@ class TestSecurityModuleIntegration:
 
     def test_end_to_end_injection_detect_sanitize_wrap(self):
         """Full pipeline: detect → sanitize → wrap → validate output."""
-        from nexus.security import (
+        from nexus.lib.security import (
             detect_injection_patterns,
             sanitize_for_prompt,
             validate_llm_output,
@@ -518,8 +518,8 @@ class TestSecurityModuleIntegration:
 
     def test_policy_enforcement_blocks_high_severity(self):
         """Configurable policy blocks high-severity injections."""
-        from nexus.security.policy import InjectionAction, InjectionPolicyConfig
-        from nexus.security.prompt_sanitizer import enforce_injection_policy
+        from nexus.lib.security.policy import InjectionAction, InjectionPolicyConfig
+        from nexus.lib.security.prompt_sanitizer import enforce_injection_policy
 
         policy = InjectionPolicyConfig(high_severity_action=InjectionAction.BLOCK)
 

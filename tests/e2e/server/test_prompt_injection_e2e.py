@@ -474,18 +474,6 @@ class TestSecurityModuleIntegration:
         assert callable(validate_llm_output)
         assert callable(enforce_injection_policy)
 
-    def test_backward_compat_server_security_import(self):
-        """Re-export shim: nexus.server.security still works."""
-        from nexus.server.security import (
-            detect_injection_patterns,
-            sanitize_for_prompt,
-            wrap_untrusted_data,
-        )
-
-        assert callable(sanitize_for_prompt)
-        assert callable(detect_injection_patterns)
-        assert callable(wrap_untrusted_data)
-
     def test_end_to_end_injection_detect_sanitize_wrap(self):
         """Full pipeline: detect → sanitize → wrap → validate output."""
         from nexus.lib.security import (

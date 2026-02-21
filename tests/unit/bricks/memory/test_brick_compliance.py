@@ -19,7 +19,7 @@ BRICK_ROOT = pathlib.Path(__file__).resolve().parents[4] / "src" / "nexus" / "br
 ALLOWED_CORE_PREFIXES = frozenset(
     {
         "nexus.core.protocols",
-        "nexus.core.cache_store",
+        "nexus.contracts.cache_store",
         "nexus.core.object_store",
     }
 )

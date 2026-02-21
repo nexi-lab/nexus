@@ -130,7 +130,7 @@ class SkillAuditLogger:
         if cache_store is not None:
             self._cache: CacheStoreABC = cache_store
         else:
-            from nexus.core.cache_store import InMemoryCacheStore
+            from nexus.contracts.cache_store import InMemoryCacheStore
 
             self._cache = InMemoryCacheStore()
 

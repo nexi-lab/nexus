@@ -70,7 +70,7 @@ class MemoryProvider:
         session = self._session_factory()
 
         if self._enable_paging:
-            from nexus.services.memory.memory_with_paging import MemoryWithPaging
+            from nexus.bricks.memory.memory_with_paging import MemoryWithPaging
 
             engine = None
             if self._session_factory is not None:
@@ -90,7 +90,7 @@ class MemoryProvider:
                 session_factory=self._session_factory,
             )
         else:
-            from nexus.services.memory.memory_api import Memory
+            from nexus.bricks.memory.service import Memory
 
             self._memory_api = Memory(
                 session=session,
@@ -112,8 +112,8 @@ class MemoryProvider:
             context: Optional dict or ``OperationContext`` with
                 ``zone_id``, ``user_id``, ``agent_id`` overrides.
         """
+        from nexus.bricks.memory.service import Memory
         from nexus.lib.context_utils import parse_context
-        from nexus.services.memory.memory_api import Memory
 
         self.ensure_entity_registry()
         session = self._session_factory()

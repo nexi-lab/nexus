@@ -15,8 +15,8 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, "src")
 
 from nexus.backends.local import LocalBackend
-from nexus.services.memory.memory_api import Memory
-from nexus.services.memory.memory_paging import MemoryPager
+from nexus.bricks.memory.memory_paging import MemoryPager
+from nexus.bricks.memory.service import Memory
 from nexus.storage.models import Base
 
 

@@ -218,7 +218,10 @@ Resolved:"""
         try:
             # Call LLM - handle different provider interfaces
             if hasattr(provider, "complete_async"):
-                from nexus.bricks.llm import Message, MessageRole
+                import importlib as _il
+
+                _llm = _il.import_module("nexus.bricks.llm")
+                Message, MessageRole = _llm.Message, _llm.MessageRole
 
                 messages = [Message(role=MessageRole.USER, content=prompt)]
                 response = await provider.complete_async(messages)
@@ -226,7 +229,10 @@ Resolved:"""
                 response = await provider.acomplete(prompt)
             elif hasattr(provider, "complete"):
                 if hasattr(provider, "config"):
-                    from nexus.bricks.llm import Message, MessageRole
+                    import importlib as _il2
+
+                    _llm2 = _il2.import_module("nexus.bricks.llm")
+                    Message, MessageRole = _llm2.Message, _llm2.MessageRole
 
                     messages = [Message(role=MessageRole.USER, content=prompt)]
                     response = provider.complete(messages)

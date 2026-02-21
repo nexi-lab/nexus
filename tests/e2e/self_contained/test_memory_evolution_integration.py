@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.services.memory.evolution_detector import (
+from nexus.bricks.memory.evolution_detector import (
     EvolutionDetectionResult,
     EvolutionResult,
     MemoryEvolutionDetector,

@@ -49,6 +49,7 @@ class LifespanServices:
     thread_pool_size: int = 40
 
     # --- System services (from nexus_fs._system_services) ----------------
+    system_services: Any = None  # The whole SystemServices dataclass
     brick_lifecycle_manager: Any = None
     brick_reconciler: Any = None
     eviction_manager: Any = None
@@ -104,6 +105,7 @@ class LifespanServices:
             profile_tuning=getattr(app.state, "profile_tuning", None),
             thread_pool_size=getattr(app.state, "thread_pool_size", 40),
             # System services
+            system_services=_sys,
             brick_lifecycle_manager=(
                 getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
             ),

@@ -472,6 +472,39 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
 
+    # --- Scheduler Service (Issue #2360: promoted to always-started) ---
+    scheduler_service: Any = None
+    state_emitter: Any = None
+    try:
+        from nexus.services.scheduler.events import AgentStateEmitter
+        from nexus.services.scheduler.policies.fair_share import FairShareCounter
+        from nexus.services.scheduler.service import SchedulerService
+
+        state_emitter = AgentStateEmitter()
+        scheduler_service = SchedulerService(
+            state_emitter=state_emitter,
+            fair_share=FairShareCounter(),
+            use_hrrn=True,
+        )
+        logger.debug("[BOOT:SYSTEM] SchedulerService created (two-phase init pending)")
+    except Exception as exc:
+        logger.warning(
+            "[BOOT:SYSTEM] SchedulerService unavailable, falling back to InMemoryScheduler: %s", exc
+        )
+        try:
+            from nexus.services.protocols.scheduler import InMemoryScheduler
+
+            scheduler_service = InMemoryScheduler()
+        except Exception:
+            pass  # scheduler_service stays None
+
+    # Wire state emitter into AsyncAgentRegistry (if both are available)
+    if state_emitter is not None and async_agent_registry is not None:
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            async_agent_registry._state_emitter = state_emitter
+
     # =====================================================================
     # Assemble result
     # =====================================================================
@@ -506,6 +539,9 @@ def _boot_system_services(
         "scoped_hook_engine": scoped_hook_engine,
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
+        # Scheduler (Issue #2360)
+        "scheduler_service": scheduler_service,
+        "scheduler_state_emitter": state_emitter,
     }
 
     elapsed = time.perf_counter() - t0

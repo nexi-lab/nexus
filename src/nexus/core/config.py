@@ -240,6 +240,10 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
+    # Scheduler (Issue #2360: promoted from optional brick to always-started)
+    scheduler_service: Any = None
+    scheduler_state_emitter: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure

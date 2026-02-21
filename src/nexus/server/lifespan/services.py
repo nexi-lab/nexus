@@ -73,15 +73,14 @@ async def shutdown_services(app: FastAPI, svc: LifespanServices) -> None:
         except Exception as e:
             logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
 
-    # Shutdown scheduler pool (Issue #1212)
-    scheduler_pool = getattr(app.state, "_scheduler_pool", None)
-    if scheduler_pool:
+    # Shutdown scheduler service (Issue #2360: two-phase shutdown)
+    scheduler_service = getattr(app.state, "scheduler_service", None)
+    if scheduler_service is not None:
         try:
-            await scheduler_pool.close()
-            logger.info("Scheduler pool closed")
+            await scheduler_service.shutdown()
+            logger.info("[SCHEDULER] Scheduler service shut down")
         except Exception as e:
-            logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
-        app.state._scheduler_pool = None
+            logger.warning("[SCHEDULER] Error shutting down scheduler: %s", e, exc_info=True)
 
     # Cancel agent background tasks and final flush (Issue #1240, #2170)
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
@@ -511,109 +510,98 @@ def _startup_agent_tasks(app: FastAPI, svc: LifespanServices) -> list[asyncio.Ta
 
 
 async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
-    """Initialize SchedulerService if PostgreSQL database is available (Issue #1212)."""
-    if not (svc.database_url and "postgresql" in svc.database_url):
+    """Initialize SchedulerService — two-phase init (Issue #2360).
+
+    The factory creates the SchedulerService (or InMemoryScheduler fallback)
+    at boot time.  This function performs the async second phase:
+    1. If PostgreSQL is available, call scheduler.initialize(dsn) to create
+       the asyncpg pool and sync fair-share counters.
+    2. Wire hook cleanup handler into state emitter.
+    """
+    # Retrieve factory-created scheduler from SystemServices
+    sys_svc = svc.system_services
+    scheduler_service = getattr(sys_svc, "scheduler_service", None) if sys_svc else None
+    if scheduler_service is None:
+        logger.debug("[SCHEDULER] No scheduler_service in SystemServices — skipping")
         return
 
-    try:
-        import asyncpg
+    app.state.scheduler_service = scheduler_service
 
-        from nexus.bricks.pay.credits import CreditsService
-        from nexus.services.scheduler.events import AgentStateEmitter
-        from nexus.services.scheduler.policies.fair_share import FairShareCounter
-        from nexus.services.scheduler.queue import TaskQueue
-        from nexus.services.scheduler.service import SchedulerService
+    # Two-phase init: if PostgreSQL is available, initialize the pool
+    if svc.database_url and "postgresql" in svc.database_url:
+        try:
+            pg_dsn = svc.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
+            _pool_tuning = svc.profile_tuning.pool
+            await scheduler_service.initialize(
+                pg_dsn,
+                pool_min=_pool_tuning.asyncpg_min_size,
+                pool_max=_pool_tuning.asyncpg_max_size,
+            )
 
-        # Convert SQLAlchemy URL to asyncpg DSN
-        pg_dsn = svc.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-        _pool_tuning = svc.profile_tuning.pool
-        pool = await asyncpg.create_pool(
-            pg_dsn,
-            min_size=_pool_tuning.asyncpg_min_size,
-            max_size=_pool_tuning.asyncpg_max_size,
-        )
-        app.state._scheduler_pool = pool
+            # Create scheduled_tasks table if it doesn't exist
+            async with scheduler_service.pool.acquire() as conn:
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        agent_id TEXT NOT NULL,
+                        executor_id TEXT NOT NULL,
+                        task_type TEXT NOT NULL,
+                        payload JSONB NOT NULL DEFAULT '{}',
+                        priority_tier SMALLINT NOT NULL DEFAULT 2,
+                        deadline TIMESTAMPTZ,
+                        boost_amount NUMERIC(12,6) NOT NULL DEFAULT 0,
+                        boost_tiers SMALLINT NOT NULL DEFAULT 0,
+                        effective_tier SMALLINT NOT NULL DEFAULT 2,
+                        enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        started_at TIMESTAMPTZ,
+                        completed_at TIMESTAMPTZ,
+                        status TEXT NOT NULL DEFAULT 'queued',
+                        boost_reservation_id TEXT,
+                        idempotency_key TEXT UNIQUE,
+                        zone_id TEXT NOT NULL DEFAULT 'default',
+                        error_message TEXT
+                    )
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_dequeue
+                    ON scheduled_tasks (effective_tier, enqueued_at)
+                    WHERE status = 'queued'
+                """)
 
-        # Create scheduled_tasks table if it doesn't exist
-        async with pool.acquire() as conn:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS scheduled_tasks (
-                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    agent_id TEXT NOT NULL,
-                    executor_id TEXT NOT NULL,
-                    task_type TEXT NOT NULL,
-                    payload JSONB NOT NULL DEFAULT '{}',
-                    priority_tier SMALLINT NOT NULL DEFAULT 2,
-                    deadline TIMESTAMPTZ,
-                    boost_amount NUMERIC(12,6) NOT NULL DEFAULT 0,
-                    boost_tiers SMALLINT NOT NULL DEFAULT 0,
-                    effective_tier SMALLINT NOT NULL DEFAULT 2,
-                    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    started_at TIMESTAMPTZ,
-                    completed_at TIMESTAMPTZ,
-                    status TEXT NOT NULL DEFAULT 'queued',
-                    boost_reservation_id TEXT,
-                    idempotency_key TEXT UNIQUE,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
-                    error_message TEXT
-                )
-            """)
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_dequeue
-                ON scheduled_tasks (effective_tier, enqueued_at)
-                WHERE status = 'queued'
-            """)
+                # Astraea columns (Issue #1274) — idempotent ALTER TABLE
+                for col_sql in (
+                    "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS request_state TEXT NOT NULL DEFAULT 'pending'",
+                    "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS priority_class TEXT NOT NULL DEFAULT 'batch'",
+                    "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS executor_state TEXT NOT NULL DEFAULT 'UNKNOWN'",
+                    "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS estimated_service_time REAL NOT NULL DEFAULT 30.0",
+                ):
+                    await conn.execute(col_sql)
 
-            # Astraea columns (Issue #1274) — idempotent ALTER TABLE
-            for col_sql in (
-                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS request_state TEXT NOT NULL DEFAULT 'pending'",
-                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS priority_class TEXT NOT NULL DEFAULT 'batch'",
-                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS executor_state TEXT NOT NULL DEFAULT 'UNKNOWN'",
-                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS estimated_service_time REAL NOT NULL DEFAULT 30.0",
-            ):
-                await conn.execute(col_sql)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_sched_astraea_dequeue
+                    ON scheduled_tasks (priority_class, enqueued_at)
+                    WHERE status = 'queued'
+                """)
 
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_sched_astraea_dequeue
-                ON scheduled_tasks (priority_class, enqueued_at)
-                WHERE status = 'queued'
-            """)
+            logger.info("[SCHEDULER] Initialized with PostgreSQL (two-phase init)")
+        except Exception as e:
+            logger.warning(
+                "[SCHEDULER] PostgreSQL init failed, using fallback: %s", e, exc_info=True
+            )
+    else:
+        logger.info("[SCHEDULER] No PostgreSQL — using InMemoryScheduler fallback")
 
-        # Astraea: state emitter + fair-share (Issue #1274)
-        state_emitter = AgentStateEmitter()
-        fair_share = FairShareCounter()
-
-        scheduler_service = SchedulerService(
-            queue=TaskQueue(),
-            db_pool=pool,
-            credits_service=CreditsService(enabled=False),
-            state_emitter=state_emitter,
-            fair_share=fair_share,
-            use_hrrn=True,
-        )
-        app.state.scheduler_service = scheduler_service
-
-        # Wire emitter into AsyncAgentRegistry if available
-        async_reg = app.state.async_agent_registry
-        if async_reg is not None:
-            async_reg._state_emitter = state_emitter
-
-        # Wire hook cleanup handler into state emitter (Issue #1257)
-        scoped_hook_engine = svc.scoped_hook_engine
-        if scoped_hook_engine is not None:
+    # Wire hook cleanup handler into state emitter (Issue #1257)
+    state_emitter = getattr(sys_svc, "scheduler_state_emitter", None) if sys_svc else None
+    scoped_hook_engine = svc.scoped_hook_engine
+    if state_emitter is not None and scoped_hook_engine is not None:
+        try:
             from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler
 
             state_emitter.add_handler(create_agent_cleanup_handler(scoped_hook_engine))
-            logger.debug("Hook cleanup handler registered on AgentStateEmitter")
-
-        # Initialize fair-share counters from DB
-        await scheduler_service.sync_fair_share()
-
-        logger.info("Scheduler service initialized with Astraea (PostgreSQL)")
-    except ImportError as e:
-        logger.debug(f"Scheduler service not available: {e}")
-    except Exception as e:
-        logger.warning("Failed to initialize Scheduler service: %s", e, exc_info=True)
+            logger.debug("[SCHEDULER] Hook cleanup handler registered on AgentStateEmitter")
+        except Exception as e:
+            logger.warning("[SCHEDULER] Failed to register hook cleanup handler: %s", e)
 
 
 def _startup_task_queue(app: FastAPI, svc: LifespanServices) -> asyncio.Task | None:

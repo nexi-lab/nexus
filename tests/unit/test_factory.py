@@ -185,6 +185,9 @@ class TestBootSystemServices:
             "scoped_hook_engine",
             "tiger_cache_manager",
             "zone_lifecycle",
+            # Scheduler (Issue #2360)
+            "scheduler_service",
+            "scheduler_state_emitter",
         }
         assert expected_keys == set(result.keys())
 

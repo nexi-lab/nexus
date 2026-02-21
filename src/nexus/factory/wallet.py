@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,7 +23,7 @@ class WalletProvisioner:
         self._tb_cluster = tb_cluster
         self._client: Any = None
 
-    def __call__(self, agent_id: str, zone_id: str = "default") -> None:
+    def __call__(self, agent_id: str, zone_id: str = ROOT_ZONE_ID) -> None:
         """Create TigerBeetle account for *agent_id*. Idempotent."""
         import tigerbeetle as tb
 

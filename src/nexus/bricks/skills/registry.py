@@ -15,7 +15,7 @@ from nexus.bricks.skills.exceptions import (
 from nexus.bricks.skills.models import Skill, SkillMetadata
 from nexus.bricks.skills.parser import SkillParseError, SkillParser
 from nexus.bricks.skills.protocols import NexusFilesystem
-from nexus.constants import ROOT_ZONE_ID
+from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from nexus.bricks.skills.types import SkillOperationContext as OperationContext
@@ -86,7 +86,7 @@ class SkillRegistry:
         paths: dict[str, str] = {**cls.TIER_PATHS}
 
         if context:
-            zone_id = context.zone_id or ROOT_ZONE_ID
+            zone_id = normalize_zone_id(context.zone_id)
 
             # Zone-level skills: /zone/{tid}/skill/
             paths["zone"] = f"/zone/{zone_id}/skill/"

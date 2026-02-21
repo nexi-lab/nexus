@@ -13,9 +13,9 @@ import zipfile
 
 import pytest
 
-from nexus.skills.package_service import SkillPackageService
-from nexus.skills.service import SkillService
-from nexus.skills.testing import (
+from nexus.bricks.skills.package_service import SkillPackageService
+from nexus.bricks.skills.service import SkillService
+from nexus.bricks.skills.testing import (
     FakeOperationContext,
     InMemorySkillFilesystem,
     StubSkillPermissions,
@@ -161,7 +161,7 @@ class TestShareUnshare:
 
     def test_share_invalid_format(self, fs, svc, perms, ctx):
         fs.seed_skill(SKILL_PATH, name="code-review")
-        from nexus.skills.exceptions import SkillValidationError
+        from nexus.bricks.skills.exceptions import SkillValidationError
 
         with pytest.raises(SkillValidationError, match="Invalid share_with"):
             svc.share(SKILL_PATH, "invalid", ctx)
@@ -171,13 +171,13 @@ class TestContextValidation:
     """Test context validation."""
 
     def test_none_context_raises(self, svc):
-        from nexus.skills.exceptions import SkillValidationError
+        from nexus.bricks.skills.exceptions import SkillValidationError
 
         with pytest.raises(SkillValidationError, match="Context"):
             svc.discover(None)
 
     def test_missing_user_id_raises(self, svc):
-        from nexus.skills.exceptions import SkillValidationError
+        from nexus.bricks.skills.exceptions import SkillValidationError
 
         ctx = FakeOperationContext(user_id="", zone_id="acme")
         with pytest.raises(SkillValidationError, match="Context"):

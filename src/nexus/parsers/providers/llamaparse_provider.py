@@ -1,11 +1,13 @@
 """LlamaParse parse provider."""
 
 import logging
+import threading
 from typing import Any
 
 from nexus.contracts.exceptions import ParserError
 from nexus.parsers.providers.base import ParseProvider, ProviderConfig
 from nexus.parsers.types import ParseResult, TextChunk
+from nexus.parsers.utils import extract_structure
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,7 @@ class LlamaParseProvider(ParseProvider):
         super().__init__(config)
         self._api_key = config.api_key if config else None
         self._parser = None
+        self._init_lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -95,8 +98,12 @@ class LlamaParseProvider(ParseProvider):
             return False
 
     def _get_parser(self) -> Any:
-        """Get or create the LlamaParse parser instance."""
-        if self._parser is None:
+        """Get or create the LlamaParse parser instance (thread-safe)."""
+        if self._parser is not None:
+            return self._parser
+        with self._init_lock:
+            if self._parser is not None:
+                return self._parser
             from llama_parse import LlamaParse
 
             self._parser = LlamaParse(
@@ -220,26 +227,5 @@ class LlamaParseProvider(ParseProvider):
             ) from e
 
     def _extract_structure(self, text: str) -> dict[str, Any]:
-        """Extract document structure from markdown text.
-
-        Args:
-            text: Markdown text content
-
-        Returns:
-            Structure dictionary with headings info
-        """
-        lines = text.split("\n")
-        headings = []
-
-        for line in lines:
-            if line.startswith("#"):
-                level = len(line) - len(line.lstrip("#"))
-                heading_text = line.lstrip("#").strip()
-                if heading_text:
-                    headings.append({"level": level, "text": heading_text})
-
-        return {
-            "headings": headings,
-            "has_headings": len(headings) > 0,
-            "line_count": len(lines),
-        }
+        """Delegate to shared ``extract_structure`` utility."""
+        return extract_structure(text)

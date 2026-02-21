@@ -218,7 +218,7 @@ def _boot_wired_services(
     skill_package_service: Any = getattr(brick_services, "skill_package_service", None)
     if skill_package_service is None and _on("skills") and skill_service is not None:
         try:
-            from nexus.skills.package_service import SkillPackageService as _SkillPkgSvc
+            from nexus.bricks.skills.package_service import SkillPackageService as _SkillPkgSvc
 
             skill_package_service = _SkillPkgSvc(
                 fs=skill_service._fs,

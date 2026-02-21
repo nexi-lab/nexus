@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from nexus.validation.models import ValidationError, ValidatorConfig
+from nexus.parsers.validation.models import ValidationError, ValidatorConfig
 
 
 class Validator(ABC):

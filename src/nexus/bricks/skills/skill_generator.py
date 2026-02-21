@@ -36,7 +36,8 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from nexus.mcp.models import MCPMount, MCPToolDefinition
+    from nexus.bricks.skills.types import MCPMountLike as MCPMount
+    from nexus.bricks.skills.types import MCPToolDefinitionLike as MCPToolDefinition
 
 logger = logging.getLogger(__name__)
 

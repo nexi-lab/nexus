@@ -91,7 +91,7 @@ def __getattr__(name: str) -> object:
     if name in _LAZY_IMPORTS:
         module = importlib.import_module(_LAZY_IMPORTS[name])
         return getattr(module, name)
-    raise AttributeError(f"module 'nexus.skills' has no attribute {name}")
+    raise AttributeError(f"module 'nexus.bricks.skills' has no attribute {name}")
 
 
 __all__ = [

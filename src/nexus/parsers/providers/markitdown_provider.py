@@ -2,12 +2,14 @@
 
 import io
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
 from nexus.contracts.exceptions import ParserError
 from nexus.parsers.providers.base import ParseProvider, ProviderConfig
 from nexus.parsers.types import ParseResult, TextChunk
+from nexus.parsers.utils import create_chunks, extract_structure
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,7 @@ class MarkItDownProvider(ParseProvider):
         """
         super().__init__(config)
         self._markitdown: Any = None
+        self._init_lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -95,8 +98,12 @@ class MarkItDownProvider(ParseProvider):
             return False
 
     def _get_markitdown(self) -> Any:
-        """Get or create the MarkItDown converter instance."""
-        if self._markitdown is None:
+        """Get or create the MarkItDown converter instance (thread-safe)."""
+        if self._markitdown is not None:
+            return self._markitdown
+        with self._init_lock:
+            if self._markitdown is not None:
+                return self._markitdown
             from markitdown import MarkItDown
 
             self._markitdown = MarkItDown()
@@ -204,74 +211,9 @@ class MarkItDownProvider(ParseProvider):
             ) from e
 
     def _create_chunks(self, text: str) -> list[TextChunk]:
-        """Create semantic chunks from markdown text.
-
-        Splits on headers to create meaningful chunks.
-
-        Args:
-            text: Markdown text content
-
-        Returns:
-            List of TextChunk objects
-        """
-        chunks: list[TextChunk] = []
-        lines = text.split("\n")
-
-        current_chunk: list[str] = []
-        current_start = 0
-
-        for line in lines:
-            # Start new chunk on headers
-            if line.startswith("#") and current_chunk:
-                chunk_text = "\n".join(current_chunk).strip()
-                if chunk_text:
-                    chunks.append(
-                        TextChunk(
-                            text=chunk_text,
-                            start_index=current_start,
-                            end_index=current_start + len(chunk_text),
-                        )
-                    )
-                current_chunk = [line]
-                current_start += len(chunk_text) + 1
-            else:
-                current_chunk.append(line)
-
-        # Add final chunk
-        if current_chunk:
-            chunk_text = "\n".join(current_chunk).strip()
-            if chunk_text:
-                chunks.append(
-                    TextChunk(
-                        text=chunk_text,
-                        start_index=current_start,
-                        end_index=current_start + len(chunk_text),
-                    )
-                )
-
-        return chunks if chunks else [TextChunk(text=text, start_index=0, end_index=len(text))]
+        """Delegate to shared ``create_chunks`` utility."""
+        return create_chunks(text)
 
     def _extract_structure(self, text: str) -> dict[str, Any]:
-        """Extract document structure from markdown text.
-
-        Args:
-            text: Markdown text content
-
-        Returns:
-            Dictionary containing structure information
-        """
-        lines = text.split("\n")
-        headings = []
-
-        for line in lines:
-            if line.startswith("#"):
-                level = len(line) - len(line.lstrip("#"))
-                heading_text = line.lstrip("#").strip()
-                if heading_text:
-                    headings.append({"level": level, "text": heading_text})
-
-        return {
-            "headings": headings,
-            "has_headings": len(headings) > 0,
-            "line_count": len(lines),
-        }
+        """Delegate to shared ``extract_structure`` utility."""
+        return extract_structure(text)

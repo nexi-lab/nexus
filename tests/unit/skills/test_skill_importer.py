@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.bricks.skills.exceptions import SkillPermissionDeniedError
+from nexus.bricks.skills.importer import SkillImporter, SkillImportError
 from nexus.contracts.types import OperationContext
-from nexus.skills.exceptions import SkillPermissionDeniedError
-from nexus.skills.importer import SkillImporter, SkillImportError
 
 # Mock SKILL.md content with valid YAML frontmatter
 VALID_SKILL_MD = """---

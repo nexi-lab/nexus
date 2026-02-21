@@ -16,9 +16,9 @@ from typing import Any
 
 import pytest
 
-from nexus.skills.package_service import SkillPackageService
-from nexus.skills.service import SkillService
-from nexus.skills.testing import (
+from nexus.bricks.skills.package_service import SkillPackageService
+from nexus.bricks.skills.service import SkillService
+from nexus.bricks.skills.testing import (
     FakeOperationContext,
     InMemorySkillFilesystem,
     StubSkillPermissions,

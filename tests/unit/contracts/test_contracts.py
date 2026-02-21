@@ -162,7 +162,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_manager_error_not_defined_in_manager(self):
         """SkillManagerError should NOT be defined in skills/manager.py."""
-        import nexus.skills.manager as mod
+        import nexus.bricks.skills.manager as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -171,7 +171,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_export_error_not_defined_in_exporter(self):
         """SkillExportError should NOT be defined in skills/exporter.py."""
-        import nexus.skills.exporter as mod
+        import nexus.bricks.skills.exporter as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -180,7 +180,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_parse_error_not_defined_in_parser(self):
         """SkillParseError should NOT be defined in skills/parser.py."""
-        import nexus.skills.parser as mod
+        import nexus.bricks.skills.parser as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -189,7 +189,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_not_found_error_not_defined_in_registry(self):
         """SkillNotFoundError should NOT be defined in skills/registry.py."""
-        import nexus.skills.registry as mod
+        import nexus.bricks.skills.registry as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -198,7 +198,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_dependency_error_not_defined_in_registry(self):
         """SkillDependencyError should NOT be defined in skills/registry.py."""
-        import nexus.skills.registry as mod
+        import nexus.bricks.skills.registry as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -207,7 +207,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_import_error_not_defined_in_importer(self):
         """SkillImportError should NOT be defined in skills/importer.py."""
-        import nexus.skills.importer as mod
+        import nexus.bricks.skills.importer as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -216,7 +216,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_all_skill_exceptions_in_exceptions_module(self):
         """All skill exceptions should be defined in skills/exceptions.py."""
-        from nexus.skills.exceptions import (
+        from nexus.bricks.skills.exceptions import (
             SkillDependencyError,
             SkillExportError,
             SkillImportError,

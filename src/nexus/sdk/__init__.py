@@ -120,6 +120,15 @@ from nexus.bricks.rebac.manager import (
     GraphLimitExceeded,
     ReBACManager,
 )
+from nexus.bricks.skills.exporter import SkillExporter, SkillExportError
+from nexus.bricks.skills.manager import SkillManager, SkillManagerError
+from nexus.bricks.skills.models import Skill, SkillMetadata
+from nexus.bricks.skills.parser import SkillParseError, SkillParser
+from nexus.bricks.skills.registry import (
+    SkillDependencyError,
+    SkillNotFoundError,
+    SkillRegistry,
+)
 from nexus.config import NexusConfig as Config
 from nexus.config import load_config
 from nexus.contracts.exceptions import (
@@ -140,19 +149,6 @@ from nexus.core.filesystem import NexusFilesystem as Filesystem
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import NamespaceConfig
 from nexus.remote import RemoteNexusFS
-from nexus.skills import (
-    Skill,
-    SkillDependencyError,
-    SkillExporter,
-    SkillExportError,
-    SkillManager,
-    SkillManagerError,
-    SkillMetadata,
-    SkillNotFoundError,
-    SkillParseError,
-    SkillParser,
-    SkillRegistry,
-)
 
 
 def connect(

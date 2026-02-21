@@ -94,7 +94,8 @@ class ParsersBrick:
         """Create a sync parse callback for virtual views.
 
         Uses the shared ``ParserRegistry`` (no redundant MarkItDown instance).
-        Uses ``asyncio.run()`` (Issue #5A — replaces deprecated get_event_loop).
+        Detects whether a running event loop already exists and delegates via
+        ``run_in_executor`` when it does (Issue #13A).
 
         Returns:
             ``(content: bytes, path: str) -> bytes | None`` callable.
@@ -106,15 +107,25 @@ class ParsersBrick:
             parser = registry.get_parser(effective_path)
             if not parser:
                 return None
+
+            coro = parser.parse(processed_content, metadata)
+
             try:
-                result = asyncio.run(parser.parse(processed_content, metadata))
+                loop = asyncio.get_running_loop()
             except RuntimeError:
-                # Already inside an event loop — use a new thread
+                loop = None
+
+            if loop is None:
+                # No event loop — safe to use asyncio.run()
+                result = asyncio.run(coro)
+            else:
+                # Already inside an event loop — run in a worker thread
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(asyncio.run, parser.parse(processed_content, metadata))
+                    future = pool.submit(asyncio.run, coro)
                     result = future.result()
+
             if result and result.text:
                 return result.text.encode("utf-8")
             return None

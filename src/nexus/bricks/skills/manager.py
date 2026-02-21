@@ -16,7 +16,7 @@ from nexus.bricks.skills.models import SkillMetadata
 from nexus.bricks.skills.parser import SkillParser
 from nexus.bricks.skills.protocols import NexusFilesystem
 from nexus.bricks.skills.registry import SkillNotFoundError, SkillRegistry
-from nexus.constants import ROOT_ZONE_ID
+from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from nexus.bricks.skills.governance import SkillGovernance
@@ -37,7 +37,8 @@ class SkillManager:
 
     Example:
         >>> from nexus import connect
-        >>> from nexus.skills import SkillRegistry, SkillManager
+        >>> from nexus.bricks.skills.registry import SkillRegistry
+        >>> from nexus.bricks.skills.manager import SkillManager
         >>>
         >>> nx = connect()
         >>> registry = SkillRegistry(nx)
@@ -151,7 +152,7 @@ class SkillManager:
 
         try:
             # Get zone_id from context if not provided
-            effective_zone_id = zone_id or (context.zone_id if context else None) or ROOT_ZONE_ID
+            effective_zone_id = normalize_zone_id(zone_id or (context.zone_id if context else None))
 
             # For user-level skills: Owner gets direct_owner on the skill directory
             # This allows them full control (read, write, delete)
@@ -184,7 +185,7 @@ class SkillManager:
                     subject=("role", "public"),
                     relation="viewer",
                     object=("file", skill_dir.rstrip("/")),
-                    zone_id=ROOT_ZONE_ID,  # System skills use root zone
+                    zone_id=normalize_zone_id(None),  # System skills use root zone
                 )
                 logger.debug(f"Created public viewer permission on {skill_dir}")
 

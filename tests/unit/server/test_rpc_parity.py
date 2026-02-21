@@ -51,13 +51,13 @@ def get_all_rpc_exposed_methods():
     # Brick services that expose RPC methods directly
     _brick_classes: list[type] = []
     try:
-        from nexus.skills.service import SkillService
+        from nexus.bricks.skills.service import SkillService
 
         _brick_classes.append(SkillService)
     except ImportError:
         pass
     try:
-        from nexus.skills.package_service import SkillPackageService
+        from nexus.bricks.skills.package_service import SkillPackageService
 
         _brick_classes.append(SkillPackageService)
     except ImportError:

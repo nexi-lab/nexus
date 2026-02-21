@@ -13,8 +13,8 @@ import inspect
 
 import pytest
 
+from nexus.bricks.skills.protocols import NexusFilesystem as NexusFilesystemProtocol
 from nexus.core.filesystem import NexusFilesystem as NexusFilesystemABC
-from nexus.skills.protocols import NexusFilesystem as NexusFilesystemProtocol
 
 try:
     from nexus.storage.raft_metadata_store import RaftMetadataStore

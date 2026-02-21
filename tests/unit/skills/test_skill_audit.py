@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from nexus.skills.audit import (
+from nexus.bricks.skills.audit import (
     AuditAction,
     AuditLogEntry,
     SkillAuditLogger,
@@ -303,7 +303,7 @@ async def test_audit_log_entry_validation() -> None:
     """Test audit log entry validation."""
     from datetime import datetime
 
-    from nexus.skills.exceptions import SkillValidationError
+    from nexus.bricks.skills.exceptions import SkillValidationError
 
     # Valid entry
     entry = AuditLogEntry(

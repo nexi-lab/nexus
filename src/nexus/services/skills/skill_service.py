@@ -1,6 +1,6 @@
 """Backward-compatible shim for SkillService (Issue #2035).
 
-Canonical location is now ``nexus.skills.service.SkillService``.
+Canonical location is now ``nexus.bricks.skills.service.SkillService``.
 This module provides a gateway-accepting constructor for backward
 compatibility with code that creates ``SkillService(gateway=gw)``.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.skills.service import SkillService as _SkillServiceImpl
+from nexus.bricks.skills.service import SkillService as _SkillServiceImpl
 
 if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class SkillService(_SkillServiceImpl):
     """Backward-compatible SkillService that accepts a NexusFSGateway.
 
-    New code should use ``nexus.skills.service.SkillService`` directly
+    New code should use ``nexus.bricks.skills.service.SkillService`` directly
     with narrow protocol dependencies (fs, perms).
 
     This shim also provides ``export``, ``import_skill``, and ``validate_zip``
@@ -159,14 +159,16 @@ class _GatewayPermAdapter:
     def rebac_create(
         self,
         *,
-        subject: tuple[str, str],
+        subject: tuple[str, str] | tuple[str, str, str],
         relation: str,
         object: tuple[str, str],
         zone_id: str | None = None,
         context: Any = None,
     ) -> dict[str, Any] | None:
+        # Gateway accepts 2-tuple; narrow the 3-tuple at the adapter boundary
+        subj: Any = subject
         return self._gw.rebac_create(
-            subject=subject, relation=relation, object=object, zone_id=zone_id, context=context
+            subject=subj, relation=relation, object=object, zone_id=zone_id, context=context
         )
 
     def rebac_list_tuples(
@@ -187,8 +189,10 @@ class _GatewayPermAdapter:
         return self._gw.rebac_delete_object_tuples(object=object, zone_id=zone_id)
 
     def invalidate_metadata_cache(self, *paths: str) -> None:
-        self._gw.invalidate_metadata_cache(*paths)
+        invalidate = getattr(self._gw, "invalidate_metadata_cache", None)
+        if invalidate is not None:
+            invalidate(*paths)
 
     @property
     def rebac_manager(self) -> Any:
-        return self._gw.rebac_manager
+        return getattr(self._gw, "rebac_manager", None)

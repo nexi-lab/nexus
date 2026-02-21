@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 import uuid
 
-from nexus.validation.models import ValidationError, ValidatorConfig
-from nexus.validation.parsers import BUILTIN_VALIDATORS, Validator
-from nexus.validation.parsers.base import Validator as BaseValidator
+from nexus.parsers.validation.models import ValidationError, ValidatorConfig
+from nexus.parsers.validation.parsers import BUILTIN_VALIDATORS, Validator
+from nexus.parsers.validation.parsers.base import Validator as BaseValidator
 
 
 class _GenericValidator(BaseValidator):

@@ -7,26 +7,44 @@ into a single pipeline that runs all applicable validators.
 from __future__ import annotations
 
 import logging
+import re
 import shlex
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from nexus.bricks.sandbox.sandbox_provider import validate_mount_path
-from nexus.validation.config import ValidatorConfigLoader
-from nexus.validation.detector import detect_project_validators
-from nexus.validation.models import (
+from nexus.parsers.validation.config import ValidatorConfigLoader
+from nexus.parsers.validation.detector import detect_project_validators
+from nexus.parsers.validation.models import (
     ValidationPipelineConfig,
     ValidationResult,
     ValidatorConfig,
 )
-from nexus.validation.parsers import BUILTIN_VALIDATORS
-from nexus.validation.script_builder import (
+from nexus.parsers.validation.parsers import BUILTIN_VALIDATORS
+from nexus.parsers.validation.script_builder import (
     build_simple_validation_script,
     parse_simple_script_output,
 )
 
 if TYPE_CHECKING:
     from nexus.bricks.sandbox.sandbox_provider import SandboxProvider
+
+# Default path validator — same regex as sandbox_provider.validate_mount_path
+_MOUNT_PATH_PATTERN = re.compile(r"^/[a-zA-Z0-9/_\-.]+$")
+
+
+def _default_validate_mount_path(path: str) -> str:
+    """Validate a mount path is safe for shell interpolation.
+
+    Raises ValueError if the path contains invalid characters.
+    """
+    if not _MOUNT_PATH_PATTERN.match(path):
+        raise ValueError(
+            f"Invalid mount path: {path!r} — must be absolute and contain only "
+            "alphanumeric, '/', '_', '-', '.' characters"
+        )
+    return path
+
 
 # Default configs for auto-detected validators (avoids instantiating Validator subclasses)
 _DEFAULT_VALIDATOR_CONFIGS: dict[str, ValidatorConfig] = {
@@ -50,8 +68,13 @@ logger = logging.getLogger(__name__)
 class ValidationRunner:
     """Orchestrates validation pipeline inside sandboxes."""
 
-    def __init__(self, config_loader: ValidatorConfigLoader | None = None) -> None:
+    def __init__(
+        self,
+        config_loader: ValidatorConfigLoader | None = None,
+        path_validator: Callable[[str], str] | None = None,
+    ) -> None:
         self._config_loader = config_loader or ValidatorConfigLoader()
+        self._validate_path = path_validator or _default_validate_mount_path
 
     async def validate(
         self,
@@ -78,7 +101,7 @@ class ValidationRunner:
         Returns:
             List of validation results, one per validator.
         """
-        validate_mount_path(workspace_path)
+        self._validate_path(workspace_path)
         pipeline_start = time.monotonic()
 
         # 1. Resolve validator configs

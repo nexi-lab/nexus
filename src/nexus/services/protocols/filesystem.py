@@ -6,7 +6,7 @@ rather than mirroring the full NexusFilesystem ABC (1,000+ LOC).
 Any object implementing these 7 methods can serve as a filesystem for bricks:
 read, write, list, exists, mkdir, delete, is_directory.
 
-Moved from nexus.skills.protocols (Issue #2035) to services/protocols/
+Moved from nexus.bricks.skills.protocols (Issue #2035) to services/protocols/
 because both Skills and MCP bricks depend on this contract.
 
 Verification:

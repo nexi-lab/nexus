@@ -293,7 +293,8 @@ def skills_create_from_web(
     try:
         import asyncio
 
-        from nexus.skills import SkillManager, SkillRegistry
+        from nexus.bricks.skills.manager import SkillManager
+        from nexus.bricks.skills.registry import SkillRegistry
 
         # Read from stdin if piped or --stdin flag
         if stdin or not sys.stdin.isatty():
@@ -780,7 +781,8 @@ def skills_export(
     try:
         import asyncio
 
-        from nexus.skills import SkillExporter, SkillRegistry
+        from nexus.bricks.skills.exporter import SkillExporter
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -837,7 +839,8 @@ def skills_validate(
     try:
         import asyncio
 
-        from nexus.skills import SkillExporter, SkillRegistry
+        from nexus.bricks.skills.exporter import SkillExporter
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -899,7 +902,8 @@ def skills_size(
     try:
         import asyncio
 
-        from nexus.skills import SkillExporter, SkillRegistry
+        from nexus.bricks.skills.exporter import SkillExporter
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -953,7 +957,7 @@ def skills_deps(
     try:
         import asyncio
 
-        from nexus.skills import SkillRegistry
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -1292,7 +1296,7 @@ def skills_diff(
 
         from rich.syntax import Syntax
 
-        from nexus.skills import SkillRegistry
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -1305,9 +1309,9 @@ def skills_diff(
             skill_obj2 = await registry.get_skill(skill2)
 
             # Reconstruct SKILL.md content for both
-            from nexus.skills.exporter import SkillExporter
+            from nexus.bricks.skills.exporter import SkillExporter
 
-            exporter = SkillExporter(registry, filesystem=nx)
+            exporter = SkillExporter(registry)
 
             content1 = exporter._reconstruct_skill_md(skill_obj1)
             content2 = exporter._reconstruct_skill_md(skill_obj2)

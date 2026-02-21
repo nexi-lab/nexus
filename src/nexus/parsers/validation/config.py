@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Any
 
-from nexus.validation.models import ValidationPipelineConfig, ValidatorConfig
+from nexus.parsers.validation.models import ValidationPipelineConfig, ValidatorConfig
 
 logger = logging.getLogger(__name__)
 

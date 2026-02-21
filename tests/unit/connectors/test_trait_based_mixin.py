@@ -6,7 +6,7 @@ Locks down the validation behavior so extraction can be verified.
 
 import pytest
 
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,

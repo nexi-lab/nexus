@@ -8,7 +8,7 @@ Provides defense-in-depth against prompt injection attacks (OWASP LLM01:2025):
 
 Usage::
 
-    from nexus.security import (
+    from nexus.lib.security import (
         sanitize_for_prompt,
         detect_injection_patterns,
         wrap_untrusted_data,
@@ -24,7 +24,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.security.policy import InjectionAction, InjectionPolicyConfig
+    from nexus.lib.security.policy import InjectionAction, InjectionPolicyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +217,7 @@ def enforce_injection_policy(
     Returns:
         Tuple of (allowed: bool, detections: list[(name, severity)]).
     """
-    from nexus.security.policy import InjectionAction, InjectionPolicyConfig
+    from nexus.lib.security.policy import InjectionAction, InjectionPolicyConfig
 
     if policy is None:
         policy = InjectionPolicyConfig()

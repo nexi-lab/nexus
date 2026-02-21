@@ -20,7 +20,7 @@ from pathlib import Path
 
 import httpx
 
-from nexus.isolation import IsolatedBackend, IsolationConfig
+from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
 # ── Helper: IsolatedBackend wrapping a real LocalBackend ──────────────
 

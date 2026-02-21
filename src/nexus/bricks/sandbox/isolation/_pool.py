@@ -5,10 +5,10 @@ import threading
 from concurrent.futures import Executor, Future
 from typing import Any
 
-from nexus.isolation._compat import create_isolation_pool
-from nexus.isolation._worker import worker_call, worker_get_property, worker_shutdown
-from nexus.isolation.config import IsolationConfig
-from nexus.isolation.errors import (
+from nexus.bricks.sandbox.isolation._compat import create_isolation_pool
+from nexus.bricks.sandbox.isolation._worker import worker_call, worker_get_property, worker_shutdown
+from nexus.bricks.sandbox.isolation.config import IsolationConfig
+from nexus.bricks.sandbox.isolation.errors import (
     IsolationCallError,
     IsolationPoolError,
     IsolationStartupError,

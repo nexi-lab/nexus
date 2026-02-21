@@ -257,7 +257,7 @@ class TestBootSystemServices:
 
         ctx = _make_mock_ctx()
         with patch(
-            "nexus.services.event_log.create_event_log",
+            "nexus.services.event_subsystem.log.create_event_log",
             side_effect=RuntimeError("WAL not available"),
         ):
             result = _boot_system_services(ctx)

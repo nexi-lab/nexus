@@ -480,7 +480,7 @@ def _boot_system_services(
             from pathlib import Path as _ElPath
             from typing import Literal
 
-            from nexus.services.event_log import EventLogConfig, create_event_log
+            from nexus.services.event_subsystem.log import EventLogConfig, create_event_log
 
             _wal_dir: str = (
                 ctx.wal_dir

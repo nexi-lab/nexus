@@ -10,6 +10,11 @@ Usage:
     from nexus.contracts.exceptions import BackendError, ValidationError
 """
 
+from nexus.contracts.access_manifest_types import (
+    AccessManifest,
+    ManifestEntry,
+    ToolPermission,
+)
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.constants import TIER_ALIASES, PriorityTier
 from nexus.contracts.credential_types import (
@@ -44,6 +49,7 @@ from nexus.contracts.exceptions import (
     ConnectorError,
     ConnectorQuotaError,
     ConnectorRateLimitError,
+    CredentialError,
     DatabaseConnectionError,
     DatabaseError,
     DatabaseIntegrityError,
@@ -133,6 +139,7 @@ __all__ = [
     "ConnectorError",
     "ConnectorQuotaError",
     "ConnectorRateLimitError",
+    "CredentialError",
     "DatabaseConnectionError",
     "DatabaseError",
     "DatabaseIntegrityError",
@@ -188,4 +195,8 @@ __all__ = [
     "MIN_CREDENTIAL_TTL",
     "VC_CONTEXT",
     "VC_TYPES",
+    # Access manifest types (Issue #1754)
+    "AccessManifest",
+    "ManifestEntry",
+    "ToolPermission",
 ]

@@ -706,10 +706,10 @@ def _make_signing_fixtures() -> tuple:
     """Create crypto, key_service mock, signer and verifier for testing."""
     from unittest.mock import MagicMock
 
-    from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
     from nexus.bricks.identity.crypto import IdentityCrypto
     from nexus.bricks.identity.did import create_did_key
     from nexus.bricks.identity.key_service import AgentKeyRecord
+    from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
 
     crypto = IdentityCrypto(_FakeTokenEncryptor())
     private_key, public_key = crypto.generate_keypair()

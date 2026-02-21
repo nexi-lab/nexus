@@ -12,7 +12,6 @@ Provides all semantic search functionality:
 from __future__ import annotations
 
 import builtins
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -46,7 +45,7 @@ class SemanticSearchMixin:
     Delegates to:
         _query_service: QueryService for search execution
         _indexing_service: IndexingService for document indexing (when file_reader available)
-        _indexing_pipeline: IndexingPipeline for bulk indexing (RPC path without nx)
+        _pipeline_indexer: PipelineIndexer for bulk indexing (RPC path without nx)
 
     Methods provided:
         - ainitialize_semantic_search: Factory init from NexusFS
@@ -89,7 +88,7 @@ class SemanticSearchMixin:
         self,
         *,
         nx: Any,
-        record_store_engine: Any,
+        record_store_engine: Any,  # noqa: ARG002
         embedding_provider: str | None = None,
         embedding_model: str | None = None,
         api_key: str | None = None,
@@ -99,121 +98,30 @@ class SemanticSearchMixin:
         cache_url: str | None = None,
         embedding_cache_ttl: int = 86400 * 3,
     ) -> None:
-        """Initialize semantic search engine.
+        """Initialize semantic search engine (NexusFS path).
 
-        Creates IndexingService + QueryService backed by IndexingPipeline,
-        VectorDatabase, and FileReaderProtocol.
-
-        Args:
-            nx: NexusFS instance (used to create FileReaderProtocol adapter)
-            record_store_engine: SQLAlchemy engine from RecordStore
-            embedding_provider: Provider name (e.g., "openai", "voyage")
-            embedding_model: Model name for embeddings
-            api_key: API key for embedding provider
-            chunk_size: Chunk size in tokens
-            chunk_strategy: Chunking strategy ("fixed", "semantic", "overlapping")
-            async_mode: Unused — kept for API compat.
-            cache_url: Redis/Dragonfly URL for embedding cache
-            embedding_cache_ttl: Cache TTL in seconds (default: 3 days)
+        Delegates to factory helper for component creation (Issue #2075, DRY).
         """
+        from nexus.factory._semantic_search import create_semantic_search_components
 
-        from nexus.bricks.search.chunking import ChunkStrategy, DocumentChunker
-        from nexus.bricks.search.indexing import IndexingPipeline
-        from nexus.bricks.search.indexing_service import IndexingService
-        from nexus.bricks.search.query_service import QueryService
-        from nexus.bricks.search.vector_db import VectorDatabase
+        if self._record_store is None:
+            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
 
-        # --- Embedding provider ---
-        emb_provider = None
-        if embedding_provider:
-            from nexus.bricks.search.embeddings import create_cached_embedding_provider
-            from nexus.lib.env import get_dragonfly_url
-
-            effective_cache_url = cache_url or get_dragonfly_url()
-            emb_provider = await create_cached_embedding_provider(
-                provider=embedding_provider,
-                model=embedding_model,
-                api_key=api_key,
-                cache_url=effective_cache_url,
-                cache_ttl=embedding_cache_ttl,
-            )
-
-        strategy_map = {
-            "fixed": ChunkStrategy.FIXED,
-            "semantic": ChunkStrategy.SEMANTIC,
-            "overlapping": ChunkStrategy.OVERLAPPING,
-        }
-        chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
-
-        # --- Core components ---
-        _is_pg = not str(record_store_engine.url).startswith("sqlite")
-        vector_db = VectorDatabase(record_store_engine, is_postgresql=_is_pg)
-        vector_db.initialize()
-
-        chunker = DocumentChunker(
+        components = await create_semantic_search_components(
+            record_store=self._record_store,
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            api_key=api_key,
             chunk_size=chunk_size,
-            strategy=chunk_strat,
-            overlap_size=128,
+            chunk_strategy=chunk_strategy,
+            cache_url=cache_url,
+            embedding_cache_ttl=embedding_cache_ttl,
+            nx=nx,
         )
-
-        _sync_sf = self._record_store.session_factory if self._record_store is not None else None
-        _async_sf = None
-        if self._record_store is not None:
-            with contextlib.suppress(NotImplementedError, AttributeError):
-                _async_sf = self._record_store.async_session_factory
-
-        pipeline = IndexingPipeline(
-            chunker=chunker,
-            embedding_provider=emb_provider,
-            db_type=vector_db.db_type,
-            async_session_factory=_async_sf,
-            max_concurrency=10,
-            cross_doc_batching=True,
-        )
-        self._indexing_pipeline = pipeline
-
-        # --- QueryService ---
-        # Issue #2036: Inject ContextBuilder as AdaptiveKProtocol provider
-        _context_builder = None
-        try:
-            from nexus.services.llm_context_builder import (
-                AdaptiveRetrievalConfig,
-                ContextBuilder,
-            )
-
-            _context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
-        except ImportError:
-            pass  # optional dependency
-        except Exception:
-            logger.warning("Failed to create ContextBuilder", exc_info=True)
-
-        if _sync_sf is not None:
-            self._query_service = QueryService(
-                vector_db=vector_db,
-                session_factory=_sync_sf,
-                embedding_provider=emb_provider,
-                context_builder=_context_builder,
-            )
-        else:
-            self._query_service = None
-
-        # --- IndexingService (needs file_reader from nx) ---
-        from nexus.factory import _NexusFSFileReader
-
-        _file_reader = _NexusFSFileReader(nx) if nx is not None else None
-
-        if _file_reader is not None and _sync_sf is not None:
-            self._indexing_service = IndexingService(
-                pipeline=pipeline,
-                file_reader=_file_reader,
-                session_factory=_sync_sf,
-                vector_db=vector_db,
-                embedding_provider=emb_provider,
-            )
-        else:
-            self._indexing_service = None
-
-        # Legacy attributes removed (Issue #2075)
+        self._query_service = components.query_service
+        self._indexing_service = components.indexing_service
+        self._indexing_pipeline = components.indexing_pipeline
+        self._pipeline_indexer = components.pipeline_indexer
 
     # =========================================================================
     # Public API: Semantic Search
@@ -317,7 +225,7 @@ class SemanticSearchMixin:
         api_key: str | None = None,
         chunk_size: int = 1024,
         chunk_strategy: str = "semantic",
-        async_mode: bool = True,
+        async_mode: bool = True,  # noqa: ARG002
         contextual_chunking: bool = False,  # noqa: ARG002
         context_generator: Any | None = None,  # noqa: ARG002
         cache_url: str | None = None,
@@ -325,106 +233,29 @@ class SemanticSearchMixin:
     ) -> None:
         """Initialize semantic search engine with embedding provider (RPC path).
 
-        This path does NOT have access to NexusFS, so IndexingService cannot be
-        created. QueryService is created for search; bulk indexing uses
-        IndexingPipeline directly.
+        Delegates to factory helper for component creation (Issue #2075, DRY).
         """
-
-        from nexus.bricks.search.chunking import ChunkStrategy, DocumentChunker
-        from nexus.bricks.search.indexing import IndexingPipeline
-        from nexus.bricks.search.query_service import QueryService
-        from nexus.bricks.search.vector_db import VectorDatabase
-
-        emb_provider = None
-        if embedding_provider:
-            from nexus.bricks.search.embeddings import create_cached_embedding_provider
-            from nexus.lib.env import get_dragonfly_url
-
-            effective_cache_url = cache_url or get_dragonfly_url()
-            emb_provider = await create_cached_embedding_provider(
-                provider=embedding_provider,
-                model=embedding_model,
-                api_key=api_key,
-                cache_url=effective_cache_url,
-                cache_ttl=embedding_cache_ttl,
-            )
-
-        strategy_map = {
-            "fixed": ChunkStrategy.FIXED,
-            "semantic": ChunkStrategy.SEMANTIC,
-            "overlapping": ChunkStrategy.OVERLAPPING,
-        }
-        chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
+        from nexus.factory._semantic_search import create_semantic_search_components
 
         if self._record_store is None:
             raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
 
-        engine = self._record_store.engine
-        _is_pg = not str(engine.url).startswith("sqlite")
-        vector_db = VectorDatabase(engine, is_postgresql=_is_pg)
-        vector_db.initialize()
-
-        chunker = DocumentChunker(
+        components = await create_semantic_search_components(
+            record_store=self._record_store,
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            api_key=api_key,
             chunk_size=chunk_size,
-            strategy=chunk_strat,
-            overlap_size=128,
+            chunk_strategy=chunk_strategy,
+            cache_url=cache_url,
+            embedding_cache_ttl=embedding_cache_ttl,
+            # RPC-path extras for PipelineIndexer
+            session_factory=self._gw_session_factory,
+            metadata=self.metadata,
+            file_reader=self._read,
+            file_lister=self.list,
         )
-
-        _sync_sf = self._record_store.session_factory
-        _async_sf = None
-        with contextlib.suppress(NotImplementedError, AttributeError):
-            _async_sf = self._record_store.async_session_factory
-
-        if not async_mode:
-            raise NotImplementedError(
-                "Sync semantic search requires NexusFS integration. Use async_mode=True."
-            )
-
-        self._indexing_pipeline = IndexingPipeline(
-            chunker=chunker,
-            embedding_provider=emb_provider,
-            db_type=vector_db.db_type,
-            async_session_factory=_async_sf,
-            max_concurrency=10,
-            cross_doc_batching=True,
-        )
-
-        # Issue #2036: Inject ContextBuilder as AdaptiveKProtocol provider
-        _rpc_context_builder = None
-        try:
-            from nexus.services.llm_context_builder import (
-                AdaptiveRetrievalConfig,
-                ContextBuilder,
-            )
-
-            _rpc_context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
-        except ImportError:
-            pass  # optional dependency
-        except Exception:
-            logger.warning("Failed to create ContextBuilder (RPC path)", exc_info=True)
-
-        self._query_service = QueryService(
-            vector_db=vector_db,
-            session_factory=_sync_sf,
-            embedding_provider=emb_provider,
-            context_builder=_rpc_context_builder,
-        )
-
-        # No file_reader available in RPC path — IndexingService not created.
-        self._indexing_service = None
-
-        # PipelineIndexer for RPC bulk indexing (Issue #2075)
-        if self._gw_session_factory is not None:
-            from nexus.bricks.search.pipeline_indexer import PipelineIndexer
-
-            self._pipeline_indexer = PipelineIndexer(
-                pipeline=self._indexing_pipeline,
-                session_factory=self._gw_session_factory,
-                metadata=self.metadata,
-                file_reader=self._read,
-                file_lister=self.list,
-            )
-        else:
-            self._pipeline_indexer = None
-
-    # _pipeline_index_documents has been extracted to PipelineIndexer (Issue #2075)
+        self._query_service = components.query_service
+        self._indexing_service = components.indexing_service
+        self._indexing_pipeline = components.indexing_pipeline
+        self._pipeline_indexer = components.pipeline_indexer

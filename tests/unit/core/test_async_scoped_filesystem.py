@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
-from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
+from nexus.bricks.filesystem.async_scoped_filesystem import AsyncScopedFilesystem
 
 
 @pytest.fixture

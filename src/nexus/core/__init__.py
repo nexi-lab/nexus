@@ -1,7 +1,7 @@
 """Core components for Nexus filesystem.
 
 This module uses lazy imports for performance optimization.
-Heavy modules (nexus_fs, async_scoped_filesystem) are only loaded when accessed.
+Heavy modules (nexus_fs) are only loaded when accessed.
 """
 
 import os
@@ -59,10 +59,8 @@ def setup_uvloop() -> bool:
 # LAZY IMPORTS for performance optimization
 # =============================================================================
 if TYPE_CHECKING:
-    from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
-    from nexus.core.filesystem import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.scoped_filesystem import ScopedFilesystem
     from nexus.lib.registry import BaseRegistry, BrickInfo, BrickRegistry
 
 # Module-level cache for lazy imports
@@ -70,13 +68,11 @@ _lazy_imports_cache: dict[str, Any] = {}
 
 # Mapping of attribute names to their import paths
 _LAZY_IMPORTS = {
-    "AsyncScopedFilesystem": ("nexus.core.async_scoped_filesystem", "AsyncScopedFilesystem"),
     "BaseRegistry": ("nexus.lib.registry", "BaseRegistry"),
     "BrickInfo": ("nexus.lib.registry", "BrickInfo"),
     "BrickRegistry": ("nexus.lib.registry", "BrickRegistry"),
-    "NexusFilesystem": ("nexus.core.filesystem", "NexusFilesystem"),
+    "NexusFilesystemABC": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
-    "ScopedFilesystem": ("nexus.core.scoped_filesystem", "ScopedFilesystem"),
 }
 
 
@@ -128,8 +124,6 @@ __all__ = [
     "BrickInfo",
     "BrickRegistry",
     # Filesystem classes (lazy)
-    "AsyncScopedFilesystem",
-    "NexusFilesystem",
+    "NexusFilesystemABC",
     "NexusFS",
-    "ScopedFilesystem",
 ]

@@ -86,7 +86,7 @@ class TestProtocolSatisfaction:
         import inspect
 
         from nexus.bricks.skills.protocols import NexusFilesystem as NexusFilesystemProtocol
-        from nexus.core.filesystem import NexusFilesystem as NexusFilesystemABC
+        from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
         # Get method names from the narrow protocol
         protocol_methods = {

@@ -431,7 +431,7 @@ disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.core.async_scoped_filesystem",
+    "nexus.bricks.filesystem.async_scoped_filesystem",
     "nexus.bricks.tools.langgraph.nexus_tools",
 ]
 # These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
@@ -595,6 +595,9 @@ module = [
     "nexus.bricks.mcp.middleware",
     "nexus.bricks.mcp.oauth_mappings",
     "nexus.bricks.mcp.profiles",
+    "nexus.bricks.mcp.server",
+    "nexus.fuse.operations",
+    "nexus.fuse.ops._shared",
     "nexus.bricks.skills.parser",
     "nexus.server.auth.oauth_factory",
     "nexus.bricks.workflows.storage",

@@ -4,12 +4,16 @@ Phase 6.1 (Issue #2033): DRY extraction of path rewriting helpers that
 were duplicated between ``scoped_filesystem.py`` and
 ``async_scoped_filesystem.py``.
 
+Moved from core/ → services/filesystem/ → bricks/filesystem/ (Issue #2424).
+
 Usage:
     class ScopedFilesystem(ScopedPathMixin):
         def __init__(self, fs, root):
             super().__init__(root)
             self._fs = fs
 """
+
+from __future__ import annotations
 
 import builtins
 from typing import Any

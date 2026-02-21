@@ -81,7 +81,7 @@ if TYPE_CHECKING:
         NexusFileNotFoundError,
         NexusPermissionError,
     )
-    from nexus.core.filesystem import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as NexusFilesystem
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import NamespaceConfig
@@ -117,7 +117,7 @@ _LAZY_IMPORTS = {
     "NexusConfig": ("nexus.config", "NexusConfig"),
     "load_config": ("nexus.config", "load_config"),
     # Core - heavy
-    "NexusFilesystem": ("nexus.core.filesystem", "NexusFilesystem"),
+    "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
     "NamespaceConfig": ("nexus.core.router", "NamespaceConfig"),
     # Remote - needed for FUSE mount

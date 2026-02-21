@@ -1,8 +1,11 @@
+# mypy: disable-error-code="no-any-return"
 """Async scoped filesystem wrapper for multi-zone path isolation.
 
 This module provides an AsyncScopedFilesystem wrapper that rebases all paths
 to a user's root directory, enabling multi-zone isolation without
 modifying existing code that uses hardcoded global paths.
+
+Moved from core/ → services/filesystem/ → bricks/filesystem/ (Issue #2424).
 
 Example:
     # For user at /zones/aquarius_team_12/users/user_12/
@@ -13,11 +16,13 @@ Example:
     files = await scoped_fs.list("/workspace/.nexus/skills/")
 """
 
+from __future__ import annotations
+
 import builtins
 from collections.abc import AsyncIterator
 from typing import Any
 
-from nexus.core._scoped_base import GLOBAL_NAMESPACES, ScopedPathMixin
+from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
 
 
 class AsyncScopedFilesystem(ScopedPathMixin):
@@ -34,9 +39,6 @@ class AsyncScopedFilesystem(ScopedPathMixin):
         _fs: The underlying async filesystem instance
         _root: The root path prefix to prepend to all paths
     """
-
-    # Re-export for backward compat
-    GLOBAL_NAMESPACES = GLOBAL_NAMESPACES
 
     def __init__(self, fs: Any, root: str) -> None:
         """Initialize AsyncScopedFilesystem.
@@ -117,7 +119,7 @@ class AsyncScopedFilesystem(ScopedPathMixin):
     async def write(
         self,
         path: str,
-        content: bytes | str,
+        content: bytes,
         context: Any = None,
         if_match: str | None = None,
         if_none_match: bool = False,
@@ -448,7 +450,7 @@ class AsyncScopedFilesystem(ScopedPathMixin):
         """Close the filesystem and release resources."""
         await self._fs.close()
 
-    async def __aenter__(self) -> "AsyncScopedFilesystem":
+    async def __aenter__(self) -> AsyncScopedFilesystem:
         """Async context manager entry."""
         return self
 

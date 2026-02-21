@@ -144,8 +144,8 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.exceptions import (
     NexusPermissionError as PermissionError,
 )
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as Filesystem
 from nexus.contracts.types import OperationContext
-from nexus.core.filesystem import NexusFilesystem as Filesystem
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import NamespaceConfig
 from nexus.remote import RemoteNexusFS

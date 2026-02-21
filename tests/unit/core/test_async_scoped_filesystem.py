@@ -3,8 +3,6 @@
 Tests path scoping/unscoping for multi-zone isolation with async client.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest

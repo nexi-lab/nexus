@@ -11,8 +11,6 @@ Moved from nexus.bricks.cache.persistent_view_postgres (Issue #2055) — this fi
 has RecordStore affinity, not cache affinity.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -76,7 +74,7 @@ class PostgresPersistentViewStore:
     Routes through RecordStoreProtocol for engine access (Four Pillars compliance).
     """
 
-    def __init__(self, record_store: RecordStoreProtocol) -> None:
+    def __init__(self, record_store: "RecordStoreProtocol") -> None:
         self._engine = record_store.engine
 
     def save_view(

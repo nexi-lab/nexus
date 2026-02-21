@@ -5,8 +5,6 @@ operations behind ``@rpc_expose`` methods.  Wired via
 ``rpc_server.register_service()`` at server startup.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -33,9 +31,9 @@ class WorkspaceRPCService:
 
     def __init__(
         self,
-        workspace_manager: WorkspaceManager,
-        workspace_registry: WorkspaceRegistry,
-        vfs: VFSOperations,
+        workspace_manager: "WorkspaceManager",
+        workspace_registry: "WorkspaceRegistry",
+        vfs: "VFSOperations",
         default_context: OperationContext,
         snapshot_service: Any | None = None,
     ) -> None:

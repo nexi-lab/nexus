@@ -1,7 +1,5 @@
 """Context versioning commands — workspace branching + explore() (Issue #1315)."""
 
-from __future__ import annotations
-
 from typing import Any
 
 import click

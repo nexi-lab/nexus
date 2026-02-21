@@ -5,8 +5,6 @@ Parses all ``src/nexus/**/*.py`` files, extracts top-level import statements
 directed graph, and asserts the graph is acyclic (topological sort succeeds).
 """
 
-from __future__ import annotations
-
 import ast
 import os
 from collections import defaultdict

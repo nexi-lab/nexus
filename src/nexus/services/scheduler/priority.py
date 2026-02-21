@@ -12,8 +12,6 @@ If wait > MAX_WAIT_SECONDS: effective_tier = min(effective_tier, HIGH)
 Related: Issue #1212
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from decimal import Decimal
 

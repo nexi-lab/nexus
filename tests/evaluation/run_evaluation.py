@@ -26,8 +26,6 @@ Requirements:
     - mcp package: pip install mcp
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import os
@@ -157,7 +155,7 @@ EVAL_WORKSPACE_LOCAL = Path(__file__).parent / "eval_workspace"
 EVAL_WORKSPACE_REMOTE = "/eval_workspace"
 
 
-async def check_data_exists(session: ClientSession) -> bool:
+async def check_data_exists(session: "ClientSession") -> bool:
     """Check if test data already exists in Nexus."""
     try:
         result = await session.call_tool(
@@ -176,7 +174,7 @@ async def check_data_exists(session: ClientSession) -> bool:
     return False
 
 
-async def upload_test_data(session: ClientSession) -> tuple[int, int]:
+async def upload_test_data(session: "ClientSession") -> tuple[int, int]:
     """Upload test data files to Nexus using MCP write_file.
 
     Returns:
@@ -237,10 +235,10 @@ async def upload_test_data(session: ClientSession) -> tuple[int, int]:
 
 
 async def evaluate_question_with_mcp(
-    client: anthropic.Anthropic,
+    client: "anthropic.Anthropic",
     question: str,
     model: str,
-    mcp_session: ClientSession,
+    mcp_session: "ClientSession",
     tools: list[dict],
 ) -> tuple[str, int, str, str]:
     """Evaluate a single question using real MCP tools.
@@ -336,7 +334,7 @@ async def evaluate_question_with_mcp(
 
 
 def evaluate_question_prompt_based(
-    client: anthropic.Anthropic,
+    client: "anthropic.Anthropic",
     question: str,
     model: str,
 ) -> tuple[str, int, str, str]:

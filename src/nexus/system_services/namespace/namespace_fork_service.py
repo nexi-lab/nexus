@@ -12,8 +12,6 @@ configured TTL (default 30 min).  Called periodically by the scheduler
 or explicitly by MCP tools.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import uuid
@@ -50,7 +48,7 @@ class AgentNamespaceForkService:
 
     def __init__(
         self,
-        namespace_manager: NamespaceManager,
+        namespace_manager: "NamespaceManager",
         *,
         ttl_seconds: int = 1800,
     ) -> None:

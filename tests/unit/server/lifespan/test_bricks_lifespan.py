@@ -1,7 +1,5 @@
 """Tests for brick lifecycle startup/shutdown in server lifespan (Issue #1704)."""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

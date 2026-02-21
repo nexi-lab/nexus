@@ -11,8 +11,6 @@ Tests cover:
 - Sequential heartbeat reliability test (Decision #11A, updated post-cache-removal)
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.contracts.agent_types import AgentState

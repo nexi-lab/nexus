@@ -6,8 +6,6 @@ query APIs for the REST conflict management endpoints.
 Extends SyncStoreBase for shared session management and dialect detection.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import UTC, datetime

@@ -1,7 +1,5 @@
 """CLI output formatters - Rich formatting utilities for Nexus CLI."""
 
-from __future__ import annotations
-
 from datetime import datetime
 
 

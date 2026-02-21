@@ -4,8 +4,6 @@ Issue #1359 Phase 0: Extracted from DisputeService.VALID_TRANSITIONS pattern.
 Reusable for any workflow with enumerated states and valid transitions.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 

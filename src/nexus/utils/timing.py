@@ -16,8 +16,6 @@ Usage::
         results = executor.submit(search_chunk, chunk)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Generator
@@ -34,7 +32,7 @@ class Timer:
 
     __slots__ = ("_start", "elapsed", "ms")
 
-    def __enter__(self) -> Timer:
+    def __enter__(self) -> "Timer":
         self._start = time.monotonic()
         self.elapsed = 0.0
         self.ms = 0.0
@@ -50,7 +48,7 @@ class Timer:
         target_logger: logging.Logger,
         label: str,
         level: int = logging.DEBUG,
-    ) -> Generator[Timer, None, None]:
+    ) -> "Generator[Timer, None, None]":
         """Context manager that auto-logs elapsed time on exit.
 
         Args:

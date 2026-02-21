@@ -9,8 +9,6 @@ Hybrid Python/Rust mode (--use-rust):
     resolution, and virtual views.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from contextlib import suppress
@@ -87,11 +85,11 @@ class NexusFUSEOperations(Operations):
 
     def __init__(
         self,
-        nexus_fs: NexusFilesystem,
-        mode: MountMode,
+        nexus_fs: "NexusFilesystem",
+        mode: "MountMode",
         cache_config: dict[str, Any] | None = None,
-        context: OperationContext | None = None,
-        namespace_manager: NamespaceManager | None = None,
+        context: "OperationContext | None" = None,
+        namespace_manager: "NamespaceManager | None" = None,
         use_rust: bool = False,
         event_bus: Any | None = None,
         subscription_manager: Any | None = None,

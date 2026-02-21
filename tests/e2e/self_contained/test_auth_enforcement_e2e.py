@@ -14,8 +14,6 @@ Covers:
 - RPC dispatch method name validation (#2136)
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

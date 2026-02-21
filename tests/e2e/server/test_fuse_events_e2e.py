@@ -11,8 +11,6 @@ Run with:
     pytest tests/e2e/test_fuse_events_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import threading
@@ -67,7 +65,7 @@ class MockWebhookServer:
         # Reset the queue
         WebhookHandler.received_events = Queue()
 
-    def __enter__(self) -> MockWebhookServer:
+    def __enter__(self) -> "MockWebhookServer":
         self.server = HTTPServer(("127.0.0.1", self.port), WebhookHandler)
         self.port = self.server.server_address[1]  # Get assigned port
         self.thread = threading.Thread(target=self.server.serve_forever)

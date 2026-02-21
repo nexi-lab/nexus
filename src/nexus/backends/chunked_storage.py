@@ -35,8 +35,6 @@ Example:
     >>> assert content == large_50mb_file
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -67,7 +65,6 @@ CDC_MAX_CHUNK_SIZE = 4 * 1024 * 1024  # 4MB maximum
 # Parallel I/O configuration
 CDC_PARALLEL_WORKERS = 8  # Optimal for SSD, reduce for HDD
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
@@ -96,7 +93,7 @@ class ChunkInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ChunkInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "ChunkInfo":
         """Deserialize from JSON dict."""
         return cls(
             chunk_hash=data["chunk_hash"],
@@ -141,7 +138,7 @@ class ChunkedReference:
     chunk_count: int = 0
     avg_chunk_size: int = 0
     content_hash: str = ""
-    chunks: tuple[ChunkInfo, ...] = ()
+    chunks: "tuple[ChunkInfo, ...]" = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
@@ -155,7 +152,7 @@ class ChunkedReference:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ChunkedReference:
+    def from_dict(cls, data: dict[str, Any]) -> "ChunkedReference":
         """Deserialize from JSON dict."""
         return cls(
             type=data.get("type", "chunked_manifest_v1"),
@@ -171,7 +168,7 @@ class ChunkedReference:
         return json.dumps(self.to_dict(), separators=(",", ":")).encode("utf-8")
 
     @classmethod
-    def from_json(cls, data: bytes) -> ChunkedReference:
+    def from_json(cls, data: bytes) -> "ChunkedReference":
         """Deserialize from JSON bytes."""
         return cls.from_dict(json.loads(data))
 
@@ -231,7 +228,7 @@ class ChunkedStorageMixin:
         - content_cache (optional attribute)
     """
 
-    _cas: CASBlobStore
+    _cas: "CASBlobStore"
 
     # Configuration (can be overridden in subclass or __init__)
     cdc_threshold: int = CDC_THRESHOLD_BYTES
@@ -332,7 +329,7 @@ class ChunkedStorageMixin:
     def _write_chunked(
         self,
         content: bytes,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Write content as CDC chunks with manifest.
 
@@ -445,7 +442,7 @@ class ChunkedStorageMixin:
     def _read_chunked(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes:
         """Read chunked content by reassembling from chunks.
 
@@ -528,7 +525,7 @@ class ChunkedStorageMixin:
     def _delete_chunked(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Delete chunked content, handling chunk reference counts.
 

@@ -9,8 +9,6 @@ Tests both admin and non-admin users:
 - Non-admin: identity-based access via MemoryPermissionEnforcer (owner match)
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

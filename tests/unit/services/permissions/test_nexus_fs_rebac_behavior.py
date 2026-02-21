@@ -10,8 +10,6 @@ exist on NexusFS (rebac_create, rebac_check, etc.) are bound from NexusFS and ro
 through rebac_service.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, Mock

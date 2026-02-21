@@ -4,8 +4,6 @@ Issue #1360: Tests generic filter application, cursor-based pagination,
 and count queries using a concrete model (ExchangeAuditLogModel).
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 from typing import Any
 

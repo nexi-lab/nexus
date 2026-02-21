@@ -9,8 +9,6 @@ Covers:
 - Leading/trailing special characters stripped
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.context_manifest.resolver import _sanitize_filename

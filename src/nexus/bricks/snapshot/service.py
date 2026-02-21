@@ -13,8 +13,6 @@ Architecture:
 Follows VersionService pattern (DI constructor, asyncio.to_thread for DB ops).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -89,7 +87,7 @@ class TransactionalSnapshotService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         cas_store: Any,
         metadata_store: Any,
         metadata_factory: Callable[..., Any] | None = None,

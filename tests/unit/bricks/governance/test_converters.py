@@ -4,8 +4,6 @@ Tests alert_model_to_domain(), edge_model_to_domain(), and
 suspension_model_to_domain() with mock ORM model objects.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 

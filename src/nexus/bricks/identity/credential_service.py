@@ -12,8 +12,6 @@ References:
     - KERNEL-ARCHITECTURE.md §3: Service layer
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -68,7 +66,7 @@ class CredentialService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         issuer: CapabilityIssuer,
         verifier: CapabilityVerifier,
         revocation_cache_ttl: float = 30.0,
@@ -82,7 +80,7 @@ class CredentialService:
         self._lock = threading.Lock()
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> "Generator[Session, None, None]":
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:

@@ -4,8 +4,6 @@ Tests the Ability enum, Capability dataclass (construction, validation,
 serialization, subset checking), CredentialClaims, and CredentialStatus.
 """
 
-from __future__ import annotations
-
 import types
 from datetime import datetime
 

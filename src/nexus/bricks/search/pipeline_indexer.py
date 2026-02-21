@@ -13,8 +13,6 @@ Key improvements over the inlined version:
 - Single DB query for all path_ids instead of N individual queries
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable
@@ -41,7 +39,7 @@ class PipelineIndexer:
     def __init__(
         self,
         *,
-        pipeline: IndexingPipeline,
+        pipeline: "IndexingPipeline",
         session_factory: Callable[..., Any],
         metadata: Any,
         file_reader: Callable[[str], bytes],

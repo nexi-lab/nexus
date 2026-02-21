@@ -7,8 +7,6 @@ Commands for discovering and inspecting available connectors:
 Works with both local and remote Nexus instances.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from typing import Any

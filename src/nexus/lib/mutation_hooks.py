@@ -19,8 +19,6 @@ Observer and hook are independent kernel subsystems (cf. Linux LSM vs notifier c
 Issue #625 partial.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable

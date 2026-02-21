@@ -10,8 +10,6 @@ Tests cover:
 - Event type mapping: operation_type → FileEventType
 """
 
-from __future__ import annotations
-
 import tempfile
 import time
 from collections.abc import Generator

@@ -25,8 +25,6 @@ Phase 1 = Python (this file). Phase 2 = Rust lock-free SPSC via nexus_fast (Task
 See: federation-memo.md §7j, ISSUE-A2A-PHASE2-VFS-IPC.md
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections import deque

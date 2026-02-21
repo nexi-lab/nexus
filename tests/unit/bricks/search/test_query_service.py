@@ -5,8 +5,6 @@ and hybrid search modes with mock dependencies. Verifies ranking,
 adaptive-k, and error-handling paths.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

@@ -4,8 +4,6 @@ All exceptions inherit from ProxyError so callers can catch the
 entire family with a single except clause.
 """
 
-from __future__ import annotations
-
 
 class ProxyError(Exception):
     """Base exception for all proxy brick errors."""

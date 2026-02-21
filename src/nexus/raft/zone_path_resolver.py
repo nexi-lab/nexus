@@ -13,8 +13,6 @@ Because All-Voters model means every zone has a local redb replica,
 all reads are local (~5μs). No network hop for path resolution.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -42,7 +40,7 @@ class ResolvedPath:
         mount_chain: List of (zone_id, mount_path) pairs traversed.
     """
 
-    store: RaftMetadataStore
+    store: "RaftMetadataStore"
     zone_id: str
     path: str
     mount_chain: list[tuple[str, str]]
@@ -57,7 +55,7 @@ class ZonePathResolver:
         metadata = resolved.store.get(resolved.path)
     """
 
-    def __init__(self, zone_manager: ZoneManager, root_zone_id: str = ROOT_ZONE_ID):
+    def __init__(self, zone_manager: "ZoneManager", root_zone_id: str = ROOT_ZONE_ID):
         self._zone_manager = zone_manager
         self._root_zone_id = root_zone_id
 
@@ -65,7 +63,7 @@ class ZonePathResolver:
     def root_zone_id(self) -> str:
         return self._root_zone_id
 
-    def get_store(self, zone_id: str) -> RaftMetadataStore | None:
+    def get_store(self, zone_id: str) -> "RaftMetadataStore | None":
         """Get the metadata store for a zone by ID.
 
         Delegates to the underlying ZoneManager.
@@ -165,7 +163,7 @@ class ZonePathResolver:
 
     def _resolve_in_zone(
         self,
-        store: RaftMetadataStore,
+        store: "RaftMetadataStore",
         zone_id: str,
         path: str,
         mount_chain: list[tuple[str, str]],

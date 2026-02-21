@@ -8,8 +8,6 @@ Covers:
 - Semantic mode with fallback detection
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.bricks.context_manifest.executors.memory_search_adapter import (

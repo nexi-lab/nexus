@@ -1,7 +1,5 @@
 """Tests for SkillDocGenerator — schema-to-doc generation extracted from SkillDocMixin."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

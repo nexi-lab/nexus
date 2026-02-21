@@ -8,8 +8,6 @@ Run with:
     NEXUS_DATABASE_URL=postgresql://... uv run pytest tests/integration/test_audit_immutability.py -o "addopts=" -v
 """
 
-from __future__ import annotations
-
 import os
 from decimal import Decimal
 from unittest.mock import MagicMock

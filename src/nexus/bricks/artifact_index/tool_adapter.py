@@ -5,8 +5,6 @@ ToolIndex for discovery.  Uses an injected ``tool_info_factory``
 to construct tool objects without cross-brick imports.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from collections.abc import Callable

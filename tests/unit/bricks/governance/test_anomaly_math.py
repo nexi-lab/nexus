@@ -5,8 +5,6 @@ compute_baseline, detect_amount_anomaly, detect_frequency_anomaly,
 detect_counterparty_anomaly, and _z_to_severity.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest
@@ -28,7 +26,6 @@ from nexus.bricks.governance.models import (
 )
 
 NOW = datetime(2024, 6, 1, tzinfo=UTC)
-
 
 # ── compute_z_score ─────────────────────────────────────────────────────
 

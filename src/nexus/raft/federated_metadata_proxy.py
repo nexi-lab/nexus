@@ -15,8 +15,6 @@ Usage:
     fs.read("/local/file.txt")          # → stays in root zone
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
@@ -43,8 +41,8 @@ class FederatedMetadataProxy(MetastoreABC):
 
     def __init__(
         self,
-        resolver: ZonePathResolver,
-        root_store: RaftMetadataStore,
+        resolver: "ZonePathResolver",
+        root_store: "RaftMetadataStore",
         *,
         zone_manager: Any | None = None,
     ):
@@ -63,7 +61,7 @@ class FederatedMetadataProxy(MetastoreABC):
         cls,
         zone_manager: Any,
         root_zone_id: str = ROOT_ZONE_ID,
-    ) -> FederatedMetadataProxy:
+    ) -> "FederatedMetadataProxy":
         """Create from a ZoneManager instance.
 
         Args:
@@ -85,7 +83,7 @@ class FederatedMetadataProxy(MetastoreABC):
     # Path remapping helpers
     # =========================================================================
 
-    def _resolve(self, path: str) -> ResolvedPath:
+    def _resolve(self, path: str) -> "ResolvedPath":
         return self._resolver.resolve(path)
 
     @staticmethod
@@ -114,7 +112,7 @@ class FederatedMetadataProxy(MetastoreABC):
     def _to_zone_metadata(
         self,
         metadata: FileMetadata,
-        resolved: ResolvedPath,
+        resolved: "ResolvedPath",
     ) -> FileMetadata:
         """Remap global metadata path to zone-relative path for storage."""
         if not resolved.mount_chain:
@@ -161,7 +159,7 @@ class FederatedMetadataProxy(MetastoreABC):
 
     def _walk_mount_tree(
         self,
-        resolved: ResolvedPath,
+        resolved: "ResolvedPath",
         recursive: bool,
         **kwargs: Any,
     ) -> list[FileMetadata]:

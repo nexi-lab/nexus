@@ -3,8 +3,6 @@
 Provides ``KeyService`` for cryptographic agent identity management.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 BRICK_NAME: str | None = None  # No deployment profile gate (always enabled)

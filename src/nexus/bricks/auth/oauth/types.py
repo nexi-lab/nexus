@@ -4,8 +4,6 @@ Frozen, immutable data classes for OAuth credentials and pending registrations.
 All types use ``@dataclass(frozen=True, slots=True)`` for safety and performance.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -61,7 +59,7 @@ class OAuthCredential:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> OAuthCredential:
+    def from_dict(cls, data: dict[str, Any]) -> "OAuthCredential":
         """Create from dictionary (inverse of ``to_dict``)."""
         expires_at = None
         if data.get("expires_at"):

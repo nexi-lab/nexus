@@ -10,8 +10,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import tarfile
@@ -55,7 +53,7 @@ class BundleReader:
         self._tar: tarfile.TarFile | None = None
         self._manifest: ExportManifest | None = None
 
-    def __enter__(self) -> BundleReader:
+    def __enter__(self) -> "BundleReader":
         """Open the bundle for reading."""
         self.open()
         return self

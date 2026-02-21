@@ -9,8 +9,6 @@ History:
     nexus.storage.models._base → nexus.contracts.db_base → nexus.lib.db_base
 """
 
-from __future__ import annotations
-
 import uuid
 from datetime import UTC, datetime
 

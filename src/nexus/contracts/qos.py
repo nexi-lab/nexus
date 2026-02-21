@@ -13,8 +13,6 @@ Types:
 - EvictionContext: Context passed to eviction policy for preemption decisions.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, cast
@@ -177,7 +175,7 @@ class AgentQoS:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> AgentQoS:
+    def from_dict(cls, data: dict[str, object]) -> "AgentQoS":
         """Deserialize from a plain dict (JSON storage).
 
         Args:
@@ -209,5 +207,5 @@ class EvictionContext:
     """
 
     pressure: PressureLevel
-    trigger: EvictionReason
+    trigger: "EvictionReason"
     requesting_agent_qos: QoSClass | None = None

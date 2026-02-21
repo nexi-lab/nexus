@@ -4,8 +4,6 @@ Issue #2436: Verifies all 6 store implementations against in-memory SQLite.
 Tests cover: create, read, update, delete, not-found, and edge cases.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.contracts.auth_store_types import (

@@ -14,8 +14,6 @@ Environment variable overrides (for CI / containers):
 Lego Architecture reference: Part 10 — Edge Deployment.
 """
 
-from __future__ import annotations
-
 import functools
 import logging
 import os
@@ -28,7 +26,6 @@ if TYPE_CHECKING:
     from nexus.contracts.deployment_profile import DeploymentProfile
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # DeviceCapabilities — immutable snapshot of detected hardware
@@ -91,7 +88,6 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     # Kernel (always on, listed for completeness)
     "storage": BrickRequirement(min_memory_mb=0),
 }
-
 
 # ---------------------------------------------------------------------------
 # Detection functions
@@ -256,7 +252,7 @@ _PROFILE_INDEX: dict[str, int] = {
 }
 
 
-def suggest_profile(caps: DeviceCapabilities) -> DeploymentProfile:
+def suggest_profile(caps: DeviceCapabilities) -> "DeploymentProfile":
     """Map device capabilities to a suggested deployment profile.
 
     Memory thresholds (conservative):
@@ -294,7 +290,7 @@ def bricks_for_device(caps: DeviceCapabilities) -> frozenset[str]:
 
 
 def warn_if_profile_exceeds_device(
-    profile: DeploymentProfile,
+    profile: "DeploymentProfile",
     caps: DeviceCapabilities,
 ) -> None:
     """Log WARNING if the explicit profile may exceed device capabilities.

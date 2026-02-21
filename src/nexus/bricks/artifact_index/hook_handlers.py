@@ -6,8 +6,6 @@ indexer adapter.  Returns ``HookResult(proceed=True)`` always —
 errors are logged and suppressed inside the adapter.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Awaitable, Callable
 

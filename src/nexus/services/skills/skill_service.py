@@ -5,8 +5,6 @@ This adapter provides a gateway-accepting constructor that bridges
 the gateway API to the brick protocol interface.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -31,7 +29,7 @@ class SkillService(_SkillServiceImpl):
 
     def __init__(
         self,
-        gateway: NexusFSGateway | None = None,
+        gateway: "NexusFSGateway | None" = None,
         *,
         fs: Any | None = None,
         perms: Any | None = None,
@@ -119,7 +117,7 @@ class SkillService(_SkillServiceImpl):
 class _GatewayFSAdapter:
     """Adapts NexusFSGateway to SkillFilesystemProtocol."""
 
-    def __init__(self, gw: NexusFSGateway):
+    def __init__(self, gw: "NexusFSGateway"):
         self._gw = gw
 
     def read(self, path: str, *, context: Any = None) -> bytes | str:
@@ -141,7 +139,7 @@ class _GatewayFSAdapter:
 class _GatewayPermAdapter:
     """Adapts NexusFSGateway to SkillPermissionProtocol."""
 
-    def __init__(self, gw: NexusFSGateway):
+    def __init__(self, gw: "NexusFSGateway"):
         self._gw = gw
 
     def rebac_check(

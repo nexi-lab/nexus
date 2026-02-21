@@ -10,8 +10,6 @@ These protocols allow the Skills brick to be tested in isolation with
 in-memory fakes (see skills/testing.py).
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

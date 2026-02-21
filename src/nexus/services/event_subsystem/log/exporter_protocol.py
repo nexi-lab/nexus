@@ -6,8 +6,6 @@ Each exporter implements this protocol and registers with ExporterRegistry.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 from nexus.services.event_subsystem.types import FileEvent

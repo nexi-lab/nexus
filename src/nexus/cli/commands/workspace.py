@@ -1,7 +1,5 @@
 """Workspace snapshot and versioning commands."""
 
-from __future__ import annotations
-
 import re
 from datetime import timedelta
 

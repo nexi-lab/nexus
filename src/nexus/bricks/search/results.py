@@ -8,8 +8,6 @@ Also provides detect_matched_field() — the canonical 6-field version used by
 ranking.py and bm25s_search.py (Issue #1092, #1499).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

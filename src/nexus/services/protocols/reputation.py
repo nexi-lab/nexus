@@ -13,8 +13,6 @@ References:
     - Issue #2131: Extract reputation into nexus/bricks/reputation
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -48,7 +46,7 @@ class ReputationProtocol(Protocol):
         fairness_score: float | None = None,
         evidence_hash: str | None = None,
         context: str = "general",
-    ) -> ReputationEvent | Any:
+    ) -> "ReputationEvent | Any":
         """Submit feedback for an exchange, creating an event and updating scores.
 
         Returns:
@@ -61,7 +59,7 @@ class ReputationProtocol(Protocol):
         agent_id: str,
         context: str = "general",
         window: str = "all_time",
-    ) -> ReputationScore | Any | None:
+    ) -> "ReputationScore | Any | None":
         """Get materialized reputation score for an agent.
 
         Returns:
@@ -74,7 +72,7 @@ class ReputationProtocol(Protocol):
         zone_id: str,
         context: str = "general",
         limit: int = 50,
-    ) -> list[ReputationScore | Any]:
+    ) -> "list[ReputationScore | Any]":
         """Get reputation leaderboard for a zone.
 
         Returns:
@@ -85,7 +83,7 @@ class ReputationProtocol(Protocol):
     def get_feedback_for_exchange(
         self,
         exchange_id: str,
-    ) -> list[ReputationEvent | Any]:
+    ) -> "list[ReputationEvent | Any]":
         """Get all feedback events for an exchange.
 
         Returns:
@@ -103,7 +101,7 @@ class ReputationProtocol(Protocol):
         zone_id: str,
         reason: str,
         evidence_hash: str | None = None,
-    ) -> DisputeRecord | Any:
+    ) -> "DisputeRecord | Any":
         """File a new dispute for an exchange.
 
         Returns:
@@ -111,7 +109,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    def auto_mediate(self, dispute_id: str) -> DisputeRecord | Any:
+    def auto_mediate(self, dispute_id: str) -> "DisputeRecord | Any":
         """Transition dispute to auto_mediating state.
 
         Returns:
@@ -124,7 +122,7 @@ class ReputationProtocol(Protocol):
         dispute_id: str,
         resolution: str,
         evidence_hash: str | None = None,
-    ) -> DisputeRecord | Any:
+    ) -> "DisputeRecord | Any":
         """Resolve a dispute.
 
         Returns:
@@ -132,7 +130,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    def dismiss(self, dispute_id: str, reason: str) -> DisputeRecord | Any:
+    def dismiss(self, dispute_id: str, reason: str) -> "DisputeRecord | Any":
         """Dismiss a dispute.
 
         Returns:
@@ -140,7 +138,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    def get_dispute(self, dispute_id: str) -> DisputeRecord | Any | None:
+    def get_dispute(self, dispute_id: str) -> "DisputeRecord | Any | None":
         """Get a dispute by ID.
 
         Returns:
@@ -154,7 +152,7 @@ class ReputationProtocol(Protocol):
         agent_id: str | None = None,
         status: str | None = None,
         zone_id: str | None = None,
-    ) -> list[DisputeRecord | Any]:
+    ) -> "list[DisputeRecord | Any]":
         """List disputes with optional filters.
 
         Returns:

@@ -6,8 +6,6 @@ content container passed between extractors and indexers.
 Storage Affinity: N/A — protocol-only, no persistence.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 

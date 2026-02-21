@@ -3,8 +3,6 @@
 Issue #2436: Decouples auth brick from direct ORM model imports.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from collections.abc import Callable

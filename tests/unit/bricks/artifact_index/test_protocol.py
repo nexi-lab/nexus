@@ -1,7 +1,5 @@
 """Tests for ArtifactContent frozen dataclass and ArtifactIndexerProtocol."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.artifact_index.protocol import ArtifactContent, ArtifactIndexerProtocol

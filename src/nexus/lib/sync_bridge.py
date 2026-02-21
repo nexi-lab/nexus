@@ -36,8 +36,6 @@ Design:
     tracks pending tasks for graceful shutdown.
 """
 
-from __future__ import annotations
-
 import asyncio
 import atexit
 import logging
@@ -48,7 +46,6 @@ from typing import Any, TypeVar
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
 
 # ---------------------------------------------------------------------------
 # TaskRegistry — bounded task tracker for fire-and-forget (Issue #1519)

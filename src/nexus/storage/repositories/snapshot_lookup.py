@@ -7,8 +7,6 @@ Issue #2189: Extracted from bricks/context_manifest to remove
 nexus.storage imports from the brick.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -26,7 +24,7 @@ class DatabaseSnapshotLookup:
     Queries the workspace_snapshots table for snapshot metadata.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._session_factory = record_store.session_factory
 
     def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:

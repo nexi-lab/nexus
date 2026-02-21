@@ -12,8 +12,6 @@ Usage:
     versioning.rollback("mem_123", version=1)
 """
 
-from __future__ import annotations
-
 import builtins
 import difflib
 import logging
@@ -41,7 +39,7 @@ class MemoryVersioning:
         self,
         session_factory: Callable[..., Any],
         memory_router: MemoryViewRouter,
-        permission_enforcer: MemoryPermissionCheckerProtocol,
+        permission_enforcer: "MemoryPermissionCheckerProtocol",
         backend: Any,
         context: OperationContext,
     ) -> None:

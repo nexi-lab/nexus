@@ -32,8 +32,6 @@ GGUF Model Download:
     )
 """
 
-from __future__ import annotations
-
 import asyncio
 import concurrent.futures
 import logging
@@ -83,7 +81,7 @@ class MobileEmbeddingProvider(ABC):
 
     def __init__(
         self,
-        config: EmbeddingModelConfig,
+        config: "EmbeddingModelConfig",
         ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
     ):
         self.config = config
@@ -126,7 +124,7 @@ class MobileRerankerProvider(ABC):
 
     def __init__(
         self,
-        config: RerankerModelConfig,
+        config: "RerankerModelConfig",
         ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
     ):
         self.config = config
@@ -412,7 +410,7 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
 
     def __init__(
         self,
-        config: EmbeddingModelConfig,
+        config: "EmbeddingModelConfig",
         ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
     ):
         """Initialize GGUF provider.
@@ -669,7 +667,7 @@ class CrossEncoderRerankerProvider(MobileRerankerProvider):
 
 
 def _get_embedding_provider_class(
-    config: EmbeddingModelConfig,
+    config: "EmbeddingModelConfig",
 ) -> type[MobileEmbeddingProvider]:
     """Get the appropriate provider class for a config."""
     from nexus.bricks.search.mobile_config import ModelProvider
@@ -690,7 +688,7 @@ def _get_embedding_provider_class(
 
 
 def _get_reranker_provider_class(
-    config: RerankerModelConfig,
+    config: "RerankerModelConfig",
 ) -> type[MobileRerankerProvider]:
     """Get the appropriate reranker provider class for a config."""
     from nexus.bricks.search.mobile_config import ModelProvider
@@ -708,7 +706,7 @@ def _get_reranker_provider_class(
 
 
 async def create_mobile_embedding_provider(
-    config: EmbeddingModelConfig,
+    config: "EmbeddingModelConfig",
     load_immediately: bool = True,
     ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
 ) -> MobileEmbeddingProvider:
@@ -732,7 +730,7 @@ async def create_mobile_embedding_provider(
 
 
 async def create_reranker_provider(
-    config: RerankerModelConfig,
+    config: "RerankerModelConfig",
     load_immediately: bool = True,
     ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
 ) -> MobileRerankerProvider:
@@ -782,7 +780,7 @@ class MobileSearchService:
 
     def __init__(
         self,
-        config: MobileSearchConfig,
+        config: "MobileSearchConfig",
         ml_executor_workers: int = _DEFAULT_ML_WORKERS,
     ):
         """Initialize mobile search service.
@@ -926,7 +924,7 @@ class MobileSearchService:
 
 
 async def create_service_from_config(
-    config: MobileSearchConfig,
+    config: "MobileSearchConfig",
     initialize: bool = True,
 ) -> MobileSearchService:
     """Create and optionally initialize a MobileSearchService.

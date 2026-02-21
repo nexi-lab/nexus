@@ -12,8 +12,6 @@ Run tests with:
     pytest tests/integration/test_postgres_cache.py -v
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 from collections.abc import Generator

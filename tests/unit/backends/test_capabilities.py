@@ -10,8 +10,6 @@ Tests:
 7. Registry query methods (get_capabilities, list_by_capability)
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterator
 from unittest.mock import MagicMock, PropertyMock
 

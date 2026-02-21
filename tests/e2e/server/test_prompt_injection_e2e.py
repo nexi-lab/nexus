@@ -11,8 +11,6 @@ Tests the full security stack:
 - Performance: safe_interpolate 100 calls < 10ms
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from dataclasses import dataclass

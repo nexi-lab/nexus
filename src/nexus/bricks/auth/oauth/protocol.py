@@ -4,8 +4,6 @@ Structural-subtyping (``typing.Protocol``) interfaces for OAuth providers
 and token managers.  ``@runtime_checkable`` enables ``isinstance()`` checks.
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 from nexus.bricks.auth.oauth.types import OAuthCredential

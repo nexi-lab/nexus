@@ -4,8 +4,6 @@ Tests the full HTTP request/response cycle for conflict management
 endpoints using a real ConflictLogStore backed by in-memory SQLite.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from typing import Any
 

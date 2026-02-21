@@ -38,8 +38,6 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -94,7 +92,6 @@ def is_zstd_available() -> bool:
 
 
 _HEADER_LEN = len(_COMPRESSED_HEADER)
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -152,7 +149,7 @@ class CompressedStorage(DelegatingBackend):
         RuntimeError: If zstd is not available at construction time.
     """
 
-    def __init__(self, inner: Backend, config: CompressedStorageConfig | None = None) -> None:
+    def __init__(self, inner: "Backend", config: CompressedStorageConfig | None = None) -> None:
         super().__init__(inner)
         if not _ZSTD_AVAILABLE:
             raise RuntimeError(

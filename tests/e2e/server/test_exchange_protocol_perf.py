@@ -4,8 +4,6 @@ Verifies no latency regression from the models.py split or error handler registr
 Each endpoint should respond within reasonable thresholds.
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 

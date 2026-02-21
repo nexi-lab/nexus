@@ -16,8 +16,6 @@ Run (from inside Docker network — production-consistent):
     docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f test
 """
 
-from __future__ import annotations
-
 import base64
 import re
 import subprocess

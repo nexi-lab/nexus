@@ -8,8 +8,6 @@ Extracted from reactive_subscriptions.py to eliminate upward dependency
 heavyweight imports.
 """
 
-from __future__ import annotations
-
 import fnmatch
 import functools
 import re

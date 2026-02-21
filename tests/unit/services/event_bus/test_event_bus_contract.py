@@ -6,8 +6,6 @@ contract. Each test is run once per backend.
 Related: Issue #1331
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 

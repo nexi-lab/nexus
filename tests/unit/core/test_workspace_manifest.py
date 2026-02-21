@@ -4,8 +4,6 @@ Issue #1264: Extracted manifest format shared between WorkspaceManager and Overl
 Pattern follows: tests/unit/backends/test_chunked_storage.py (TestChunkInfo, TestChunkedReference)
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

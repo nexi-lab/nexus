@@ -10,8 +10,6 @@ Bug fixes applied:
 Part of: #1628 (Split CacheConnectorMixin into focused units)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -91,7 +89,7 @@ class BackendIOService:
     def batch_read_from_backend(
         self,
         paths: list[str],
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes]:
         """Batch read content directly from backend (bypassing cache).
 
@@ -162,7 +160,7 @@ class BackendIOService:
     def read_content_from_backend(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes | None:
         """Read content directly from backend (bypassing cache).
 

@@ -4,8 +4,6 @@ Tests the snapshot service's core lifecycle: begin, track, commit, rollback,
 and cleanup. Uses mocks for CAS store, metadata store, and session factory.
 """
 
-from __future__ import annotations
-
 import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field

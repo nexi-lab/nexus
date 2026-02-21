@@ -4,8 +4,6 @@ Uses importlib.import_module() on key nexus.core and nexus.factory modules
 to catch runtime import failures that AST analysis misses.
 """
 
-from __future__ import annotations
-
 import importlib
 
 import pytest

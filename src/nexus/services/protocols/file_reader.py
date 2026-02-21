@@ -16,8 +16,6 @@ References:
     - Issue #2036: Extract search module into search brick (LEGO compliance)
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

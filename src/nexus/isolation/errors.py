@@ -5,8 +5,6 @@ entire family with a single except clause.  This is a standalone tree
 — isolation errors represent a different concern from ProxyError.
 """
 
-from __future__ import annotations
-
 
 class IsolationError(Exception):
     """Base exception for all isolation errors."""

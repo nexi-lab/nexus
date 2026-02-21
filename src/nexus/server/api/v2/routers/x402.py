@@ -8,8 +8,6 @@ This module provides FastAPI routes for:
 Related: Issue #1206 (x402 protocol integration)
 """
 
-from __future__ import annotations
-
 import logging
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -29,7 +27,6 @@ webhook_router = APIRouter(prefix="/x402", tags=["x402"])
 
 # Auth'd router for topup/config (called by authenticated agents)
 router = APIRouter(prefix="/x402", tags=["x402"], dependencies=[Depends(require_auth)])
-
 
 # =============================================================================
 # Request/Response Models

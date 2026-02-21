@@ -3,8 +3,6 @@
 Tests merge with no changes, adds, deletes, conflicts, and edge cases.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

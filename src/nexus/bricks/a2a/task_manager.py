@@ -5,8 +5,6 @@ goes through a pluggable ``TaskStoreProtocol``; active SSE streams are
 managed by a ``StreamRegistry`` (injected via DI).
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -56,9 +54,9 @@ class TaskManager:
 
     def __init__(
         self,
-        store: TaskStoreProtocol | None = None,
-        stream_registry: StreamRegistry | None = None,
-        hook_engine: HookEngineProtocol | None = None,
+        store: "TaskStoreProtocol | None" = None,
+        stream_registry: "StreamRegistry | None" = None,
+        hook_engine: "HookEngineProtocol | None" = None,
     ) -> None:
         if store is not None:
             self._store: TaskStoreProtocol = store
@@ -78,12 +76,12 @@ class TaskManager:
         self._hook_engine = hook_engine
 
     @property
-    def stream_registry(self) -> StreamRegistry:
+    def stream_registry(self) -> "StreamRegistry":
         """Public access to the stream registry."""
         return self._stream_registry
 
     @property
-    def store(self) -> TaskStoreProtocol:
+    def store(self) -> "TaskStoreProtocol":
         """Public access to the underlying task store."""
         return self._store
 
@@ -294,10 +292,12 @@ class TaskManager:
     # Stream management (delegates to StreamRegistry)
     # ------------------------------------------------------------------
 
-    def register_stream(self, task_id: str) -> asyncio.Queue[dict[str, Any] | None]:
+    def register_stream(self, task_id: str) -> "asyncio.Queue[dict[str, Any] | None]":
         """Register a new SSE stream for a task."""
         return self._stream_registry.register(task_id)
 
-    def unregister_stream(self, task_id: str, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
+    def unregister_stream(
+        self, task_id: str, queue: "asyncio.Queue[dict[str, Any] | None]"
+    ) -> None:
         """Remove an SSE stream registration."""
         self._stream_registry.unregister(task_id, queue)

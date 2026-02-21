@@ -8,8 +8,6 @@ Canonical import:
     from nexus.bricks.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
 """
 
-from __future__ import annotations
-
 import uuid
 
 from nexus.bricks.rebac.domain import NamespaceConfig

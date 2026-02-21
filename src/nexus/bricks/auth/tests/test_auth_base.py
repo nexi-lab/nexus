@@ -1,7 +1,5 @@
 """Unit tests for base authentication provider interface."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.auth.providers.base import AuthProvider, AuthResult

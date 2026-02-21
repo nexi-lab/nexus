@@ -3,8 +3,6 @@
 Fernet symmetric encryption (AES-128 CBC + HMAC-SHA256) for OAuth tokens.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
@@ -26,7 +24,7 @@ class OAuthCrypto:
         self,
         encryption_key: str | None = None,
         *,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
     ) -> None:
         self._session_factory = record_store.session_factory if record_store else None
 

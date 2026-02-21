@@ -4,8 +4,6 @@ Tests: Init, IsTracked, Begin, TrackWrite, TrackDelete, Commit, Rollback,
        Get, List, Cleanup, Performance, FailureInjection.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from datetime import UTC, datetime, timedelta

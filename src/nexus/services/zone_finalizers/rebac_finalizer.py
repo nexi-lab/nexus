@@ -4,8 +4,6 @@ MUST run last (Decision #13A) — other finalizers may still need
 ReBAC data for permission checks during their cleanup.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import Any

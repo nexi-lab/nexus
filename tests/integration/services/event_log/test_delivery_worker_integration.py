@@ -6,8 +6,6 @@ in-memory event bus mock, and ExporterRegistry.
 Issue #1241, #1138.
 """
 
-from __future__ import annotations
-
 import tempfile
 import time
 import uuid

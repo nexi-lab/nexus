@@ -7,8 +7,6 @@ Tests cover:
 - agent_eviction_task calls eviction_manager.run_cycle()
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock

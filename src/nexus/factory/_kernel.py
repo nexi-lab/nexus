@@ -9,8 +9,6 @@ All service creation has been moved to ``_boot_system_services()``
 or *degradable* (WARNING + None).
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import Any

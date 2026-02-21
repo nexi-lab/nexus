@@ -19,8 +19,6 @@ Test flow:
 Issue #1255: ReBAC permission export/import in portability module
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

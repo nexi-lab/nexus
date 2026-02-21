@@ -4,8 +4,6 @@ Pure function tests — no I/O, no mocks.
 Tests first-match-wins semantics, glob matching, and case normalization.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.access_manifest.evaluator import ManifestEvaluator

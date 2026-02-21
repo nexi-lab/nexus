@@ -1,7 +1,5 @@
 """Unit tests for database API key authentication provider."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 
 import pytest

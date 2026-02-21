@@ -3,8 +3,6 @@
 Issue #1707: Edge split-brain resilience.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.proxy.vector_clock import CausalOrder, VectorClock

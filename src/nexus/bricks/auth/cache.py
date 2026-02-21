@@ -5,8 +5,6 @@ for authentication results with explicit invalidation for revocation.
 Includes singleflight deduplication for concurrent requests (Issue #15).
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging

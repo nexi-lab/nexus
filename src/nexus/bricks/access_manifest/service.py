@@ -5,8 +5,6 @@ Generates ReBAC tuples on creation and deletes them on revocation.
 Uses in-process TTLCache (60s) for hot-path evaluations.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -41,7 +39,6 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Simple TTL cache (in-process, no external deps)
@@ -127,8 +124,8 @@ class AccessManifestService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
-        rebac_manager: ReBACBrickProtocol,
+        record_store: "RecordStoreABC",
+        rebac_manager: "ReBACBrickProtocol",
         cache_ttl: int = 60,
     ) -> None:
         self._session_factory = record_store.session_factory
@@ -137,7 +134,7 @@ class AccessManifestService:
         self._evaluator = ManifestEvaluator()
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> "Generator[Session, None, None]":
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:

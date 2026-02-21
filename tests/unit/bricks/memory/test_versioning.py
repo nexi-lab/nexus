@@ -6,8 +6,6 @@ and gc_old_versions — before the Memory service gets moved to the
 brick structure.
 """
 
-from __future__ import annotations
-
 import importlib
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace

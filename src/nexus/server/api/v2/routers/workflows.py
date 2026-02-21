@@ -13,8 +13,6 @@ Provides 8 endpoints for workflow management:
 Related: Issue #1522
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -24,7 +22,6 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/workflows", tags=["workflows"])
-
 
 # =============================================================================
 # Pydantic Request/Response Models

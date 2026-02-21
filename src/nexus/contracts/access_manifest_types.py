@@ -4,8 +4,6 @@ Frozen dataclasses with zero nexus imports — safe for any tier.
 Manifests declare per-agent tool access with first-match-wins semantics.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import StrEnum
 

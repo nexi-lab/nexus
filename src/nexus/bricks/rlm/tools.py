@@ -11,8 +11,6 @@ rate limiting, and audit logging — no custom broker needed.
 Reference: Issue #1306 — API tools approach (Decision 5A, 6A)
 """
 
-from __future__ import annotations
-
 import logging
 
 import requests
@@ -186,7 +184,6 @@ _NEXUS_ZONE_ID = {zone_id!r}
 _MAX_OUTPUT = 8192
 _HEADERS = {{"Authorization": f"Bearer {{_NEXUS_API_KEY}}"}}
 
-
 def nexus_read(path: str) -> str:
     """Read a file from Nexus VFS. Returns file content as string."""
     try:
@@ -204,7 +201,6 @@ def nexus_read(path: str) -> str:
         return content
     except Exception as e:
         return f"Error reading {{path}}: {{e}}"
-
 
 def nexus_search(query: str, limit: int = 10, mode: str = "hybrid") -> str:
     """Search Nexus VFS. Returns formatted results."""
@@ -229,7 +225,6 @@ def nexus_search(query: str, limit: int = 10, mode: str = "hybrid") -> str:
         return out[:_MAX_OUTPUT] if len(out) > _MAX_OUTPUT else out
     except Exception as e:
         return f"Error searching '{{query}}': {{e}}"
-
 
 def nexus_list(path: str = "/") -> str:
     """List directory contents in Nexus VFS."""
@@ -256,7 +251,6 @@ def nexus_list(path: str = "/") -> str:
     except Exception as e:
         return f"Error listing {{path}}: {{e}}"
 
-
 def FINAL(answer: str) -> str:
     """Signal that you have reached your final answer.
 
@@ -268,7 +262,6 @@ def FINAL(answer: str) -> str:
     print(f"FINAL ANSWER: {{_FINAL_ANSWER}}")
     return _FINAL_ANSWER
 
-
 def FINAL_VAR(var_name: str) -> str:
     """Signal final answer using a variable from your workspace.
 
@@ -278,7 +271,6 @@ def FINAL_VAR(var_name: str) -> str:
     if val is None:
         return f"Error: variable '{{var_name}}' not found"
     return FINAL(str(val))
-
 
 _FINAL_ANSWER = None
 print("Nexus tools loaded: nexus_read(), nexus_search(), nexus_list(), FINAL(), FINAL_VAR()")

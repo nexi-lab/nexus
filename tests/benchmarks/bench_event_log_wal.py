@@ -6,8 +6,6 @@ Track-only: no hard CI assertions (Decision #12).
 Issue #1397
 """
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 from typing import Any
@@ -37,7 +35,7 @@ def _event(i: int = 0) -> FileEvent:
 
 
 @pytest.fixture()
-def wal(tmp_path: Path) -> WALEventLog:
+def wal(tmp_path: Path) -> "WALEventLog":
     config = EventLogConfig(wal_dir=tmp_path / "wal", sync_mode="none")
     log = WALEventLog(config)
     yield log  # type: ignore[misc]
@@ -47,7 +45,7 @@ def wal(tmp_path: Path) -> WALEventLog:
         pass
 
 
-def test_bench_append_single(benchmark: Any, wal: WALEventLog) -> None:
+def test_bench_append_single(benchmark: Any, wal: "WALEventLog") -> None:
     """Benchmark single event append (no fsync)."""
     loop = asyncio.new_event_loop()
 
@@ -59,7 +57,7 @@ def test_bench_append_single(benchmark: Any, wal: WALEventLog) -> None:
 
 
 @pytest.mark.benchmark_ci
-def test_bench_append_batch_1k(benchmark: Any, wal: WALEventLog) -> None:
+def test_bench_append_batch_1k(benchmark: Any, wal: "WALEventLog") -> None:
     """Benchmark batch of 1000 events."""
     loop = asyncio.new_event_loop()
     events = [_event(i) for i in range(1000)]
@@ -71,7 +69,7 @@ def test_bench_append_batch_1k(benchmark: Any, wal: WALEventLog) -> None:
     loop.close()
 
 
-def test_bench_read_1k(benchmark: Any, wal: WALEventLog) -> None:
+def test_bench_read_1k(benchmark: Any, wal: "WALEventLog") -> None:
     """Benchmark reading 1000 events from middle of WAL."""
     loop = asyncio.new_event_loop()
 

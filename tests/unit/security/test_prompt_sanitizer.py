@@ -7,8 +7,6 @@ Tests cover:
 - enforce_injection_policy: configurable actions per severity
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.security.policy import InjectionAction, InjectionPolicyConfig

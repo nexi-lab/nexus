@@ -4,8 +4,6 @@ OverlayConfig is a pure data class with no service dependencies,
 so it belongs in contracts/ rather than services/.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

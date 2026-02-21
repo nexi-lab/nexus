@@ -4,8 +4,6 @@ AuthResult is the primary output of authentication, consumed by
 the server layer (dependencies.py) and downstream services.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
 

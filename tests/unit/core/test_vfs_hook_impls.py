@@ -1,7 +1,5 @@
 """Unit tests for concrete VFS hook implementations (Phase 4, Issue #2033)."""
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import MagicMock

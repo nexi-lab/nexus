@@ -5,8 +5,6 @@ describe() chain introspection, CacheStrategy enum, CacheWrapperConfig
 defaults, and WrapperMetrics integration.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

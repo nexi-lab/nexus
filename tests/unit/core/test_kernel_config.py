@@ -8,8 +8,6 @@ Validates:
 - Cross-contamination: tier fields do not leak across containers
 """
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest

@@ -4,8 +4,6 @@ Processes ReBAC changelog entries and updates affected Tiger Cache
 entries incrementally via a queue-based approach.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -41,9 +39,9 @@ class TigerCacheUpdater:
 
     def __init__(
         self,
-        engine: Engine,
-        tiger_cache: TigerCache,
-        rebac_manager: ReBACManager | None = None,
+        engine: "Engine",
+        tiger_cache: "TigerCache",
+        rebac_manager: "ReBACManager | None" = None,
         *,
         is_postgresql: bool = False,
     ):
@@ -60,7 +58,7 @@ class TigerCacheUpdater:
         self._is_postgresql = is_postgresql
         self._last_processed_revision = 0
 
-    def set_rebac_manager(self, manager: ReBACManager) -> None:
+    def set_rebac_manager(self, manager: "ReBACManager") -> None:
         """Set the ReBAC manager for permission computation."""
         self._rebac_manager = manager
         self._tiger_cache.set_rebac_manager(manager)
@@ -73,7 +71,7 @@ class TigerCacheUpdater:
         resource_type: str,
         zone_id: str,
         priority: int = 100,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> int:
         """Queue a cache update for background processing.
 
@@ -101,7 +99,7 @@ class TigerCacheUpdater:
             created_at=datetime.now(UTC),
         )
 
-        def execute(connection: Connection) -> int:
+        def execute(connection: "Connection") -> int:
             result = connection.execute(stmt)
             return result.lastrowid or 0
 
@@ -112,7 +110,7 @@ class TigerCacheUpdater:
                 return execute(new_conn)
 
     def reset_stuck_entries(
-        self, stuck_timeout_minutes: int = 5, conn: Connection | None = None
+        self, stuck_timeout_minutes: int = 5, conn: "Connection | None" = None
     ) -> int:
         """Reset entries stuck in 'processing' state.
 
@@ -135,7 +133,7 @@ class TigerCacheUpdater:
             .values(status="pending")
         )
 
-        def execute(connection: Connection) -> int:
+        def execute(connection: "Connection") -> int:
             result = connection.execute(stmt)
             count = result.rowcount
             if count > 0:
@@ -148,7 +146,7 @@ class TigerCacheUpdater:
             with self._engine.begin() as new_conn:
                 return execute(new_conn)
 
-    def process_queue(self, batch_size: int = 100, conn: Connection | None = None) -> int:
+    def process_queue(self, batch_size: int = 100, conn: "Connection | None" = None) -> int:
         """Process pending queue entries.
 
         Args:
@@ -197,7 +195,7 @@ class TigerCacheUpdater:
         if self._is_postgresql:
             select_query = select_query.with_for_update(skip_locked=True)
 
-        def do_process(connection: Connection) -> int:
+        def do_process(connection: "Connection") -> int:
             processed = 0
             result = connection.execute(select_query)
             entries = list(result)
@@ -301,7 +299,7 @@ class TigerCacheUpdater:
         permission: str,
         resource_type: str,
         zone_id: str,
-        conn: Connection,
+        conn: "Connection",
     ) -> set[int]:
         """Compute all resources accessible by subject.
 
@@ -345,7 +343,7 @@ class TigerCacheUpdater:
 
         return accessible
 
-    def _get_current_revision(self, zone_id: str, conn: Connection) -> int:
+    def _get_current_revision(self, zone_id: str, conn: "Connection") -> int:
         """Get current revision from changelog."""
         stmt = select(func.coalesce(func.max(RCL.change_id), 0)).where(
             RCL.zone_id == zone_id,
@@ -354,7 +352,9 @@ class TigerCacheUpdater:
         value = result.scalar()
         return int(value) if value is not None else 0
 
-    def cleanup_completed(self, older_than_hours: int = 24, conn: Connection | None = None) -> int:
+    def cleanup_completed(
+        self, older_than_hours: int = 24, conn: "Connection | None" = None
+    ) -> int:
         """Clean up completed queue entries.
 
         Args:
@@ -371,7 +371,7 @@ class TigerCacheUpdater:
             TCQ.processed_at < cutoff,
         )
 
-        def execute(connection: Connection) -> int:
+        def execute(connection: "Connection") -> int:
             result = connection.execute(stmt)
             return result.rowcount
 

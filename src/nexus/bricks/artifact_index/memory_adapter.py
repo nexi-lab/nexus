@@ -5,8 +5,6 @@ one thread per artifact, no batching.  Errors are logged and suppressed
 so hook execution is never blocked.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any

@@ -12,8 +12,6 @@ Run with:
     pytest tests/e2e/test_directory_grants_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import sys
 import time

@@ -1,7 +1,5 @@
 """Subscription manager for webhook event notifications."""
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import hmac
@@ -42,7 +40,7 @@ class SubscriptionManager:
 
     def __init__(
         self,
-        session_factory: Callable[[], Session],
+        session_factory: "Callable[[], Session]",
         webhook_timeout: float = WEBHOOK_TIMEOUT,
     ) -> None:
         """Initialize subscription manager.

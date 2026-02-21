@@ -4,8 +4,6 @@ Tests revocation lifecycle: happy path, double revoke, expired/completed
 delegation, ReBAC failure propagation, and not-found error.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any

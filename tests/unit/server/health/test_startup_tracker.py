@@ -1,7 +1,5 @@
 """Tests for StartupTracker (#2168)."""
 
-from __future__ import annotations
-
 import time
 
 from nexus.server.health.startup_tracker import (

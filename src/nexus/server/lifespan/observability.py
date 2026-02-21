@@ -4,8 +4,6 @@ Issue #2072: Consolidate observability init/shutdown into unified registry.
 Replaces 6 inline _startup_* / 3 shutdown_* calls with a single registry.
 """
 
-from __future__ import annotations
-
 import importlib
 import logging
 import os
@@ -86,7 +84,7 @@ def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
     return registry
 
 
-async def startup_observability(app: FastAPI, svc: LifespanServices) -> None:
+async def startup_observability(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize all observability subsystems via the registry."""
     write_observer = svc.write_observer
     registry = create_registry(write_observer=write_observer)
@@ -104,7 +102,7 @@ async def startup_observability(app: FastAPI, svc: LifespanServices) -> None:
     logger.info("Starting FastAPI Nexus server...")
 
 
-async def shutdown_observability(app: FastAPI, _svc: LifespanServices) -> None:
+async def shutdown_observability(app: "FastAPI", _svc: "LifespanServices") -> None:
     """Shutdown all observability components via the registry."""
     registry = app.state.observability_registry
     if registry:

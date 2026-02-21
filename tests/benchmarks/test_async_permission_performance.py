@@ -9,8 +9,6 @@ Goal: Permission enforcement should add <20ms overhead per operation.
 Converted to pytest-benchmark for CI integration (Issue #1304).
 """
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock

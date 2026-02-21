@@ -5,8 +5,6 @@ Tests are organized by functionality and cover success paths, error paths,
 edge cases, and permission enforcement.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

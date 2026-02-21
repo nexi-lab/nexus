@@ -10,8 +10,6 @@ services tier.
 See: NEXUS-LEGO-ARCHITECTURE.md §2.4, §3.3
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

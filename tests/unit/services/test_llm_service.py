@@ -6,8 +6,6 @@ and error handling for missing dependencies.
 All async service methods are tested via asyncio.run().
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 

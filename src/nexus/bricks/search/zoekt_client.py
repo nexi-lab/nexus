@@ -25,8 +25,6 @@ References:
     - https://sourcegraph.com/blog/sourcegraph-accepting-zoekt-maintainership
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import subprocess

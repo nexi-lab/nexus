@@ -29,8 +29,6 @@ References:
     - BM25S GitHub: https://github.com/xhluca/bm25s
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -55,7 +53,6 @@ try:
 except ImportError:
     bm25s_module = None
     BM25S_AVAILABLE = False
-
 
 # Common programming stopwords (keywords that appear frequently but aren't discriminating)
 CODE_STOPWORDS = frozenset(

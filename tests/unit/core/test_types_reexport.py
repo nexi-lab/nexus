@@ -2,10 +2,8 @@
 
 Verifies that:
 1. contracts/types.py is a zero-dependency leaf module (no runtime nexus.* imports).
-2. contracts/types.py uses ``from __future__ import annotations``.
+2. contracts/types.py does NOT use ``from __future__ import annotations``.
 """
-
-from __future__ import annotations
 
 import ast
 from pathlib import Path
@@ -55,8 +53,8 @@ class TestTypesIsLeafModule:
             f"but has runtime nexus imports: {runtime_nexus_imports}"
         )
 
-    def test_has_future_annotations(self) -> None:
-        """contracts/types.py must use ``from __future__ import annotations``."""
+    def test_no_future_annotations(self) -> None:
+        """contracts/types.py must NOT use ``from __future__ import annotations``."""
         source = _CONTRACTS_TYPES_FILE.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(_CONTRACTS_TYPES_FILE))
 
@@ -66,4 +64,6 @@ class TestTypesIsLeafModule:
                 for alias in node.names:
                     if alias.name == "annotations":
                         has_future = True
-        assert has_future, "contracts/types.py must use 'from __future__ import annotations'"
+        assert not has_future, (
+            "contracts/types.py must NOT use 'from __future__ import annotations'"
+        )

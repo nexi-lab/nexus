@@ -15,8 +15,6 @@ Note: Auth enforcement is tested in integration tests
 in open-access mode per the shared conftest fixture.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import httpx

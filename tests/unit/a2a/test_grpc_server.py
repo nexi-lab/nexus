@@ -5,8 +5,6 @@ All business logic goes through the real TaskManager with an
 CacheBackedTaskStore, exercising the full gRPC transport path.
 """
 
-from __future__ import annotations
-
 import grpc
 import grpc.aio
 import pytest

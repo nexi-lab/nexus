@@ -14,8 +14,6 @@ References:
     - Issue #1242: General /batch HTTP endpoint for io_uring-style submission
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -32,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_batch_router(
-    async_fs: AsyncNexusFS | None = None,
+    async_fs: "AsyncNexusFS | None" = None,
     get_fs: Any | None = None,
     get_context_override: Callable[..., Any] | None = None,
 ) -> APIRouter:
@@ -53,7 +51,7 @@ def create_batch_router(
     """
     router = APIRouter(tags=["batch"])
 
-    async def _get_fs() -> AsyncNexusFS:
+    async def _get_fs() -> "AsyncNexusFS":
         """Get AsyncNexusFS, supporting both direct and lazy modes."""
         if async_fs is not None:
             return async_fs

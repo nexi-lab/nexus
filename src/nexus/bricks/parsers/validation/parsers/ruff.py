@@ -3,8 +3,6 @@
 Parses JSON output from `ruff check --output-format json`.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import shlex

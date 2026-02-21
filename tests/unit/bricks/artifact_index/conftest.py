@@ -4,8 +4,6 @@ Uses simple dataclass stubs instead of importing from nexus.bricks.a2a
 to respect LEGO architecture cross-brick import boundaries.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
 

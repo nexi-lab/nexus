@@ -11,8 +11,6 @@ Provides centralized helpers for:
 - Extracting subject tuples from context (Issue #2033)
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import Any

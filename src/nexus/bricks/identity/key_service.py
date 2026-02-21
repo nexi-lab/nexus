@@ -10,8 +10,6 @@ database (RecordStoreABC). Distributed caching via CacheStoreABC can be
 layered on top (see task #224).
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from contextlib import contextmanager
@@ -75,14 +73,14 @@ class KeyService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         crypto: IdentityCrypto,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._crypto = crypto
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> "Generator[Session, None, None]":
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:
@@ -222,7 +220,7 @@ class KeyService:
 
             return self._model_to_record(model)
 
-    def get_public_key_object(self, key_id: str) -> Ed25519PublicKey | None:
+    def get_public_key_object(self, key_id: str) -> "Ed25519PublicKey | None":
         """Get the Ed25519PublicKey object for a key_id.
 
         Convenience method for signature verification.

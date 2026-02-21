@@ -3,8 +3,6 @@
 Uses ``ProcessPoolExecutor`` (``force_process=True``) for portability.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor

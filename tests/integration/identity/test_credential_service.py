@@ -9,8 +9,6 @@ Tests the CredentialService with real database operations (in-memory SQLite):
 - Performance benchmark: <200µs for verification
 """
 
-from __future__ import annotations
-
 import time
 import types
 

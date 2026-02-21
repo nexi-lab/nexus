@@ -1,7 +1,5 @@
 """Memory service factory — create_memory_service for server-layer RPC."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

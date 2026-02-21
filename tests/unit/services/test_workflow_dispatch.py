@@ -4,8 +4,6 @@ Tests the service directly (not via FakeCoreMixin) — fire(), on_mutation(),
 start()/stop() lifecycle, and PipeManager integration.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from unittest.mock import AsyncMock, patch

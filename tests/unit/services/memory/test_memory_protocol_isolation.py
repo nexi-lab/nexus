@@ -6,8 +6,6 @@ ReBAC classes. This proves the Protocol decoupling is real, not just
 annotation-level.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from nexus.ipc.conventions import (
+from nexus.bricks.ipc.conventions import (
     AGENT_SUBDIRS,
     AGENTS_ROOT,
     agent_card_path,

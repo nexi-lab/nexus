@@ -7,10 +7,10 @@ stored in the VFS (filesystem), PostgreSQL, or any future backend.
 Issue: #1243
 """
 
-from nexus.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
-from nexus.ipc.storage.protocol import IPCStorageDriver
-from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
-from nexus.ipc.storage.vfs_driver import VFSStorageDriver
+from nexus.bricks.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
+from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+from nexus.bricks.ipc.storage.vfs_driver import VFSStorageDriver
 
 __all__ = [
     "IPCStorageDriver",

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.ipc.nats_adapter import NatsHotPathAdapter
+from nexus.bricks.ipc.nats_adapter import NatsHotPathAdapter
 
 
 class FakeNatsMsg:

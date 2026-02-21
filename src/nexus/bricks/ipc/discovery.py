@@ -15,8 +15,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nexus.ipc.conventions import AGENTS_ROOT, agent_card_path
-from nexus.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.conventions import AGENTS_ROOT, agent_card_path
+from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
 
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC

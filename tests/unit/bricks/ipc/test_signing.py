@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 from nexus.identity.crypto import IdentityCrypto
 from nexus.identity.did import create_did_key
 from nexus.identity.key_service import AgentKeyRecord
-from nexus.ipc.envelope import MessageEnvelope, MessageType
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -182,7 +182,7 @@ class TestMessageSigner:
     """Tests for MessageSigner sign() operation."""
 
     def test_sign_envelope_adds_signature_fields(self) -> None:
-        from nexus.ipc.signing import MessageSigner
+        from nexus.bricks.ipc.signing import MessageSigner
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -202,7 +202,7 @@ class TestMessageSigner:
         assert env.signature is None
 
     def test_sign_verify_roundtrip(self) -> None:
-        from nexus.ipc.signing import MessageSigner, MessageVerifier
+        from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -222,7 +222,7 @@ class TestMessageSigner:
         assert result.valid is True
 
     def test_verify_tampered_payload_fails(self) -> None:
-        from nexus.ipc.signing import MessageSigner, MessageVerifier
+        from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -245,7 +245,7 @@ class TestMessageSigner:
         assert "signature" in result.detail.lower() or "invalid" in result.detail.lower()
 
     def test_verify_tampered_sender_fails(self) -> None:
-        from nexus.ipc.signing import MessageSigner, MessageVerifier
+        from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -266,7 +266,7 @@ class TestMessageSigner:
         assert result.valid is False
 
     def test_verify_unknown_key_id_fails(self) -> None:
-        from nexus.ipc.signing import MessageSigner, MessageVerifier
+        from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -287,7 +287,7 @@ class TestMessageSigner:
         assert "not found" in result.detail.lower()
 
     def test_verify_revoked_key_fails(self) -> None:
-        from nexus.ipc.signing import MessageSigner, MessageVerifier
+        from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -319,7 +319,7 @@ class TestMessageSigner:
 
     def test_auto_provision_keypair(self) -> None:
         """Signer calls ensure_keypair on first sign."""
-        from nexus.ipc.signing import MessageSigner
+        from nexus.bricks.ipc.signing import MessageSigner
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -335,7 +335,7 @@ class TestMessageSigner:
 
     def test_private_key_cached_after_first_sign(self) -> None:
         """Private key is decrypted once and cached for subsequent signs."""
-        from nexus.ipc.signing import MessageSigner
+        from nexus.bricks.ipc.signing import MessageSigner
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -354,7 +354,7 @@ class TestMessageSigner:
 
     def test_verify_unsigned_envelope(self) -> None:
         """Verifying an unsigned envelope returns invalid."""
-        from nexus.ipc.signing import MessageVerifier
+        from nexus.bricks.ipc.signing import MessageVerifier
 
         crypto = _make_crypto()
         key_service = MagicMock()
@@ -368,7 +368,7 @@ class TestMessageSigner:
 
     def test_signing_performance_under_1ms(self) -> None:
         """Average signing time must be under 1ms (1000 iterations)."""
-        from nexus.ipc.signing import MessageSigner
+        from nexus.bricks.ipc.signing import MessageSigner
 
         crypto = _make_crypto()
         record, private_key = _make_key_record(crypto=crypto)
@@ -398,14 +398,14 @@ class TestSigningMode:
     """Tests for the SigningMode enum."""
 
     def test_signing_mode_values(self) -> None:
-        from nexus.ipc.signing import SigningMode
+        from nexus.bricks.ipc.signing import SigningMode
 
         assert SigningMode.OFF == "off"
         assert SigningMode.VERIFY_ONLY == "verify_only"
         assert SigningMode.ENFORCE == "enforce"
 
     def test_signing_mode_is_str_enum(self) -> None:
-        from nexus.ipc.signing import SigningMode
+        from nexus.bricks.ipc.signing import SigningMode
 
         assert isinstance(SigningMode.OFF, str)
 
@@ -414,14 +414,14 @@ class TestVerifyResult:
     """Tests for VerifyResult dataclass."""
 
     def test_verify_result_frozen(self) -> None:
-        from nexus.ipc.signing import VerifyResult
+        from nexus.bricks.ipc.signing import VerifyResult
 
         result = VerifyResult(valid=True, detail="ok")
         with pytest.raises(AttributeError):
-            result.valid = False  # type: ignore[misc]
+            result.valid = False
 
     def test_verify_result_default_detail(self) -> None:
-        from nexus.ipc.signing import VerifyResult
+        from nexus.bricks.ipc.signing import VerifyResult
 
         result = VerifyResult(valid=True)
         assert result.detail == ""

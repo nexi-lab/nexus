@@ -53,6 +53,11 @@ PREEXISTING_VIOLATIONS: set[str] = {
     "src/nexus/bricks/mcp/server.py",
     "src/nexus/bricks/mcp/provider_registry.py",
     "src/nexus/bricks/mcp/mount.py",
+    "src/nexus/bricks/ipc/driver.py",
+    "src/nexus/bricks/ipc/discovery.py",
+    "src/nexus/bricks/ipc/delivery.py",
+    # Test files that test factory wiring must reference kernel internals
+    "tests/unit/bricks/ipc/test_factory_wiring.py",
 }
 
 

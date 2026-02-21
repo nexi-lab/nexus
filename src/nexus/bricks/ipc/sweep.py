@@ -11,9 +11,9 @@ import contextlib
 import logging
 from datetime import UTC, datetime
 
-from nexus.ipc.conventions import AGENTS_ROOT, dead_letter_path, inbox_path
-from nexus.ipc.envelope import MessageEnvelope
-from nexus.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.conventions import AGENTS_ROOT, dead_letter_path, inbox_path
+from nexus.bricks.ipc.envelope import MessageEnvelope
+from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 

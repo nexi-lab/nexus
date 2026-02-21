@@ -8,13 +8,13 @@ Issues: #1411, #1243
 Architecture: KERNEL-ARCHITECTURE.md
 
 Usage:
-    from nexus.ipc import MessageEnvelope, MessageSender, MessageProcessor
-    from nexus.ipc.conventions import inbox_path, outbox_path
-    from nexus.ipc.discovery import AgentDiscovery
-    from nexus.ipc.storage import IPCStorageDriver
+    from nexus.bricks.ipc import MessageEnvelope, MessageSender, MessageProcessor
+    from nexus.bricks.ipc.conventions import inbox_path, outbox_path
+    from nexus.bricks.ipc.discovery import AgentDiscovery
+    from nexus.bricks.ipc.storage import IPCStorageDriver
 """
 
-from nexus.ipc.conventions import (
+from nexus.bricks.ipc.conventions import (
     AGENTS_ROOT,
     agent_dir,
     dead_letter_path,
@@ -23,11 +23,11 @@ from nexus.ipc.conventions import (
     outbox_path,
     processed_path,
 )
-from nexus.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
-from nexus.ipc.discovery import AgentDiscovery
-from nexus.ipc.driver import IPCVFSDriver
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.exceptions import (
+from nexus.bricks.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
+from nexus.bricks.ipc.discovery import AgentDiscovery
+from nexus.bricks.ipc.driver import IPCVFSDriver
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.exceptions import (
     CrossZoneDeliveryError,
     DLQReason,
     EnvelopeValidationError,
@@ -36,10 +36,10 @@ from nexus.ipc.exceptions import (
     IPCError,
     MessageExpiredError,
 )
-from nexus.ipc.provisioning import AgentProvisioner
-from nexus.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
-from nexus.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
-from nexus.ipc.sweep import TTLSweeper
+from nexus.bricks.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
+from nexus.bricks.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
+from nexus.bricks.ipc.sweep import TTLSweeper
 
 __all__ = [
     # Envelope

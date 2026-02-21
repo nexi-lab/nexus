@@ -29,8 +29,8 @@ from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
+    from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
     from nexus.core.permissions import OperationContext
-    from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 

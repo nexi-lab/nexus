@@ -17,8 +17,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from nexus.bricks.ipc.envelope import MessageEnvelope
 from nexus.identity.crypto import IdentityCrypto
-from nexus.ipc.envelope import MessageEnvelope
 from nexus.storage.zone_settings import SigningMode
 
 if TYPE_CHECKING:

@@ -520,7 +520,7 @@ class TestVFSEnvelopeFormat:
 
     @pytest.mark.asyncio
     async def test_stored_as_message_envelope(self, vfs_store: tuple[Any, Any]) -> None:
-        from nexus.ipc.envelope import MessageEnvelope
+        from nexus.bricks.ipc.envelope import MessageEnvelope
 
         store, driver = vfs_store
         task = _make_task("t-env")

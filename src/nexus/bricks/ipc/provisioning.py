@@ -15,13 +15,13 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from nexus.ipc.conventions import (
+from nexus.bricks.ipc.conventions import (
     AGENT_SUBDIRS,
     agent_card_path,
     agent_dir,
     inbox_path,
 )
-from nexus.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 

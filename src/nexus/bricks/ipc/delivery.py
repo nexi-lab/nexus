@@ -19,7 +19,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from nexus.ipc.conventions import (
+from nexus.bricks.ipc.conventions import (
     dead_letter_path,
     inbox_path,
     message_path_in_dead_letter,
@@ -28,20 +28,20 @@ from nexus.ipc.conventions import (
     message_path_in_processed,
     outbox_path,
 )
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.exceptions import (
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.exceptions import (
     DLQReason,
     EnvelopeValidationError,
     InboxFullError,
     InboxNotFoundError,
 )
-from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
-from nexus.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
+from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
 from nexus.storage.zone_settings import SigningMode
 
 if TYPE_CHECKING:
+    from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
     from nexus.core.cache_store import CacheStoreABC
-    from nexus.ipc.signing import MessageSigner, MessageVerifier
 
 logger = logging.getLogger(__name__)
 

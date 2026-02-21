@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.ipc.storage.vfs_driver import VFSStorageDriver
-from tests.unit.ipc.fakes import InMemoryVFS
+from nexus.bricks.ipc.storage.vfs_driver import VFSStorageDriver
+from tests.unit.bricks.ipc.fakes import InMemoryVFS
 
 ZONE = "test-zone"
 

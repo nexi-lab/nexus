@@ -129,7 +129,7 @@ class MessageEnvelope(BaseModel):
             EnvelopeValidationError: If the data is not valid JSON or
                 fails envelope validation.
         """
-        from nexus.ipc.exceptions import EnvelopeValidationError
+        from nexus.bricks.ipc.exceptions import EnvelopeValidationError
 
         try:
             parsed = json.loads(data)

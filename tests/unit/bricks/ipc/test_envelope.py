@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.exceptions import EnvelopeValidationError
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.exceptions import EnvelopeValidationError
 
 
 class TestEnvelopeCreation:
@@ -54,7 +55,7 @@ class TestEnvelopeCreation:
             type=MessageType.TASK,
         )
         with pytest.raises(ValidationError):
-            env.sender = "agent:c"  # type: ignore[misc]
+            env.sender = "agent:c"
 
     def test_create_via_alias(self) -> None:
         """Ensure we can create from JSON with 'from'/'to' keys."""
@@ -114,11 +115,12 @@ class TestEnvelopeValidation:
             )
 
     def test_invalid_type_rejected(self) -> None:
+        bad_type: Any = "invalid_type"
         with pytest.raises(ValidationError):
             MessageEnvelope(
                 sender="agent:a",
                 recipient="agent:b",
-                type="invalid_type",  # type: ignore[arg-type]
+                type=bad_type,
             )
 
 

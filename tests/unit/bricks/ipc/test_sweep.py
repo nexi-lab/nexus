@@ -7,10 +7,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.ipc.conventions import dead_letter_path, inbox_path
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.provisioning import AgentProvisioner
-from nexus.ipc.sweep import TTLSweeper
+from nexus.bricks.ipc.conventions import dead_letter_path, inbox_path
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.sweep import TTLSweeper
 
 from .fakes import InMemoryVFS
 

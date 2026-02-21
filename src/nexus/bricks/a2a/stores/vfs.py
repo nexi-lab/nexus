@@ -24,11 +24,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from nexus.bricks.a2a.models import Task, TaskState
-from nexus.ipc.conventions import AGENTS_ROOT, task_dead_letter_path, tasks_path
-from nexus.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.conventions import AGENTS_ROOT, task_dead_letter_path, tasks_path
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 
 if TYPE_CHECKING:
-    from nexus.ipc.storage.protocol import IPCStorageDriver
+    from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 

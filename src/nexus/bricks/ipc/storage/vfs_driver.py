@@ -7,7 +7,7 @@ gain ReBAC permission checks, EventLog auditing, and caching.
 
 from __future__ import annotations
 
-from nexus.ipc.protocols import VFSOperations
+from nexus.bricks.ipc.protocols import VFSOperations
 
 
 class VFSStorageDriver:

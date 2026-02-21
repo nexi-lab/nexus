@@ -955,9 +955,9 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     ipc_provisioner: Any = None
     if ctx.session_factory is not None:
         try:
-            from nexus.ipc.driver import IPCVFSDriver
-            from nexus.ipc.provisioning import AgentProvisioner
-            from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+            from nexus.bricks.ipc.driver import IPCVFSDriver
+            from nexus.bricks.ipc.provisioning import AgentProvisioner
+            from nexus.bricks.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
             ipc_storage_driver = RecordStoreStorageDriver(
                 session_factory=ctx.session_factory,

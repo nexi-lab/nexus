@@ -7,22 +7,22 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus.cache.inmemory import InMemoryCacheStore
-from nexus.ipc.conventions import (
+from nexus.bricks.ipc.conventions import (
     dead_letter_path,
     inbox_path,
     message_path_in_inbox,
     outbox_path,
     processed_path,
 )
-from nexus.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.exceptions import (
+from nexus.bricks.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.exceptions import (
     EnvelopeValidationError,
     InboxFullError,
     InboxNotFoundError,
 )
-from nexus.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.provisioning import AgentProvisioner
+from nexus.cache.inmemory import InMemoryCacheStore
 
 from .fakes import (
     InMemoryEventPublisher,
@@ -705,10 +705,10 @@ def _make_signing_fixtures() -> tuple:
     """Create crypto, key_service mock, signer and verifier for testing."""
     from unittest.mock import MagicMock
 
+    from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier
     from nexus.identity.crypto import IdentityCrypto
     from nexus.identity.did import create_did_key
     from nexus.identity.key_service import AgentKeyRecord
-    from nexus.ipc.signing import MessageSigner, MessageVerifier
 
     crypto = IdentityCrypto(_FakeTokenEncryptor())
     private_key, public_key = crypto.generate_keypair()
@@ -765,7 +765,7 @@ class TestSignedDelivery:
     @pytest.mark.asyncio
     async def test_process_signed_message_success(self, vfs: InMemoryVFS) -> None:
         """Processor with verifier, valid sig -> handler invoked."""
-        from nexus.ipc.signing import SigningMode
+        from nexus.bricks.ipc.signing import SigningMode
 
         await _provision_agent(vfs, "agent:bob")
         _, _, signer, verifier = _make_signing_fixtures()
@@ -796,7 +796,7 @@ class TestSignedDelivery:
     @pytest.mark.asyncio
     async def test_process_invalid_signature_dead_letters(self, vfs: InMemoryVFS) -> None:
         """Bad signature -> dead_letter with INVALID_SIGNATURE reason."""
-        from nexus.ipc.signing import SigningMode
+        from nexus.bricks.ipc.signing import SigningMode
 
         await _provision_agent(vfs, "agent:bob")
         _, _, signer, verifier = _make_signing_fixtures()
@@ -832,7 +832,7 @@ class TestSignedDelivery:
     @pytest.mark.asyncio
     async def test_process_unsigned_on_enforced_zone_dead_letters(self, vfs: InMemoryVFS) -> None:
         """Enforce mode, no sig -> dead_letter with UNSIGNED_MESSAGE."""
-        from nexus.ipc.signing import SigningMode
+        from nexus.bricks.ipc.signing import SigningMode
 
         await _provision_agent(vfs, "agent:bob")
         _, _, _, verifier = _make_signing_fixtures()
@@ -865,7 +865,7 @@ class TestSignedDelivery:
     @pytest.mark.asyncio
     async def test_process_unsigned_on_verify_only_logs_warning(self, vfs: InMemoryVFS) -> None:
         """verify_only mode, no sig -> handler still invoked."""
-        from nexus.ipc.signing import SigningMode
+        from nexus.bricks.ipc.signing import SigningMode
 
         await _provision_agent(vfs, "agent:bob")
         _, _, _, verifier = _make_signing_fixtures()
@@ -895,7 +895,7 @@ class TestSignedDelivery:
     @pytest.mark.asyncio
     async def test_process_unsigned_on_off_mode_no_verification(self, vfs: InMemoryVFS) -> None:
         """OFF mode -> no verification at all, handler invoked."""
-        from nexus.ipc.signing import SigningMode
+        from nexus.bricks.ipc.signing import SigningMode
 
         await _provision_agent(vfs, "agent:bob")
 

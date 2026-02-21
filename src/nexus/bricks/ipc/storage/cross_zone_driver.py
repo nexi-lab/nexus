@@ -24,12 +24,12 @@ import re
 import time
 from typing import TYPE_CHECKING
 
-from nexus.ipc.conventions import dead_letter_path
-from nexus.ipc.exceptions import CrossZoneDeliveryError, DLQReason
+from nexus.bricks.ipc.conventions import dead_letter_path
+from nexus.bricks.ipc.exceptions import CrossZoneDeliveryError, DLQReason
 
 if TYPE_CHECKING:
-    from nexus.ipc.protocols import HotPathPublisher
-    from nexus.ipc.storage.protocol import IPCStorageDriver
+    from nexus.bricks.ipc.protocols import HotPathPublisher
+    from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
     from nexus.services.protocols.agent_registry import AgentRegistryProtocol
     from nexus.services.protocols.permission import PermissionProtocol
 
@@ -162,7 +162,7 @@ class CrossZoneStorageDriver:
         await self._check_permission(self._local_zone_id, target_zone, recipient_id)
 
         # Verify target zone inbox exists
-        from nexus.ipc.conventions import inbox_path
+        from nexus.bricks.ipc.conventions import inbox_path
 
         target_inbox = inbox_path(recipient_id)
         if not await self._inner.exists(target_inbox, target_zone):

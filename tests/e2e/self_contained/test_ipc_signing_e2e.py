@@ -24,19 +24,19 @@ from typing import Any
 
 import pytest
 
+from nexus.bricks.ipc.conventions import dead_letter_path, inbox_path, processed_path
+from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import MetastoreABC
 from nexus.identity.crypto import IdentityCrypto
 from nexus.identity.key_service import KeyService
-from nexus.ipc.conventions import dead_letter_path, inbox_path, processed_path
-from nexus.ipc.delivery import MessageProcessor, MessageSender
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.provisioning import AgentProvisioner
-from nexus.ipc.signing import MessageSigner, MessageVerifier, SigningMode
 from nexus.storage.models import Base
 from nexus.storage.zone_settings import ZoneSettings
-from tests.unit.ipc.fakes import InMemoryStorageDriver
+from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 
 # ---------------------------------------------------------------------------
 # In-memory metadata store (same pattern as test_identity_e2e.py)
@@ -358,7 +358,7 @@ class TestSignedIPCE2E:
         crypto: IdentityCrypto,
     ) -> None:
         """ENFORCE mode: tampered payload → dead-lettered with INVALID_SIGNATURE reason."""
-        from nexus.ipc.conventions import message_path_in_inbox
+        from nexus.bricks.ipc.conventions import message_path_in_inbox
 
         prov = AgentProvisioner(vfs, zone_id=ZONE)
         await prov.provision("agent:alice", skills=["coding"])

@@ -46,19 +46,19 @@ class TestIPCBrickWiring:
 
     def test_ipc_storage_driver_importable(self) -> None:
         """RecordStoreStorageDriver is importable (validates no circular deps)."""
-        from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+        from nexus.bricks.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
         assert RecordStoreStorageDriver is not None
 
     def test_ipc_vfs_driver_importable(self) -> None:
         """IPCVFSDriver is importable (validates no circular deps)."""
-        from nexus.ipc.driver import IPCVFSDriver
+        from nexus.bricks.ipc.driver import IPCVFSDriver
 
         assert IPCVFSDriver is not None
 
     def test_ipc_provisioner_importable(self) -> None:
         """AgentProvisioner is importable (validates no circular deps)."""
-        from nexus.ipc.provisioning import AgentProvisioner
+        from nexus.bricks.ipc.provisioning import AgentProvisioner
 
         assert AgentProvisioner is not None
 
@@ -85,9 +85,9 @@ class TestIPCVFSDriverMount:
 
     def test_ipc_driver_mounts_at_agents(self) -> None:
         """IPCVFSDriver can be mounted at /agents on the PathRouter."""
+        from nexus.bricks.ipc.driver import IPCVFSDriver
         from nexus.core.router import PathRouter
-        from nexus.ipc.driver import IPCVFSDriver
-        from tests.unit.ipc.fakes import InMemoryStorageDriver
+        from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 
         storage = InMemoryStorageDriver()
         driver = IPCVFSDriver(storage=storage, zone_id="test-zone")
@@ -105,8 +105,8 @@ class TestIPCVFSDriverMount:
 
     def test_ipc_driver_close_is_idempotent(self) -> None:
         """Calling close() multiple times is safe."""
-        from nexus.ipc.driver import IPCVFSDriver
-        from tests.unit.ipc.fakes import InMemoryStorageDriver
+        from nexus.bricks.ipc.driver import IPCVFSDriver
+        from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 
         storage = InMemoryStorageDriver()
         driver = IPCVFSDriver(storage=storage, zone_id="test-zone")

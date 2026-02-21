@@ -11,12 +11,12 @@ import json
 
 import pytest
 
-from nexus.ipc.conventions import (
+from nexus.bricks.ipc.conventions import (
     AGENTS_ROOT,
     inbox_path,
 )
-from nexus.ipc.driver import IPCVFSDriver
-from nexus.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.driver import IPCVFSDriver
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 
 from .fakes import InMemoryStorageDriver
 

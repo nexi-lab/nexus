@@ -6,13 +6,13 @@ import json
 
 import pytest
 
-from nexus.ipc.conventions import (
+from nexus.bricks.ipc.conventions import (
     AGENT_SUBDIRS,
     agent_card_path,
     agent_dir,
     inbox_path,
 )
-from nexus.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.provisioning import AgentProvisioner
 
 from .fakes import InMemoryVFS
 

@@ -156,8 +156,8 @@ async def send_message(
     and optionally writes an outbox copy for the sender.
     Non-admin callers can only send as themselves (sender must match auth).
     """
-    from nexus.ipc.delivery import MessageSender
-    from nexus.ipc.envelope import MessageEnvelope, MessageType
+    from nexus.bricks.ipc.delivery import MessageSender
+    from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 
     _validate_agent_id(body.sender)
     _validate_agent_id(body.recipient)
@@ -203,7 +203,7 @@ async def list_inbox(
     zone_id: str = Depends(_get_zone_id),
 ) -> InboxListResponse:
     """List messages in an agent's inbox. Requires ownership or admin access."""
-    from nexus.ipc.conventions import inbox_path
+    from nexus.bricks.ipc.conventions import inbox_path
 
     _validate_agent_id(agent_id)
     _check_agent_access(auth_result, agent_id)
@@ -228,7 +228,7 @@ async def count_inbox(
     zone_id: str = Depends(_get_zone_id),
 ) -> InboxCountResponse:
     """Count messages in an agent's inbox. Requires ownership or admin access."""
-    from nexus.ipc.conventions import inbox_path
+    from nexus.bricks.ipc.conventions import inbox_path
 
     _validate_agent_id(agent_id)
     _check_agent_access(auth_result, agent_id)

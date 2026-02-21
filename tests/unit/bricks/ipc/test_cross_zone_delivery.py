@@ -14,13 +14,13 @@ from typing import Any
 
 import pytest
 
-from nexus.ipc.conventions import dead_letter_path, inbox_path, message_path_in_inbox
-from nexus.ipc.delivery import MessageSender
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.exceptions import CrossZoneDeliveryError, DLQReason
-from nexus.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
+from nexus.bricks.ipc.conventions import dead_letter_path, inbox_path, message_path_in_inbox
+from nexus.bricks.ipc.delivery import MessageSender
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.exceptions import CrossZoneDeliveryError, DLQReason
+from nexus.bricks.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
 from nexus.services.protocols.agent_registry import AgentInfo
-from tests.unit.ipc.fakes import (
+from tests.unit.bricks.ipc.fakes import (
     InMemoryEventPublisher,
     InMemoryHotPathPublisher,
     InMemoryStorageDriver,

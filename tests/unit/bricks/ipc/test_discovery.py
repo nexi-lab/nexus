@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from nexus.ipc.conventions import agent_card_path
-from nexus.ipc.discovery import AgentDiscovery
+from nexus.bricks.ipc.conventions import agent_card_path
+from nexus.bricks.ipc.discovery import AgentDiscovery
 
 from .fakes import InMemoryVFS
 

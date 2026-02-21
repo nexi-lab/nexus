@@ -1,6 +1,6 @@
 """In-memory fakes for IPC brick unit testing.
 
-These satisfy the Protocol interfaces defined in ``nexus.ipc.protocols``
+These satisfy the Protocol interfaces defined in ``nexus.bricks.ipc.protocols``
 without any real I/O, enabling fast, isolated unit tests.
 """
 

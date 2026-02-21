@@ -15,7 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.ipc.storage.recordstore_driver import (
+from nexus.bricks.ipc.storage.recordstore_driver import (
     RecordStoreStorageDriver,
     _basename,
     _parent_dir,

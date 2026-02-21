@@ -11,7 +11,7 @@ bundle format, enabling:
 Example usage:
 
     # Export zone data
-    from nexus.portability import ZoneExportOptions, ExportManifest
+    from nexus.bricks.portability import ZoneExportOptions, ExportManifest
 
     options = ZoneExportOptions(
         output_path="/backup/zone.nexus",
@@ -21,7 +21,7 @@ Example usage:
     # Export service creates the bundle
 
     # Import zone data
-    from nexus.portability import ZoneImportOptions, ImportResult
+    from nexus.bricks.portability import ZoneImportOptions, ImportResult
 
     options = ZoneImportOptions(
         bundle_path="/backup/zone.nexus",
@@ -35,20 +35,20 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from nexus.portability.bundle import (
+from nexus.bricks.portability.bundle import (
     BundleReader,
     inspect_bundle,
     validate_bundle,
 )
-from nexus.portability.export_service import (
+from nexus.bricks.portability.export_service import (
     ZoneExportService,
     export_zone_bundle,
 )
-from nexus.portability.import_service import (
+from nexus.bricks.portability.import_service import (
     ZoneImportService,
     import_zone_bundle,
 )
-from nexus.portability.models import (
+from nexus.bricks.portability.models import (
     BUNDLE_EXTENSION,
     BUNDLE_FORMAT_VERSION,
     BUNDLE_PATHS,

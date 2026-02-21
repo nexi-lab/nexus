@@ -460,8 +460,8 @@ def export_zone(
         nexus zone export acme-corp -o /backup/acme.nexus --after 2025-01-01T00:00:00
     """
     try:
+        from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
         from nexus.core.nexus_fs import NexusFS
-        from nexus.portability import ZoneExportOptions, ZoneExportService
 
         # Parse after time if provided
         after_time = None
@@ -604,8 +604,8 @@ def import_zone(
         nexus zone import /backup/acme.nexus --dry-run
     """
     try:
+        from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
         from nexus.core.nexus_fs import NexusFS
-        from nexus.portability import ConflictMode, ZoneImportOptions, ZoneImportService
 
         # Parse path remappings
         path_prefix_remap: dict[str, str] = {}
@@ -717,7 +717,7 @@ def inspect_bundle_cmd(bundle_path: str) -> None:
         nexus zone inspect /backup/acme.nexus
     """
     try:
-        from nexus.portability import inspect_bundle
+        from nexus.bricks.portability import inspect_bundle
 
         info = inspect_bundle(bundle_path)
 
@@ -763,7 +763,7 @@ def validate_bundle_cmd(bundle_path: str) -> None:
         nexus zone validate /backup/acme.nexus
     """
     try:
-        from nexus.portability import validate_bundle
+        from nexus.bricks.portability import validate_bundle
 
         console.print(f"[cyan]Validating:[/cyan] {bundle_path}")
 

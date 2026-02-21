@@ -30,6 +30,7 @@ class BrickFactoryDescriptor:
     name: str | None  # Profile gate name (None = always enabled)
     result_key: str
     create_fn: Callable[..., Any]
+    manifest: Any | None = None  # Optional BrickManifest instance
 
 
 def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDescriptor]:
@@ -39,6 +40,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
     - ``BRICK_NAME``: Maps to deployment profile gate name (None = always on)
     - ``TIER``: ``"independent"`` or ``"dependent"``
     - ``RESULT_KEY``: Key in the result dict
+    - ``MANIFEST``: Optional ``BrickManifest`` instance for import verification
     - ``create(ctx, system) -> Any``: Factory function
     """
     import importlib
@@ -67,6 +69,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
                 name=getattr(mod, "BRICK_NAME", name),
                 result_key=mod.RESULT_KEY,
                 create_fn=mod.create,
+                manifest=getattr(mod, "MANIFEST", None),
             )
         )
 
@@ -105,6 +108,20 @@ def _boot_independent_bricks(
     # === Auto-discovered bricks ===
     auto_results: dict[str, Any] = {}
     for desc in _discover_brick_factories("independent"):
+        # Manifest pre-check: verify imports once, skip if required modules missing
+        _manifest_status: dict[str, bool] | None = None
+        if desc.manifest is not None:
+            _manifest_status = desc.manifest.verify_imports()
+            _required_ok = all(
+                _manifest_status.get(mod, False) for mod in desc.manifest.required_modules
+            )
+            if not _required_ok:
+                logger.debug(
+                    "[BOOT:BRICK] Skipping %s — required modules missing",
+                    desc.result_key,
+                )
+                continue
+
         if desc.name is None:
             # No profile gate — always create
             auto_results[desc.result_key] = _safe_create(
@@ -118,6 +135,18 @@ def _boot_independent_bricks(
                 desc.name,
                 lambda d=desc: d.create_fn(ctx, system),  # type: ignore[misc]
                 _on,
+            )
+
+        # Log cached manifest status for successfully created bricks
+        if (
+            _manifest_status is not None
+            and auto_results.get(desc.result_key) is not None
+            and logger.isEnabledFor(logging.DEBUG)
+        ):
+            logger.debug(
+                "[BOOT:BRICK] %s manifest: %s",
+                desc.result_key,
+                _manifest_status,
             )
 
     # === Manually-wired bricks (complex conditional logic) ===
@@ -355,8 +384,10 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] ReputationService unavailable: %s", _rep_exc)
 
     # --- DelegationService (Issue #2131: extracted to bricks) ---
-    delegation_service: Any = auto_results.pop("delegation_service", None)
-    if delegation_service is None and ctx.record_store is not None:
+    # Always recreate with reputation_service (cross-brick dep wired by kernel)
+    auto_results.pop("delegation_service", None)
+    delegation_service: Any = None
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.delegation.service import DelegationService
 

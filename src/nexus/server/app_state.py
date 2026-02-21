@@ -77,7 +77,6 @@ class NexusAppState:
     agent_warmup_service: Any = None
     async_agent_registry: Any = None
     async_rebac_manager: Any = None
-    async_nexus_fs: Any = None
     key_service: Any = None
     credential_service: Any = None
     scheduler_service: Any = None

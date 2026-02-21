@@ -1,6 +1,6 @@
-"""Async File Operations REST API endpoints (Phase 4).
+"""File Operations REST API endpoints (Phase 4).
 
-Provides async-native file operations using AsyncNexusFS:
+Provides file operations using NexusFS via asyncio.to_thread():
 - POST   /write           - Write file content
 - GET    /read            - Read file content
 - DELETE /delete          - Delete file
@@ -11,13 +11,16 @@ Provides async-native file operations using AsyncNexusFS:
 - POST   /batch-read      - Batch read multiple files
 - GET    /stream          - Stream file content
 
-All operations use true async I/O for better concurrency.
+All operations use asyncio.to_thread() to run sync NexusFS calls
+in worker threads (io_uring pattern: async scheduling, sync kernel).
 All operations pass user context for permission enforcement.
 """
 
+import asyncio
 import base64
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Iterator
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
@@ -29,9 +32,6 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
-
-if TYPE_CHECKING:
-    from nexus.core.async_nexus_fs import AsyncNexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -119,40 +119,40 @@ class BatchReadRequest(BaseModel):
 
 
 def create_async_files_router(
-    async_fs: "AsyncNexusFS | None" = None,
+    nexus_fs: Any | None = None,
     get_fs: Any | None = None,
 ) -> APIRouter:
     """
-    Create an async files router.
+    Create a files router.
 
     Supports two modes:
-    1. Direct: Pass async_fs instance (for testing)
+    1. Direct: Pass nexus_fs instance (for testing)
     2. Lazy: Pass get_fs callable that returns the instance at request time
        (for server lifespan where fs is initialized after app creation)
 
     Args:
-        async_fs: Initialized AsyncNexusFS instance (direct mode)
-        get_fs: Callable returning AsyncNexusFS (lazy mode)
+        nexus_fs: Initialized NexusFS instance (direct mode)
+        get_fs: Callable returning NexusFS (lazy mode)
 
     Returns:
-        FastAPI router with async file endpoints
+        FastAPI router with file endpoints
     """
     router = APIRouter(tags=["files"])
 
     # Import auth dependencies from main server
     from nexus.server.dependencies import get_auth_result, get_operation_context
 
-    async def _get_fs() -> "AsyncNexusFS":
-        """Get AsyncNexusFS, supporting both direct and lazy modes."""
-        if async_fs is not None:
-            return async_fs
+    async def _get_fs() -> Any:
+        """Get NexusFS, supporting both direct and lazy modes."""
+        if nexus_fs is not None:
+            return nexus_fs
         if get_fs is not None:
             fs = get_fs()
             if fs is not None:
-                return cast("AsyncNexusFS", fs)
+                return cast(Any, fs)
         raise HTTPException(
             status_code=503,
-            detail="AsyncNexusFS not initialized. Server may still be starting up.",
+            detail="NexusFS not initialized. Server may still be starting up.",
         )
 
     async def get_context(
@@ -196,7 +196,8 @@ def create_async_files_router(
             else:
                 content = request.content.encode("utf-8")
 
-            result = await fs.write(
+            result = await asyncio.to_thread(
+                fs.write,
                 path=request.path,
                 content=content,
                 if_match=request.if_match,
@@ -252,7 +253,7 @@ def create_async_files_router(
 
             # Get metadata first for ETag check
             if if_none_match:
-                meta = await fs.get_metadata(path)
+                meta = await asyncio.to_thread(fs.get_metadata, path)
                 if meta and meta.etag:
                     client_etag = if_none_match.strip('"')
                     if client_etag == meta.etag:
@@ -262,7 +263,9 @@ def create_async_files_router(
                         )
 
             # Read content
-            result = await fs.read(path, return_metadata=include_metadata, context=context)
+            result = await asyncio.to_thread(
+                fs.read, path, return_metadata=include_metadata, context=context
+            )
 
             if include_metadata and isinstance(result, dict):
                 content = result["content"]
@@ -315,7 +318,7 @@ def create_async_files_router(
         """Delete a file."""
         try:
             fs = await _get_fs()
-            result = await fs.delete(path, context=context)
+            result = await asyncio.to_thread(fs.delete, path, context=context)
             return DeleteResponse(deleted=result["deleted"], path=result["path"])
 
         except NexusPermissionError as e:
@@ -340,7 +343,7 @@ def create_async_files_router(
         """Check if a file or directory exists."""
         try:
             fs = await _get_fs()
-            exists = await fs.exists(path, context=context)
+            exists = await asyncio.to_thread(fs.exists, path, context=context)
             return ExistsResponse(exists=exists)
 
         except NexusPermissionError as e:
@@ -364,7 +367,13 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
 
-            items = await fs.list_dir(path, context=context)
+            # NexusFS.list() returns full paths; strip prefix to get names
+            full_paths = await asyncio.to_thread(fs.list, path, recursive=False, context=context)
+            prefix = path.rstrip("/") + "/"
+            items = [
+                fp[len(prefix) :] if fp.startswith(prefix) else fp.rsplit("/", 1)[-1]
+                for fp in full_paths
+            ]
             return ListResponse(items=items)
 
         except NexusPermissionError as e:
@@ -389,7 +398,9 @@ def create_async_files_router(
         """Create a directory."""
         try:
             fs = await _get_fs()
-            await fs.mkdir(request.path, parents=request.parents, context=context)
+            await asyncio.to_thread(
+                fs.mkdir, request.path, parents=request.parents, context=context
+            )
             return {"created": True, "path": request.path}
 
         except NexusPermissionError as e:
@@ -416,7 +427,7 @@ def create_async_files_router(
         """Get file or directory metadata."""
         try:
             fs = await _get_fs()
-            meta = await fs.get_metadata(path, context=context)
+            meta = await asyncio.to_thread(fs.get_metadata, path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -457,7 +468,7 @@ def create_async_files_router(
         """
         try:
             fs = await _get_fs()
-            results = await fs.batch_read(request.paths, context=context)
+            results = await asyncio.to_thread(fs.read_bulk, request.paths, context=context)
 
             # Convert bytes to string for JSON response
             response: dict[str, Any] = {}
@@ -503,16 +514,32 @@ def create_async_files_router(
 
         try:
             fs = await _get_fs()
-            meta = await fs.get_metadata(path, context=context)
+            meta = await asyncio.to_thread(fs.get_metadata, path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
+            def _range_generator(start: int, end: int, cs: int) -> Iterator[bytes]:
+                """Sync generator wrapping NexusFS.read_range()."""
+                data = fs.read_range(path, start, end, context=context)
+                if isinstance(data, bytes):
+                    for i in range(0, len(data), cs):
+                        yield data[i : i + cs]
+
+            def _full_generator() -> Iterator[bytes]:
+                """Sync generator wrapping NexusFS.read()."""
+                data = fs.read(path, context=context)
+                if isinstance(data, bytes):
+                    for i in range(0, len(data), chunk_size):
+                        yield data[i : i + chunk_size]
+                else:
+                    raw = str(data).encode("utf-8")
+                    for i in range(0, len(raw), chunk_size):
+                        yield raw[i : i + chunk_size]
+
             return build_range_response(
                 request_headers=request.headers,
-                content_generator=lambda s, e, cs: fs.stream_read_range(
-                    path, s, e, cs, context=context
-                ),
-                full_generator=lambda: fs.stream_read(path, chunk_size=chunk_size, context=context),
+                content_generator=_range_generator,
+                full_generator=_full_generator,
                 total_size=meta.size,
                 etag=meta.etag,
                 content_type=meta.mime_type or "application/octet-stream",

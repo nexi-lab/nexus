@@ -4,8 +4,8 @@ Shared trait/checkpoint errors are inherited from ``base_errors``.
 Domain-specific errors are defined here.
 """
 
-from nexus.connectors.base import ErrorDef
-from nexus.connectors.base_errors import CHECKPOINT_ERRORS, TRAIT_ERRORS
+from nexus.backends.connectors.base import ErrorDef
+from nexus.backends.connectors.base_errors import CHECKPOINT_ERRORS, TRAIT_ERRORS
 
 # Domain-specific errors for Calendar operations
 _DOMAIN_ERRORS: dict[str, ErrorDef] = {

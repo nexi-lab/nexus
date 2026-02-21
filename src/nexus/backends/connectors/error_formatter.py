@@ -6,7 +6,7 @@ Centralizes all error-with-skill-reference formatting (DRY #5-A).
 
 import posixpath
 
-from nexus.connectors.base import ErrorDef, ValidationError
+from nexus.backends.connectors.base import ErrorDef, ValidationError
 
 
 class SkillErrorFormatter:

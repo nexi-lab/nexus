@@ -37,9 +37,7 @@ import yaml
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
-from nexus.backends.oauth_mixin import OAuthConnectorMixin
-from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
     OpTraits,
@@ -49,12 +47,14 @@ from nexus.connectors.base import (
     ValidatedMixin,
     ValidationError,
 )
-from nexus.connectors.calendar.errors import ERROR_REGISTRY
-from nexus.connectors.calendar.schemas import (
+from nexus.backends.connectors.calendar.errors import ERROR_REGISTRY
+from nexus.backends.connectors.calendar.schemas import (
     CreateEventSchema,
     DeleteEventSchema,
     UpdateEventSchema,
 )
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response

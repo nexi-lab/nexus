@@ -3,7 +3,7 @@
 Orchestrates zone teardown using a Kubernetes-inspired finalizer pattern:
 
 1. Zone enters ``Terminating`` phase → writes gated, reads allowed.
-2. Registered finalizers run in dependency order (concurrent, then ReBAC last).
+2. Registered finalizers run in dependency order (concurrent, then sequential).
 3. Finalizers removed as they complete; zone enters ``Terminated`` when empty.
 4. Per-finalizer timeout (30 s) + reconciler retry on failure.
 
@@ -18,10 +18,9 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from nexus.services.protocols.zone_lifecycle import (
-    REBAC_FINALIZER_KEY,
     ZoneDeprovisionResult,
     ZoneFinalizerProtocol,
     ZonePhase,
@@ -31,6 +30,9 @@ logger = logging.getLogger(__name__)
 
 # Per-finalizer timeout (Decision #16A)
 _FINALIZER_TIMEOUT_S: float = 30.0
+
+# Finalizer execution phases
+FinalizerPhase = Literal["concurrent", "sequential"]
 
 
 class ZoneLifecycleService:
@@ -42,7 +44,7 @@ class ZoneLifecycleService:
 
     def __init__(self, session_factory: Callable[..., Any]) -> None:
         self._session_factory = session_factory
-        self._finalizers: list[ZoneFinalizerProtocol] = []
+        self._finalizers: list[tuple[ZoneFinalizerProtocol, FinalizerPhase]] = []
         # In-memory set for O(1) write-gating checks (Decision #14A)
         self._terminating_zones: set[str] = set()
         # Per-zone lock to prevent concurrent deprovision races
@@ -52,16 +54,29 @@ class ZoneLifecycleService:
     # Registration
     # ------------------------------------------------------------------
 
-    def register_finalizer(self, finalizer: ZoneFinalizerProtocol) -> None:
+    def register_finalizer(
+        self,
+        finalizer: ZoneFinalizerProtocol,
+        *,
+        phase: FinalizerPhase = "concurrent",
+    ) -> None:
         """Register a finalizer to run during zone deprovisioning.
 
-        Finalizers are run in registration order, except the ReBAC finalizer
-        which is always executed last (Decision #13A).
+        Args:
+            finalizer: Service implementing ``ZoneFinalizerProtocol``.
+            phase: Execution phase — ``"concurrent"`` (default) runs in
+                parallel with other concurrent finalizers; ``"sequential"``
+                runs after all concurrent finalizers complete (e.g. ReBAC
+                must run last because other finalizers may need permissions).
         """
         if not isinstance(finalizer, ZoneFinalizerProtocol):
             raise TypeError(f"Expected ZoneFinalizerProtocol, got {type(finalizer).__name__}")
-        self._finalizers.append(finalizer)
-        logger.debug("[ZoneLifecycle] Registered finalizer: %s", finalizer.finalizer_key)
+        self._finalizers.append((finalizer, phase))
+        logger.debug(
+            "[ZoneLifecycle] Registered finalizer: %s (phase=%s)",
+            finalizer.finalizer_key,
+            phase,
+        )
 
     # ------------------------------------------------------------------
     # Write-gating (Decision #4A / #14A)
@@ -103,6 +118,8 @@ class ZoneLifecycleService:
         Returns:
             ZoneDeprovisionResult with completed/pending/failed finalizers.
         """
+        from datetime import UTC, datetime
+
         from nexus.storage.models import ZoneModel
 
         # Per-zone lock to prevent concurrent races (Decision #11A)
@@ -130,7 +147,7 @@ class ZoneLifecycleService:
 
             # Transition to Terminating if Active
             if zone.phase == ZonePhase.ACTIVE:
-                finalizer_keys = [f.finalizer_key for f in self._finalizers]
+                finalizer_keys = [f.finalizer_key for f, _phase in self._finalizers]
                 zone.phase = ZonePhase.TERMINATING
                 zone.finalizers = json.dumps(finalizer_keys)
                 # Update in-memory set BEFORE commit to close the race window
@@ -144,7 +161,7 @@ class ZoneLifecycleService:
                 )
 
             # Run finalizers
-            pending_keys = json.loads(zone.finalizers)
+            pending_keys = zone.parsed_finalizers
             result = await self._run_finalizers(zone_id, pending_keys)
 
             # Update DB state
@@ -152,6 +169,7 @@ class ZoneLifecycleService:
             if not remaining and not result.finalizers_failed:
                 zone.phase = ZonePhase.TERMINATED
                 zone.finalizers = "[]"
+                zone.deleted_at = datetime.now(UTC)
                 self._terminating_zones.discard(zone_id)
                 self._zone_locks.pop(zone_id, None)
                 logger.info("[ZoneLifecycle] Zone %s → Terminated", zone_id)
@@ -162,17 +180,26 @@ class ZoneLifecycleService:
             return result
 
     async def _run_finalizers(self, zone_id: str, pending_keys: list[str]) -> ZoneDeprovisionResult:
-        """Execute finalizers with concurrent-then-sequential ordering.
+        """Execute finalizers in two phases: concurrent then sequential.
 
-        Decision #13A: Cache + Search + Mount run concurrently (Phase 1),
-        then ReBAC runs sequentially (Phase 2).
+        Decision #13A / #4B: Finalizers registered with ``phase="concurrent"``
+        run in parallel first; those with ``phase="sequential"`` run one-by-one
+        afterward.  This ensures resources like ReBAC (sequential) remain
+        available while other finalizers clean up.
         """
         # Build lookup: key → finalizer
-        by_key = {f.finalizer_key: f for f in self._finalizers}
+        by_key: dict[str, ZoneFinalizerProtocol] = {
+            f.finalizer_key: f for f, _ph in self._finalizers
+        }
+        phase_of: dict[str, FinalizerPhase] = {f.finalizer_key: ph for f, ph in self._finalizers}
 
-        # Partition into concurrent (non-ReBAC) and sequential (ReBAC)
-        concurrent_keys = [k for k in pending_keys if k != REBAC_FINALIZER_KEY and k in by_key]
-        sequential_keys = [k for k in pending_keys if k == REBAC_FINALIZER_KEY and k in by_key]
+        # Partition pending keys into concurrent and sequential
+        concurrent_keys = [
+            k for k in pending_keys if k in by_key and phase_of.get(k) == "concurrent"
+        ]
+        sequential_keys = [
+            k for k in pending_keys if k in by_key and phase_of.get(k) == "sequential"
+        ]
 
         completed: list[str] = []
         failed: dict[str, str] = {}
@@ -188,7 +215,7 @@ class ZoneLifecycleService:
                 else:
                     completed.append(key)
 
-        # Phase 2: Sequential finalizers (ReBAC last)
+        # Phase 2: Sequential finalizers (e.g. ReBAC last)
         for key in sequential_keys:
             error = await self._run_single(zone_id, key, by_key[key])
             if error:

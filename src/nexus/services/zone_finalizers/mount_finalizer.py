@@ -8,7 +8,10 @@ directory index, hierarchy tuples, and permission tuples.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.services.mount.mount_core_service import MountCoreService
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +19,7 @@ logger = logging.getLogger(__name__)
 class MountZoneFinalizer:
     """Finalizer that removes all mount points belonging to a zone."""
 
-    def __init__(self, mount_service: Any) -> None:
+    def __init__(self, mount_service: MountCoreService | Any) -> None:
         self._mount_service = mount_service
 
     @property
@@ -24,13 +27,14 @@ class MountZoneFinalizer:
         return "nexus.core/mount"
 
     async def finalize_zone(self, zone_id: str) -> None:
-        """Remove all mounts for *zone_id*."""
+        """Remove all mounts for *zone_id*.
+
+        .. todo:: Issue #2070: push zone_id filter to MountCoreService.list_mounts()
+           to avoid O(total) scan.  Current approach is acceptable because mount
+           counts are typically small (tens, not thousands).
+        """
         mounts = self._mount_service.list_mounts()
-        zone_mounts = [
-            m
-            for m in mounts
-            if m.get("zone_id") == zone_id or m.get("path", "").startswith(f"/{zone_id}/")
-        ]
+        zone_mounts = [m for m in mounts if m.get("mount_point", "").startswith(f"/{zone_id}/")]
 
         removed = 0
         for mount in zone_mounts:

@@ -453,4 +453,47 @@ def create_nexus_fs(
         _blm.register("parsers", parsers_brick, protocol_name="ParsersProtocol")
         _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
 
+    # --- Zone Lifecycle: Wire late finalizers (Issue #2070) ---
+    # Cache, Mount, and BrickDrain finalizers need dependencies created by
+    # _boot_wired_services() (mount_core_service) or create_nexus_fs() (_blm).
+    _zl = getattr(system_services, "zone_lifecycle", None)
+    if _zl is not None:
+        try:
+            from nexus.services.zone_finalizers import (
+                BrickDrainFinalizer,
+                CacheZoneFinalizer,
+                MountZoneFinalizer,
+            )
+
+            # Cache finalizer: L1 file cache + optional L2 distributed cache
+            _file_cache_obj = getattr(nx, "_local_disk_cache", None)
+            _l2_cache = cache_store if cache_store is not None else None
+            if _file_cache_obj is not None or _l2_cache is not None:
+                _zl.register_finalizer(
+                    CacheZoneFinalizer(
+                        file_cache=_file_cache_obj or _NullFileCache(),
+                        l2_cache=_l2_cache,
+                    )
+                )
+
+            # Mount finalizer: remove zone mounts
+            _mcs = getattr(_wired, "mount_core_service", None)
+            if _mcs is not None:
+                _zl.register_finalizer(MountZoneFinalizer(mount_service=_mcs))
+
+            # BrickDrain finalizer: drain/finalize zone-aware bricks
+            if _blm is not None:
+                _zl.register_finalizer(BrickDrainFinalizer(brick_lifecycle_manager=_blm))
+
+            logger.debug("[BOOT:FACTORY] Zone late finalizers registered")
+        except Exception as exc:
+            logger.warning("[BOOT:FACTORY] Zone late finalizer registration failed: %s", exc)
+
     return nx
+
+
+class _NullFileCache:
+    """No-op file cache for CacheZoneFinalizer when L1 cache is unavailable."""
+
+    def delete_zone(self, zone_id: str) -> int:  # noqa: ARG002
+        return 0

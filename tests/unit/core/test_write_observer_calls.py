@@ -10,7 +10,7 @@ Coverage matrix (all gaps closed in Issue #625):
 - rmdir()       -> on_rmdir()       YES  (Issue #625)
 
 Phase 1.3 of #1246/#1330 consolidation plan.
-Issue #1631: Error handling tests for _handle_observer_error (strict + non-strict).
+Issue #2152: Observer owns error policy — kernel is a pure caller (no try/except).
 """
 
 from __future__ import annotations
@@ -337,21 +337,21 @@ def _make_failing_observer() -> MagicMock:
     return obs
 
 
-class TestObserverErrorHandlingStrict:
-    """audit_strict_mode=True + failing observer → AuditLogError."""
+class TestObserverErrorPropagation:
+    """Issue #2152: Observer errors propagate directly (no kernel safety net)."""
 
     @pytest.fixture
     def failing_observer(self) -> MagicMock:
         return _make_failing_observer()
 
     @pytest.fixture
-    def nx_strict(
+    def nx_with_failing_observer(
         self, temp_dir: Path, failing_observer: MagicMock
     ) -> Generator[NexusFS, None, None]:
         nx = NexusFS(
             backend=LocalBackend(str(temp_dir / "data")),
             metadata_store=InMemoryMetastore(),
-            permissions=PermissionConfig(enforce=False, audit_strict_mode=True),
+            permissions=PermissionConfig(enforce=False),
             parsing=ParseConfig(auto_parse=False),
             system_services=SystemServices(write_observer=failing_observer),
         )
@@ -369,68 +369,22 @@ class TestObserverErrorHandlingStrict:
         yield nx
         nx.close()
 
-    def test_write_raises_audit_log_error_on_observer_failure(self, nx_strict: NexusFS) -> None:
-        from nexus.contracts.exceptions import AuditLogError
+    def test_write_propagates_observer_error(self, nx_with_failing_observer: NexusFS) -> None:
+        """Observer RuntimeError propagates — no kernel try/except wrapper."""
+        with pytest.raises(RuntimeError, match="observer boom"):
+            nx_with_failing_observer.write("/test.txt", b"hello")
 
-        with pytest.raises(AuditLogError, match="audit logging failed"):
-            nx_strict.write("/test.txt", b"hello")
+    def test_mkdir_propagates_observer_error(self, nx_with_failing_observer: NexusFS) -> None:
+        with pytest.raises(RuntimeError, match="observer boom"):
+            nx_with_failing_observer.mkdir("/testdir")
 
-    def test_mkdir_raises_audit_log_error_on_observer_failure(self, nx_strict: NexusFS) -> None:
-        from nexus.contracts.exceptions import AuditLogError
-
-        with pytest.raises(AuditLogError, match="audit logging failed"):
-            nx_strict.mkdir("/testdir")
-
-    def test_rmdir_raises_audit_log_error_on_observer_failure(
-        self, nx_strict: NexusFS, failing_observer: MagicMock
+    def test_rmdir_propagates_observer_error(
+        self, nx_with_failing_observer: NexusFS, failing_observer: MagicMock
     ) -> None:
-        from nexus.contracts.exceptions import AuditLogError
-
         # Create dir with a non-failing observer first, then switch
         failing_observer.on_mkdir.side_effect = None
-        nx_strict.mkdir("/testdir")
+        nx_with_failing_observer.mkdir("/testdir")
         failing_observer.on_rmdir.side_effect = RuntimeError("observer boom")
 
-        with pytest.raises(AuditLogError, match="audit logging failed"):
-            nx_strict.rmdir("/testdir")
-
-
-class TestObserverErrorHandlingNonStrict:
-    """audit_strict_mode=False + failing observer → operation succeeds."""
-
-    @pytest.fixture
-    def failing_observer(self) -> MagicMock:
-        return _make_failing_observer()
-
-    @pytest.fixture
-    def nx_nonstrict(
-        self, temp_dir: Path, failing_observer: MagicMock
-    ) -> Generator[NexusFS, None, None]:
-        nx = NexusFS(
-            backend=LocalBackend(str(temp_dir / "data")),
-            metadata_store=InMemoryMetastore(),
-            permissions=PermissionConfig(enforce=False, audit_strict_mode=False),
-            parsing=ParseConfig(auto_parse=False),
-            system_services=SystemServices(write_observer=failing_observer),
-        )
-
-        # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
-        from nexus.services.permissions.checker import PermissionChecker
-
-        nx._permission_checker = PermissionChecker(
-            permission_enforcer=nx._permission_enforcer,
-            metadata_store=nx.metadata,
-            default_context=nx._default_context,
-            enforce_permissions=nx._enforce_permissions,
-        )
-
-        yield nx
-        nx.close()
-
-    def test_write_succeeds_despite_observer_failure(self, nx_nonstrict: NexusFS) -> None:
-        result = nx_nonstrict.write("/test.txt", b"hello")
-        assert result["etag"] is not None
-
-    def test_mkdir_succeeds_despite_observer_failure(self, nx_nonstrict: NexusFS) -> None:
-        # Should not raise — observer failure is logged but swallowed
-        nx_nonstrict.mkdir("/testdir")
+        with pytest.raises(RuntimeError, match="observer boom"):
+            nx_with_failing_observer.rmdir("/testdir")

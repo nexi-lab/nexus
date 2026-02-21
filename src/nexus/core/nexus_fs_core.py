@@ -71,7 +71,6 @@ class NexusFSCoreMixin:
         _overlay_resolver: Any  # Issue #1264: OverlayResolver service
         _workspace_registry: Any  # Workspace registry for overlay config lookup
         _write_observer: WriteObserverProtocol | None
-        _audit_strict_mode: bool
 
         @property
         def zone_id(self) -> str | None: ...
@@ -1285,18 +1284,17 @@ class NexusFSCoreMixin:
         self.metadata.put(new_meta)
 
         # Sync to RecordStore via write_observer (closes gap: write_stream was missing this)
+        # Observer owns error policy (Issue #2152).
         if (obs := self._write_observer) is not None:
-            try:
-                obs.on_write(
-                    metadata=new_meta,
-                    is_new=(meta is None),
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    urgency=self._resolve_write_urgency(route.io_profile),
-                )
-            except Exception as e:
-                self._handle_observer_error("write", path, e)
+            # observer owns error policy (#2152)
+            obs.on_write(
+                metadata=new_meta,
+                is_new=(meta is None),
+                path=path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                urgency=self._resolve_write_urgency(route.io_profile),
+            )
 
         return {
             "etag": content_hash,
@@ -1703,21 +1701,19 @@ class NexusFSCoreMixin:
 
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
         # Observer is optional — injected by factory.py, not created by kernel.
-        # Issue #1631: Direct typed dispatch (replaces getattr-based _notify_observer).
+        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
         if (obs := self._write_observer) is not None:
-            try:
-                obs.on_write(
-                    metadata=metadata,
-                    is_new=(meta is None),
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                    urgency=self._resolve_write_urgency(route.io_profile),
-                )
-            except Exception as e:
-                self._handle_observer_error("write", path, e)
+            # observer owns error policy (#2152)
+            obs.on_write(
+                metadata=metadata,
+                is_new=(meta is None),
+                path=path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=metadata_snapshot,
+                urgency=self._resolve_write_urgency(route.io_profile),
+            )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         is_new_file = meta is None or meta.etag is None
@@ -2180,40 +2176,9 @@ class NexusFSCoreMixin:
             pass  # Unknown/missing profile, default to normal urgency
         return None
 
-    def _handle_observer_error(self, operation: str, op_path: str, error: Exception) -> None:
-        """Defensive safety net for observer errors (see Issue #55).
-
-        Per WriteObserverProtocol contract, observers own their error policy.
-        This catches any errors that escape the observer implementation.
-
-        Args:
-            operation: The mutation operation name (e.g. 'write', 'delete').
-            op_path: Primary path affected (for error messages only).
-            error: The exception that escaped the observer.
-        """
-        from nexus.contracts.exceptions import AuditLogError
-
-        if self._audit_strict_mode:
-            logger.error(
-                "AUDIT LOG FAILURE: %s on '%s' ABORTED. "
-                "Error: %s. Set audit_strict_mode=False to allow writes without audit logs.",
-                operation,
-                op_path,
-                error,
-            )
-            raise AuditLogError(
-                f"Operation aborted: audit logging failed for {operation}: {error}",
-                path=op_path,
-                original_error=error,
-            ) from error
-        else:
-            logger.critical(
-                "AUDIT LOG FAILURE: %s on '%s' SUCCEEDED but audit log FAILED. "
-                "Error: %s. This creates an audit trail gap!",
-                operation,
-                op_path,
-                error,
-            )
+    # _handle_observer_error → removed (Issue #2152)
+    # Observer owns its error policy via strict_mode. No kernel safety net needed.
+    # See RecordStoreWriteObserver._handle_error() in storage/record_store_syncer.py.
 
     # _auto_parse_file + _parse_in_thread → removed (Issue #2272)
     # Replaced by AutoParseWriteHook in services/vfs_hook_impls.py
@@ -2302,18 +2267,15 @@ class NexusFSCoreMixin:
                 self._snapshot_service.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
-        # Issue #1631: Direct typed dispatch (replaces getattr-based _notify_observer).
+        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
         if (obs := self._write_observer) is not None:
-            try:
-                obs.on_delete(
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
-            except Exception as e:
-                self._handle_observer_error("delete", path, e)
+            obs.on_delete(
+                path=path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=metadata_snapshot,
+            )
 
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
@@ -2598,19 +2560,16 @@ class NexusFSCoreMixin:
             _pipeline.run_post_rename(_rename_ctx)
 
         # Task #45: Sync to RecordStore (audit trail)
-        # Issue #1631: Direct typed dispatch (replaces getattr-based _notify_observer).
+        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
         if (obs := self._write_observer) is not None:
-            try:
-                obs.on_rename(
-                    old_path=old_path,
-                    new_path=new_path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
-            except Exception as e:
-                self._handle_observer_error("rename", old_path, e)
+            obs.on_rename(
+                old_path=old_path,
+                new_path=new_path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=metadata_snapshot,
+            )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         self._fire_workflow_event(

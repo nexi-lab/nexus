@@ -81,7 +81,7 @@ def test_nexus_fs_satisfies_narrow_protocol() -> None:
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
             metadata_store=metadata_store,
-            permissions=PermissionConfig(audit_strict_mode=False),
+            permissions=PermissionConfig(),
         )
 
         # Verify all required methods exist and are callable

@@ -15,6 +15,7 @@ import dataclasses
 import pytest
 
 from nexus.core.config import (
+    AuditConfig,
     BrickServices,
     CacheConfig,
     DistributedConfig,
@@ -80,7 +81,6 @@ class TestPermissionConfig:
         assert cfg.inherit is True
         assert cfg.allow_admin_bypass is False
         assert cfg.enforce_zone_isolation is True
-        assert cfg.audit_strict_mode is True
         assert cfg.enable_tiger_cache is True
         assert cfg.enable_deferred is True
         assert cfg.deferred_flush_interval == 0.05
@@ -101,7 +101,36 @@ class TestPermissionConfig:
         """PermissionConfig(enforce=False) is the standard test setup."""
         cfg = PermissionConfig(enforce=False)
         assert cfg.enforce is False
-        assert cfg.audit_strict_mode is True  # other defaults unchanged
+        assert cfg.enable_tiger_cache is True  # other defaults unchanged
+
+
+# ---------------------------------------------------------------------------
+# AuditConfig (Issue #2152)
+# ---------------------------------------------------------------------------
+
+
+class TestAuditConfig:
+    """Tests for AuditConfig frozen dataclass (Issue #2152)."""
+
+    def test_defaults(self) -> None:
+        cfg = AuditConfig()
+        assert cfg.strict_mode is True
+
+    def test_frozen(self) -> None:
+        cfg = AuditConfig()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            cfg.strict_mode = False
+
+    def test_replace(self) -> None:
+        cfg = AuditConfig(strict_mode=True)
+        new = dataclasses.replace(cfg, strict_mode=False)
+        assert new.strict_mode is False
+        assert cfg.strict_mode is True  # original unchanged
+
+    def test_non_strict_for_ha(self) -> None:
+        """AuditConfig(strict_mode=False) for high-availability scenarios."""
+        cfg = AuditConfig(strict_mode=False)
+        assert cfg.strict_mode is False
 
 
 # ---------------------------------------------------------------------------

@@ -63,7 +63,7 @@ class CacheConfig:
 class PermissionConfig:
     """Permission enforcement configuration.
 
-    Controls ReBAC permission checks, zone isolation, audit logging,
+    Controls ReBAC permission checks, zone isolation,
     Tiger Cache, and deferred permission batching.
     """
 
@@ -71,10 +71,32 @@ class PermissionConfig:
     inherit: bool = True
     allow_admin_bypass: bool = False
     enforce_zone_isolation: bool = True
-    audit_strict_mode: bool = True
     enable_tiger_cache: bool = True
     enable_deferred: bool = True
     deferred_flush_interval: float = 0.05
+
+
+@dataclass(frozen=True)
+class AuditConfig:
+    """Audit trail error-policy configuration (Issue #2152).
+
+    Controls what happens when audit logging (RecordStore sync) fails
+    during write operations. This is a P0 compliance concern — separate
+    from permission enforcement (PermissionConfig).
+
+    P0 COMPLIANCE: SOX, HIPAA, GDPR, PCI DSS require complete audit
+    trails. ``strict_mode=True`` (default) ensures writes fail if audit
+    logging fails, preventing silent audit gaps.
+
+    Note on buffered observers: ``strict_mode`` is enforced by the
+    synchronous ``RecordStoreWriteObserver``. The async
+    ``BufferedRecordStoreWriteObserver`` enqueues events into a
+    ``WriteBuffer`` where the enqueue path cannot fail; actual error
+    handling (retry + drop) is managed by the ``WriteBuffer`` background
+    flush thread, not by ``strict_mode``.
+    """
+
+    strict_mode: bool = True
 
 
 @dataclass(frozen=True)

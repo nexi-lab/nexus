@@ -1,9 +1,10 @@
-"""Agent spec/status REST API endpoints (Issue #2169).
+"""Agent spec/status/warmup REST API endpoints (Issues #2169, #2172).
 
 Provides:
 - GET  /api/v2/agents/{agent_id}/status  - Computed agent status
 - PUT  /api/v2/agents/{agent_id}/spec    - Set agent spec
 - GET  /api/v2/agents/{agent_id}/spec    - Get agent spec
+- POST /api/v2/agents/{agent_id}/warmup  - Trigger agent warmup
 
 All endpoints are authenticated via existing auth middleware.
 
@@ -91,6 +92,63 @@ class AgentStatusResponse(BaseModel):
     last_activity: str | None
     inbox_depth: int
     context_usage_pct: float
+
+
+class WarmupStepModel(BaseModel):
+    """A single warmup step in the request body (Issue #2172)."""
+
+    name: str
+    timeout_seconds: float = 30.0
+    required: bool = True
+
+
+class WarmupRequest(BaseModel):
+    """Request body for POST /warmup (Issue #2172)."""
+
+    steps: list[WarmupStepModel] | None = None
+
+
+class WarmupResponse(BaseModel):
+    """Response body for POST /warmup (Issue #2172)."""
+
+    success: bool
+    agent_id: str
+    steps_completed: list[str] = []
+    steps_skipped: list[str] = []
+    failed_step: str | None = None
+    error: str | None = None
+    duration_ms: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Helpers (DRY fix — Issue #2172)
+# ---------------------------------------------------------------------------
+
+
+def _spec_to_response(stored: Any) -> AgentSpecResponse:
+    """Convert an AgentSpec domain object to AgentSpecResponse.
+
+    Eliminates duplication across set_agent_spec and get_agent_spec endpoints.
+    """
+    return AgentSpecResponse(
+        agent_type=stored.agent_type,
+        capabilities=sorted(stored.capabilities),
+        resource_requests=AgentResourcesModel(
+            token_budget=stored.resource_requests.token_budget,
+            token_request=stored.resource_requests.token_request,
+            storage_limit_mb=stored.resource_requests.storage_limit_mb,
+            context_limit=stored.resource_requests.context_limit,
+        ),
+        resource_limits=AgentResourcesModel(
+            token_budget=stored.resource_limits.token_budget,
+            token_request=stored.resource_limits.token_request,
+            storage_limit_mb=stored.resource_limits.storage_limit_mb,
+            context_limit=stored.resource_limits.context_limit,
+        ),
+        qos_class=str(stored.qos_class),
+        zone_affinity=stored.zone_affinity,
+        spec_generation=stored.spec_generation,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -208,25 +266,7 @@ async def set_agent_spec(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    return AgentSpecResponse(
-        agent_type=stored.agent_type,
-        capabilities=sorted(stored.capabilities),
-        resource_requests=AgentResourcesModel(
-            token_budget=stored.resource_requests.token_budget,
-            token_request=stored.resource_requests.token_request,
-            storage_limit_mb=stored.resource_requests.storage_limit_mb,
-            context_limit=stored.resource_requests.context_limit,
-        ),
-        resource_limits=AgentResourcesModel(
-            token_budget=stored.resource_limits.token_budget,
-            token_request=stored.resource_limits.token_request,
-            storage_limit_mb=stored.resource_limits.storage_limit_mb,
-            context_limit=stored.resource_limits.context_limit,
-        ),
-        qos_class=str(stored.qos_class),
-        zone_affinity=stored.zone_affinity,
-        spec_generation=stored.spec_generation,
-    )
+    return _spec_to_response(stored)
 
 
 @router.get(
@@ -245,22 +285,63 @@ async def get_agent_spec(
     if stored is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec")
 
-    return AgentSpecResponse(
-        agent_type=stored.agent_type,
-        capabilities=sorted(stored.capabilities),
-        resource_requests=AgentResourcesModel(
-            token_budget=stored.resource_requests.token_budget,
-            token_request=stored.resource_requests.token_request,
-            storage_limit_mb=stored.resource_requests.storage_limit_mb,
-            context_limit=stored.resource_requests.context_limit,
-        ),
-        resource_limits=AgentResourcesModel(
-            token_budget=stored.resource_limits.token_budget,
-            token_request=stored.resource_limits.token_request,
-            storage_limit_mb=stored.resource_limits.storage_limit_mb,
-            context_limit=stored.resource_limits.context_limit,
-        ),
-        qos_class=str(stored.qos_class),
-        zone_affinity=stored.zone_affinity,
-        spec_generation=stored.spec_generation,
+    return _spec_to_response(stored)
+
+
+# ---------------------------------------------------------------------------
+# Warmup endpoint (Issue #2172)
+# ---------------------------------------------------------------------------
+
+
+async def _get_warmup_service(request: Request) -> Any:
+    """Get AgentWarmupService from app state."""
+    service = getattr(request.app.state, "agent_warmup_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="Agent warmup service not available")
+    return service
+
+
+@router.post(
+    "/api/v2/agents/{agent_id}/warmup",
+    response_model=WarmupResponse,
+    summary="Trigger agent warmup (Issue #2172)",
+    description=(
+        "Execute structured warmup steps for an agent before it accepts work. "
+        "Steps run sequentially with per-step timeouts. Required steps must "
+        "pass for the agent to transition from UNKNOWN to CONNECTED."
+    ),
+)
+async def warmup_agent(
+    agent_id: str,
+    body: WarmupRequest | None = None,
+    _auth: dict = Depends(_get_require_auth()),
+    warmup_service: Any = Depends(_get_warmup_service),
+) -> WarmupResponse:
+    """Trigger agent warmup."""
+    from datetime import timedelta
+
+    from nexus.contracts.agent_warmup_types import WarmupStep
+
+    # Convert request body steps to domain objects (or use defaults)
+    steps: list[WarmupStep] | None = None
+    if body is not None and body.steps is not None:
+        steps = [
+            WarmupStep(
+                name=s.name,
+                timeout=timedelta(seconds=s.timeout_seconds),
+                required=s.required,
+            )
+            for s in body.steps
+        ]
+
+    result = await warmup_service.warmup(agent_id, steps=steps)
+
+    return WarmupResponse(
+        success=result.success,
+        agent_id=result.agent_id,
+        steps_completed=list(result.steps_completed),
+        steps_skipped=list(result.steps_skipped),
+        failed_step=result.failed_step,
+        error=result.error,
+        duration_ms=result.duration_ms,
     )

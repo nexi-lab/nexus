@@ -717,7 +717,7 @@ class DelegationService:
         expires_at: datetime | None,
     ) -> str:
         """Create API key for the worker agent."""
-        from nexus.bricks.identity.api_key_ops import create_api_key
+        from nexus.storage.api_key_ops import create_api_key
 
         with self._session() as session:
             _key_id, raw_key = create_api_key(
@@ -769,7 +769,7 @@ class DelegationService:
         """Revoke all API keys for the worker agent."""
         from sqlalchemy import select
 
-        from nexus.bricks.identity.api_key_ops import revoke_api_key
+        from nexus.storage.api_key_ops import revoke_api_key
         from nexus.storage.models.auth import APIKeyModel
 
         with self._session() as session:

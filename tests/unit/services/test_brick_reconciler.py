@@ -70,7 +70,9 @@ class TestReconcileDetectDrift:
         brick = _make_failing_brick()
         manager.register("failing", brick, protocol_name="FP")
         await manager.mount("failing")
-        assert manager.get_status("failing").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("failing")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
         # Now fix the brick so remount succeeds
         brick.start = AsyncMock(return_value=None)
@@ -126,10 +128,10 @@ class TestReconcileDetectDrift:
         assert drift.action is DriftAction.MOUNT
 
     @pytest.mark.asyncio
-    async def test_no_drift_for_disabled_unregistered(
+    async def test_no_drift_for_disabled_unmounted(
         self, manager: BrickLifecycleManager, reconciler: BrickReconciler
     ) -> None:
-        """Disabled brick in UNREGISTERED state → no drift."""
+        """Disabled brick in UNMOUNTED state → no drift."""
         brick = _make_lifecycle_brick("gone")
         manager.register("gone", brick, protocol_name="GP")
         await manager.mount("gone")
@@ -164,10 +166,14 @@ class TestReconcileSelfHealing:
         )
         manager.register("search", brick, protocol_name="SP")
         await manager.mount("search")
-        assert manager.get_status("search").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
         result = await reconciler.reconcile()
-        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
         assert result.actions_taken >= 1
 
     @pytest.mark.asyncio
@@ -187,7 +193,9 @@ class TestReconcileSelfHealing:
             await reconciler.reconcile()
 
         # After 3 retries, the brick should still be FAILED
-        assert manager.get_status("hopeless").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("hopeless")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
         assert manager.get_retry_count("hopeless") >= 3
 
         # 4th reconcile should skip (max retries exceeded)
@@ -214,10 +222,14 @@ class TestReconcileSelfHealing:
         brick.start = AsyncMock(side_effect=_flaky_start)
         manager.register("flaky", brick, protocol_name="FP")
         await manager.mount("flaky")  # fails (call 1)
-        assert manager.get_status("flaky").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("flaky")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
         await reconciler.reconcile()  # resets + remounts (call 2 — succeeds)
-        assert manager.get_status("flaky").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("flaky")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
         assert manager._bricks["flaky"].retry_count == 0
 
     @pytest.mark.asyncio
@@ -277,15 +289,21 @@ class TestReconcileSelfHealing:
         manager.register("b", brick_b, protocol_name="BP", depends_on=("a",))
 
         await manager.mount("a")  # fails (call 1)
-        assert manager.get_status("a").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
         # Reconcile: A succeeds on retry, then B should get mounted
         await reconciler.reconcile()  # A recovers (call 2)
-        assert manager.get_status("a").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
         # B may need another reconcile pass to mount (since A just recovered)
         await reconciler.reconcile()
-        assert manager.get_status("b").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +325,9 @@ class TestReconcileHealthCheck:
         await manager.mount("healthy")
 
         result = await reconciler.reconcile()
-        assert manager.get_status("healthy").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("healthy")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
         assert result.drifted == 0
 
     @pytest.mark.asyncio
@@ -321,7 +341,9 @@ class TestReconcileHealthCheck:
         await manager.mount("sick")
 
         result = await reconciler.reconcile()
-        assert manager.get_status("sick").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("sick")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
         assert result.drifted >= 1
 
     @pytest.mark.asyncio
@@ -345,7 +367,9 @@ class TestReconcileHealthCheck:
         await manager.mount("slow")
 
         await reconciler.reconcile()
-        assert manager.get_status("slow").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("slow")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
     @pytest.mark.asyncio
     async def test_stateless_brick_skips_health_check(
@@ -357,7 +381,9 @@ class TestReconcileHealthCheck:
         await manager.mount("pay")
 
         result = await reconciler.reconcile()
-        assert manager.get_status("pay").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("pay")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
         assert result.drifted == 0
 
 
@@ -509,11 +535,15 @@ class TestReconcileIntegration:
         manager.register("search", brick, protocol_name="SP")
 
         await manager.mount_all()
-        assert manager.get_status("search").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
         # Reconciler fixes it
         result = await reconciler.reconcile()
-        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
         assert result.actions_taken >= 1
 
     @pytest.mark.asyncio
@@ -541,12 +571,18 @@ class TestReconcileIntegration:
 
         # Reconcile — A should recover
         await reconciler.reconcile()
-        assert manager.get_status("a").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
         # If B was still REGISTERED, another pass mounts it
-        if manager.get_status("b").state != BrickState.ACTIVE:  # type: ignore[union-attr]
+        _s = manager.get_status("b")
+        assert _s is not None
+        if _s.state != BrickState.ACTIVE:
             await reconciler.reconcile()
-        assert manager.get_status("b").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
     @pytest.mark.asyncio
     async def test_reconcile_returns_correct_counts(
@@ -628,3 +664,69 @@ class TestConcurrentReconcile:
         status = manager.get_status("shared")
         assert status is not None
         assert status.state in (BrickState.ACTIVE, BrickState.FAILED)
+
+
+# ---------------------------------------------------------------------------
+# TestReconcileUnmounted — UNMOUNTED drift handling (Issue #2363)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileUnmounted:
+    """Test reconciler handling of UNMOUNTED state."""
+
+    @pytest.mark.asyncio
+    async def test_unmounted_enabled_triggers_mount(
+        self, manager: BrickLifecycleManager, reconciler: BrickReconciler
+    ) -> None:
+        """UNMOUNTED + enabled → reconciler should mount (DriftAction.MOUNT)."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+        await manager.unmount("search")
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+
+        result = await reconciler.reconcile()
+        # Reconciler should have detected drift and remounted
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+        assert result.drifted >= 1
+        assert result.actions_taken >= 1
+
+    @pytest.mark.asyncio
+    async def test_unmounted_disabled_no_drift(
+        self, manager: BrickLifecycleManager, reconciler: BrickReconciler
+    ) -> None:
+        """UNMOUNTED + disabled → no drift (reconciler should skip)."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+        await manager.unmount("search")
+
+        from dataclasses import replace
+
+        entry = manager._bricks["search"]
+        entry.spec = replace(entry.spec, enabled=False)
+
+        result = await reconciler.reconcile()
+        drifts = [d for d in result.drifts if d.brick_name == "search"]
+        assert len(drifts) == 0
+
+    @pytest.mark.asyncio
+    async def test_reconciler_auto_remounts_unmounted(
+        self, manager: BrickLifecycleManager, reconciler: BrickReconciler
+    ) -> None:
+        """Reconciler should auto-remount UNMOUNTED bricks that should be active."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+        await manager.unmount("search")
+
+        # Second start call succeeds
+        await reconciler.reconcile()
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+        assert brick.start.await_count == 2

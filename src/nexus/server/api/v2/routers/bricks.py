@@ -1,13 +1,15 @@
-"""Brick lifecycle REST API (Issue #1704).
+"""Brick lifecycle REST API (Issue #1704, #2363).
 
 Endpoints for brick health monitoring and runtime hot-swap.
-Requires admin authentication for mount/unmount operations.
+Requires admin authentication for mount/unmount/unregister operations.
 
 Endpoints:
     GET  /api/v2/bricks/health — Aggregated brick health report
     GET  /api/v2/bricks/{name} — Individual brick status
-    POST /api/v2/bricks/{name}/mount — Mount a registered brick at runtime
+    POST /api/v2/bricks/{name}/mount — Mount a registered/unmounted brick at runtime
     POST /api/v2/bricks/{name}/unmount — Unmount an active brick at runtime
+    POST /api/v2/bricks/{name}/remount — Re-mount an unmounted brick
+    POST /api/v2/bricks/{name}/unregister — Unregister an unmounted brick (terminal)
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ class BrickStatusResponse(BaseModel):
     error: str | None = None
     started_at: float | None = None
     stopped_at: float | None = None
+    unmounted_at: float | None = None
 
 
 class BrickHealthResponse(BaseModel):
@@ -190,6 +193,7 @@ async def brick_health(
                 error=s.error,
                 started_at=s.started_at,
                 stopped_at=s.stopped_at,
+                unmounted_at=s.unmounted_at,
             )
             for s in report.bricks
         ],
@@ -212,6 +216,7 @@ async def brick_status(
         error=status.error,
         started_at=status.started_at,
         stopped_at=status.stopped_at,
+        unmounted_at=status.unmounted_at,
     )
 
 
@@ -286,4 +291,59 @@ async def reset_brick(
     return ResetBrickResponse(
         name=name,
         state=new_status.state.value if new_status else "unknown",
+    )
+
+
+@router.post("/{name}/remount", response_model=BrickActionResponse)
+async def remount_brick(
+    name: str,
+    manager: Any = Depends(_get_lifecycle_manager),
+) -> BrickActionResponse:
+    """Re-mount an UNMOUNTED brick at runtime.
+
+    The brick must be in UNMOUNTED state. Equivalent to calling mount on an
+    unmounted brick.  Fires PRE_MOUNT/POST_MOUNT hooks.
+    """
+    status = manager.get_status(name)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Brick {name!r} not found")
+
+    try:
+        await manager.remount(name)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    new_status = manager.get_status(name)
+    return BrickActionResponse(
+        name=name,
+        action="remount",
+        state=new_status.state.value if new_status else "unknown",
+        error=new_status.error if new_status else None,
+    )
+
+
+@router.post("/{name}/unregister", response_model=BrickActionResponse)
+async def unregister_brick(
+    name: str,
+    manager: Any = Depends(_get_lifecycle_manager),
+) -> BrickActionResponse:
+    """Unregister an UNMOUNTED brick (remove from registry).
+
+    The brick must be in UNMOUNTED state. This is a terminal action —
+    the brick is removed and cannot be re-mounted.
+    Fires PRE_UNREGISTER/POST_UNREGISTER hooks.
+    """
+    status = manager.get_status(name)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Brick {name!r} not found")
+
+    try:
+        await manager.unregister(name)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    return BrickActionResponse(
+        name=name,
+        action="unregister",
+        state="unregistered",
     )

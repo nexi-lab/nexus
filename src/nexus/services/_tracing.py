@@ -29,7 +29,7 @@ def lazy_tracer(name: str) -> tuple:
             return _tracer[0]
         _resolved[0] = True
         try:
-            from nexus.server.telemetry import get_tracer as _gt
+            from nexus.lib.telemetry import get_tracer as _gt
 
             _tracer[0] = _gt(name)
         except Exception:

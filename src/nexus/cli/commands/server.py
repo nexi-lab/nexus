@@ -979,8 +979,8 @@ def serve(
 
             from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.factory._record_store import create_record_store
             from nexus.server.auth.factory import DiscriminatingAuthProvider
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = get_database_url()
             if not db_url:
@@ -1001,7 +1001,7 @@ def serve(
                     "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
                 )
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             session_factory = _record_store.session_factory
 
             # Create composite provider that routes tokens to appropriate handler
@@ -1022,7 +1022,7 @@ def serve(
             import os
 
             from nexus.auth.providers.database_local import DatabaseLocalAuth
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.factory._record_store import create_record_store
 
             db_url = get_database_url()
             if not db_url:
@@ -1041,7 +1041,7 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             session_factory = _record_store.session_factory
             # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
             auth_provider = DatabaseLocalAuth(
@@ -1144,9 +1144,9 @@ def serve(
 
             from sqlalchemy import table
 
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.factory._record_store import create_record_store
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             engine = _record_store.engine
 
             # List of tables to clear (in dependency order).
@@ -1247,13 +1247,13 @@ def serve(
             from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.bricks.rebac.entity_registry import EntityRegistry
             from nexus.constants import ROOT_ZONE_ID
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.factory._record_store import create_record_store
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             Session = _record_store.session_factory
 
             # Register user in entity registry (for agent permission inheritance)
-            entity_registry = EntityRegistry(Session)
+            entity_registry = EntityRegistry(_record_store)
             zone_id = ROOT_ZONE_ID
 
             # User might already exist, ignore errors

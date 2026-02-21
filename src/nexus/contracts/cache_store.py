@@ -182,22 +182,22 @@ class NullCacheStore(CacheStoreABC):
     NullCacheStore makes "no cache" invisible to the kernel.
     """
 
-    async def get(self, _key: str) -> bytes | None:
+    async def get(self, key: str) -> bytes | None:  # noqa: ARG002
         return None
 
-    async def set(self, _key: str, _value: bytes, _ttl: int | None = None) -> None:
+    async def set(self, key: str, value: bytes, ttl: int | None = None) -> None:  # noqa: ARG002
         pass
 
-    async def delete(self, _key: str) -> bool:
+    async def delete(self, key: str) -> bool:  # noqa: ARG002
         return False
 
-    async def exists(self, _key: str) -> bool:
+    async def exists(self, key: str) -> bool:  # noqa: ARG002
         return False
 
-    async def delete_by_pattern(self, _pattern: str) -> int:
+    async def delete_by_pattern(self, pattern: str) -> int:  # noqa: ARG002
         return 0
 
-    async def keys_by_pattern(self, _pattern: str) -> list[str]:
+    async def keys_by_pattern(self, pattern: str) -> list[str]:  # noqa: ARG002
         return []
 
     async def publish(self, _channel: str, _message: bytes) -> int:

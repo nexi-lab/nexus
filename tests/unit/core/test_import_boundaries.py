@@ -194,7 +194,7 @@ class TestFourStoragePillars:
         ("nexus.core.metastore", "MetastoreABC"),
         ("nexus.backends.backend", "Backend"),
         ("nexus.storage.record_store", "RecordStoreABC"),
-        ("nexus.core.cache_store", "CacheStoreABC"),
+        ("nexus.contracts.cache_store", "CacheStoreABC"),
     ]
 
     @pytest.mark.parametrize(

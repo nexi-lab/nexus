@@ -21,7 +21,6 @@ References:
 """
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
-from nexus.core.persistent_view_store import PersistentView, PersistentViewStore
 from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
@@ -50,8 +49,6 @@ __all__ = [
     "NullCacheStore",
     "OAuthCapableProtocol",
     "PassthroughProtocol",
-    "PersistentView",
-    "PersistentViewStore",
     "ResolvedPath",
     "SearchableConnector",
     "StreamingProtocol",

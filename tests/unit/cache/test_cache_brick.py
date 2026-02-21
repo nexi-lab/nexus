@@ -211,6 +211,7 @@ class TestCacheBrickIsolation:
             pathlib.Path(__file__).parent.parent.parent.parent
             / "src"
             / "nexus"
+            / "bricks"
             / "cache"
             / "brick.py"
         )

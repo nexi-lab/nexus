@@ -8,6 +8,44 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _resolve_embedding_provider() -> Any:
+    """Resolve the embedding provider from the search brick (factory-layer DI)."""
+    try:
+        from nexus.bricks.search.embeddings import create_embedding_provider
+
+        return create_embedding_provider(provider="openrouter")
+    except Exception:
+        logger.debug("[FACTORY] Embedding provider unavailable, semantic search disabled")
+        return None
+
+
+def _resolve_graph_store_class() -> type[Any] | None:
+    """Resolve the GraphStore class from the search brick (factory-layer DI)."""
+    try:
+        from nexus.bricks.search.graph_store import GraphStore
+
+        return GraphStore
+    except Exception:
+        logger.debug("[FACTORY] GraphStore class unavailable, graph storage disabled")
+        return None
+
+
+def _resolve_vector_db(engine: Any) -> Any:
+    """Resolve VectorDatabase from the search brick (factory-layer DI)."""
+    if engine is None:
+        return None
+    try:
+        from nexus.bricks.search.vector_db import VectorDatabase
+
+        _is_pg = not str(engine.url).startswith("sqlite")
+        vdb = VectorDatabase(engine, is_postgresql=_is_pg)
+        vdb.initialize()
+        return vdb
+    except Exception as exc:
+        logger.debug("[FACTORY] VectorDatabase unavailable: %s", exc)
+        return None
+
+
 def create_memory_service(nx: Any) -> Any:
     """Create MemoryService for server-layer RPC dispatch (Issue #12).
 
@@ -27,6 +65,10 @@ def create_memory_service(nx: Any) -> Any:
         _main_cap = getattr(memory_cfg, "main_capacity", 1000) if memory_cfg else 1000
         _recall_age = getattr(memory_cfg, "recall_max_age_hours", 168) if memory_cfg else 168
 
+        # --- DI: resolve cross-brick dependencies at the factory layer ---
+        _embedding_provider = _resolve_embedding_provider()
+        _graph_store_class = _resolve_graph_store_class()
+
         def _create_memory(
             zone_id: str | None = None,
             user_id: str | None = None,
@@ -41,6 +83,7 @@ def create_memory_service(nx: Any) -> Any:
                 from nexus.bricks.memory.memory_with_paging import MemoryWithPaging
 
                 engine = nx.SessionLocal.kw.get("bind") if nx.SessionLocal else None
+                vector_db = _resolve_vector_db(engine)
                 return MemoryWithPaging(
                     session=session,
                     backend=nx.backend,
@@ -53,6 +96,7 @@ def create_memory_service(nx: Any) -> Any:
                     recall_max_age_hours=_recall_age,
                     engine=engine,
                     session_factory=nx.SessionLocal,
+                    vector_db=vector_db,
                 )
             else:
                 from nexus.bricks.memory.service import Memory
@@ -64,6 +108,8 @@ def create_memory_service(nx: Any) -> Any:
                     user_id=user_id,
                     agent_id=agent_id,
                     entity_registry=nx._entity_registry,
+                    embedding_provider=_embedding_provider,
+                    graph_store_class=_graph_store_class,
                 )
 
         from nexus.services.memory_service import MemoryService

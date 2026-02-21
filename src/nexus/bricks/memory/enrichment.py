@@ -189,17 +189,6 @@ class EnrichmentPipeline:
     ) -> None:
         """Generate embedding vector (#406)."""
         provider = embedding_provider
-        if provider is None:
-            try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                try:
-                    provider = create_embedding_provider(provider="openrouter")
-                except Exception as e:
-                    logger.debug("Failed to create embedding provider: %s", e)
-            except ImportError:
-                return
-
         if not provider:
             return
 

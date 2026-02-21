@@ -8,6 +8,7 @@ so ``ProxyBrick`` doesn't depend on the concrete ``OfflineQueue`` (SQLite).
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import time
 from collections import deque
@@ -26,6 +27,9 @@ class QueuedOperation:
     payload_ref: str | None
     retry_count: int
     created_at: float
+    idempotency_key: str | None = None
+    vector_clock: str | None = None
+    priority: int = 0
 
 
 class QueueFullError(Exception):
@@ -46,6 +50,8 @@ class OfflineQueueProtocol(Protocol):
         args: tuple[Any, ...] = (),
         kwargs: dict[str, Any] | None = None,
         payload_ref: str | None = None,
+        vector_clock: str | None = None,
+        priority: int = 0,
     ) -> int: ...
 
     async def dequeue_batch(self, limit: int = 50) -> list[QueuedOperation]: ...
@@ -80,12 +86,22 @@ class InMemoryQueue:
     async def initialize(self) -> None:
         """No-op for in-memory queue. Safe to call multiple times."""
 
+    @staticmethod
+    def _generate_idempotency_key(method: str, kwargs: dict[str, Any] | None) -> str:
+        """Derive a deterministic idempotency key from method + kwargs."""
+        import json
+
+        canonical = json.dumps({"m": method, "k": kwargs or {}}, sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:32]
+
     async def enqueue(
         self,
         method: str,
         args: tuple[Any, ...] = (),
         kwargs: dict[str, Any] | None = None,
         payload_ref: str | None = None,
+        vector_clock: str | None = None,
+        priority: int = 0,
     ) -> int:
         """Add an operation to the queue. Returns the operation id."""
         import json
@@ -96,6 +112,7 @@ class InMemoryQueue:
             )
 
         op_id = next(self._counter)
+        idem_key = self._generate_idempotency_key(method, kwargs)
         op = QueuedOperation(
             id=op_id,
             method=method,
@@ -104,6 +121,9 @@ class InMemoryQueue:
             payload_ref=payload_ref,
             retry_count=0,
             created_at=time.time(),
+            idempotency_key=idem_key,
+            vector_clock=vector_clock,
+            priority=priority,
         )
         self._pending.append(op)
         return op_id
@@ -135,7 +155,6 @@ class InMemoryQueue:
         new_pending: deque[QueuedOperation] = deque()
         for op in self._pending:
             if op.id == op_id:
-                # Create new op with incremented retry count
                 updated = QueuedOperation(
                     id=op.id,
                     method=op.method,
@@ -144,6 +163,9 @@ class InMemoryQueue:
                     payload_ref=op.payload_ref,
                     retry_count=op.retry_count + 1,
                     created_at=op.created_at,
+                    idempotency_key=op.idempotency_key,
+                    vector_clock=op.vector_clock,
+                    priority=op.priority,
                 )
                 new_pending.append(updated)
             else:

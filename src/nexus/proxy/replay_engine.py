@@ -54,13 +54,10 @@ class ReplayEngine:
         self._poll_interval = poll_interval
         self._stopped = False
         self._wake = asyncio.Event()
+        self._replayed_keys: set[str] = set()
 
     def wake(self) -> None:
-        """Signal the replay loop to check the queue immediately.
-
-        Called by ``ProxyBrick`` after enqueueing an operation so that
-        replay starts without waiting for the next poll interval.
-        """
+        """Signal the replay loop to check the queue immediately."""
         self._wake.set()
 
     async def run(self) -> None:
@@ -68,10 +65,9 @@ class ReplayEngine:
         while not self._stopped:
             try:
                 # Wait for wake signal or poll interval, whichever comes first
-                with contextlib.suppress(asyncio.TimeoutError):
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._wake.wait(), timeout=self._poll_interval)
                 self._wake.clear()
-
                 if self._circuit.is_open:
                     continue
 
@@ -79,9 +75,26 @@ class ReplayEngine:
                 if not batch:
                     continue
 
+                # Re-check after dequeue — circuit may have opened during the async call
+                if self._circuit.is_open:
+                    continue
+
                 logger.info("Replaying %d queued operations", len(batch))
                 for op in batch:
+                    # Re-check before each replay to avoid racing with circuit state changes
+                    if self._circuit.is_open:
+                        logger.warning("Circuit opened during replay — stopping batch")
+                        break
+
                     try:
+                        # Idempotency check: skip if already replayed
+                        if op.idempotency_key and op.idempotency_key in self._replayed_keys:
+                            logger.info(
+                                "Skipping duplicate op %d (key=%s)", op.id, op.idempotency_key[:8]
+                            )
+                            await self._queue.mark_done(op.id)
+                            continue
+
                         kwargs = json.loads(op.kwargs_json)
                         if not isinstance(kwargs, dict):
                             logger.error("Invalid kwargs_json for op %d: not a dict", op.id)
@@ -90,6 +103,8 @@ class ReplayEngine:
                         await self._transport.call(op.method, params=kwargs)
                         await self._queue.mark_done(op.id)
                         await self._circuit.record_success()
+                        if op.idempotency_key:
+                            self._replayed_keys.add(op.idempotency_key)
                     except json.JSONDecodeError as jexc:
                         logger.error("Failed to decode op %d: %s", op.id, jexc)
                         await self._queue.mark_dead_letter(op.id)

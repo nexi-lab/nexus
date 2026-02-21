@@ -152,7 +152,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "LLMServiceProtocol",
         "nexus.services.protocols.llm",
-        "nexus.services.llm.llm_service.LLMService",
+        "nexus.bricks.llm.llm_service.LLMService",
         True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
     ),
     # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
@@ -183,7 +183,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "PermissionProtocol",
         "nexus.services.protocols.permission",
-        "nexus.services.rebac.rebac_service.ReBACService",
+        "nexus.bricks.rebac.rebac_service.ReBACService",
         True,  # Fixed: protocol updated to match async ReBACService interface
     ),
     # ── ShareLinkService extracted (Issue #1387) ────────────────────────
@@ -209,7 +209,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "SnapshotServiceProtocol",
         "nexus.services.protocols.snapshot",
-        "nexus.services.snapshot.service.TransactionalSnapshotService",
+        "nexus.bricks.snapshot.service.TransactionalSnapshotService",
         True,
     ),
     # ── Async adapter protocols (Issue #1440) ─────────────────────────
@@ -235,7 +235,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "MCPProtocol",
         "nexus.services.protocols.mcp",
-        "nexus.services.mcp.mcp_service.MCPService",
+        "nexus.bricks.mcp.mcp_service.MCPService",
         True,
     ),
     (

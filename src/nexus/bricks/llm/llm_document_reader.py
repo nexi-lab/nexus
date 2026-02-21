@@ -24,8 +24,10 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.bricks.llm.provider import LLMProvider
-    from nexus.bricks.search.protocols import SearchableProtocol as SemanticSearch
     from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+
+# SemanticSearch typed as Any — avoids cross-brick import from search brick.
+SemanticSearch = Any
 
 
 @dataclass

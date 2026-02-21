@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.snapshot.registry import TransactionRegistry
-from nexus.services.snapshot.service import TransactionalSnapshotService
+from nexus.bricks.snapshot.registry import TransactionRegistry
+from nexus.bricks.snapshot.service import TransactionalSnapshotService
 
 
 class FakeSession:

@@ -102,7 +102,7 @@ class TestMCPServiceSmoke:
 
     def test_mcp_service_init(self):
         """Test MCPService can be instantiated."""
-        from nexus.services.mcp.mcp_service import MCPService
+        from nexus.bricks.mcp.mcp_service import MCPService
 
         service = MCPService(filesystem=None)
         assert service._filesystem is None
@@ -110,8 +110,8 @@ class TestMCPServiceSmoke:
     @pytest.mark.asyncio
     async def test_mcp_mount_validation(self):
         """Test mcp_mount validates inputs."""
+        from nexus.bricks.mcp.mcp_service import MCPService
         from nexus.contracts.exceptions import ValidationError
-        from nexus.services.mcp.mcp_service import MCPService
 
         service = MCPService(filesystem=None)
 
@@ -130,14 +130,14 @@ class TestLLMServiceSmoke:
 
     def test_llm_service_init(self):
         """Test LLMService can be instantiated."""
-        from nexus.services.llm.llm_service import LLMService
+        from nexus.bricks.llm.llm_service import LLMService
 
         service = LLMService(nexus_fs=None)
         assert service.nexus_fs is None
 
     def test_create_llm_reader_raises_without_nexus_fs(self):
         """Test create_llm_reader raises if nexus_fs not set."""
-        from nexus.services.llm.llm_service import LLMService
+        from nexus.bricks.llm.llm_service import LLMService
 
         service = LLMService(nexus_fs=None)
 
@@ -306,7 +306,7 @@ class TestReBACServiceSmoke:
 
     def test_rebac_service_init(self):
         """Test ReBACService can be instantiated."""
-        from nexus.services.rebac.rebac_service import ReBACService
+        from nexus.bricks.rebac.rebac_service import ReBACService
 
         service = ReBACService(rebac_manager=None, enforce_permissions=False)
         assert service._rebac_manager is None
@@ -315,7 +315,7 @@ class TestReBACServiceSmoke:
     @pytest.mark.asyncio
     async def test_rebac_check_without_manager(self):
         """Test rebac_check raises without manager."""
-        from nexus.services.rebac.rebac_service import ReBACService
+        from nexus.bricks.rebac.rebac_service import ReBACService
 
         service = ReBACService(rebac_manager=None, enforce_permissions=False)
 
@@ -340,12 +340,12 @@ class TestServiceIntegrationSmoke:
         """Test that all services can be instantiated together."""
         from unittest.mock import MagicMock
 
+        from nexus.bricks.llm.llm_service import LLMService
+        from nexus.bricks.mcp.mcp_service import MCPService
+        from nexus.bricks.rebac.rebac_service import ReBACService
         from nexus.bricks.skills.skill_service_adapter import SkillService
-        from nexus.services.llm.llm_service import LLMService
-        from nexus.services.mcp.mcp_service import MCPService
         from nexus.services.mount.mount_service import MountService
         from nexus.services.oauth.oauth_service import OAuthService
-        from nexus.services.rebac.rebac_service import ReBACService
         from nexus.services.search.search_service import SearchService
         from nexus.services.versioning.version_service import VersionService
 

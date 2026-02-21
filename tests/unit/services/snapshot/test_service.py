@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.snapshot.service import (
+from nexus.bricks.snapshot.service import (
     TransactionalSnapshotService,
     TransactionConflictError,
     TransactionNotActiveError,

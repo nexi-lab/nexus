@@ -16,7 +16,7 @@ References:
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.services.reputation.reputation_records import (
+    from nexus.bricks.reputation.reputation_records import (
         DisputeRecord,
         ReputationEvent,
         ReputationScore,

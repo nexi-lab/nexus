@@ -9,7 +9,7 @@ Tests cover:
 
 import time
 
-from nexus.security.output_validator import validate_llm_output
+from nexus.lib.security.output_validator import validate_llm_output
 
 
 class TestSystemPromptEcho:

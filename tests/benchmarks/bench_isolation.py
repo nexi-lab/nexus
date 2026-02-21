@@ -149,7 +149,7 @@ def bench(label: str, func: Any, n: int = 1000) -> dict[str, float]:
 
 
 def main() -> None:
-    from nexus.isolation import IsolatedBackend, IsolationConfig
+    from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
     print(f"Python {sys.version}")
     print()

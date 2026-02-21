@@ -9,8 +9,8 @@ This module provides Pydantic schemas for Gmail operations:
 Error definitions are used by TraitBasedMixin for helpful error messages.
 """
 
-from nexus.connectors.gmail.errors import ERROR_REGISTRY
-from nexus.connectors.gmail.schemas import (
+from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
+from nexus.backends.connectors.gmail.schemas import (
     Attachment,
     DraftEmailSchema,
     ForwardEmailSchema,

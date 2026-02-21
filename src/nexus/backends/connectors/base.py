@@ -13,7 +13,7 @@ import logging
 import posixpath
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
@@ -21,9 +21,9 @@ from pydantic import ValidationError as PydanticValidationError
 from nexus.contracts.exceptions import ValidationError as CoreValidationError
 
 if TYPE_CHECKING:
+    from nexus.backends.connectors.error_formatter import SkillErrorFormatter
+    from nexus.backends.connectors.schema_generator import SkillDocGenerator
     from nexus.bricks.skills.protocols import SkillRegistryProtocol
-    from nexus.connectors.error_formatter import SkillErrorFormatter
-    from nexus.connectors.schema_generator import SkillDocGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ class SkillDocMixin:
     def _get_doc_generator(self) -> "SkillDocGenerator":
         """Get or create the cached SkillDocGenerator."""
         if self._cached_doc_generator is None:
-            from nexus.connectors.schema_generator import SkillDocGenerator
+            from nexus.backends.connectors.schema_generator import SkillDocGenerator
 
             self._cached_doc_generator = SkillDocGenerator(
                 skill_name=self.SKILL_NAME,
@@ -249,7 +249,7 @@ class SkillDocMixin:
     def _get_error_formatter(self) -> "SkillErrorFormatter":
         """Get or create the cached SkillErrorFormatter."""
         if self._cached_error_formatter is None:
-            from nexus.connectors.error_formatter import SkillErrorFormatter
+            from nexus.backends.connectors.error_formatter import SkillErrorFormatter
 
             self._cached_error_formatter = SkillErrorFormatter(
                 skill_name=self.SKILL_NAME,
@@ -324,7 +324,7 @@ class ValidatedMixin:
         schema = self.SCHEMAS.get(operation)
         if not schema:
             # No schema defined - skip validation
-            return data  # type: ignore
+            return cast("BaseModel", data)
 
         try:
             return schema.model_validate(data)
@@ -339,7 +339,7 @@ class ValidatedMixin:
             if formatter_fn is not None:
                 formatter = formatter_fn()
             else:
-                from nexus.connectors.error_formatter import SkillErrorFormatter
+                from nexus.backends.connectors.error_formatter import SkillErrorFormatter
 
                 skill_name = getattr(self, "SKILL_NAME", "")
                 mount_path = getattr(self, "_mount_path", "") or ""
@@ -431,7 +431,7 @@ class TraitBasedMixin:
 
     def _trait_error(self, code: str, message: str, section: str, fix: str) -> ValidationError:
         """Create ValidationError for trait validation failure."""
-        from nexus.connectors.error_formatter import SkillErrorFormatter
+        from nexus.backends.connectors.error_formatter import SkillErrorFormatter
 
         skill_name = getattr(self, "SKILL_NAME", "")
         mount_path = getattr(self, "_mount_path", "") or ""

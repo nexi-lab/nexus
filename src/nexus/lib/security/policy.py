@@ -5,7 +5,7 @@ configured per-deployment without code changes.
 
 Usage::
 
-    from nexus.security.policy import InjectionAction, InjectionPolicyConfig
+    from nexus.lib.security.policy import InjectionAction, InjectionPolicyConfig
 
     # Block high-severity, log everything else
     policy = InjectionPolicyConfig(

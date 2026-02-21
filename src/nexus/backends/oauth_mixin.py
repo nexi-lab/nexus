@@ -38,7 +38,9 @@ class OAuthConnectorMixin:
             user_email: Optional user email for OAuth lookup. None = use context.
             provider: OAuth provider name from config
         """
-        from nexus.bricks.auth.oauth.token_manager import TokenManager
+        import importlib as _il
+
+        TokenManager = _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
 
         self.token_manager_db = token_manager_db
         self.user_email = user_email

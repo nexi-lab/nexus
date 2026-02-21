@@ -15,8 +15,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.contracts.types import OperationContext
-    from nexus.core.metastore import MetastoreABC
-    from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 
@@ -32,7 +30,7 @@ class WirableFS(Protocol):
     """
 
     @property
-    def metadata(self) -> "MetastoreABC": ...
+    def metadata(self) -> Any: ...  # MetastoreABC (core tier — typed as Any to avoid upward import)
 
     @property
     def backend(self) -> "Backend": ...
@@ -40,7 +38,7 @@ class WirableFS(Protocol):
     def read(self, path: str, **kwargs: Any) -> bytes: ...
 
     _enforce_permissions: bool
-    _permission_enforcer: "PermissionEnforcerProtocol | None"
+    _permission_enforcer: Any  # PermissionEnforcerProtocol (services tier — typed as Any)
     _record_store: "RecordStoreABC | None"
     _default_context: "OperationContext | None"
     _config: Any

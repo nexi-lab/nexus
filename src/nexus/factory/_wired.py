@@ -61,7 +61,7 @@ def _boot_wired_services(
     # --- ReBACService: Permission and access control operations ---
     rebac_service: Any = None
     try:
-        from nexus.services.rebac.rebac_service import ReBACService
+        from nexus.bricks.rebac.rebac_service import ReBACService
 
         rebac_service = ReBACService(
             rebac_manager=system_services.rebac_manager,
@@ -79,7 +79,7 @@ def _boot_wired_services(
     mcp_service: Any = None
     if _on("mcp"):
         try:
-            from nexus.services.mcp.mcp_service import MCPService
+            from nexus.bricks.mcp.mcp_service import MCPService
 
             mcp_service = MCPService(filesystem=nx)
             logger.debug("[BOOT:WIRED] MCPService created")
@@ -93,7 +93,7 @@ def _boot_wired_services(
     llm_subsystem: Any = None
     if _on("llm"):
         try:
-            from nexus.services.llm.llm_service import LLMService
+            from nexus.bricks.llm.llm_service import LLMService
 
             llm_service = LLMService(nexus_fs=nx)
 

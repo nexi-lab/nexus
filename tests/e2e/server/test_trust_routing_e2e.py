@@ -19,9 +19,9 @@ from nexus.bricks.delegation.models import (
 from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.bricks.reputation.reputation_service import ReputationService
 from nexus.constants import ROOT_ZONE_ID
 from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.reputation.reputation_service import ReputationService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

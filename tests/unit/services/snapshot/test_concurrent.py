@@ -6,7 +6,7 @@ Tests: Registry stress, CAS hold concurrent, Conflict detection,
 
 from concurrent.futures import ThreadPoolExecutor
 
-from nexus.services.snapshot.registry import TransactionRegistry
+from nexus.bricks.snapshot.registry import TransactionRegistry
 
 
 class TestRegistryStress:

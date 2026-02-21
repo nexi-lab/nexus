@@ -117,6 +117,7 @@ class ProxyBrick:
             transport=self._transport,
             circuit=self._circuit,
             health_check_url=self._config.reconnect_health_check_url,
+            replay_wake=self._wake_replay,
         )
         await self._edge_sync.start()
         logger.info("ProxyBrick started for %s", self._config.remote_url)

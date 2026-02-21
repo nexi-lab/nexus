@@ -32,6 +32,10 @@ class VectorClock:
 
     counters: dict[str, int] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Defensive copy to prevent external mutation of the frozen clock."""
+        object.__setattr__(self, "counters", dict(self.counters))
+
     def increment(self, node_id: str) -> VectorClock:
         """Return a new VectorClock with the given node's counter incremented."""
         new_counters = dict(self.counters)

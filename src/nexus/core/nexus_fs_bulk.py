@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
     from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.metastore import MetastoreABC
-    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
     from nexus.core.router import PathRouter
     from nexus.core.vfs_hooks import VFSHookPipeline
 

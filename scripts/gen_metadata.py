@@ -5,7 +5,7 @@ SSOT: proto/nexus/core/metadata.proto is the single source of truth
 for FileMetadata fields. This script generates:
 
   - src/nexus/core/metadata_pb2.py         (protobuf stubs via grpc_tools.protoc)
-  - src/nexus/core/metadata.py             (FileMetadata + PaginatedResult data classes)
+  - src/nexus/contracts/metadata.py        (FileMetadata + PaginatedResult data classes)
   - src/nexus/core/metastore.py            (MetastoreABC + AsyncMetastoreWrapper)
   - src/nexus/core/_compact_generated.py   (CompactFileMetadata + interning)
 
@@ -22,7 +22,7 @@ from pathlib import Path
 # Resolve paths relative to repo root
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROTO_PATH = REPO_ROOT / "proto" / "nexus" / "core" / "metadata.proto"
-METADATA_OUT = REPO_ROOT / "src" / "nexus" / "core" / "metadata.py"
+METADATA_OUT = REPO_ROOT / "src" / "nexus" / "contracts" / "metadata.py"
 METASTORE_OUT = REPO_ROOT / "src" / "nexus" / "core" / "metastore.py"
 COMPACT_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_compact_generated.py"
 MAPPER_OUT = REPO_ROOT / "src" / "nexus" / "storage" / "_metadata_mapper_generated.py"
@@ -621,7 +621,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 # --- String interning ---
 # Single global pool: string -> int ID, and reverse lookup.
@@ -680,7 +680,7 @@ class CompactFileMetadata:
 
     def to_file_metadata(self) -> FileMetadata:
         """Convert back to FileMetadata."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         return FileMetadata(
 {fm_block}
@@ -816,7 +816,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -879,7 +879,7 @@ class MetadataMapper:
     @staticmethod
     def from_proto(proto: Any) -> FileMetadata:
         """Convert protobuf message to FileMetadata dataclass."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
 {datetime_parse_block}
 
@@ -899,7 +899,7 @@ class MetadataMapper:
     @staticmethod
     def from_json(obj: dict[str, Any]) -> FileMetadata:
         """Convert JSON dict to FileMetadata dataclass."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         # Migration: convert legacy is_directory -> entry_type
         if "is_directory" in obj:
@@ -1051,11 +1051,11 @@ def audit_ssot_coverage() -> list[str]:
     tests_dir = REPO_ROOT / "tests"
 
     # Match single-line and multi-line imports from generated/managed modules
-    # e.g. from nexus.core.metadata import FileMetadata, PaginatedResult
+    # e.g. from nexus.contracts.metadata import FileMetadata, PaginatedResult
     # e.g. from nexus.core.metastore import MetastoreABC
     # e.g. from nexus.core._compact_generated import CompactFileMetadata
     import_re = re.compile(
-        r"from\s+nexus\.core\.(metadata|metastore|_compact_generated)\s+import\s+"
+        r"from\s+nexus\.(?:contracts|core)\.(metadata|metastore|_compact_generated)\s+import\s+"
         r"(?:\(([^)]*)\)|(.+?))\s*$",
         re.MULTILINE | re.DOTALL,
     )

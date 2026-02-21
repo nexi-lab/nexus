@@ -18,7 +18,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.metadata import DT_DIR, DT_MOUNT, FileMetadata
+from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
     from nexus.storage.raft_metadata_store import RaftMetadataStore

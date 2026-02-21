@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from nexus.contracts.exceptions import AuditLogError
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_syncer import RecordStoreWriteObserver

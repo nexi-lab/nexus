@@ -17,7 +17,7 @@ Usage:
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import CasResult, MetastoreABC
 
 

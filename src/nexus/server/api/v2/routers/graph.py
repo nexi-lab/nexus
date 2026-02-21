@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from nexus.server.dependencies import require_auth
@@ -42,7 +42,7 @@ class SubgraphRequest(BaseModel):
 # =============================================================================
 
 
-def _get_nexus_fs(request: Any) -> Any:
+def _get_nexus_fs(request: Request) -> Any:
     """Get NexusFS instance from app.state."""
     fs = getattr(request.app.state, "nexus_fs", None)
     if fs is None:
@@ -50,7 +50,7 @@ def _get_nexus_fs(request: Any) -> Any:
     return fs
 
 
-def _get_record_store(request: Any) -> Any:
+def _get_record_store(request: Request) -> Any:
     """Get RecordStore from app.state."""
     store = getattr(request.app.state, "record_store", None)
     if store is None:
@@ -58,7 +58,7 @@ def _get_record_store(request: Any) -> Any:
     return store
 
 
-def _get_async_read_session_factory(request: Any) -> Any:
+def _get_async_read_session_factory(request: Request) -> Any:
     """Get async read session factory for graph queries."""
     factory = getattr(request.app.state, "async_read_session_factory", None)
     if factory is not None:

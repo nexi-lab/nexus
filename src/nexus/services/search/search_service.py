@@ -786,7 +786,7 @@ class SearchService(SemanticSearchMixin):
         _rebac_manager: Any,
     ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
         """Non-recursive list using sparse directory index + Tiger bitmap."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         _preapproved_dirs: set[str] = set()
         _revision_before: int | None = None
@@ -1235,7 +1235,7 @@ class SearchService(SemanticSearchMixin):
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
-        from nexus.core.metadata import PaginatedResult
+        from nexus.contracts.metadata import PaginatedResult
         from nexus.lib.pagination import encode_cursor
 
         context = context or self._default_context

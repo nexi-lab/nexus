@@ -24,7 +24,7 @@ from grpc import aio as grpc_aio
 from nexus.raft import commands_pb2, transport_pb2, transport_pb2_grpc
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 

@@ -491,7 +491,7 @@ class SyncService:
             cached_entries: Pre-fetched change log entries (batch optimization)
             pending_upserts: Accumulator for batch upsert (batch optimization)
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         # Apply pattern filtering
         if not self._matches_patterns(virtual_path, ctx):
@@ -727,7 +727,7 @@ class SyncService:
             files_found: Set to track found paths
             paths_needing_tuples: List for batch tuple creation
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         files_found.add(virtual_path)
 

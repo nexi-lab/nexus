@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.types import OperationContext, Permission
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
     from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)

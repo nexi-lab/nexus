@@ -19,7 +19,7 @@ Completed by: #2152 (Move audit_strict_mode to dedicated AuditConfig)
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 
 @runtime_checkable

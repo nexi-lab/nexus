@@ -127,7 +127,7 @@ alembic downgrade -1
 
 ### Updated Data Models
 
-#### FileMetadata (`/src/nexus/core/metadata.py`)
+#### FileMetadata (`/src/nexus/contracts/metadata.py`)
 ```python
 @dataclass
 class FileMetadata:

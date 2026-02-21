@@ -17,7 +17,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from nexus.server.api.v2.models.locks import (
@@ -41,7 +41,7 @@ router = APIRouter(prefix="/api/v2/locks", tags=["locks"])
 # =============================================================================
 
 
-def _get_lock_manager(request: Any) -> Any:
+def _get_lock_manager(request: Request) -> Any:
     """Get the distributed lock manager from NexusFS, raising 503 if not configured."""
     fs = getattr(request.app.state, "nexus_fs", None)
     if fs is None:

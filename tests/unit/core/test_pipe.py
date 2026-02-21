@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from nexus.core.metadata import DT_PIPE, DT_REG, FileMetadata
+from nexus.contracts.metadata import DT_PIPE, DT_REG, FileMetadata
 from nexus.core.pipe import (
     PipeClosedError,
     PipeEmptyError,

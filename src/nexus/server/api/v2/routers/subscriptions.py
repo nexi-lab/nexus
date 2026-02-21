@@ -16,7 +16,7 @@ Ported from v1 with improvements:
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from nexus.server.dependencies import require_auth
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/v2/subscriptions", tags=["subscriptions"])
 # =============================================================================
 
 
-def _get_subscription_manager(request: Any) -> Any:
+def _get_subscription_manager(request: Request) -> Any:
     """Get SubscriptionManager from app.state, raising 503 if not available."""
     mgr = getattr(request.app.state, "subscription_manager", None)
     if mgr is None:

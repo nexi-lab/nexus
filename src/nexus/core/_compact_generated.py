@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 # --- String interning ---
 # Single global pool: string -> int ID, and reverse lookup.
@@ -101,7 +101,7 @@ class CompactFileMetadata:
 
     def to_file_metadata(self) -> "FileMetadata":
         """Convert back to FileMetadata."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         return FileMetadata(
             path=_resolve_required(self.path_id),

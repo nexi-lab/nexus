@@ -414,7 +414,7 @@ class TestReconcileLoop:
         await manager.mount("a")
 
         await reconciler.start()
-        await asyncio.sleep(0.15)  # Should fire 2-3 times
+        await asyncio.sleep(0.30)  # Should fire 2-3 times (generous for slow CI runners)
         await reconciler.stop()
         assert reconciler._reconcile_count >= 2
 

@@ -7,8 +7,8 @@ Implements:
   and ``subscribeToTask``
 
 This module handles only HTTP concerns (auth, body parsing, error
-wrapping).  Business logic lives in ``handlers.py`` and
-``streaming.py``.
+wrapping).  Business logic lives in ``nexus.bricks.a2a.handlers`` and
+``nexus.bricks.a2a.streaming``.
 """
 
 from __future__ import annotations
@@ -260,3 +260,62 @@ def _extract_agent_id(auth_result: dict[str, Any] | None) -> str | None:
     if auth_result:
         return auth_result.get("x_agent_id") or auth_result.get("subject_id")
     return None
+
+
+# ======================================================================
+# High-level factory (moved from nexus.bricks.a2a.__init__)
+# ======================================================================
+
+
+def create_a2a_router(
+    *,
+    nexus_fs: Any = None,
+    config: Any = None,
+    base_url: str | None = None,
+    auth_required: bool = False,
+    auth_fn: Any = None,
+    data_dir: str | None = None,
+    hook_engine: Any = None,
+) -> tuple[APIRouter, TaskManager]:
+    """Create the A2A protocol FastAPI router.
+
+    Args:
+        nexus_fs: NexusFS instance for backend operations.
+        config: NexusConfig instance for Agent Card generation.
+        base_url: Base URL for the Agent Card endpoint URL field.
+            If None, defaults to "http://localhost:2026".
+        auth_required: When True, all A2A operational endpoints
+            require a valid Authorization header.
+        auth_fn: Optional async callback ``(Request) -> dict | None``
+            for authentication.  Injected by the server layer.
+        data_dir: Server data directory.  When provided, A2A tasks
+            are persisted as MessageEnvelope JSON files under
+            ``{data_dir}/agents/{agent_id}/tasks/`` (§17.6 convergence).
+            When None, tasks are stored in-memory only.
+        hook_engine: Optional HookEngineProtocol instance for artifact
+            indexing hooks (Issue #1861).
+
+    Returns:
+        Tuple of (configured FastAPI APIRouter, TaskManager instance).
+    """
+    task_manager: TaskManager | None = None
+    if data_dir is not None:
+        from nexus.bricks.a2a.stores.local_driver import LocalStorageDriver
+        from nexus.bricks.a2a.stores.vfs import VFSTaskStore
+
+        storage = LocalStorageDriver(root=data_dir)
+        store = VFSTaskStore(storage=storage)
+        task_manager = TaskManager(store=store, hook_engine=hook_engine)
+
+    if task_manager is None:
+        task_manager = TaskManager(hook_engine=hook_engine)
+
+    router = build_router(
+        _nexus_fs=nexus_fs,
+        config=config,
+        base_url=base_url,
+        task_manager=task_manager,
+        auth_required=auth_required,
+        auth_fn=auth_fn,
+    )
+    return router, task_manager

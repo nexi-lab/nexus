@@ -19,8 +19,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from nexus.bricks.a2a.router import build_router
 from nexus.bricks.a2a.task_manager import TaskManager
+from nexus.server.api.v2.routers.a2a import build_router
 
 # ======================================================================
 # Fixtures

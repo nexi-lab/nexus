@@ -11,9 +11,9 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
-from nexus.identity.crypto import IdentityCrypto
-from nexus.identity.did import create_did_key
-from nexus.identity.key_service import AgentKeyRecord
+from nexus.bricks.identity.crypto import IdentityCrypto
+from nexus.bricks.identity.did import create_did_key
+from nexus.bricks.identity.key_service import AgentKeyRecord
 
 # ---------------------------------------------------------------------------
 # Helpers

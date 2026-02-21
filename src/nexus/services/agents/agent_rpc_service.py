@@ -315,7 +315,7 @@ class AgentRPCService:
         _logger: logging.Logger,
     ) -> None:
         try:
-            from nexus.identity.did import create_did_document
+            from nexus.bricks.identity.did import create_did_document
 
             assert self._key_service is not None
             key_record = self._key_service.get_active_keys(agent_id)[0]

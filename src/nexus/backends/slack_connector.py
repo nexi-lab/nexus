@@ -164,7 +164,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         import traceback
 
         try:
-            from nexus.auth.oauth.factory import OAuthProviderFactory
+            from nexus.bricks.auth.oauth.factory import OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()

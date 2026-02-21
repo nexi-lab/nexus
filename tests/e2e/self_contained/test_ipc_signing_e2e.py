@@ -32,8 +32,8 @@ from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import MetastoreABC
-from nexus.identity.crypto import IdentityCrypto
-from nexus.identity.key_service import KeyService
+from nexus.bricks.identity.crypto import IdentityCrypto
+from nexus.bricks.identity.key_service import KeyService
 from nexus.storage.models import Base
 from nexus.storage.zone_settings import ZoneSettings
 from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
@@ -170,7 +170,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
     with session_factory() as session:
         _, admin_raw = DatabaseAPIKeyAuth.create_key(
@@ -196,7 +196,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     from types import SimpleNamespace
 
     db_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))
-    from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+    from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
 
     auth_provider = DiscriminatingAuthProvider(api_key_provider=db_key_auth, jwt_provider=None)
 

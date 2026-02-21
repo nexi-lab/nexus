@@ -1583,7 +1583,7 @@ def skills_mcp_mount(
             try:
                 import os
 
-                from nexus.auth.oauth.token_manager import TokenManager
+                from nexus.bricks.auth.oauth.token_manager import TokenManager
 
                 # Get TokenManager (same logic as oauth CLI)
                 from nexus.lib.env import get_database_url
@@ -1598,8 +1598,8 @@ def skills_mcp_mount(
 
                 # Register OAuth provider for automatic token refresh
                 if oauth_provider == "google":
-                    from nexus.auth.oauth.base_provider import BaseOAuthProvider as OAuthProvider
-                    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+                    from nexus.bricks.auth.oauth.base_provider import BaseOAuthProvider as OAuthProvider
+                    from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
 
                     client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                     client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1643,7 +1643,7 @@ def skills_mcp_mount(
 
                     # Get OAuth provider credentials from environment
                     if oauth_provider == "google":
-                        from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+                        from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1668,7 +1668,7 @@ def skills_mcp_mount(
                             provider_name="google",
                         )
                     elif oauth_provider in ("twitter", "x"):
-                        from nexus.auth.oauth.providers.x import XOAuthProvider
+                        from nexus.bricks.auth.oauth.providers.x import XOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")

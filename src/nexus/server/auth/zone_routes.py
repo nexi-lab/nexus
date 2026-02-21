@@ -9,9 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from nexus.auth.providers.database_local import DatabaseLocalAuth
-from nexus.auth.user_queries import get_user_by_id
-from nexus.auth.zone_helpers import (
+from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+from nexus.bricks.auth.user_queries import get_user_by_id
+from nexus.bricks.auth.zone_helpers import (
     create_zone,
     normalize_to_slug,
     suggest_zone_id,

@@ -45,7 +45,7 @@ def live_server(tmp_path, monkeypatch):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.server import fastapi_server as fas
     from nexus.storage.models import Base
 

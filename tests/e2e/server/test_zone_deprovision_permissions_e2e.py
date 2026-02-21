@@ -78,7 +78,7 @@ def app_with_auth():
     )
 
     # Create auth provider with SAME database
-    from nexus.auth.providers.database_local import DatabaseLocalAuth
+    from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 
     auth = DatabaseLocalAuth(
         session_factory=SessionLocal,

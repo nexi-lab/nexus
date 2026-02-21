@@ -220,9 +220,9 @@ def _startup_key_service(app: FastAPI, svc: LifespanServices) -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if svc.nexus_fs and svc.session_factory:
         try:
-            from nexus.auth.oauth.crypto import OAuthCrypto
-            from nexus.identity.crypto import IdentityCrypto
-            from nexus.identity.key_service import KeyService
+            from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+            from nexus.bricks.identity.crypto import IdentityCrypto
+            from nexus.bricks.identity.key_service import KeyService
             from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists

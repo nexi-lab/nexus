@@ -185,7 +185,7 @@ def _preseed_database(db_url: str) -> dict[str, str]:
     Returns dict mapping role names to raw API keys:
         {"admin": "sk-...", "alice": "sk-...", "bob": "sk-..."}
     """
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import Base
 
     engine = create_engine(db_url, echo=False, pool_pre_ping=True)

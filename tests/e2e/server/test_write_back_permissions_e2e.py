@@ -85,7 +85,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         # Setup paths
         sys.path.insert(0, os.getenv("PYTHONPATH", ""))
 
-        from nexus.auth.providers.static_key import StaticAPIKeyAuth
+        from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.cli import main as cli_main
 
         # Create multi-key auth provider BEFORE starting the CLI

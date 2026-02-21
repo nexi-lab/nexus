@@ -388,7 +388,7 @@ def test_oauth_callback_race_condition():
 
     from sqlalchemy import func, select
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import APIKeyModel, UserModel
 
     # Create temporary file-based database (required for thread safety)
@@ -539,7 +539,7 @@ def test_oauth_callback_race_condition_postgres():
 
     from sqlalchemy import func, select
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import APIKeyModel, UserModel
 
     # PostgreSQL connection

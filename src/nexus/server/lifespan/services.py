@@ -33,6 +33,7 @@ async def startup_services(app: FastAPI, svc: LifespanServices) -> list[asyncio.
 
     _startup_agent_registry(app, svc)
     _startup_key_service(app, svc)
+    _startup_credential_service(app, svc)
     _startup_reputation_delegation_from_bricks(app, svc)
     _startup_governance(app, svc)
     _startup_sandbox_auth(app, svc)
@@ -252,6 +253,67 @@ def _startup_key_service(app: FastAPI, svc: LifespanServices) -> None:
             app.state.key_service = None
     else:
         app.state.key_service = None
+
+
+def _startup_credential_service(app: FastAPI, svc: LifespanServices) -> None:
+    """Initialize CredentialService for agent capability attestation (Issue #1753).
+
+    Depends on KeyService being initialized first. Pre-decrypts the kernel's
+    signing key and creates the CapabilityIssuer, CapabilityVerifier, and
+    CredentialService.
+    """
+    key_service = getattr(app.state, "key_service", None)
+    if key_service is None or svc.record_store is None:
+        app.state.credential_service = None
+        return
+
+    try:
+        from sqlalchemy import Table
+
+        from nexus.identity.credential_service import CredentialService
+        from nexus.identity.credentials import CapabilityIssuer, CapabilityVerifier
+        from nexus.identity.crypto import IdentityCrypto
+        from nexus.storage.models.identity import AgentCredentialModel
+
+        # Ensure agent_credentials table exists
+        _nx_engine = svc.sql_engine
+        if _nx_engine is not None:
+            cast(Table, AgentCredentialModel.__table__).create(_nx_engine, checkfirst=True)
+
+        # Get or create a kernel identity for credential signing.
+        # The kernel uses a well-known agent_id for its signing key.
+        _kernel_agent_id = "__nexus_kernel__"
+        kernel_key_record = key_service.ensure_keypair(_kernel_agent_id)
+
+        # Pre-decrypt the signing key for fast issuance
+        kernel_private_key = key_service.decrypt_private_key(kernel_key_record.key_id)
+        kernel_public_key = IdentityCrypto.public_key_from_bytes(kernel_key_record.public_key_bytes)
+
+        # Create issuer and verifier
+        issuer = CapabilityIssuer(
+            issuer_did=kernel_key_record.did,
+            signing_key=kernel_private_key,
+            key_id=kernel_key_record.key_id,
+        )
+        verifier = CapabilityVerifier()
+        verifier.trust_issuer(kernel_key_record.did, kernel_public_key)
+
+        # Create the credential service
+        credential_service = CredentialService(
+            record_store=svc.record_store,
+            issuer=issuer,
+            verifier=verifier,
+            revocation_cache_ttl=30.0,
+        )
+
+        app.state.credential_service = credential_service
+        logger.info(
+            "[VC] CredentialService initialized (kernel DID=%s)",
+            kernel_key_record.did,
+        )
+    except Exception as e:
+        logger.warning("[VC] Failed to initialize CredentialService: %s", e, exc_info=True)
+        app.state.credential_service = None
 
 
 def _startup_reputation_delegation_from_bricks(app: FastAPI, svc: LifespanServices) -> None:

@@ -12,6 +12,19 @@ Usage:
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.constants import TIER_ALIASES, PriorityTier
+from nexus.contracts.credential_types import (
+    DEFAULT_CREDENTIAL_TTL,
+    MAX_CAPABILITIES_PER_CREDENTIAL,
+    MAX_CREDENTIAL_TTL,
+    MAX_DELEGATION_DEPTH,
+    MIN_CREDENTIAL_TTL,
+    VC_CONTEXT,
+    VC_TYPES,
+    Ability,
+    Capability,
+    CredentialClaims,
+    CredentialStatus,
+)
 from nexus.contracts.describable import Describable
 from nexus.contracts.exceptions import (
     AccessDeniedError,
@@ -163,4 +176,16 @@ __all__ = [
     # Search types (Issue #2190)
     "GlobStrategy",
     "SearchStrategy",
+    # Credential types (Issue #1753)
+    "Ability",
+    "Capability",
+    "CredentialClaims",
+    "CredentialStatus",
+    "DEFAULT_CREDENTIAL_TTL",
+    "MAX_CAPABILITIES_PER_CREDENTIAL",
+    "MAX_CREDENTIAL_TTL",
+    "MAX_DELEGATION_DEPTH",
+    "MIN_CREDENTIAL_TTL",
+    "VC_CONTEXT",
+    "VC_TYPES",
 ]

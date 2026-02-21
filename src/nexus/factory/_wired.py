@@ -203,7 +203,7 @@ def _boot_wired_services(
     skill_service: Any = brick_services.skill_service
     if skill_service is None and _on("skills") and gateway is not None:
         try:
-            from nexus.services.skills.skill_service import SkillService as _SkillService
+            from nexus.bricks.skills.skill_service_adapter import SkillService as _SkillService
 
             skill_service = _SkillService(gateway=gateway)
             logger.debug("[BOOT:WIRED] SkillService created")

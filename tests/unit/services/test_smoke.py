@@ -246,7 +246,7 @@ class TestSkillServiceSmoke:
         """Test SkillService can be instantiated with a gateway."""
         from unittest.mock import MagicMock
 
-        from nexus.services.skills.skill_service import SkillService
+        from nexus.bricks.skills.skill_service_adapter import SkillService
 
         mock_gateway = MagicMock()
         service = SkillService(gateway=mock_gateway)
@@ -259,7 +259,7 @@ class TestSkillServiceSmoke:
         """Test skills_discover requires a properly configured gateway."""
         from unittest.mock import MagicMock
 
-        from nexus.services.skills.skill_service import SkillService
+        from nexus.bricks.skills.skill_service_adapter import SkillService
 
         mock_gateway = MagicMock()
         mock_gateway.get_context.return_value = None
@@ -340,13 +340,13 @@ class TestServiceIntegrationSmoke:
         """Test that all services can be instantiated together."""
         from unittest.mock import MagicMock
 
+        from nexus.bricks.skills.skill_service_adapter import SkillService
         from nexus.services.llm.llm_service import LLMService
         from nexus.services.mcp.mcp_service import MCPService
         from nexus.services.mount.mount_service import MountService
         from nexus.services.oauth.oauth_service import OAuthService
         from nexus.services.rebac.rebac_service import ReBACService
         from nexus.services.search.search_service import SearchService
-        from nexus.services.skills.skill_service import SkillService
         from nexus.services.versioning.version_service import VersionService
 
         # Create mock gateway for SkillService

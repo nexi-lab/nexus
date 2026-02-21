@@ -22,6 +22,7 @@ Subsystem ABC (Issue #1287):
 Phase 2: Core Refactoring (Issue #988)
 """
 
+from nexus.bricks.skills.skill_service_adapter import SkillService
 from nexus.contracts.types import ContextIdentity, extract_context_identity
 from nexus.services.llm.llm_service import LLMService
 from nexus.services.mcp.mcp_service import MCPService
@@ -30,7 +31,6 @@ from nexus.services.oauth.oauth_service import OAuthService
 from nexus.services.rebac.rebac_service import ReBACService
 from nexus.services.scheduler import SchedulerService
 from nexus.services.search.search_service import SearchService
-from nexus.services.skills.skill_service import SkillService
 from nexus.services.subsystem import Subsystem
 from nexus.services.versioning.version_service import VersionService
 

@@ -12,6 +12,8 @@ import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from nexus.bricks.delegation.models import DelegationMode
+from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.server.api.v2.routers.delegation import (
@@ -20,8 +22,6 @@ from nexus.server.api.v2.routers.delegation import (
     _handle_delegation_error,
 )
 from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.delegation.models import DelegationMode
-from nexus.services.delegation.service import DelegationService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

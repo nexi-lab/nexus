@@ -17,15 +17,15 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.llm.message import Message, MessageRole, TextContent
+from nexus.bricks.llm.message import Message, MessageRole, TextContent
 from nexus.services.llm_citation import Citation, CitationExtractor, DocumentReadResult
 from nexus.services.llm_context_builder import ChunkLike, ContextBuilder
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.bricks.llm.provider import LLMProvider
     from nexus.core.filesystem import NexusFilesystem
-    from nexus.llm.provider import LLMProvider
     from nexus.search.protocols import SearchableProtocol as SemanticSearch
 
 

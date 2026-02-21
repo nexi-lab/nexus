@@ -24,11 +24,11 @@ from litellm.exceptions import RateLimitError
 from litellm.types.utils import CostPerToken, ModelInfo, ModelResponse, Usage
 from litellm.utils import create_pretrained_tokenizer
 
-from nexus.llm.cancellation import AsyncCancellationToken
-from nexus.llm.config import LLMConfig
-from nexus.llm.exceptions import LLMCancellationError, LLMNoResponseError
-from nexus.llm.message import Message
-from nexus.llm.metrics import LLMMetrics
+from nexus.bricks.llm.cancellation import AsyncCancellationToken
+from nexus.bricks.llm.config import LLMConfig
+from nexus.bricks.llm.exceptions import LLMCancellationError, LLMNoResponseError
+from nexus.bricks.llm.message import Message
+from nexus.bricks.llm.metrics import LLMMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -801,7 +801,7 @@ class LiteLLMProvider(LLMProvider):
             extra_kwargs["custom_cost_per_token"] = cost_per_token
 
         try:
-            cost = litellm_completion_cost(completion_response=response, **extra_kwargs)  # type: ignore[arg-type]
+            cost = litellm_completion_cost(completion_response=response, **extra_kwargs)
             if cost is not None:
                 self.metrics.add_cost(float(cost))
                 return float(cost)
@@ -816,7 +816,7 @@ class LiteLLMProvider(LLMProvider):
                 cost = litellm_completion_cost(
                     completion_response=response,
                     model=model_name,
-                    **extra_kwargs,  # type: ignore[arg-type]
+                    **extra_kwargs,
                 )
                 if cost is not None:
                     self.metrics.add_cost(float(cost))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.llm.message import (
+from nexus.bricks.llm.message import (
     ContentType,
     ImageContent,
     ImageDetail,

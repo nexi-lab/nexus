@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
+from nexus.bricks.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 
 
 class TestTokenUsage:

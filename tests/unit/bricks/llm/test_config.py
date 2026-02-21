@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from nexus.llm.config import LLMConfig
+from nexus.bricks.llm.config import LLMConfig
 
 
 class TestLLMConfig:

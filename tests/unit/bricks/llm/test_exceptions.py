@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.llm.exceptions import (
+from nexus.bricks.llm.exceptions import (
     LLMAuthenticationError,
     LLMCancellationError,
     LLMConfigError,

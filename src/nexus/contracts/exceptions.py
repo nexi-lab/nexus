@@ -769,3 +769,61 @@ class StalePointerError(BranchError):
             f"expected version {expected_version}, current is {current_version}"
         )
         super().__init__(msg, branch_name=branch_name)
+
+
+# =====================================================================
+# Namespace Fork errors (Issue #1273)
+# =====================================================================
+
+
+class NamespaceForkError(NexusError):
+    """Base error for namespace fork operations.
+
+    All namespace fork errors are expected (user-facing) — they result
+    from invalid fork IDs, merge conflicts, or stale state.
+    Maps to HTTP 400 Bad Request by default.
+    """
+
+    is_expected = True
+    status_code = 400
+    error_type = "Bad Request"
+
+    def __init__(self, message: str, *, fork_id: str | None = None):
+        self.fork_id = fork_id
+        super().__init__(message)
+
+
+class NamespaceForkNotFoundError(NamespaceForkError):
+    """Raised when a fork_id does not exist in the active forks.
+
+    Maps to HTTP 404 Not Found.
+    """
+
+    status_code = 404
+    error_type = "Not Found"
+
+    def __init__(self, fork_id: str):
+        msg = f"Namespace fork '{fork_id}' not found"
+        super().__init__(msg, fork_id=fork_id)
+
+
+class NamespaceMergeConflictError(NamespaceForkError):
+    """Raised when a namespace merge has conflicting paths and strategy='fail'.
+
+    Contains the list of conflicting paths for the caller to handle.
+    Maps to HTTP 409 Conflict.
+    """
+
+    status_code = 409
+    error_type = "Conflict"
+
+    def __init__(self, fork_id: str, conflicting_paths: list[str]):
+        self.conflicting_paths = conflicting_paths
+        paths_str = ", ".join(conflicting_paths[:5])
+        if len(conflicting_paths) > 5:
+            paths_str += f" (and {len(conflicting_paths) - 5} more)"
+        msg = (
+            f"Namespace fork '{fork_id}' merge conflict: "
+            f"{len(conflicting_paths)} path(s) changed in both fork and parent: {paths_str}"
+        )
+        super().__init__(msg, fork_id=fork_id)

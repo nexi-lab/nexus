@@ -216,6 +216,9 @@ class SystemServices:
     # Workspace branching (Issue #1315)
     context_branch_service: Any = None
 
+    # Namespace forking for speculative execution (Issue #1273)
+    namespace_fork_service: Any = None
+
     # Hook engine chain (Issue #1257)
     scoped_hook_engine: Any = None
 

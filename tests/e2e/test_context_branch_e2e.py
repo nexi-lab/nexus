@@ -621,3 +621,81 @@ class TestE2EProtectedBranches:
         # Try to discard main via finish_explore
         with pytest.raises(BranchProtectedError):
             service.finish_explore(ws, "main", outcome="discard")
+
+
+# ===========================================================================
+# Namespace Fork Integration (Issue #1273)
+# ===========================================================================
+
+
+class TestE2ENamespaceForkIntegration:
+    """E2E tests verifying namespace fork alongside context branching."""
+
+    @pytest.fixture
+    def mock_namespace_manager(self):
+        mgr = MagicMock()
+        mgr.get_mount_table.return_value = [
+            SimpleNamespace(virtual_path="/workspace/alpha"),
+            SimpleNamespace(virtual_path="/workspace/beta"),
+        ]
+        return mgr
+
+    @pytest.fixture
+    def fork_service(self, mock_namespace_manager):
+        from nexus.system_services.namespace.namespace_fork_service import (
+            AgentNamespaceForkService,
+        )
+
+        return AgentNamespaceForkService(namespace_manager=mock_namespace_manager)
+
+    def test_fork_during_explore(self, fork_service):
+        """Fork namespace when starting exploration."""
+        from nexus.contracts.namespace_fork_types import ForkMode
+
+        info = fork_service.fork("explore-agent", mode=ForkMode.COPY)
+        assert info.mount_count == 2
+        ns = fork_service.get_fork(info.fork_id)
+        assert ns.get("/workspace/alpha") is not None
+
+    def test_merge_on_finish(self, fork_service):
+        """Merge namespace fork when finishing exploration with merge outcome."""
+        info = fork_service.fork("explore-agent")
+        ns = fork_service.get_fork(info.fork_id)
+        ns.put(
+            "/workspace/gamma",
+            SimpleNamespace(virtual_path="/workspace/gamma"),
+        )
+        result = fork_service.merge(info.fork_id, strategy="source-wins")
+        assert result.merged is True
+        assert result.entries_added == 1
+
+    def test_discard_on_finish(self, fork_service):
+        """Discard namespace fork when finishing exploration with discard outcome."""
+        info = fork_service.fork("explore-agent")
+        fork_service.discard(info.fork_id)
+        from nexus.contracts.exceptions import NamespaceForkNotFoundError
+
+        with pytest.raises(NamespaceForkNotFoundError):
+            fork_service.get_fork(info.fork_id)
+
+    def test_fork_isolation_across_agents(self, fork_service):
+        """Two agents' forks don't interfere."""
+        info1 = fork_service.fork("agent-a")
+        info2 = fork_service.fork("agent-b")
+        ns1 = fork_service.get_fork(info1.fork_id)
+        ns2 = fork_service.get_fork(info2.fork_id)
+        ns1.put("/workspace/only-a", SimpleNamespace(virtual_path="/workspace/only-a"))
+        assert ns2.get("/workspace/only-a") is None
+
+    def test_graceful_degradation(self):
+        """Fork service operations fail gracefully when namespace manager is broken."""
+        broken_mgr = MagicMock()
+        broken_mgr.get_mount_table.side_effect = RuntimeError("DB down")
+
+        from nexus.system_services.namespace.namespace_fork_service import (
+            AgentNamespaceForkService,
+        )
+
+        svc = AgentNamespaceForkService(namespace_manager=broken_mgr)
+        with pytest.raises(RuntimeError, match="DB down"):
+            svc.fork("agent-x")

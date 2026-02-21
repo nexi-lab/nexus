@@ -399,6 +399,21 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
 
+    # --- Namespace Fork Service (Issue #1273) ---
+    namespace_fork_service: Any = None
+    if namespace_manager is not None:
+        try:
+            from nexus.system_services.namespace.namespace_fork_service import (
+                AgentNamespaceForkService,
+            )
+
+            namespace_fork_service = AgentNamespaceForkService(
+                namespace_manager=namespace_manager,
+            )
+            logger.debug("[BOOT:SYSTEM] AgentNamespaceForkService created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] AgentNamespaceForkService unavailable: %s", exc)
+
     # --- Hook Engine chain: PluginHooks → AsyncHookEngine → ScopedHookEngine (Issue #1257) ---
     scoped_hook_engine: Any = None
     try:
@@ -577,6 +592,7 @@ def _boot_system_services(
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
+        "namespace_fork_service": namespace_fork_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
         "brick_reconciler": brick_reconciler,
         "scoped_hook_engine": scoped_hook_engine,

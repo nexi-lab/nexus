@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-# Import directly from the module to avoid nexus.mcp.__init__
+# Import directly from the module to avoid nexus.bricks.mcp.__init__
 # which requires fastmcp (not always installed).
-from nexus.mcp.provider_registry import (
+from nexus.bricks.mcp.provider_registry import (
     BackendConfig,
     MCPConfig,
     MCPProviderRegistry,

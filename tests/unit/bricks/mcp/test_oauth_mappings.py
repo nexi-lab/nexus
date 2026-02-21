@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from nexus.mcp.oauth_mappings import OAuthKlavisMappings, OAuthProviderMapping
+from nexus.bricks.mcp.oauth_mappings import OAuthKlavisMappings, OAuthProviderMapping
 
 
 class TestOAuthProviderMapping:

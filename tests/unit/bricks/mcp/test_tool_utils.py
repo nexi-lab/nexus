@@ -13,7 +13,7 @@ import inspect
 import logging
 from typing import Any
 
-from nexus.mcp.tool_utils import (
+from nexus.bricks.mcp.tool_utils import (
     _extract_path_hint,
     handle_tool_errors,
     tool_error,
@@ -48,13 +48,13 @@ class TestToolError:
         assert result == "Error: Something went wrong"
 
     def test_detail_logged_at_warning(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="nexus.mcp.tool_utils"):
+        with caplog.at_level(logging.WARNING, logger="nexus.bricks.mcp.tool_utils"):
             tool_error("internal", "oops", detail="stack trace here")
         assert "stack trace here" in caplog.text
         assert "internal" in caplog.text
 
     def test_no_detail_logged_at_debug(self, caplog):
-        with caplog.at_level(logging.DEBUG, logger="nexus.mcp.tool_utils"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.bricks.mcp.tool_utils"):
             tool_error("not_found", "File not found")
         assert "not_found" in caplog.text
         assert "File not found" in caplog.text

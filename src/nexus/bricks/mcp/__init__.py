@@ -17,14 +17,14 @@ Usage:
     nexus mcp serve --transport stdio
 
     # Or use programmatically
-    from nexus.mcp import create_mcp_server
+    from nexus.bricks.mcp import create_mcp_server
 
     nx = connect()
     server = create_mcp_server(nx)
     server.run()
 
     # Infrastructure API key management
-    from nexus.mcp import set_request_api_key, reset_request_api_key
+    from nexus.bricks.mcp import set_request_api_key, reset_request_api_key
 
     # In middleware/proxy code:
     token = set_request_api_key("sk-user-api-key")
@@ -35,18 +35,27 @@ Usage:
         reset_request_api_key(token)
 
     # Unified MCP connection (Klavis or local)
-    from nexus.mcp import KlavisClient, MCPProviderRegistry
+    from nexus.bricks.mcp import KlavisClient, MCPProviderRegistry
 
     registry = MCPProviderRegistry.load_default()
     klavis = KlavisClient(api_key="...")
 """
 
-from nexus.mcp.connection_manager import MCPConnection, MCPConnectionError, MCPConnectionManager
-from nexus.mcp.exporter import MCPToolExporter
-from nexus.mcp.klavis_client import KlavisClient, KlavisError, KlavisMCPInstance, KlavisOAuthResult
-from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
-from nexus.mcp.mount import MCPMountError, MCPMountManager
-from nexus.mcp.provider_registry import (
+from nexus.bricks.mcp.connection_manager import (
+    MCPConnection,
+    MCPConnectionError,
+    MCPConnectionManager,
+)
+from nexus.bricks.mcp.exporter import MCPToolExporter
+from nexus.bricks.mcp.klavis_client import (
+    KlavisClient,
+    KlavisError,
+    KlavisMCPInstance,
+    KlavisOAuthResult,
+)
+from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
+from nexus.bricks.mcp.mount import MCPMountError, MCPMountManager
+from nexus.bricks.mcp.provider_registry import (
     BackendConfig,
     MCPConfig,
     MCPProviderRegistry,
@@ -54,7 +63,7 @@ from nexus.mcp.provider_registry import (
     ProviderConfig,
     ProviderType,
 )
-from nexus.mcp.server import (
+from nexus.bricks.mcp.server import (
     create_mcp_server,
     get_request_api_key,
     reset_request_api_key,

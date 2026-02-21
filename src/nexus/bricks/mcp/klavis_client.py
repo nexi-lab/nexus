@@ -7,7 +7,7 @@ Klavis provides 100+ pre-configured OAuth integrations (GitHub, Slack, Notion, e
 and hosts MCP servers so you don't need to run them locally.
 
 Example:
-    >>> from nexus.mcp.klavis_client import KlavisClient
+    >>> from nexus.bricks.mcp.klavis_client import KlavisClient
     >>>
     >>> client = KlavisClient(api_key="your-klavis-api-key")
     >>>

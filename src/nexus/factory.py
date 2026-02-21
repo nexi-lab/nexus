@@ -847,7 +847,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     # --- Tool Namespace Middleware (Issue #1272) ---
     tool_namespace_middleware = None
     try:
-        from nexus.mcp.middleware import ToolNamespaceMiddleware
+        from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
 
         tool_namespace_middleware = ToolNamespaceMiddleware(
             rebac_manager=kernel["rebac_manager"],

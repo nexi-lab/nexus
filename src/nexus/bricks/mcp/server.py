@@ -15,9 +15,9 @@ from typing import Any, cast
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 
+from nexus.bricks.mcp.formatters import format_response
+from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
 from nexus.core.filesystem import NexusFilesystem
-from nexus.mcp.formatters import format_response
-from nexus.mcp.tool_utils import handle_tool_errors, tool_error
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
         A token that can be used to reset the context variable
 
     Example:
-        >>> from nexus.mcp import set_request_api_key, reset_request_api_key
+        >>> from nexus.bricks.mcp import set_request_api_key, reset_request_api_key
         >>>
         >>> # In middleware or proxy code:
         >>> token = set_request_api_key("sk-user-api-key-xyz")
@@ -101,7 +101,7 @@ def create_mcp_server(
         (e.g., HTTP middleware, proxy, gateway) without exposing them to AI agents.
 
         Infrastructure should set the API key using:
-            from nexus.mcp import set_request_api_key, reset_request_api_key
+            from nexus.bricks.mcp import set_request_api_key, reset_request_api_key
             token = set_request_api_key("sk-user-api-key-xyz")
             try:
                 # Make MCP tool calls here
@@ -113,7 +113,7 @@ def create_mcp_server(
 
     Examples:
         >>> from nexus import connect
-        >>> from nexus.mcp import create_mcp_server
+        >>> from nexus.bricks.mcp import create_mcp_server
         >>>
         >>> # Local filesystem
         >>> nx = connect()
@@ -1336,7 +1336,7 @@ def create_mcp_server(
     # CONTEXT BRANCHING TOOLS (Issue #1315)
     # =========================================================================
 
-    def _get_branch_service(ctx: Context | None = None):  # type: ignore[no-untyped-def]
+    def _get_branch_service(ctx: Context | None = None) -> Any:
         """Get ContextBranchService from NexusFS services."""
         nx_instance = _get_nexus_instance(ctx)
         svc = getattr(

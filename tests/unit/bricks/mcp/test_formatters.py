@@ -5,7 +5,7 @@ These tests verify the output formatters for MCP server responses.
 
 import json
 
-from nexus.mcp.formatters import (
+from nexus.bricks.mcp.formatters import (
     _format_dict,
     _format_list,
     _format_list_of_dicts,

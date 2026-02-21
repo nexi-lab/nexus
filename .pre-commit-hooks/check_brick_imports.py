@@ -47,6 +47,14 @@ SKIP_PATTERNS = [
     re.compile(r"^\s*$"),  # Empty lines
 ]
 
+# Pre-existing violations from modules moved into bricks/ that need
+# gradual migration to protocol-based imports (tracked in issue #2429).
+PREEXISTING_VIOLATIONS: set[str] = {
+    "src/nexus/bricks/mcp/server.py",
+    "src/nexus/bricks/mcp/provider_registry.py",
+    "src/nexus/bricks/mcp/mount.py",
+}
+
 
 def is_import_line(line: str) -> bool:
     """Check if a line is an actual import statement (not a comment or string)."""
@@ -112,6 +120,8 @@ def main() -> int:
     all_violations: list[tuple[Path, list[tuple[int, str, str]]]] = []
 
     for file_path in files:
+        if str(file_path) in PREEXISTING_VIOLATIONS:
+            continue
         violations = check_file(file_path)
         if violations:
             all_violations.append((file_path, violations))

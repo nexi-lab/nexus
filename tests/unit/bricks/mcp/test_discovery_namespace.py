@@ -15,7 +15,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from nexus.mcp.server import create_mcp_server
+from nexus.bricks.mcp.server import create_mcp_server
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -36,8 +36,8 @@ from cachetools import TTLCache
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.tool import Tool, ToolResult
 
-from nexus.mcp.profiles import TOOL_PATH_PREFIX
-from nexus.mcp.tool_utils import tool_error
+from nexus.bricks.mcp.profiles import TOOL_PATH_PREFIX
+from nexus.bricks.mcp.tool_utils import tool_error
 
 if TYPE_CHECKING:
     import mcp.types as mt

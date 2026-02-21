@@ -8,7 +8,7 @@ The same command works for both:
     - nexus mcp connect gdrive --user alice@gmail  # Local
 
 Example:
-    >>> from nexus.mcp import MCPConnectionManager
+    >>> from nexus.bricks.mcp import MCPConnectionManager
     >>>
     >>> manager = MCPConnectionManager(filesystem=nx)
     >>> await manager.connect("github", user_id="alice")
@@ -27,10 +27,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.mcp.klavis_client import KlavisClient, KlavisError
-from nexus.mcp.models import MCPMount
-from nexus.mcp.mount import MCPMountManager
-from nexus.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
+from nexus.bricks.mcp.klavis_client import KlavisClient, KlavisError
+from nexus.bricks.mcp.models import MCPMount
+from nexus.bricks.mcp.mount import MCPMountManager
+from nexus.bricks.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
 
 if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem

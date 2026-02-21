@@ -4,7 +4,7 @@ This module provides a registry for MCP providers, supporting both
 Klavis-hosted and local providers with a unified configuration format.
 
 Example:
-    >>> from nexus.mcp.provider_registry import MCPProviderRegistry
+    >>> from nexus.bricks.mcp.provider_registry import MCPProviderRegistry
     >>>
     >>> registry = MCPProviderRegistry.load_default()
     >>>

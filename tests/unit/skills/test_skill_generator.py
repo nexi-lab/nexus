@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from nexus.backends.service_map import SERVICE_REGISTRY, ServiceInfo, _sync_from_connector_registry
-from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
+from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 from nexus.skills.skill_generator import (
     ConnectorTemplate,
     SkillGenerator,

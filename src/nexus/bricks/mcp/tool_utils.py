@@ -114,7 +114,7 @@ def handle_tool_errors(operation: str) -> Any:
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> str:
             try:
-                return fn(*args, **kwargs)  # type: ignore[no-any-return]
+                return fn(*args, **kwargs)
             except FileNotFoundError as exc:
                 path = _extract_path_hint(args, kwargs)
                 hint = f" at '{path}'" if path else ""

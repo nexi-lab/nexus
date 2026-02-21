@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from nexus.mcp.server import create_mcp_server
+from nexus.bricks.mcp.server import create_mcp_server
 
 
 class TestCreateMCPServer:
@@ -81,7 +81,7 @@ class TestMCPMain:
 
     def test_main_imports(self):
         """Test that main function can be imported."""
-        from nexus.mcp.server import main
+        from nexus.bricks.mcp.server import main
 
         assert main is not None
         assert callable(main)

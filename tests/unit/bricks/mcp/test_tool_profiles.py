@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from nexus.mcp.profiles import (
+from nexus.bricks.mcp.profiles import (
     TOOL_PATH_PREFIX,
     ProfileCycleError,
     ProfileNotFoundError,
@@ -64,7 +64,7 @@ class TestToolProfile:
     def test_profile_is_immutable(self):
         profile = ToolProfile(name="test", tools=frozenset(["a"]))
         with pytest.raises(AttributeError):
-            profile.name = "changed"  # type: ignore[misc]
+            profile.name = "changed"
 
 
 class TestToolProfileConfig:
@@ -411,7 +411,7 @@ class TestDefaultConfigValidity:
         from pathlib import Path
         from unittest.mock import Mock
 
-        from nexus.mcp.server import create_mcp_server
+        from nexus.bricks.mcp.server import create_mcp_server
 
         # Tools from optional features (conditionally registered)
         OPTIONAL_TOOL_PREFIXES = ("nexus_python", "nexus_bash", "nexus_sandbox_")

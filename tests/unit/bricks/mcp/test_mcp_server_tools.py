@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from nexus.mcp.server import create_mcp_server
+from nexus.bricks.mcp.server import create_mcp_server
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -1349,7 +1349,7 @@ class TestServerCreation:
     def test_main_with_remote_url(self):
         """Test main function with remote URL from environment."""
         with (
-            patch("nexus.mcp.server.create_mcp_server") as mock_create,
+            patch("nexus.bricks.mcp.server.create_mcp_server") as mock_create,
             patch.dict("os.environ", {"NEXUS_URL": "http://test:2026", "NEXUS_API_KEY": "key123"}),
         ):
             mock_server = Mock()

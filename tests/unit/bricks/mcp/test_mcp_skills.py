@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.mcp.exporter import NEXUS_TOOLS, MCPToolExporter
-from nexus.mcp.models import (
+from nexus.bricks.mcp.exporter import NEXUS_TOOLS, MCPToolExporter
+from nexus.bricks.mcp.models import (
     MCPMount,
     MCPToolConfig,
     MCPToolDefinition,
     MCPToolExample,
 )
-from nexus.mcp.mount import MCPMountError, MCPMountManager
+from nexus.bricks.mcp.mount import MCPMountError, MCPMountManager
 from nexus.skills.exceptions import SkillValidationError
 from nexus.skills.models import SkillMetadata
 

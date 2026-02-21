@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
+from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -58,7 +58,7 @@ class MCPMountManager:
 
     Example:
         >>> from nexus import connect
-        >>> from nexus.mcp.mount import MCPMountManager
+        >>> from nexus.bricks.mcp.mount import MCPMountManager
         >>>
         >>> nx = connect()
         >>> manager = MCPMountManager(nx)

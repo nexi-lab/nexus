@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.mcp.middleware import ToolNamespaceMiddleware
+from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -107,7 +107,7 @@ class TestOnListTools:
             FakeTool(name="nexus_list_files"),
         ]
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
             method="tools/list",
         )
@@ -115,7 +115,7 @@ class TestOnListTools:
         async def call_next(context: Any) -> Sequence[Any]:
             return all_tools
 
-        result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_list_tools(ctx, call_next)
         names = [t.name for t in result]
         assert names == ["nexus_read_file", "nexus_list_files"]
 
@@ -124,14 +124,14 @@ class TestOnListTools:
         mw = make_middleware(granted_tools=[])
 
         all_tools = [FakeTool(name="nexus_read_file")]
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
             return all_tools
 
-        result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_list_tools(ctx, call_next)
         assert result == []
 
     @pytest.mark.asyncio
@@ -140,14 +140,14 @@ class TestOnListTools:
         mw = make_middleware(granted_tools=tools)
 
         all_tools = [FakeTool(name=t) for t in tools]
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
             return all_tools
 
-        result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_list_tools(ctx, call_next)
         assert len(result) == 2
 
     @pytest.mark.asyncio
@@ -156,12 +156,12 @@ class TestOnListTools:
         mw = make_middleware(granted_tools=["nexus_read_file"])
 
         all_tools = [FakeTool(name="nexus_read_file"), FakeTool(name="nexus_write_file")]
-        ctx = FakeMiddlewareContext(fastmcp_context=None)
+        ctx: Any = FakeMiddlewareContext(fastmcp_context=None)
 
         async def call_next(context: Any) -> Sequence[Any]:
             return all_tools
 
-        result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_list_tools(ctx, call_next)
         assert len(result) == 2  # All tools returned, no filtering
 
     @pytest.mark.asyncio
@@ -169,14 +169,14 @@ class TestOnListTools:
         mw = make_middleware(granted_tools=["nexus_read_file"], enabled=False)
 
         all_tools = [FakeTool(name="nexus_read_file"), FakeTool(name="nexus_write_file")]
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
             return all_tools
 
-        result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_list_tools(ctx, call_next)
         assert len(result) == 2  # All tools, middleware disabled
 
 
@@ -190,7 +190,7 @@ class TestOnCallTool:
     async def test_allowed_tool_passes_through(self):
         mw = make_middleware(granted_tools=["nexus_read_file"])
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             message=FakeCallToolParams(name="nexus_read_file"),
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
@@ -200,14 +200,14 @@ class TestOnCallTool:
         async def call_next(context: Any) -> Any:
             return expected_result
 
-        result = await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_call_tool(ctx, call_next)
         assert result is expected_result
 
     @pytest.mark.asyncio
     async def test_invisible_tool_returns_not_found(self):
         mw = make_middleware(granted_tools=["nexus_read_file"])
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             message=FakeCallToolParams(name="nexus_python"),
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
@@ -215,7 +215,7 @@ class TestOnCallTool:
         async def call_next(context: Any) -> Any:
             pytest.fail("call_next should not be called for invisible tool")
 
-        result = await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_call_tool(ctx, call_next)
         # Result should be a ToolResult with "not found" error
         assert result is not None
         # Check the error message content
@@ -226,7 +226,7 @@ class TestOnCallTool:
         """Namespace-as-security: invisible tools must return 'not found', not 'denied'."""
         mw = make_middleware(granted_tools=[])
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             message=FakeCallToolParams(name="nexus_python"),
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
@@ -234,7 +234,7 @@ class TestOnCallTool:
         async def call_next(context: Any) -> Any:
             pytest.fail("Should not reach here")
 
-        result = await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_call_tool(ctx, call_next)
         # Verify the error message uses "not found"
         content_text = result.content[0].text
         assert "not found" in content_text.lower()
@@ -246,7 +246,7 @@ class TestOnCallTool:
         """No subject → backward compat → allow all calls."""
         mw = make_middleware(granted_tools=[])
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             message=FakeCallToolParams(name="nexus_python"),
             fastmcp_context=None,
         )
@@ -256,7 +256,7 @@ class TestOnCallTool:
         async def call_next(context: Any) -> Any:
             return expected_result
 
-        result = await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_call_tool(ctx, call_next)
         assert result is expected_result
 
 
@@ -270,7 +270,7 @@ class TestCacheBehavior:
     async def test_cache_hit_on_second_call(self):
         mw = make_middleware(granted_tools=["nexus_read_file"])
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
@@ -278,12 +278,12 @@ class TestCacheBehavior:
             return [FakeTool(name="nexus_read_file")]
 
         # First call: cache miss
-        await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        await mw.on_list_tools(ctx, call_next)
         assert mw._cache_misses == 1
         assert mw._cache_hits == 0
 
         # Second call: cache hit
-        await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        await mw.on_list_tools(ctx, call_next)
         assert mw._cache_hits == 1
 
         # rebac_list_objects should have been called only once
@@ -295,7 +295,7 @@ class TestCacheBehavior:
         rebac = make_rebac_mock(granted_objects=objects, zone_revision=0)
         mw = ToolNamespaceMiddleware(rebac_manager=rebac, revision_window=10)
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
@@ -303,12 +303,12 @@ class TestCacheBehavior:
             return [FakeTool(name="nexus_read_file")]
 
         # First call at revision 0 (bucket 0)
-        await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        await mw.on_list_tools(ctx, call_next)
         assert mw._cache_misses == 1
 
         # Change revision to a new bucket
         rebac.get_zone_revision.return_value = 15  # bucket = 15 // 10 = 1
-        await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        await mw.on_list_tools(ctx, call_next)
         assert mw._cache_misses == 2  # New bucket → cache miss
 
     def test_explicit_invalidation(self):
@@ -343,32 +343,32 @@ class TestCacheBehavior:
 class TestSubjectExtraction:
     def test_extract_from_state(self):
         mw = make_middleware()
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "bot-1"}),
         )
-        subject = mw._extract_subject(ctx)  # type: ignore[arg-type]
+        subject = mw._extract_subject(ctx)
         assert subject == ("agent", "bot-1")
 
     def test_extract_falls_back_to_api_key(self):
         mw = make_middleware()
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"api_key": "sk-test-123"}),
         )
-        subject = mw._extract_subject(ctx)  # type: ignore[arg-type]
+        subject = mw._extract_subject(ctx)
         assert subject == ("api_key", "sk-test-123")
 
     def test_extract_returns_none_when_no_context(self):
         mw = make_middleware()
-        ctx = FakeMiddlewareContext(fastmcp_context=None)
-        subject = mw._extract_subject(ctx)  # type: ignore[arg-type]
+        ctx: Any = FakeMiddlewareContext(fastmcp_context=None)
+        subject = mw._extract_subject(ctx)
         assert subject is None
 
     def test_extract_returns_none_when_no_identity(self):
         mw = make_middleware()
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({}),
         )
-        subject = mw._extract_subject(ctx)  # type: ignore[arg-type]
+        subject = mw._extract_subject(ctx)
         assert subject is None
 
 
@@ -399,7 +399,8 @@ class TestResolveVisibleTools:
 
     def test_ctx_without_get_state_returns_none(self):
         mw = make_middleware(granted_tools=["nexus_read_file"])
-        result = mw.resolve_visible_tools("not-a-context")  # type: ignore[arg-type]
+        not_a_ctx: Any = "not-a-context"
+        result = mw.resolve_visible_tools(not_a_ctx)
         assert result is None
 
 
@@ -413,14 +414,14 @@ class TestMetrics:
     async def test_metrics_reflect_operations(self):
         mw = make_middleware(granted_tools=["nexus_read_file"])
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
             return [FakeTool(name="nexus_read_file"), FakeTool(name="nexus_write_file")]
 
-        await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        await mw.on_list_tools(ctx, call_next)
 
         metrics = mw.metrics
         assert metrics["cache_misses"] == 1
@@ -452,7 +453,7 @@ class TestPerformance:
         mw = make_middleware(granted_tools=granted)
 
         all_tools = [FakeTool(name=t) for t in tools]
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
@@ -460,11 +461,11 @@ class TestPerformance:
             return all_tools
 
         # Warm up cache
-        await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        await mw.on_list_tools(ctx, call_next)
 
         # Measure cached path
         start = time.perf_counter()
-        result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_list_tools(ctx, call_next)
         elapsed_ms = (time.perf_counter() - start) * 1000
 
         assert len(result) == 25
@@ -486,14 +487,14 @@ class TestErrorHandling:
 
         mw = ToolNamespaceMiddleware(rebac_manager=rebac)
 
-        ctx = FakeMiddlewareContext(
+        ctx: Any = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
             return [FakeTool(name="nexus_read_file")]
 
-        result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        result = await mw.on_list_tools(ctx, call_next)
         assert result == []  # Fail-closed: no tools visible
         assert mw.metrics["rebac_errors"] == 1
 

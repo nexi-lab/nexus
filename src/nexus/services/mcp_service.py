@@ -318,8 +318,8 @@ class MCPService:
             - Transport is auto-detected: stdio for command, sse for url
             - Tools are automatically synced after mounting
         """
+        from nexus.bricks.mcp.models import MCPMount
         from nexus.core.exceptions import ValidationError
-        from nexus.mcp.models import MCPMount
 
         # Validate: need either command or url
         if not command and not url:
@@ -490,7 +490,7 @@ class MCPService:
         """
         from typing import cast
 
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
         from nexus.skills.protocols import NexusFilesystem
 
         if self.nexus_fs is None:

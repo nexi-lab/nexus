@@ -8,7 +8,7 @@ we can pass that token to Klavis via set_auth() instead of requiring
 a separate OAuth flow.
 
 Example:
-    >>> from nexus.mcp.oauth_mappings import OAuthKlavisMappings
+    >>> from nexus.bricks.mcp.oauth_mappings import OAuthKlavisMappings
     >>>
     >>> mappings = OAuthKlavisMappings.load_default()
     >>>

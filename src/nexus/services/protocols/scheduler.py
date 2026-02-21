@@ -8,6 +8,10 @@ Also defines ``CreditsReservationProtocol`` — the narrow interface
 the scheduler uses for credit-based priority boosting, decoupling
 the system service tier from the pay brick (LEGO §3.3).
 
+``classify_agent_request()`` is the single source of truth for
+AgentRequest → PriorityClass conversion, shared by both
+SchedulerService and InMemoryScheduler (DRY).
+
 Storage Affinity: **CacheStore** — ephemeral work queue (Dragonfly sorted set).
 
 References:
@@ -28,6 +32,10 @@ from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+# Maximum completed tasks retained by InMemoryScheduler to prevent
+# unbounded memory growth in long-running edge deployments.
+_MAX_COMPLETED = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +95,37 @@ class SchedulerProtocol(Protocol):
     async def classify(self, request: AgentRequest) -> str: ...
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]: ...
+
+
+# ---------------------------------------------------------------------------
+# classify_agent_request — shared classification helper (DRY)
+# ---------------------------------------------------------------------------
+
+
+def classify_agent_request(request: AgentRequest) -> str:
+    """Classify an AgentRequest into a PriorityClass string.
+
+    Single source of truth for AgentRequest → PriorityClass conversion.
+    Delegates to ``classify_request()`` from the scheduler policies module,
+    handling AgentRequest field parsing (tier, request_state) in one place.
+
+    Used by both ``InMemoryScheduler.classify()`` and
+    ``SchedulerService.classify()`` to avoid duplicated logic.
+    """
+    from nexus.services.scheduler.constants import PriorityTier, RequestState
+    from nexus.services.scheduler.policies.classifier import classify_request
+
+    try:
+        tier = PriorityTier(request.priority)
+    except ValueError:
+        tier = PriorityTier.NORMAL
+
+    try:
+        req_state = RequestState(request.request_state)
+    except ValueError:
+        req_state = RequestState.PENDING
+
+    return classify_request(tier, req_state)
 
 
 # ---------------------------------------------------------------------------
@@ -169,9 +208,6 @@ class InMemoryScheduler:
         self._seq: int = 0
         self._completed: dict[str, dict[str, Any]] = {}
         self._task_map: dict[str, AgentRequest] = {}
-        logger.warning(
-            "[SCHEDULER] Using InMemoryScheduler fallback — tasks will NOT persist across restarts"
-        )
 
     async def submit(self, request: AgentRequest) -> str:
         import heapq
@@ -228,27 +264,13 @@ class InMemoryScheduler:
         }
         self._task_map.pop(task_id, None)
 
+        # Evict oldest entries to prevent unbounded memory growth
+        if len(self._completed) > _MAX_COMPLETED:
+            oldest = next(iter(self._completed))
+            del self._completed[oldest]
+
     async def classify(self, request: AgentRequest) -> str:
-        from nexus.contracts.constants import PriorityTier
-
-        # Tier→class mapping (uses shared PriorityTier from contracts, not implementation).
-        _TIER_TO_CLASS = {
-            PriorityTier.CRITICAL: "interactive",
-            PriorityTier.HIGH: "interactive",
-            PriorityTier.NORMAL: "batch",
-            PriorityTier.LOW: "background",
-            PriorityTier.BEST_EFFORT: "background",
-        }
-        try:
-            tier = PriorityTier(request.priority)
-        except ValueError:
-            tier = PriorityTier.NORMAL
-        base_class = _TIER_TO_CLASS[tier]
-
-        # IO promotion: BACKGROUND → BATCH if IO_WAIT
-        if base_class == "background" and request.request_state == "io_wait":
-            return "batch"
-        return base_class
+        return classify_agent_request(request)
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         count = await self.pending_count(zone_id=zone_id)

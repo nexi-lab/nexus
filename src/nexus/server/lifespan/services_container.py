@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.services.protocols.scheduler import SchedulerProtocol
+
 
 @dataclass(slots=True)
 class LifespanServices:
@@ -56,9 +58,9 @@ class LifespanServices:
     write_observer: Any = None
     zone_lifecycle: Any = None
 
-    # --- Issue #2195: EventLog + Scheduler (from SystemServices) ----------
+    # --- Issue #2195, #2360: EventLog + Scheduler (from SystemServices) ----
     event_log: Any = None
-    scheduler_service: Any = None
+    scheduler_service: SchedulerProtocol | None = None
 
     # --- Brick services container ----------------------------------------
     brick_services: Any = None  # The whole BrickServices dataclass

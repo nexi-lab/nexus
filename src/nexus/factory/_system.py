@@ -16,6 +16,7 @@ Two severity classes:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -247,6 +248,13 @@ def _boot_system_services(
     # ORIGINAL SYSTEM SERVICES (all degradable)
     # =====================================================================
 
+    # --- AgentStateEmitter (Issue #2360: created early for DI into AsyncAgentRegistry) ---
+    state_emitter: Any = None
+    with contextlib.suppress(Exception):
+        from nexus.services.scheduler.events import AgentStateEmitter
+
+        state_emitter = AgentStateEmitter()
+
     # --- Agent Registry (Issue #1502) ---
     agent_registry: Any = None
     async_agent_registry: Any = None
@@ -260,7 +268,7 @@ def _boot_system_services(
                 entity_registry=entity_registry,
                 flush_interval=ctx.profile_tuning.background_task.heartbeat_flush_interval,
             )
-            async_agent_registry = AsyncAgentRegistry(agent_registry)
+            async_agent_registry = AsyncAgentRegistry(agent_registry, state_emitter=state_emitter)
             logger.debug("[BOOT:SYSTEM] AgentRegistry + AsyncAgentRegistry created")
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] AgentRegistry unavailable: %s", exc)
@@ -511,15 +519,13 @@ def _boot_system_services(
         logger.debug("[BOOT:SYSTEM] EventLog disabled by profile")
 
     # --- Scheduler Service (Issue #2195, #2360: promoted to always-started) ---
+    # state_emitter already created above (before AgentRegistry) for DI.
     scheduler_service: Any = None
-    state_emitter: Any = None
     try:
-        from nexus.services.scheduler.events import AgentStateEmitter
         from nexus.services.scheduler.policies.fair_share import FairShareCounter
         from nexus.services.scheduler.queue import TaskQueue
         from nexus.services.scheduler.service import SchedulerService
 
-        state_emitter = AgentStateEmitter()
         scheduler_service = SchedulerService(
             queue=TaskQueue(),
             db_pool=None,
@@ -541,13 +547,6 @@ def _boot_system_services(
         except Exception:
             # nexus.services namespace unavailable (e.g., nats not installed)
             pass
-
-    # Wire state_emitter into async_agent_registry if both are available
-    import contextlib
-
-    with contextlib.suppress(Exception):
-        if state_emitter is not None and async_agent_registry is not None:
-            async_agent_registry._state_emitter = state_emitter
 
     # =====================================================================
     # Assemble result

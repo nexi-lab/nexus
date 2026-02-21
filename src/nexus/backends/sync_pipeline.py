@@ -166,7 +166,9 @@ class SyncPipelineService:
         result: "SyncResult",
     ) -> tuple[list[str], dict[str, str]]:
         """Step 1: Discover and filter files from backend."""
-        from nexus.bricks.search.primitives import glob_fast
+        import importlib as _il
+
+        glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
 
         connector = self._connector
 

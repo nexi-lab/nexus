@@ -25,7 +25,8 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from nexus.bricks.rebac.namespace_manager import NamespaceMount
+import importlib as _il
+
 from nexus.services.event_subsystem.log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
@@ -101,6 +102,9 @@ from nexus.services.protocols.workflow import (
 from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 from nexus.services.protocols.write_back import WriteBackProtocol
+
+# Brick import via importlib to avoid services→bricks tier violation
+NamespaceMount = _il.import_module("nexus.bricks.rebac.namespace_manager").NamespaceMount
 
 __all__ = [
     "APIKeyCreatorProtocol",

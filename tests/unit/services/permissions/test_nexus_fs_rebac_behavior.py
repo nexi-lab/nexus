@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from nexus.bricks.rebac.rebac_service import ReBACService
 from nexus.core.nexus_fs import NexusFS
-from nexus.services.rebac.rebac_service import ReBACService
 
 # NOTE (Issue #2440): rebac_create, rebac_check, rebac_delete, rebac_list_tuples
 # were deleted from NexusFS (Phase 3: kernel surface reduction). MockNexusFS now

@@ -1,7 +1,7 @@
 """MCP service protocol (Issue #988: Extract domain services).
 
 Defines the contract for Model Context Protocol (MCP) server management operations.
-Existing implementation: ``nexus.services.mcp_service.MCPService``.
+Existing implementation: ``nexus.bricks.mcp.mcp_service.MCPService``.
 
 Storage Affinity: **ObjectStore** — MCP tool definitions stored as JSON files.
 

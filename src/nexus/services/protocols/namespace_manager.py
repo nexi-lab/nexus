@@ -15,10 +15,7 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.bricks.rebac.namespace_manager import NamespaceMount
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -42,6 +39,6 @@ class NamespaceManagerProtocol(Protocol):
         subject: tuple[str, str],
         *,
         zone_id: str | None = None,
-    ) -> "list[NamespaceMount]": ...
+    ) -> list[Any]: ...
 
     async def invalidate(self, subject: tuple[str, str]) -> None: ...

@@ -12,8 +12,8 @@ from unittest.mock import patch
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.bricks.memory.service import Memory
 from nexus.bricks.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_api import Memory
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
@@ -173,7 +173,7 @@ class TestStabilityClassification:
     def test_classification_failure_non_fatal(self, memory_api):
         """Classification failure should not prevent memory storage."""
         with patch(
-            "nexus.services.memory.stability_classifier.TemporalStabilityClassifier.classify",
+            "nexus.bricks.memory.stability_classifier.TemporalStabilityClassifier.classify",
             side_effect=RuntimeError("Classifier exploded"),
         ):
             memory_id = memory_api.store(

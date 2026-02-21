@@ -5,7 +5,7 @@ These tests verify the async-to-sync bridge functionality for ReBAC operations.
 
 import pytest
 
-from nexus.rebac.async_bridge import (
+from nexus.bricks.rebac.async_bridge import (
     AsyncReBACBridge,
     get_async_rebac_bridge,
     shutdown_async_rebac_bridge,

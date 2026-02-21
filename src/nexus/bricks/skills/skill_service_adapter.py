@@ -6,12 +6,9 @@ the gateway API to the brick protocol interface.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 from nexus.bricks.skills.service import SkillService as _SkillServiceImpl
-
-if TYPE_CHECKING:
-    from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +26,7 @@ class SkillService(_SkillServiceImpl):
 
     def __init__(
         self,
-        gateway: "NexusFSGateway | None" = None,
+        gateway: Any | None = None,
         *,
         fs: Any | None = None,
         perms: Any | None = None,
@@ -117,11 +114,11 @@ class SkillService(_SkillServiceImpl):
 class _GatewayFSAdapter:
     """Adapts NexusFSGateway to SkillFilesystemProtocol."""
 
-    def __init__(self, gw: "NexusFSGateway"):
+    def __init__(self, gw: Any):
         self._gw = gw
 
     def read(self, path: str, *, context: Any = None) -> bytes | str:
-        return self._gw.read(path, context=context)
+        return cast("bytes | str", self._gw.read(path, context=context))
 
     def write(self, path: str, content: bytes | str, *, context: Any = None) -> None:
         self._gw.write(path, content, context=context)
@@ -130,16 +127,16 @@ class _GatewayFSAdapter:
         self._gw.mkdir(path, context=context)
 
     def list(self, path: str, *, context: Any = None) -> list[str]:
-        return self._gw.list(path, context=context)
+        return cast("list[str]", self._gw.list(path, context=context))
 
     def exists(self, path: str, *, context: Any = None) -> bool:
-        return self._gw.exists(path, context=context)
+        return cast(bool, self._gw.exists(path, context=context))
 
 
 class _GatewayPermAdapter:
     """Adapts NexusFSGateway to SkillPermissionProtocol."""
 
-    def __init__(self, gw: "NexusFSGateway"):
+    def __init__(self, gw: Any):
         self._gw = gw
 
     def rebac_check(
@@ -150,8 +147,11 @@ class _GatewayPermAdapter:
         object: tuple[str, str],
         zone_id: str | None = None,
     ) -> bool:
-        return self._gw.rebac_check(
-            subject=subject, permission=permission, object=object, zone_id=zone_id
+        return cast(
+            bool,
+            self._gw.rebac_check(
+                subject=subject, permission=permission, object=object, zone_id=zone_id
+            ),
         )
 
     def rebac_create(
@@ -165,8 +165,11 @@ class _GatewayPermAdapter:
     ) -> dict[str, Any] | None:
         # Gateway accepts 2-tuple; narrow the 3-tuple at the adapter boundary
         subj: Any = subject
-        return self._gw.rebac_create(
-            subject=subj, relation=relation, object=object, zone_id=zone_id, context=context
+        return cast(
+            "dict[str, Any] | None",
+            self._gw.rebac_create(
+                subject=subj, relation=relation, object=object, zone_id=zone_id, context=context
+            ),
         )
 
     def rebac_list_tuples(
@@ -176,7 +179,10 @@ class _GatewayPermAdapter:
         relation: str | None = None,
         object: tuple[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        return self._gw.rebac_list_tuples(subject=subject, relation=relation, object=object)
+        return cast(
+            "list[dict[str, Any]]",
+            self._gw.rebac_list_tuples(subject=subject, relation=relation, object=object),
+        )
 
     def rebac_delete_object_tuples(
         self,
@@ -184,7 +190,7 @@ class _GatewayPermAdapter:
         object: tuple[str, str],
         zone_id: str | None = None,
     ) -> int:
-        return self._gw.rebac_delete_object_tuples(object=object, zone_id=zone_id)
+        return cast(int, self._gw.rebac_delete_object_tuples(object=object, zone_id=zone_id))
 
     def invalidate_metadata_cache(self, *paths: str) -> None:
         invalidate = getattr(self._gw, "invalidate_metadata_cache", None)

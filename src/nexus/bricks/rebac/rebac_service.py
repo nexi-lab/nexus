@@ -21,9 +21,9 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 from nexus.contracts.exceptions import CircuitOpenError
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.services.rebac.rebac_share_mixin import ReBACShareMixin
 
 logger = logging.getLogger(__name__)
 

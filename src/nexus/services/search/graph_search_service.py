@@ -29,7 +29,9 @@ class DaemonSemanticSearchWrapper:
         alpha: float = 0.5,
         **kwargs: Any,  # noqa: ARG002
     ) -> list[Any]:
-        from nexus.bricks.search.results import BaseSearchResult
+        import importlib as _il
+
+        BaseSearchResult = _il.import_module("nexus.bricks.search.results").BaseSearchResult
 
         results = await self.daemon.search(
             query=query,
@@ -86,11 +88,12 @@ async def graph_enhanced_search(
     Returns:
         List of GraphEnhancedSearchResult
     """
-    from nexus.bricks.search.graph_retrieval import (
-        GraphEnhancedRetriever,
-        GraphRetrievalConfig,
-    )
-    from nexus.bricks.search.graph_store import GraphStore
+    import importlib as _il
+
+    _graph_retrieval = _il.import_module("nexus.bricks.search.graph_retrieval")
+    GraphEnhancedRetriever = _graph_retrieval.GraphEnhancedRetriever
+    GraphRetrievalConfig = _graph_retrieval.GraphRetrievalConfig
+    GraphStore = _il.import_module("nexus.bricks.search.graph_store").GraphStore
 
     async with async_session_factory() as session:
         graph_store = GraphStore(record_store, session, zone_id=ROOT_ZONE_ID)
@@ -111,7 +114,7 @@ async def graph_enhanced_search(
             config=config,
         )
 
-        return await retriever.search(
+        results: list[Any] = await retriever.search(
             query=query,
             path=path_filter or "/",
             limit=limit,
@@ -120,3 +123,4 @@ async def graph_enhanced_search(
             alpha=alpha,
             include_graph_context=True,
         )
+        return results

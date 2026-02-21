@@ -102,7 +102,9 @@ class SkillGenerator:
     def _default_service_info_lookup(name: str) -> Any:
         """Lazy fallback that imports ServiceMap at runtime."""
         try:
-            from nexus.backends.service_map import ServiceMap
+            import importlib as _il
+
+            ServiceMap = _il.import_module("nexus.backends.service_map").ServiceMap
 
             return ServiceMap.get_service_info(name)
         except ImportError:

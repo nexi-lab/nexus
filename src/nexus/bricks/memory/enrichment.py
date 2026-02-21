@@ -171,7 +171,7 @@ class EnrichmentPipeline:
         try:
             import importlib
 
-            _mod = importlib.import_module("nexus.core.temporal_resolver")
+            _mod = importlib.import_module("nexus.bricks.memory.temporal_resolver")
             resolve_temp = _mod.resolve_temporal
             return resolve_temp(  # type: ignore[no-any-return]
                 text=text,
@@ -224,7 +224,7 @@ class EnrichmentPipeline:
         try:
             import importlib
 
-            _mod = importlib.import_module("nexus.core.temporal_resolver")
+            _mod = importlib.import_module("nexus.bricks.memory.temporal_resolver")
             extract_temporal_metadata = _mod.extract_temporal_metadata
 
             temporal_meta = extract_temporal_metadata(text, reference_time=reference_time)

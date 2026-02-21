@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.services.protocols.persistent_view import PersistentView
+from nexus.contracts.persistent_view import PersistentView
 
 if TYPE_CHECKING:
     from nexus.bricks.cache.protocols import RecordStoreProtocol

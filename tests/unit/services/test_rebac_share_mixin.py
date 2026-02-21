@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.rebac.rebac_share_mixin import ReBACShareMixin
+from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 
 
 def _pandas_available() -> bool:

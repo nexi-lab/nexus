@@ -10,6 +10,7 @@ Usage:
     from nexus.contracts.exceptions import BackendError, ValidationError
 """
 
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.constants import TIER_ALIASES, PriorityTier
 from nexus.contracts.describable import Describable
 from nexus.contracts.exceptions import (
@@ -85,6 +86,9 @@ from nexus.lib.validators import (
 )
 
 __all__ = [
+    # Fourth Pillar ABC (CacheStore — ephemeral KV + Pub/Sub)
+    "CacheStoreABC",
+    "NullCacheStore",
     # Constants (shared across bricks)
     "PriorityTier",
     "TIER_ALIASES",

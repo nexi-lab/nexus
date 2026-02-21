@@ -20,6 +20,8 @@ References:
     - Issue #2359: Move non-kernel protocols out of core/protocols/
 """
 
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
+from nexus.core.persistent_view_store import PersistentView, PersistentViewStore
 from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
@@ -38,14 +40,18 @@ from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterPr
 __all__ = [
     "BatchContentProtocol",
     "CacheConfigContract",
+    "CacheStoreABC",
     "CachingConnectorContract",
     "ConnectorProtocol",
     "ContentStoreProtocol",
     "DirectoryListingProtocol",
     "DirectoryOpsProtocol",
     "MountInfo",
+    "NullCacheStore",
     "OAuthCapableProtocol",
     "PassthroughProtocol",
+    "PersistentView",
+    "PersistentViewStore",
     "ResolvedPath",
     "SearchableConnector",
     "StreamingProtocol",

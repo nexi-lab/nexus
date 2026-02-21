@@ -25,7 +25,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.server.token_utils import parse_sk_token
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 

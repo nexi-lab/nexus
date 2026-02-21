@@ -23,7 +23,7 @@ from nexus.bricks.cache.base import (
     TigerCacheProtocol,
 )
 from nexus.bricks.cache.settings import CacheSettings
-from nexus.core.cache_store import CacheStoreABC, NullCacheStore
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 # ---------------------------------------------------------------------------
 # Helpers

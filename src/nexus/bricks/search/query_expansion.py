@@ -34,7 +34,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 

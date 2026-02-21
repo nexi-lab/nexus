@@ -1,4 +1,4 @@
-"""CacheStore: The "Ephemeral" pillar of the Nexus Quartet.
+"""CacheStoreABC — the "Ephemeral" pillar of the Nexus Quartet.
 
 Provides ephemeral KV + PubSub storage for hot caching and event distribution.
 This is one of the Four Pillars (Metastore, RecordStore, ObjectStore, CacheStore).
@@ -12,9 +12,9 @@ CacheStore is NOT required by the Kernel. When absent, consumers degrade gracefu
 - TigerCache: O(n) permission checks (no pre-materialized bitmaps)
 - UserSession: stays in RecordStore (acceptable for kernel-only)
 
-Canonical home for CacheStoreABC (Issue #2055). Follows the pillar placement
-pattern: Backend lives in backends/, RecordStoreABC lives in storage/,
-CacheStoreABC lives in bricks/cache/.
+Canonical home for CacheStoreABC (Issue #2055). Lives in contracts/ because it is
+a multi-layer type used by kernel, services, and bricks — per §3.1 Placement
+Decision Tree: "Multi-layer types → contracts/".
 
 Usage:
     # Production (Dragonfly)
@@ -182,29 +182,29 @@ class NullCacheStore(CacheStoreABC):
     NullCacheStore makes "no cache" invisible to the kernel.
     """
 
-    async def get(self, key: str) -> bytes | None:
+    async def get(self, _key: str) -> bytes | None:
         return None
 
-    async def set(self, key: str, value: bytes, ttl: int | None = None) -> None:
+    async def set(self, _key: str, _value: bytes, _ttl: int | None = None) -> None:
         pass
 
-    async def delete(self, key: str) -> bool:
+    async def delete(self, _key: str) -> bool:
         return False
 
-    async def exists(self, key: str) -> bool:
+    async def exists(self, _key: str) -> bool:
         return False
 
-    async def delete_by_pattern(self, pattern: str) -> int:
+    async def delete_by_pattern(self, _pattern: str) -> int:
         return 0
 
-    async def keys_by_pattern(self, pattern: str) -> list[str]:
+    async def keys_by_pattern(self, _pattern: str) -> list[str]:
         return []
 
-    async def publish(self, channel: str, message: bytes) -> int:
+    async def publish(self, _channel: str, _message: bytes) -> int:
         return 0
 
     @asynccontextmanager
-    async def subscribe(self, channel: str) -> AsyncIterator[AsyncIterator[bytes]]:
+    async def subscribe(self, _channel: str) -> AsyncIterator[AsyncIterator[bytes]]:
         async def _empty() -> AsyncIterator[bytes]:
             return
             yield  # make it an async generator

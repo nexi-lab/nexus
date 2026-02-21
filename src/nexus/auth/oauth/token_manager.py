@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
 
 from nexus.auth.oauth.crypto import OAuthCrypto
 from nexus.auth.oauth.types import OAuthCredential, OAuthError

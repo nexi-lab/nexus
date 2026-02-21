@@ -131,6 +131,8 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.events_replay import (
             router as events_replay_router,
+        )
+        from nexus.server.api.v2.routers.events_replay import (
             watch_router,
         )
 

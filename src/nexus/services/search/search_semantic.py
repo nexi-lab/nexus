@@ -26,6 +26,20 @@ if TYPE_CHECKING:
     from nexus.bricks.search.query_service import QueryService
 
 
+def _result_to_dict(r: Any) -> dict[str, Any]:
+    """Convert a BaseSearchResult to a canonical dict."""
+    return {
+        "path": r.path,
+        "chunk_index": r.chunk_index,
+        "chunk_text": r.chunk_text,
+        "score": r.score,
+        "start_offset": r.start_offset,
+        "end_offset": r.end_offset,
+        "line_start": r.line_start,
+        "line_end": r.line_end,
+    }
+
+
 class SemanticSearchMixin:
     """Mixin providing semantic search capabilities for SearchService.
 
@@ -45,11 +59,7 @@ class SemanticSearchMixin:
     @property
     def _has_search_engine(self) -> bool:
         """Check if a search engine is available."""
-        return (
-            (hasattr(self, "_query_service") and self._query_service is not None)
-            or (hasattr(self, "_async_search") and self._async_search is not None)
-            or (hasattr(self, "_semantic_search") and self._semantic_search is not None)
-        )
+        return hasattr(self, "_query_service") and self._query_service is not None
 
     def _require_search_engine(self) -> None:
         """Raise ValueError if no search engine is initialized."""
@@ -63,8 +73,6 @@ class SemanticSearchMixin:
     _query_service: QueryService | None
     _indexing_service: IndexingService | None
     _indexing_pipeline: Any  # IndexingPipeline | None
-    _async_search: Any  # kept for backward compat during migration
-    _semantic_search: Any  # kept for backward compat during migration
     _record_store: Any
     _gw_session_factory: Any
     _gw_backend: Any
@@ -166,13 +174,17 @@ class SemanticSearchMixin:
         # --- QueryService ---
         # Issue #2036: Inject ContextBuilder as AdaptiveKProtocol provider
         _context_builder = None
-        with contextlib.suppress(Exception):
+        try:
             from nexus.services.llm_context_builder import (
                 AdaptiveRetrievalConfig,
                 ContextBuilder,
             )
 
             _context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
+        except ImportError:
+            pass  # optional dependency
+        except Exception:
+            logger.warning("Failed to create ContextBuilder", exc_info=True)
 
         if _sync_sf is not None:
             self._query_service = QueryService(
@@ -200,10 +212,7 @@ class SemanticSearchMixin:
         else:
             self._indexing_service = None
 
-        # Legacy attributes — set to None so _has_search_engine doesn't
-        # need them and old code that checks them won't crash.
-        self._async_search = None
-        self._semantic_search = None
+        # Legacy attributes removed (Issue #2075)
 
     # =========================================================================
     # Public API: Semantic Search
@@ -234,53 +243,17 @@ class SemanticSearchMixin:
         """
         self._require_search_engine()
 
-        # Prefer QueryService (Issue #2075)
-        if self._query_service is not None:
-            results = await self._query_service.search(
-                query=query,
-                path=path,
-                limit=limit,
-                search_mode=search_mode,
-                adaptive_k=adaptive_k,
-            )
-            return [
-                {
-                    "path": r.path,
-                    "chunk_index": r.chunk_index,
-                    "chunk_text": r.chunk_text,
-                    "score": r.score,
-                    "start_offset": r.start_offset,
-                    "end_offset": r.end_offset,
-                    "line_start": r.line_start,
-                    "line_end": r.line_end,
-                }
-                for r in results
-            ]
+        if self._query_service is None:
+            raise ValueError("Semantic search not properly initialized")
 
-        # Fallback: AsyncSemanticSearch (legacy — will be removed)
-        if hasattr(self, "_async_search") and self._async_search is not None:
-            results_legacy = await self._async_search.search(
-                query=query,
-                limit=limit,
-                path_filter=path if path != "/" else None,
-                search_mode=search_mode,
-                adaptive_k=adaptive_k,
-            )
-            return [
-                {
-                    "path": r.path,
-                    "chunk_index": r.chunk_index,
-                    "chunk_text": r.chunk_text,
-                    "score": r.score,
-                    "start_offset": r.start_offset,
-                    "end_offset": r.end_offset,
-                    "line_start": r.line_start,
-                    "line_end": r.line_end,
-                }
-                for r in results_legacy
-            ]
-
-        raise ValueError("Semantic search not properly initialized")
+        results = await self._query_service.search(
+            query=query,
+            path=path,
+            limit=limit,
+            search_mode=search_mode,
+            adaptive_k=adaptive_k,
+        )
+        return [_result_to_dict(r) for r in results]
 
     @rpc_expose(description="Index documents for semantic search")
     async def semantic_search_index(
@@ -330,11 +303,6 @@ class SemanticSearchMixin:
 
         if self._indexing_service is not None:
             return await self._indexing_service.get_index_stats()
-
-        # Fallback: legacy
-        if hasattr(self, "_async_search") and self._async_search is not None:
-            result: dict[str, Any] = await self._async_search.get_stats()
-            return result
 
         raise ValueError("Semantic search not properly initialized")
 
@@ -420,13 +388,17 @@ class SemanticSearchMixin:
 
         # Issue #2036: Inject ContextBuilder as AdaptiveKProtocol provider
         _rpc_context_builder = None
-        with contextlib.suppress(Exception):
+        try:
             from nexus.services.llm_context_builder import (
                 AdaptiveRetrievalConfig,
                 ContextBuilder,
             )
 
             _rpc_context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
+        except ImportError:
+            pass  # optional dependency
+        except Exception:
+            logger.warning("Failed to create ContextBuilder (RPC path)", exc_info=True)
 
         self._query_service = QueryService(
             vector_db=vector_db,
@@ -437,8 +409,6 @@ class SemanticSearchMixin:
 
         # No file_reader available in RPC path — IndexingService not created.
         self._indexing_service = None
-        self._async_search = None
-        self._semantic_search = None
 
     # =========================================================================
     # Helper Methods

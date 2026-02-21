@@ -406,13 +406,12 @@ async def handle_semantic_search_index(
     path = getattr(params, "path", "/")
     recursive = getattr(params, "recursive", True)
 
-    if not hasattr(nexus_fs, "_semantic_search") or nexus_fs._semantic_search is None:
-        try:
-            await nexus_fs.ainitialize_semantic_search()
-        except Exception as e:
-            raise ValueError(
-                f"Semantic search is not initialized and could not be auto-initialized: {e}"
-            ) from e
+    try:
+        await nexus_fs.ainitialize_semantic_search()
+    except Exception as e:
+        raise ValueError(
+            f"Semantic search is not initialized and could not be auto-initialized: {e}"
+        ) from e
 
     results = await nexus_fs.asemantic_search_index(path=path, recursive=recursive)
 

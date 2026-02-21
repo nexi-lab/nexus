@@ -489,7 +489,7 @@ def _boot_system_services(
     # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
     tiger_cache_manager: Any = None
     try:
-        from nexus.services.tiger_cache_manager import TigerCacheManager
+        from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
 
         tiger_cache_manager = TigerCacheManager(
             rebac_manager=rebac_manager,

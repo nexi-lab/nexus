@@ -299,7 +299,7 @@ class NexusFS(  # type: ignore[misc]
         if _injected_tcm is not None:
             self._tiger_cache_manager = _injected_tcm
         else:
-            from nexus.services.tiger_cache_manager import TigerCacheManager
+            from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
 
             self._tiger_cache_manager = TigerCacheManager(
                 rebac_manager=self._rebac_manager,
